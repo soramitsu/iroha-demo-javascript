@@ -12,7 +12,7 @@ import {
   validateBscTestnetNativeEvmProverBundle,
   verifyBscMainnetNativeEvmProverArtifactsFromBundle,
   verifyBscTestnetNativeEvmProverArtifactsFromBundle,
-} from "@iroha/iroha-js/sccp";
+} from "../../src/legacy/sccpLegacySdk.js";
 import {
   BSC_TAIRA_CHAIN_ID,
   BSC_TAIRA_NETWORK_PREFIX,

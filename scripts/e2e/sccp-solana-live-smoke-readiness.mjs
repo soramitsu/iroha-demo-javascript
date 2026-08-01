@@ -25,6 +25,15 @@ import {
 } from "./sccp-live-smoke-readiness.mjs";
 import { validateSolanaProverKnownAnswerSummary } from "../sccp-solana-prover-known-answer.mjs";
 import {
+  SOLANA_EXACT_PROVER_APPROVAL_FILE_ENV,
+  SOLANA_PROVER_GOVERNANCE_BINDING_SCHEMA,
+  SOLANA_PROVER_SIDECAR_SCHEMA,
+  SOLANA_EXACT_PROVER_APPROVAL_SHA256_ENV,
+  buildExactSolanaProductionProverApprovalValidation,
+  canonicalSolanaExactProverApprovalJson,
+  readStablePublicExactSolanaArtifact,
+} from "./sccp-solana-exact-prover-governance.mjs";
+import {
   DEFAULT_SOLANA_TEXT_MAX_BYTES,
   parseStrictCliArgs,
   readStableRegularFileSync,
@@ -53,16 +62,25 @@ const DEFAULT_OUTPUT_DIR = path.join(
 
 export const SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL_ENV =
   "VITE_SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL";
-export const SCCP_SOLANA_PROVER_MODULE_URL_ENV =
-  "VITE_SCCP_SOLANA_PROVER_MODULE_URL";
 export const SCCP_SOLANA_SOURCE_PROVER_MODULE_URL_ENV =
   "VITE_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL";
+export const SCCP_SOLANA_PROVER_GOVERNANCE_APPROVAL_SHA256_ENV =
+  SOLANA_EXACT_PROVER_APPROVAL_SHA256_ENV;
+export const SCCP_SOLANA_PROVER_GOVERNANCE_APPROVAL_FILE_ENV =
+  SOLANA_EXACT_PROVER_APPROVAL_FILE_ENV;
 export const DEFAULT_SCCP_SOLANA_PROVER_MODULE_URL =
   "/sccp-solana/taira-solana-xor-destination-prover.js";
 export const DEFAULT_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL =
   "/sccp-solana/taira-solana-xor-source-prover.js";
-const SOLANA_PROVER_SIDECAR_SCHEMA =
-  "iroha-demo-sccp-solana-browser-prover-sidecar/v1";
+const SOLANA_SMOKE_ENV_FILE_ALLOWED_KEYS = new Set([
+  WALLETCONNECT_PROJECT_ID_ENV,
+  SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL_ENV,
+  SCCP_SOLANA_SOURCE_PROVER_MODULE_URL_ENV,
+]);
+const SOLANA_ROUTE_PREFLIGHT_SCHEMA =
+  "iroha-demo-sccp-solana-route-preflight/v2";
+const SOLANA_ROUTE_PREFLIGHT_PROTOCOL_SOURCE = "typed-sccp-registry-v1";
+const SOLANA_ROUTE_PREFLIGHT_MANIFEST_SOURCE = "public-registry";
 const SCCP_SORA_DOMAIN = 0;
 const SCCP_SOLANA_DOMAIN = 3;
 
@@ -106,6 +124,10 @@ const parseEnvFileLine = (line) => {
   return { key: match[1], value };
 };
 
+const envFileLineKey = (line) =>
+  line.trim().match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/u)?.[1] ??
+  null;
+
 const parseEnvFile = (file) => {
   const entries = [];
   const bytes = readStableRegularFileSync(file, {
@@ -114,6 +136,10 @@ const parseEnvFile = (file) => {
     root: path.dirname(file),
   });
   for (const line of bytes.toString("utf8").split(/\r?\n/u)) {
+    const key = envFileLineKey(line);
+    if (!key || !SOLANA_SMOKE_ENV_FILE_ALLOWED_KEYS.has(key)) {
+      continue;
+    }
     const parsed = parseEnvFileLine(line);
     if (parsed) {
       entries.push(parsed);
@@ -152,7 +178,10 @@ export const loadSolanaSccpSmokeEnvFiles = ({
       throw error;
     }
     for (const { key, value } of entries) {
-      if (preexistingKeys.has(key)) {
+      if (
+        preexistingKeys.has(key) ||
+        !SOLANA_SMOKE_ENV_FILE_ALLOWED_KEYS.has(key)
+      ) {
         continue;
       }
       env[key] = value;
@@ -194,46 +223,11 @@ const failedPreflightChecks = (routePreflight) =>
         }))
     : [];
 
-const routePreflightCheckEvidence = (routePreflight, id) =>
-  Array.isArray(routePreflight?.checks)
-    ? routePreflight.checks.find((check) => check?.id === id)?.evidence
-    : null;
+const solanaProverFallbackLabel = () => "the bundled fail-closed default";
 
-const routePreflightBrowserProofModules = (routePreflight) => {
-  const evidence = routePreflightCheckEvidence(
-    routePreflight,
-    "browser-proof-modules",
-  );
-  if (!isRecord(evidence)) {
-    return null;
-  }
-  return {
-    destinationModuleUrl: trimString(evidence.destinationModuleUrl),
-    destinationModuleHash: trimString(evidence.destinationModuleHash),
-    destinationSidecarHash: trimString(evidence.destinationSidecarHash),
-    sourceModuleUrl: trimString(evidence.sourceModuleUrl),
-    sourceModuleHash: trimString(evidence.sourceModuleHash),
-    sourceSidecarHash: trimString(evidence.sourceSidecarHash),
-  };
-};
-
-const routePublishedProverModuleUrl = (browserProofModules, key) => {
-  const value = trimString(browserProofModules?.[key]);
-  return value || null;
-};
-
-const solanaProverFallbackLabel = (source) =>
-  source === "public-route"
-    ? "the public route-published module"
-    : "the bundled fail-closed default";
-
-const selectSolanaProverModuleUrl = ({
-  runtimeValue,
-  routeValue,
-  bundledDefault,
-}) =>
+const selectSolanaProverModuleUrl = ({ runtimeValue, bundledDefault }) =>
   runtimeValue === undefined || runtimeValue === null
-    ? routeValue || bundledDefault
+    ? bundledDefault
     : runtimeValue;
 
 const optionalEnvValue = (env, envNames) => {
@@ -247,10 +241,7 @@ const optionalEnvValue = (env, envNames) => {
 };
 
 const solanaDestinationProverModuleUrlFromEnv = (env = process.env) =>
-  optionalEnvValue(env, [
-    SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL_ENV,
-    SCCP_SOLANA_PROVER_MODULE_URL_ENV,
-  ]);
+  optionalEnvValue(env, [SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL_ENV]);
 
 const routePreflightSolanaBinding = (routePreflight) => {
   const solana = isRecord(routePreflight?.solana) ? routePreflight.solana : {};
@@ -426,32 +417,48 @@ const routePreflightCheck = ({
     return makeCheck(
       "route-preflight",
       false,
-      routePreflightError || "Solana route preflight report is missing.",
-      { routePreflightPath },
+      routePreflightError
+        ? "Solana route preflight report could not be loaded."
+        : "Solana route preflight report is missing.",
+      {
+        routePreflightPath: routePreflightPath
+          ? "[public-report-supplied]"
+          : null,
+      },
     );
   }
   const routeId = trimString(routePreflight.routeId);
   const assetKey = trimString(routePreflight.assetKey);
+  const routeRevision = routePreflight.routeRevision;
   const failed = failedPreflightChecks(routePreflight);
-  const browserProofModules = routePreflightBrowserProofModules(routePreflight);
-  const browserProofModulesReady =
-    Boolean(browserProofModules?.destinationModuleUrl) &&
-    Boolean(browserProofModules?.destinationModuleHash) &&
-    Boolean(browserProofModules?.destinationSidecarHash) &&
-    Boolean(browserProofModules?.sourceModuleUrl) &&
-    Boolean(browserProofModules?.sourceModuleHash) &&
-    Boolean(browserProofModules?.sourceSidecarHash);
   const solana = routePreflightSolanaBinding(routePreflight);
+  const exactPublicRegistrySourceReady =
+    routePreflight.schema === SOLANA_ROUTE_PREFLIGHT_SCHEMA &&
+    routePreflight.protocolSource === SOLANA_ROUTE_PREFLIGHT_PROTOCOL_SOURCE &&
+    routePreflight.manifestSource === SOLANA_ROUTE_PREFLIGHT_MANIFEST_SOURCE;
   const ready =
     routePreflight.ready === true &&
+    exactPublicRegistrySourceReady &&
     routeId === SCCP_SOLANA_XOR_ROUTE_ID &&
     assetKey === SCCP_XOR_ASSET_KEY &&
-    routePreflight.manifestSource === "public" &&
+    routeRevision === 1 &&
     solana.networkReady &&
     solana.caipChainReady &&
     solana.genesisReady &&
-    browserProofModulesReady &&
     failed.length === 0;
+  const checkedAt = trimString(routePreflight.checkedAt);
+  const checkedAtMs = Date.parse(checkedAt);
+  const publicSolana = {
+    network: solana.networkReady ? SOLANA_TESTNET_NETWORK_ID : null,
+    caipChainId: solana.caipChainReady ? SOLANA_TESTNET_CAIP_CHAIN_ID : null,
+    genesisHash: solana.genesisReady ? SOLANA_TESTNET_GENESIS_HASH : null,
+    expectedNetwork: SOLANA_TESTNET_NETWORK_ID,
+    expectedCaipChainId: SOLANA_TESTNET_CAIP_CHAIN_ID,
+    expectedGenesisHash: SOLANA_TESTNET_GENESIS_HASH,
+    networkReady: solana.networkReady,
+    caipChainReady: solana.caipChainReady,
+    genesisReady: solana.genesisReady,
+  };
   return makeCheck(
     "route-preflight",
     ready,
@@ -462,25 +469,48 @@ const routePreflightCheck = ({
             !solana.caipChainReady ||
             !solana.genesisReady)
         ? "Public TAIRA Solana route preflight is not bound to Solana testnet."
-        : routePreflight.ready === true && !browserProofModulesReady
-          ? "Public TAIRA Solana route preflight is missing browser proof module or sidecar hash evidence."
+        : routePreflight.ready === true && !exactPublicRegistrySourceReady
+          ? "Public TAIRA Solana route preflight is not an exact v2 typed-registry report."
           : "Public TAIRA Solana route preflight is not ready.",
     {
-      routePreflightPath,
-      checkedAt: trimString(routePreflight.checkedAt) || null,
+      routePreflightPath: routePreflightPath
+        ? "[public-report-supplied]"
+        : null,
+      checkedAt:
+        checkedAt &&
+        Number.isFinite(checkedAtMs) &&
+        new Date(checkedAtMs).toISOString() === checkedAt
+          ? checkedAt
+          : null,
       ready: routePreflight.ready === true,
-      routeId,
-      assetKey,
-      manifestSource: routePreflight.manifestSource ?? null,
-      solana,
-      browserProofModules,
-      failedChecks: failed,
-      publicSolanaCapability: isRecord(routePreflight.publicSolanaCapability)
-        ? routePreflight.publicSolanaCapability
-        : null,
-      publicSolanaLane: isRecord(routePreflight.publicSolanaLane)
-        ? routePreflight.publicSolanaLane
-        : null,
+      schema:
+        routePreflight.schema === SOLANA_ROUTE_PREFLIGHT_SCHEMA
+          ? SOLANA_ROUTE_PREFLIGHT_SCHEMA
+          : null,
+      protocolSource:
+        routePreflight.protocolSource === SOLANA_ROUTE_PREFLIGHT_PROTOCOL_SOURCE
+          ? SOLANA_ROUTE_PREFLIGHT_PROTOCOL_SOURCE
+          : null,
+      routeId: routeId === SCCP_SOLANA_XOR_ROUTE_ID ? routeId : null,
+      assetKey: assetKey === SCCP_XOR_ASSET_KEY ? assetKey : null,
+      routeRevision: routeRevision === 1 ? 1 : null,
+      manifestSource:
+        routePreflight.manifestSource === SOLANA_ROUTE_PREFLIGHT_MANIFEST_SOURCE
+          ? SOLANA_ROUTE_PREFLIGHT_MANIFEST_SOURCE
+          : null,
+      solana: publicSolana,
+      failedCheckCount: failed.length,
+      failedChecks:
+        failed.length > 0
+          ? [
+              {
+                id: "public-route-preflight-failed",
+                status: "fail",
+                detail:
+                  "Public route preflight contains failed or invalid checks.",
+              },
+            ]
+          : [],
     },
   );
 };
@@ -587,6 +617,247 @@ const readSidecarAliasValues = (sidecar, keys) =>
     .map((key) => ({ key, value: sidecar?.[key] }))
     .filter(({ value }) => value !== undefined);
 
+const validPublicSha256 = (value) =>
+  typeof value === "string" &&
+  /^0x[0-9a-f]{64}$/u.test(value) &&
+  !/^0x0{64}$/u.test(value);
+
+export const loadSolanaExactProverApprovalForSmoke = async ({
+  file,
+  expectedApprovalSha256,
+} = {}) => {
+  const requestedFile = trimString(file);
+  let artifact = null;
+  let approvalRecord = null;
+  const errors = [];
+  if (!requestedFile) {
+    errors.push(
+      `${SCCP_SOLANA_PROVER_GOVERNANCE_APPROVAL_FILE_ENV} is required.`,
+    );
+  } else {
+    try {
+      artifact = await readStablePublicExactSolanaArtifact({
+        file: requestedFile,
+        label: "Solana exact prover governance approval",
+        maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
+      });
+      let parsed = null;
+      try {
+        parsed = JSON.parse(artifact.bytes.toString("utf8"));
+      } catch {
+        errors.push(
+          "Solana exact prover governance approval contains invalid JSON.",
+        );
+      }
+      if (isRecord(parsed)) {
+        const canonicalBytes = Buffer.from(
+          `${canonicalSolanaExactProverApprovalJson(parsed)}\n`,
+          "utf8",
+        );
+        if (!artifact.bytes.equals(canonicalBytes)) {
+          errors.push(
+            "Solana exact prover governance approval must be canonical UTF-8 JSON with sorted object keys, no insignificant whitespace, and one trailing newline.",
+          );
+        } else {
+          approvalRecord = parsed;
+        }
+      } else if (parsed !== null) {
+        errors.push(
+          "Solana exact prover governance approval must be a JSON object.",
+        );
+      }
+    } catch (error) {
+      errors.push(
+        error?.code === "ENOENT"
+          ? "Solana exact prover governance approval file is missing."
+          : error instanceof Error
+            ? error.message
+            : String(error),
+      );
+    }
+  }
+  const validation = buildExactSolanaProductionProverApprovalValidation({
+    approvalRecord,
+    approvalPath:
+      artifact?.path ?? (requestedFile ? path.resolve(requestedFile) : null),
+    approvalSha256: artifact?.sha256 ?? null,
+    expectedApprovalSha256: expectedApprovalSha256 ?? null,
+  });
+  errors.push(
+    ...validation.blockers.map(
+      (blocker) =>
+        blocker.error ||
+        `Solana exact prover governance approval ${blocker.key} is ${blocker.status}.`,
+    ),
+  );
+  return Object.freeze({
+    validation,
+    errors: Object.freeze([...new Set(errors)]),
+    publicSummary: Object.freeze({
+      schema: validation.schema,
+      ready: validation.ready === true && errors.length === 0,
+      approvalId: validation.approvalId ?? null,
+      approvalSha256: validation.approvalSha256 ?? null,
+      expectedApprovalSha256: validation.expectedApprovalSha256 ?? null,
+      blockerIds: Object.freeze([...validation.blockerIds]),
+    }),
+  });
+};
+
+const containsSecretBearingField = (value) => {
+  if (Array.isArray(value)) return value.some(containsSecretBearingField);
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(
+    ([key, child]) =>
+      /(?:private|secret|mnemonic|seed|credential|wallet.?connect|keypair|token)/iu.test(
+        key,
+      ) || containsSecretBearingField(child),
+  );
+};
+
+const validateGovernanceApprovalBinding = ({
+  sidecar,
+  direction,
+  moduleHash,
+  expectedApprovalSha256,
+  approvalValidation,
+}) => {
+  const errors = [];
+  const binding = sidecar?.governanceApprovalBinding;
+  const knownAnswer = sidecar?.knownAnswer;
+  const expectedFields = [
+    "schema",
+    "ready",
+    "direction",
+    "approvalId",
+    "approvalSha256",
+    "expectedApprovalSha256",
+    "governancePlanCanonicalSha256",
+    "orderedInitializationEvidenceSha256",
+    "approvedModuleHash",
+    "approvedVectorHash",
+    "moduleHash",
+    "vectorHash",
+    "errors",
+  ].sort();
+  if (!isRecord(binding)) {
+    return ["Exact prover governance approval binding is missing."];
+  }
+  const actualFields = Object.keys(binding).sort();
+  if (JSON.stringify(actualFields) !== JSON.stringify(expectedFields)) {
+    errors.push(
+      "Exact prover governance approval binding contains unknown or missing fields.",
+    );
+  }
+  if (!validPublicSha256(expectedApprovalSha256)) {
+    errors.push(
+      `${SCCP_SOLANA_PROVER_GOVERNANCE_APPROVAL_SHA256_ENV} must independently pin a nonzero lowercase 0x-prefixed SHA-256.`,
+    );
+  }
+  if (!isRecord(approvalValidation) || approvalValidation.ready !== true) {
+    errors.push(
+      "Canonical exact prover governance approval validation is not ready.",
+    );
+  }
+  if (binding.schema !== SOLANA_PROVER_GOVERNANCE_BINDING_SCHEMA) {
+    errors.push("Exact prover governance approval binding schema is invalid.");
+  }
+  if (binding.ready !== true || binding.direction !== direction) {
+    errors.push(
+      "Exact prover governance approval binding is not ready for this direction.",
+    );
+  }
+  if (
+    typeof binding.approvalId !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(binding.approvalId)
+  ) {
+    errors.push("Exact prover governance approval id is invalid.");
+  }
+  if (!Array.isArray(binding.errors) || binding.errors.length !== 0) {
+    errors.push("Exact prover governance approval binding contains errors.");
+  }
+  for (const key of [
+    "approvalSha256",
+    "expectedApprovalSha256",
+    "governancePlanCanonicalSha256",
+    "orderedInitializationEvidenceSha256",
+    "approvedModuleHash",
+    "approvedVectorHash",
+    "moduleHash",
+    "vectorHash",
+  ]) {
+    if (!validPublicSha256(binding[key])) {
+      errors.push(
+        `Exact prover governance approval binding ${key} is invalid.`,
+      );
+    }
+  }
+  if (
+    binding.approvalSha256 !== expectedApprovalSha256 ||
+    binding.expectedApprovalSha256 !== expectedApprovalSha256
+  ) {
+    errors.push(
+      "Exact prover sidecar does not match the independently supplied governance approval hash.",
+    );
+  }
+  if (
+    binding.moduleHash !== moduleHash ||
+    binding.approvedModuleHash !== moduleHash
+  ) {
+    errors.push(
+      "Exact prover sidecar module bytes do not match the governance-approved module hash.",
+    );
+  }
+  if (
+    binding.vectorHash !== binding.approvedVectorHash ||
+    binding.vectorHash !== knownAnswer?.vectorHash ||
+    knownAnswer?.governance?.vectorHashPin !== binding.approvedVectorHash
+  ) {
+    errors.push(
+      "Exact prover sidecar known-answer vector does not match its governance approval pin.",
+    );
+  }
+  if (
+    knownAnswer?.governance?.approvalHash !== expectedApprovalSha256 ||
+    knownAnswer?.governance?.expectedApprovalHash !== expectedApprovalSha256
+  ) {
+    errors.push(
+      "Exact prover known-answer summary does not match the independent governance approval hash.",
+    );
+  }
+  const approvalPins = isRecord(approvalValidation?.pins)
+    ? approvalValidation.pins
+    : {};
+  const modulePinKey = `${direction}ProverModuleHash`;
+  const vectorPinKey = `${direction}ProverKnownAnswerVectorHash`;
+  for (const [field, expected] of [
+    ["approvalSha256", approvalValidation?.approvalSha256],
+    ["expectedApprovalSha256", approvalValidation?.expectedApprovalSha256],
+    [
+      "governancePlanCanonicalSha256",
+      approvalPins.governancePlanCanonicalSha256,
+    ],
+    [
+      "orderedInitializationEvidenceSha256",
+      approvalPins.orderedInitializationEvidenceSha256,
+    ],
+    ["approvedModuleHash", approvalPins[modulePinKey]],
+    ["approvedVectorHash", approvalPins[vectorPinKey]],
+  ]) {
+    if (!validPublicSha256(expected) || binding[field] !== expected) {
+      errors.push(
+        `Exact prover sidecar ${field} does not match the canonical approval descriptor.`,
+      );
+    }
+  }
+  if (binding.approvalId !== approvalValidation?.approvalId) {
+    errors.push(
+      "Exact prover sidecar approval id does not match the canonical approval descriptor.",
+    );
+  }
+  return errors;
+};
+
 export const validateSolanaSccpProverSidecar = ({
   sidecar,
   direction,
@@ -594,6 +865,8 @@ export const validateSolanaSccpProverSidecar = ({
   moduleHash,
   proveExport,
   selfTestExport,
+  expectedApprovalSha256,
+  approvalValidation,
 }) => {
   if (
     typeof sidecar !== "object" ||
@@ -603,6 +876,9 @@ export const validateSolanaSccpProverSidecar = ({
     return ["Solana prover sidecar is missing or not a JSON object."];
   }
   const errors = [];
+  if (containsSecretBearingField(sidecar)) {
+    errors.push("Solana prover sidecar contains secret-bearing fields.");
+  }
   const expectString = (keys, expected, label) => {
     const values = readSidecarAliasValues(sidecar, keys);
     const normalized = values.map(({ value }) =>
@@ -731,6 +1007,15 @@ export const validateSolanaSccpProverSidecar = ({
       summary: sidecar.knownAnswer,
     }),
   );
+  errors.push(
+    ...validateGovernanceApprovalBinding({
+      sidecar,
+      direction,
+      moduleHash,
+      expectedApprovalSha256,
+      approvalValidation,
+    }),
+  );
   return errors;
 };
 
@@ -738,6 +1023,10 @@ export const runLocalProverSelfTest = ({
   moduleUrl,
   proveExport,
   selfTestExport,
+  expectedApprovalSha256,
+  approvalValidation = null,
+  approvalErrors = [],
+  approvalSummary = null,
 }) => {
   const moduleFile = localPublicModuleFile(moduleUrl);
   if (!moduleFile) {
@@ -759,9 +1048,7 @@ export const runLocalProverSelfTest = ({
       error:
         error?.code === "ENOENT"
           ? "Local Solana prover module file is missing."
-          : error instanceof Error
-            ? error.message
-            : String(error),
+          : "Local Solana prover module failed safe regular-file validation, including symbolic link rejection.",
     };
   }
   const moduleHash = hexSha256Bytes(moduleBytes);
@@ -769,17 +1056,137 @@ export const runLocalProverSelfTest = ({
   const direction = proveExport.includes("Destination")
     ? "destination"
     : "source";
-  const sidecarErrors = [
-    ...(sidecarRead.sidecarErrors ?? []),
-    ...validateSolanaSccpProverSidecar({
-      sidecar: sidecarRead.sidecar,
-      direction,
-      moduleUrl,
-      moduleHash,
-      proveExport,
-      selfTestExport,
-    }),
+  const rawApprovalErrors = Array.isArray(approvalErrors)
+    ? approvalErrors.filter((error) => typeof error === "string" && error)
+    : ["invalid-approval-errors"];
+  const rawSidecarReadErrors = Array.isArray(sidecarRead.sidecarErrors)
+    ? sidecarRead.sidecarErrors.filter(
+        (error) => typeof error === "string" && error,
+      )
+    : ["invalid-sidecar-read-errors"];
+  const rawSidecarValidationErrors = validateSolanaSccpProverSidecar({
+    sidecar: sidecarRead.sidecar,
+    direction,
+    moduleUrl,
+    moduleHash,
+    proveExport,
+    selfTestExport,
+    expectedApprovalSha256,
+    approvalValidation,
+  });
+  const rawSidecarErrors = [
+    ...rawApprovalErrors,
+    ...rawSidecarReadErrors,
+    ...rawSidecarValidationErrors,
   ];
+  const sidecarApprovalOnlyFailure =
+    rawSidecarValidationErrors.length > 0 &&
+    rawSidecarValidationErrors.every((error) =>
+      /(?:exact prover.*approval|governance approval|GOVERNANCE_APPROVAL_(?:FILE|SHA256))/iu.test(
+        error,
+      ),
+    );
+  const productionPackageFailure = rawSidecarValidationErrors.some((error) =>
+    SOLANA_PROVER_PACKAGE_SIDECAR_ERRORS.has(error),
+  );
+  const sidecarErrors = [
+    ...(rawApprovalErrors.length > 0
+      ? ["Canonical exact prover governance approval validation failed."]
+      : []),
+    ...(rawSidecarReadErrors.length > 0
+      ? [
+          rawSidecarReadErrors.includes(
+            "Solana prover sidecar file is missing.",
+          )
+            ? "Solana prover sidecar file is missing."
+            : "Solana prover sidecar could not be read safely.",
+        ]
+      : []),
+    ...(rawSidecarValidationErrors.length > 0
+      ? ["Solana prover sidecar validation failed."]
+      : []),
+  ];
+  const sidecarBinding = sidecarRead.sidecar?.governanceApprovalBinding;
+  const publicGovernanceBinding =
+    rawSidecarErrors.length === 0 && isRecord(sidecarBinding)
+      ? Object.fromEntries(
+          [
+            "schema",
+            "ready",
+            "direction",
+            "approvalId",
+            "approvalSha256",
+            "expectedApprovalSha256",
+            "governancePlanCanonicalSha256",
+            "orderedInitializationEvidenceSha256",
+            "approvedModuleHash",
+            "approvedVectorHash",
+            "moduleHash",
+            "vectorHash",
+            "errors",
+          ].map((key) => [key, sidecarBinding[key] ?? null]),
+        )
+      : null;
+  const approvalSummaryReady = approvalSummary?.ready === true;
+  const publicGovernanceApproval = isRecord(approvalSummary)
+    ? {
+        schema:
+          approvalSummary.schema ===
+          "iroha-sccp-solana-production-prover-approval-validation/v1"
+            ? approvalSummary.schema
+            : null,
+        ready: approvalSummaryReady,
+        approvalId:
+          approvalSummaryReady &&
+          typeof approvalSummary.approvalId === "string" &&
+          /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(
+            approvalSummary.approvalId,
+          )
+            ? approvalSummary.approvalId
+            : null,
+        approvalSha256: validPublicSha256(approvalSummary.approvalSha256)
+          ? approvalSummary.approvalSha256
+          : null,
+        expectedApprovalSha256: validPublicSha256(
+          approvalSummary.expectedApprovalSha256,
+        )
+          ? approvalSummary.expectedApprovalSha256
+          : null,
+        blockerIds:
+          !approvalSummaryReady &&
+          Array.isArray(approvalSummary.blockerIds) &&
+          approvalSummary.blockerIds.length > 0
+            ? ["solana-exact-prover-approval-invalid"]
+            : [],
+      }
+    : null;
+  const publicInspectionBase = {
+    moduleFile,
+    moduleHash,
+    sidecarUrl: sidecarRead.sidecarUrl,
+    sidecarFile: sidecarRead.sidecarFile,
+    sidecarHash: sidecarRead.sidecarHash ?? null,
+    productionPackageFailure,
+    sidecarApprovalOnlyFailure,
+    governanceApprovalBinding: publicGovernanceBinding,
+    governanceApproval: publicGovernanceApproval,
+  };
+  if (rawSidecarErrors.length > 0) {
+    return {
+      ...publicInspectionBase,
+      sidecarReady: false,
+      sidecarErrors,
+      inspected: true,
+      exists: true,
+      exportsOk: false,
+      executionSkipped: true,
+      ready: false,
+      selfTest: null,
+      proofProbe: null,
+      error:
+        "Solana prover execution was skipped until its public approval and sidecar validate.",
+    };
+  }
   const result = spawnSync(
     process.execPath,
     [
@@ -804,7 +1211,7 @@ try {
   });
   console.log(JSON.stringify({ inspected: true, exists: true, exportsOk, ready: selfTest?.ready === true && proofProbe.ready === true, selfTest, proofProbe }));
 } catch (error) {
-  console.log(JSON.stringify({ inspected: true, exists: true, exportsOk: false, ready: false, error: error instanceof Error ? error.message : String(error) }));
+  console.log(JSON.stringify({ inspected: true, exists: true, exportsOk: false, ready: false, errorCategory: "execution-failed" }));
   process.exitCode = 1;
 }
 `,
@@ -838,10 +1245,7 @@ try {
         exists: true,
         exportsOk: false,
         ready: false,
-        error:
-          error instanceof Error
-            ? `Solana prover self-test returned invalid JSON: ${error.message}`
-            : "Solana prover self-test returned invalid JSON.",
+        errorCategory: "invalid-json",
       };
     }
   } else {
@@ -850,21 +1254,51 @@ try {
       exists: true,
       exportsOk: false,
       ready: false,
-      error: "Solana prover self-test produced no output.",
+      errorCategory: "no-output",
     };
   }
-  if (result.status !== 0 && !parsed.error) {
-    parsed.error = result.stderr || "Solana prover self-test failed.";
+  if (result.status !== 0 && !parsed.errorCategory) {
+    parsed.errorCategory = "execution-failed";
   }
+  const publicSelfTest = isRecord(parsed.selfTest)
+    ? {
+        ready: parsed.selfTest.ready === true,
+        linked: parsed.selfTest.linked === true,
+        productionProofsReady:
+          parsed.selfTest.productionProofsReady === true ||
+          parsed.selfTest.production_proofs_ready === true,
+      }
+    : null;
+  const publicProofProbe = isRecord(parsed.proofProbe)
+    ? {
+        ready: parsed.proofProbe.ready === true,
+        invoked: parsed.proofProbe.invoked === true,
+        errors:
+          Array.isArray(parsed.proofProbe.errors) &&
+          parsed.proofProbe.errors.length > 0
+            ? ["Solana prover known-answer probe failed."]
+            : [],
+        vectorHash: validPublicSha256(parsed.proofProbe.vectorHash)
+          ? parsed.proofProbe.vectorHash
+          : null,
+        packageHash: validPublicSha256(parsed.proofProbe.packageHash)
+          ? parsed.proofProbe.packageHash
+          : null,
+      }
+    : null;
   return {
-    moduleFile,
-    moduleHash,
-    sidecarUrl: sidecarRead.sidecarUrl,
-    sidecarFile: sidecarRead.sidecarFile,
-    sidecarHash: sidecarRead.sidecarHash ?? null,
+    ...publicInspectionBase,
     sidecarReady: sidecarErrors.length === 0,
     sidecarErrors,
-    ...parsed,
+    inspected: parsed.inspected === true,
+    exists: parsed.exists === true,
+    exportsOk: parsed.exportsOk === true,
+    ready: parsed.ready === true && sidecarErrors.length === 0,
+    selfTest: publicSelfTest,
+    proofProbe: publicProofProbe,
+    ...(parsed.errorCategory
+      ? { error: "Solana prover self-test execution failed." }
+      : {}),
   };
 };
 
@@ -878,9 +1312,6 @@ const proverModuleCheck = ({
   defaultValue = null,
   defaultSource = "bundled-default",
   inspection = null,
-  expectedModuleUrl = "",
-  expectedModuleHash = "",
-  expectedSidecarHash = "",
 }) => {
   try {
     const usingDefault = value === undefined || value === null;
@@ -889,50 +1320,32 @@ const proverModuleCheck = ({
       label,
     );
     const configured = Boolean(moduleUrl);
-    const moduleUrlMatchesRoute =
-      !expectedModuleUrl || moduleUrl === expectedModuleUrl;
-    const moduleHashMatchesRoute =
-      !expectedModuleHash || inspection?.moduleHash === expectedModuleHash;
-    const sidecarHashMatchesRoute =
-      !expectedSidecarHash || inspection?.sidecarHash === expectedSidecarHash;
     const inspectionReady =
-      inspection == null ||
-      (inspection.ready === true &&
-        inspection.exportsOk === true &&
-        inspection.sidecarReady === true &&
-        inspection.proofProbe?.ready === true &&
-        inspection.proofProbe?.invoked === true);
-    const ok =
-      configured &&
-      inspectionReady &&
-      moduleUrlMatchesRoute &&
-      moduleHashMatchesRoute &&
-      sidecarHashMatchesRoute;
-    let reason = null;
-    if (!moduleUrlMatchesRoute) {
-      reason = "module URL does not match public route preflight";
-    } else if (inspection == null && expectedModuleHash) {
-      reason = "module bytes were not inspected against public route preflight";
-    } else if (!moduleHashMatchesRoute) {
-      reason = "module hash does not match public route preflight";
-    } else if (!sidecarHashMatchesRoute) {
-      reason = "sidecar hash does not match public route preflight";
-    }
+      inspection != null &&
+      inspection.ready === true &&
+      inspection.exportsOk === true &&
+      inspection.sidecarReady === true &&
+      inspection.proofProbe?.ready === true &&
+      inspection.proofProbe?.invoked === true &&
+      inspection.governanceApprovalBinding?.ready === true &&
+      inspection.governanceApproval?.ready === true;
+    const ok = configured && inspectionReady;
     const inspectionReason =
-      inspection && inspectionReady !== true
-        ? inspection.sidecarErrors?.[0] ||
-          inspection.proofProbe?.errors?.[0] ||
-          inspection.selfTest?.reason ||
-          (inspection.proofProbe == null
-            ? "known-answer prove export was not invoked"
-            : null) ||
-          inspection.error ||
-          null
-        : null;
-    const normalizedReason =
-      reason || inspectionReason
-        ? trimString(reason || inspectionReason).replace(/\.+$/u, "")
-        : "self-test failed";
+      inspection == null
+        ? "module package and sidecar were not inspected"
+        : inspectionReady !== true
+          ? inspection.sidecarErrors?.[0] ||
+            inspection.proofProbe?.errors?.[0] ||
+            inspection.selfTest?.reason ||
+            (inspection.proofProbe == null
+              ? "known-answer prove export was not invoked"
+              : null) ||
+            inspection.error ||
+            null
+          : null;
+    const normalizedReason = inspectionReason
+      ? trimString(inspectionReason).replace(/\.+$/u, "")
+      : "self-test failed";
     const configuredSource = usingDefault ? defaultSource : "runtime";
     const notReadyDetail = usingDefault
       ? `${label} is using ${solanaProverFallbackLabel(configuredSource)} but not ready: ${normalizedReason}.`
@@ -953,12 +1366,6 @@ const proverModuleCheck = ({
         usingDefault,
         configuredSource,
         moduleUrl,
-        expectedModuleUrl: expectedModuleUrl || null,
-        expectedModuleHash: expectedModuleHash || null,
-        expectedSidecarHash: expectedSidecarHash || null,
-        moduleUrlMatchesRoute,
-        moduleHashMatchesRoute,
-        sidecarHashMatchesRoute,
         inspection,
       },
     );
@@ -1003,11 +1410,70 @@ const proverFailureNeedsProductionPackages = (failedCheckRecords) =>
       return (
         check.evidence?.configured === true &&
         inspection?.exists === true &&
-        inspection?.exportsOk === true &&
-        (inspection?.selfTest?.ready === false ||
+        (inspection?.exportsOk === true ||
+          inspection?.productionPackageFailure === true) &&
+        (inspection?.productionPackageFailure === true ||
+          inspection?.selfTest?.ready === false ||
           (inspection?.sidecarErrors ?? []).some((error) =>
             SOLANA_PROVER_PACKAGE_SIDECAR_ERRORS.has(error),
           ))
+      );
+    });
+
+const proverFailureNeedsExactApproval = (failedCheckRecords) =>
+  failedCheckRecords
+    .filter((check) =>
+      ["destination-prover-module-url", "source-prover-module-url"].includes(
+        check.id,
+      ),
+    )
+    .some((check) => {
+      const inspection = check.evidence?.inspection;
+      return (
+        (isRecord(inspection?.governanceApproval) &&
+          inspection.governanceApproval.ready !== true) ||
+        (inspection?.sidecarErrors ?? []).some((error) =>
+          /exact prover governance approval|GOVERNANCE_APPROVAL_(?:FILE|SHA256)/iu.test(
+            error,
+          ),
+        )
+      );
+    });
+
+const exactApprovalSidecarError = (error) =>
+  typeof error === "string" &&
+  /(?:exact prover governance approval|canonical (?:exact prover )?governance approval|canonical approval descriptor|GOVERNANCE_APPROVAL_(?:FILE|SHA256))/iu.test(
+    error,
+  );
+
+const proverFailureNeedsModuleAction = (failedCheckRecords) =>
+  failedCheckRecords
+    .filter((check) =>
+      ["destination-prover-module-url", "source-prover-module-url"].includes(
+        check.id,
+      ),
+    )
+    .some((check) => {
+      const inspection = check.evidence?.inspection;
+      if (
+        inspection?.executionSkipped === true &&
+        inspection?.sidecarApprovalOnlyFailure === true &&
+        inspection?.governanceApproval?.ready !== true
+      ) {
+        return false;
+      }
+      const sidecarErrors = Array.isArray(inspection?.sidecarErrors)
+        ? inspection.sidecarErrors
+        : [];
+      return (
+        check.evidence?.configured !== true ||
+        inspection == null ||
+        inspection.exists !== true ||
+        inspection.exportsOk !== true ||
+        inspection.selfTest?.ready !== true ||
+        inspection.proofProbe?.ready !== true ||
+        inspection.proofProbe?.invoked !== true ||
+        sidecarErrors.some((error) => !exactApprovalSidecarError(error))
       );
     });
 
@@ -1022,8 +1488,10 @@ const proverCheckRootCauseBlockerId = (check) => {
   const needsProductionPackage =
     check.evidence?.configured === true &&
     inspection?.exists === true &&
-    inspection?.exportsOk === true &&
+    (inspection?.exportsOk === true ||
+      inspection?.productionPackageFailure === true) &&
     (inspection?.selfTest?.ready === false ||
+      inspection?.productionPackageFailure === true ||
       (inspection?.sidecarErrors ?? []).some((error) =>
         SOLANA_PROVER_PACKAGE_SIDECAR_ERRORS.has(error),
       ));
@@ -1035,19 +1503,34 @@ const proverCheckRootCauseBlockerId = (check) => {
     : "solana-source-production-prover-package";
 };
 
-const smokeRootCauseBlockerIds = (failedCheckRecords) => [
-  ...new Set(
-    failedCheckRecords
-      .flatMap((check) => {
-        if (check.id === "route-preflight") {
-          return ["solana-public-route-report"];
-        }
-        const proverRootCause = proverCheckRootCauseBlockerId(check);
-        return [proverRootCause || check.id];
-      })
-      .filter(Boolean),
-  ),
-];
+const smokeRootCauseBlockerIds = (failedCheckRecords) => {
+  const needsApproval = proverFailureNeedsExactApproval(failedCheckRecords);
+  const needsModuleAction = proverFailureNeedsModuleAction(failedCheckRecords);
+  return [
+    ...new Set(
+      [
+        ...(needsApproval ? ["solana-exact-prover-governance-approval"] : []),
+        ...failedCheckRecords.flatMap((check) => {
+          if (check.id === "route-preflight") {
+            return ["solana-public-route-report"];
+          }
+          if (
+            needsApproval &&
+            !needsModuleAction &&
+            [
+              "destination-prover-module-url",
+              "source-prover-module-url",
+            ].includes(check.id)
+          ) {
+            return [];
+          }
+          const proverRootCause = proverCheckRootCauseBlockerId(check);
+          return [proverRootCause || check.id];
+        }),
+      ].filter(Boolean),
+    ),
+  ];
+};
 
 const nextActionsForFailedChecks = (
   failedCheckIds,
@@ -1101,57 +1584,88 @@ const nextActionsForFailedChecks = (
     failed("destination-prover-module-url") ||
     failed("source-prover-module-url")
   ) {
-    const needsProductionPackages =
-      proverFailureNeedsProductionPackages(failedCheckRecords);
-    actions.push(
-      smokeAction({
-        id: needsProductionPackages
-          ? "publish-solana-production-prover-packages"
-          : "publish-solana-prover-modules",
-        title: needsProductionPackages
-          ? "Publish governed Solana prover packages"
-          : "Publish Solana browser prover modules",
-        detail: needsProductionPackages
-          ? "Replace fail-closed placeholder Solana destination/source prover modules with governed browser-safe packages whose sidecars set productionProofsReady=true and whose self-tests pass."
-          : "Publish browser-safe Solana destination and source proof modules and point the renderer at deterministic package-relative, HTTPS, or loopback URLs.",
-        requiredInputs: needsProductionPackages
-          ? [
-              smokeRequiredInput(
-                "solana-destination-production-prover-package",
-                "browser-module-package",
-                "<destination-solana-production-prover-module-and-sidecar>",
-                `${SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL_ENV} plus a matching sidecar with productionProofsReady=true for TAIRA -> Solana finalize proof construction.`,
-              ),
-              smokeRequiredInput(
-                "solana-source-production-prover-package",
-                "browser-module-package",
-                "<source-solana-production-prover-module-and-sidecar>",
-                `${SCCP_SOLANA_SOURCE_PROVER_MODULE_URL_ENV} plus a matching sidecar with productionProofsReady=true for Solana -> TAIRA source proof construction.`,
-              ),
-            ]
-          : [
-              smokeRequiredInput(
-                "solana-destination-browser-prover-module",
-                "browser-module-url",
-                "<destination-solana-prover-module-url>",
-                `${SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL_ENV} for TAIRA -> Solana finalize proof construction.`,
-              ),
-              smokeRequiredInput(
-                "solana-source-browser-prover-module",
-                "browser-module-url",
-                "<source-solana-prover-module-url>",
-                `${SCCP_SOLANA_SOURCE_PROVER_MODULE_URL_ENV} for Solana -> TAIRA source proof construction.`,
-              ),
-            ],
-        blockedByChecks: [
-          "destination-prover-module-url",
-          "source-prover-module-url",
-        ],
-        commands: [
-          `${SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL_ENV}=<destination-solana-prover-module-url> ${SCCP_SOLANA_SOURCE_PROVER_MODULE_URL_ENV}=<source-solana-prover-module-url> npm run e2e:sccp:solana-smoke-readiness`,
-        ],
-      }),
-    );
+    const failedProverCheckIds = [
+      "destination-prover-module-url",
+      "source-prover-module-url",
+    ].filter(failed);
+    if (proverFailureNeedsExactApproval(failedCheckRecords)) {
+      actions.push(
+        smokeAction({
+          id: "provide-solana-exact-prover-approval",
+          title: "Provide the exact prover approval",
+          detail:
+            "Provide the canonical public exact prover approval descriptor and its independently distributed SHA-256; sidecar-reported values cannot supply either trust input.",
+          requiredInputs: [
+            smokeRequiredInput(
+              "solana-exact-prover-approval-file",
+              "public-canonical-json",
+              "<canonical-public-exact-prover-approval.json>",
+              `${SCCP_SOLANA_PROVER_GOVERNANCE_APPROVAL_FILE_ENV} containing canonical exact approval bytes.`,
+            ),
+            smokeRequiredInput(
+              "solana-exact-prover-approval-sha256",
+              "independent-public-hash",
+              "0x<independently-distributed-approval-sha256>",
+              `${SCCP_SOLANA_PROVER_GOVERNANCE_APPROVAL_SHA256_ENV} supplied independently of the descriptor and sidecars.`,
+            ),
+          ],
+          blockedByChecks: failedProverCheckIds,
+          commands: [
+            `${SCCP_SOLANA_PROVER_GOVERNANCE_APPROVAL_FILE_ENV}=<canonical-public-exact-prover-approval.json> ${SCCP_SOLANA_PROVER_GOVERNANCE_APPROVAL_SHA256_ENV}=0x<independently-distributed-approval-sha256> npm run e2e:sccp:solana-smoke-readiness`,
+          ],
+        }),
+      );
+    }
+    if (proverFailureNeedsModuleAction(failedCheckRecords)) {
+      const needsProductionPackages =
+        proverFailureNeedsProductionPackages(failedCheckRecords);
+      actions.push(
+        smokeAction({
+          id: needsProductionPackages
+            ? "publish-solana-production-prover-packages"
+            : "publish-solana-prover-modules",
+          title: needsProductionPackages
+            ? "Publish governed Solana prover packages"
+            : "Publish Solana browser prover modules",
+          detail: needsProductionPackages
+            ? "Replace fail-closed placeholder Solana destination/source prover modules with governed browser-safe packages whose sidecars set productionProofsReady=true and whose self-tests pass."
+            : "Publish browser-safe Solana destination and source proof modules and point the renderer at deterministic package-relative, HTTPS, or loopback URLs.",
+          requiredInputs: needsProductionPackages
+            ? [
+                smokeRequiredInput(
+                  "solana-destination-production-prover-package",
+                  "browser-module-package",
+                  "<destination-solana-production-prover-module-and-sidecar>",
+                  `${SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL_ENV} plus a matching sidecar with productionProofsReady=true for TAIRA -> Solana finalize proof construction.`,
+                ),
+                smokeRequiredInput(
+                  "solana-source-production-prover-package",
+                  "browser-module-package",
+                  "<source-solana-production-prover-module-and-sidecar>",
+                  `${SCCP_SOLANA_SOURCE_PROVER_MODULE_URL_ENV} plus a matching sidecar with productionProofsReady=true for Solana -> TAIRA source proof construction.`,
+                ),
+              ]
+            : [
+                smokeRequiredInput(
+                  "solana-destination-browser-prover-module",
+                  "browser-module-url",
+                  "<destination-solana-prover-module-url>",
+                  `${SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL_ENV} for TAIRA -> Solana finalize proof construction.`,
+                ),
+                smokeRequiredInput(
+                  "solana-source-browser-prover-module",
+                  "browser-module-url",
+                  "<source-solana-prover-module-url>",
+                  `${SCCP_SOLANA_SOURCE_PROVER_MODULE_URL_ENV} for Solana -> TAIRA source proof construction.`,
+                ),
+              ],
+          blockedByChecks: failedProverCheckIds,
+          commands: [
+            `${SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL_ENV}=<destination-solana-prover-module-url> ${SCCP_SOLANA_SOURCE_PROVER_MODULE_URL_ENV}=<source-solana-prover-module-url> npm run e2e:sccp:solana-smoke-readiness`,
+          ],
+        }),
+      );
+    }
   }
   return actions;
 };
@@ -1174,15 +1688,6 @@ export const evaluateSolanaSccpLiveSmokeReadiness = ({
   sourceProverInspection = null,
   checkedAt = new Date().toISOString(),
 } = {}) => {
-  const browserProofModules = routePreflightBrowserProofModules(routePreflight);
-  const destinationRouteModuleUrl = routePublishedProverModuleUrl(
-    browserProofModules,
-    "destinationModuleUrl",
-  );
-  const sourceRouteModuleUrl = routePublishedProverModuleUrl(
-    browserProofModules,
-    "sourceModuleUrl",
-  );
   const checks = [
     routePreflightCheck({
       routePreflight,
@@ -1194,18 +1699,12 @@ export const evaluateSolanaSccpLiveSmokeReadiness = ({
       id: "destination-prover-module-url",
       label: "Solana destination prover module URL",
       env: SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL_ENV,
-      envAliases: [SCCP_SOLANA_PROVER_MODULE_URL_ENV],
+      envAliases: [],
       configuredEnv: destinationProverModuleEnv,
       value: destinationProverModuleUrl,
-      defaultValue:
-        destinationRouteModuleUrl || DEFAULT_SCCP_SOLANA_PROVER_MODULE_URL,
-      defaultSource: destinationRouteModuleUrl
-        ? "public-route"
-        : "bundled-default",
+      defaultValue: DEFAULT_SCCP_SOLANA_PROVER_MODULE_URL,
+      defaultSource: "bundled-default",
       inspection: destinationProverInspection,
-      expectedModuleUrl: browserProofModules?.destinationModuleUrl,
-      expectedModuleHash: browserProofModules?.destinationModuleHash,
-      expectedSidecarHash: browserProofModules?.destinationSidecarHash,
     }),
     proverModuleCheck({
       id: "source-prover-module-url",
@@ -1213,13 +1712,9 @@ export const evaluateSolanaSccpLiveSmokeReadiness = ({
       env: SCCP_SOLANA_SOURCE_PROVER_MODULE_URL_ENV,
       configuredEnv: sourceProverModuleEnv,
       value: sourceProverModuleUrl,
-      defaultValue:
-        sourceRouteModuleUrl || DEFAULT_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL,
-      defaultSource: sourceRouteModuleUrl ? "public-route" : "bundled-default",
+      defaultValue: DEFAULT_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL,
+      defaultSource: "bundled-default",
       inspection: sourceProverInspection,
-      expectedModuleUrl: browserProofModules?.sourceModuleUrl,
-      expectedModuleHash: browserProofModules?.sourceModuleHash,
-      expectedSidecarHash: browserProofModules?.sourceSidecarHash,
     }),
   ];
   const failedBeforeRunbook = failedChecks(checks);
@@ -1286,6 +1781,8 @@ export const runSolanaSccpLiveSmokeReadiness = async ({
   walletConnectProjectId = undefined,
   destinationProverModuleUrl = undefined,
   sourceProverModuleUrl = undefined,
+  proverGovernanceApprovalFile = undefined,
+  proverGovernanceApprovalSha256 = undefined,
   routePreflight: suppliedRoutePreflight = undefined,
   routePreflightPath: suppliedRoutePreflightPath = null,
   routePreflightError: suppliedRoutePreflightError = null,
@@ -1311,6 +1808,16 @@ export const runSolanaSccpLiveSmokeReadiness = async ({
         ? null
         : SCCP_SOLANA_SOURCE_PROVER_MODULE_URL_ENV
       : "argument";
+  const resolvedProverGovernanceApprovalSha256 =
+    proverGovernanceApprovalSha256 ??
+    process.env[SCCP_SOLANA_PROVER_GOVERNANCE_APPROVAL_SHA256_ENV];
+  const resolvedProverGovernanceApprovalFile =
+    proverGovernanceApprovalFile ??
+    process.env[SCCP_SOLANA_PROVER_GOVERNANCE_APPROVAL_FILE_ENV];
+  const proverGovernanceApproval = await loadSolanaExactProverApprovalForSmoke({
+    file: resolvedProverGovernanceApprovalFile,
+    expectedApprovalSha256: resolvedProverGovernanceApprovalSha256,
+  });
   let routePreflight = suppliedRoutePreflight ?? null;
   let routePreflightPath = suppliedRoutePreflightPath;
   let routePreflightError = suppliedRoutePreflightError;
@@ -1332,23 +1839,12 @@ export const runSolanaSccpLiveSmokeReadiness = async ({
         error instanceof Error ? error.message : String(error);
     }
   }
-  const browserProofModules = routePreflightBrowserProofModules(routePreflight);
-  const destinationRouteModuleUrl = routePublishedProverModuleUrl(
-    browserProofModules,
-    "destinationModuleUrl",
-  );
-  const sourceRouteModuleUrl = routePublishedProverModuleUrl(
-    browserProofModules,
-    "sourceModuleUrl",
-  );
   const destinationProverModuleUrlForInspection = selectSolanaProverModuleUrl({
     runtimeValue: resolvedDestinationProverModuleUrl,
-    routeValue: destinationRouteModuleUrl,
     bundledDefault: DEFAULT_SCCP_SOLANA_PROVER_MODULE_URL,
   });
   const sourceProverModuleUrlForInspection = selectSolanaProverModuleUrl({
     runtimeValue: resolvedSourceProverModuleUrl,
-    routeValue: sourceRouteModuleUrl,
     bundledDefault: DEFAULT_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL,
   });
   const normalizedDestinationProverModuleUrl = normalizeSccpBrowserModuleUrl(
@@ -1372,11 +1868,19 @@ export const runSolanaSccpLiveSmokeReadiness = async ({
       moduleUrl: normalizedDestinationProverModuleUrl,
       proveExport: "proveSolanaSccpDestination",
       selfTestExport: "solanaSccpDestinationProverSelfTest",
+      expectedApprovalSha256: resolvedProverGovernanceApprovalSha256,
+      approvalValidation: proverGovernanceApproval.validation,
+      approvalErrors: proverGovernanceApproval.errors,
+      approvalSummary: proverGovernanceApproval.publicSummary,
     }),
     sourceProverInspection: runLocalProverSelfTest({
       moduleUrl: normalizedSourceProverModuleUrl,
       proveExport: "proveSolanaSccpSource",
       selfTestExport: "solanaSccpSourceProverSelfTest",
+      expectedApprovalSha256: resolvedProverGovernanceApprovalSha256,
+      approvalValidation: proverGovernanceApproval.validation,
+      approvalErrors: proverGovernanceApproval.errors,
+      approvalSummary: proverGovernanceApproval.publicSummary,
     }),
   });
   const reportPath = await writeAtomicJsonFile(
@@ -1402,6 +1906,8 @@ export const parseArgs = (argv) =>
       "walletconnect-project-id",
       "destination-prover-module-url",
       "source-prover-module-url",
+      "prover-governance-approval",
+      "prover-governance-approval-sha256",
       "env-mode",
       "fetch-timeout-ms",
       "fetch-attempts",
@@ -1421,6 +1927,9 @@ Options:
   --walletconnect-project-id ID        WalletConnect project ID
   --destination-prover-module-url URL  Browser-safe Solana destination prover module URL
   --source-prover-module-url URL       Browser-safe Solana source prover module URL
+  --prover-governance-approval PATH   Canonical public exact prover approval descriptor
+  --prover-governance-approval-sha256 HASH
+                                      Independent public SHA-256 pin for the exact prover approval
   --env-mode MODE                      Vite env mode to load from .env files (default: test)
   --fetch-timeout-ms MS                Per-request fetch timeout for fresh public reads
   --fetch-attempts N                   Per-request retry attempts for fresh public reads
@@ -1470,15 +1979,22 @@ const main = async () => {
     destinationProverModuleUrl: optionalArgOrEnvs(
       args,
       "destination-prover-module-url",
-      [
-        SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL_ENV,
-        SCCP_SOLANA_PROVER_MODULE_URL_ENV,
-      ],
+      [SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL_ENV],
     ),
     sourceProverModuleUrl: optionalArgOrEnv(
       args,
       "source-prover-module-url",
       SCCP_SOLANA_SOURCE_PROVER_MODULE_URL_ENV,
+    ),
+    proverGovernanceApprovalFile: optionalArgOrEnv(
+      args,
+      "prover-governance-approval",
+      SCCP_SOLANA_PROVER_GOVERNANCE_APPROVAL_FILE_ENV,
+    ),
+    proverGovernanceApprovalSha256: optionalArgOrEnv(
+      args,
+      "prover-governance-approval-sha256",
+      SCCP_SOLANA_PROVER_GOVERNANCE_APPROVAL_SHA256_ENV,
     ),
   });
   console.log(`Solana SCCP smoke-readiness report: ${reportPath}`);

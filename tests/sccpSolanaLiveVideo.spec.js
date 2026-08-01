@@ -1,3 +1,4 @@
+// @vitest-environment node
 /* global BigInt */
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -7,19 +8,28 @@ import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { describe, expect, it } from "vitest";
 import {
   buildSolanaLiveTransferEvidenceTemplate,
+  buildSolanaLiveCaptureInspection,
+  buildSolanaGeneratedLiveVideoBinding,
   buildSolanaLiveVideoSuccessEvidencePolicy,
   buildSolanaLiveVideoMediaVerification,
   buildBlockedSolanaLiveVideoTranscript,
   buildSolanaLiveVideoBlockedDiagnostics,
+  extractSolanaLiveRegistryPins,
   normalizeSolanaLiveTransferEvidence,
   parseArgs,
+  productionGateOptionsFromPreLiveSnapshot,
   removeStaleSuccessfulArtifacts,
   runSccpSolanaLiveVideoGate,
   SOLANA_TESTNET_GENESIS_HASH,
+  solanaLiveVideoMediaArtifactMaxBytes,
+  solanaLiveVideoMediaArtifactSizeAllowed,
   solanaLiveEvidencePackageHashProblems,
   solanaLiveVideoSuccessPrerequisiteProblems,
+  summarizeSolanaLiveVideoSubtitleCues,
   verifySolanaLiveTransferReadbacks,
 } from "../scripts/e2e/sccp-solana-live-video.mjs";
+import { summarizeExactSolanaRegistryRoute } from "../scripts/e2e/sccp-solana-exact-registry.mjs";
+import { buildExactSolanaRegistryFixture } from "./helpers/sccpSolanaExactRegistryFixture.js";
 
 const SOLANA_SIG_A =
   "6pc4LiB8KHAPvbUbkozrTcPL5zXspYBdATv5raNDyVbhiKjrKokLb9o111kxTD5KkPVd7UBSCcFcnWFkrJ82Hu6";
@@ -33,11 +43,11 @@ const HASH_A = `0x${"aa".repeat(32)}`;
 const HASH_B = `0x${"bb".repeat(32)}`;
 const HASH_C = `0x${"cc".repeat(32)}`;
 const HASH_D = `0x${"dd".repeat(32)}`;
-const ACTIVATION_PACKAGE_HASH = `0x${"44".repeat(32)}`;
-const OPERATOR_HANDOFF_HASH = `0x${"77".repeat(32)}`;
 const REQUIRED_PACKAGE_HASHES = {
-  activationPackageHash: ACTIVATION_PACKAGE_HASH,
-  operatorHandoffHash: OPERATOR_HANDOFF_HASH,
+  governancePlanSha256: `0x${"44".repeat(32)}`,
+  governanceRegistrationSha256: `0x${"55".repeat(32)}`,
+  governanceActivationSha256: `0x${"66".repeat(32)}`,
+  publicRegistrySha256: `0x${"77".repeat(32)}`,
 };
 const SMOKE_PRODUCTION_BLOCKER_IDS = [
   "solana-public-route-report",
@@ -122,97 +132,119 @@ const transparentPublicInputs = (messageId) => {
 };
 
 const buildAuthoritativeReadbackFixture = () => {
+  const registry = buildExactSolanaRegistryFixture();
+  const registrySummary = summarizeExactSolanaRegistryRoute(registry, {
+    requireBidirectional: true,
+    requireCurrentTrustAnchor: true,
+  });
   const addresses = {
-    bridgeProgramAddress: testPublicKey(1),
-    tokenMintAddress: testPublicKey(2),
-    sourceBridgeProgramAddress: testPublicKey(3),
-    verifierProgramAddress: testPublicKey(4),
-    nativeVerifierProgramAddress: testPublicKey(12),
-    verifierStateAddress: testPublicKey(5),
-    sourceStateAddress: testPublicKey(6),
-    mintAuthorityAddress: testPublicKey(7),
+    destinationProgramAddress: registrySummary.programs.destination,
+    tokenMintAddress: registrySummary.accounts.tokenMint,
+    sourceProgramAddress: registrySummary.programs.source,
+    nativeVerifierProgramAddress: registrySummary.programs.nativeVerifier,
+    destinationStateAddress: registrySummary.accounts.destinationState,
+    sourceStateAddress: registrySummary.accounts.sourceState,
+    nativeVerifierMaterialAddress:
+      registrySummary.accounts.nativeVerifierMaterial,
+    destinationProgramDataAddress:
+      registrySummary.accounts.destinationProgramData,
+    sourceProgramDataAddress: registrySummary.accounts.sourceProgramData,
+    nativeVerifierProgramDataAddress:
+      registrySummary.accounts.nativeVerifierProgramData,
     forwardPayer: testPublicKey(8),
     destinationTokenAccount: testPublicKey(9),
     reverseOwner: testPublicKey(10),
     sourceTokenAccount: testPublicKey(11),
   };
+  addresses.mintAuthorityAddress = deriveProgramAddress(
+    [
+      Buffer.from("sccp-mint-authority-v1", "utf8"),
+      new PublicKey(addresses.destinationStateAddress).toBuffer(),
+    ],
+    addresses.destinationProgramAddress,
+  );
   const hashes = {
-    verifierCodeHash: "01".repeat(32),
-    verifierKeyHash: "02".repeat(32),
-    destinationBindingHash: "03".repeat(32),
-    sourceTrustAnchorHash: "04".repeat(32),
-    consensusVerifierHash: "05".repeat(32),
-    messageInclusionVerifierHash: "06".repeat(32),
-    finalityPolicyHash: "07".repeat(32),
-    sourceStateVerifierHash: "08".repeat(32),
-    adapterVerifierVkHash: "09".repeat(32),
-    adapterDeploymentReceiptHash: "0a".repeat(32),
+    destinationBindingHash: registrySummary.destinationBindingHash.slice(2),
   };
-  const settlementAssetDefinitionId = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
   const preflightReport = {
+    schema: "iroha-demo-sccp-solana-route-preflight/v2",
+    protocolSource: "typed-sccp-registry-v1",
     ready: true,
-    manifestSource: "public",
+    manifestSource: "public-registry",
     routeId: "taira_sol_xor",
     assetKey: "xor",
+    routeRevision: 1,
     taira: {
       toriiUrl: "https://taira.sora.org",
-      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
       networkPrefix: 369,
+      registryPath: "/v1/sccp/registry",
     },
     solana: {
       rpcUrl: "https://api.testnet.solana.com",
       network: "solana-testnet",
       caipChainId: TESTNET_CAIP_CHAIN_ID,
+      genesisHash: SOLANA_TESTNET_GENESIS_HASH,
     },
+    registryState: {
+      lanePresent: true,
+      routePresent: true,
+      activation: "bidirectional",
+      currentNativeTrustAnchorHash:
+        registrySummary.currentNativeTrustAnchorHash,
+    },
+    registrySummary,
     checks: [
       {
-        id: "solana-deployment-addresses",
+        id: "solana-live-exact-programdata-evidence",
         status: "pass",
         evidence: {
-          bridgeProgramAddress: addresses.bridgeProgramAddress,
-          tokenMintAddress: addresses.tokenMintAddress,
-          sourceBridgeProgramAddress: addresses.sourceBridgeProgramAddress,
-          verifierProgramAddress: addresses.verifierProgramAddress,
-          nativeVerifierProgramAddress: addresses.nativeVerifierProgramAddress,
-          verifierStateAddress: addresses.verifierStateAddress,
-          sourceStateAddress: addresses.sourceStateAddress,
-        },
-      },
-      {
-        id: "solana-rollout-material",
-        status: "pass",
-        evidence: {
-          verifierCodeHash: `0x${hashes.verifierCodeHash}`,
-          verifierKeyHash: `0x${hashes.verifierKeyHash}`,
-          destinationBindingHash: `0x${hashes.destinationBindingHash}`,
-        },
-      },
-      {
-        id: "solana-live-token-state-evidence",
-        status: "pass",
-        evidence: { expectedMintAuthority: addresses.mintAuthorityAddress },
-      },
-      {
-        id: "source-lane-material",
-        status: "pass",
-        evidence: {
-          verifier: {
-            sourceTrustAnchorHash: `0x${hashes.sourceTrustAnchorHash}`,
-            consensusVerifierHash: `0x${hashes.consensusVerifierHash}`,
-            messageInclusionVerifierHash: `0x${hashes.messageInclusionVerifierHash}`,
-            finalityPolicyHash: `0x${hashes.finalityPolicyHash}`,
-            sourceStateVerifierHash: `0x${hashes.sourceStateVerifierHash}`,
+          destination: {
+            role: "destination",
+            immutable: true,
+            upgradeAuthority: null,
+            programAddress: addresses.destinationProgramAddress,
+            programdataAddress: addresses.destinationProgramDataAddress,
+            programdataSlot: String(
+              registrySummary.programDataSlots.destination,
+            ),
+            programCodeHash: registrySummary.codeHashes.destination,
           },
-          adapter: {
-            adapterVerifierVkHash: `0x${hashes.adapterVerifierVkHash}`,
-            deploymentReceiptHash: `0x${hashes.adapterDeploymentReceiptHash}`,
+          source: {
+            role: "source",
+            immutable: true,
+            upgradeAuthority: null,
+            programAddress: addresses.sourceProgramAddress,
+            programdataAddress: addresses.sourceProgramDataAddress,
+            programdataSlot: String(registrySummary.programDataSlots.source),
+            programCodeHash: registrySummary.codeHashes.source,
+          },
+          nativeVerifier: {
+            role: "nativeVerifier",
+            immutable: true,
+            upgradeAuthority: null,
+            programAddress: addresses.nativeVerifierProgramAddress,
+            programdataAddress: addresses.nativeVerifierProgramDataAddress,
+            programdataSlot: String(
+              registrySummary.programDataSlots.nativeVerifier,
+            ),
+            programCodeHash: registrySummary.codeHashes.nativeVerifier,
           },
         },
       },
       {
-        id: "taira-burn-record-material",
+        id: "solana-live-exact-runtime-state",
         status: "pass",
-        evidence: { settlementAssetDefinitionId },
+        evidence: {
+          destinationState: { address: addresses.destinationStateAddress },
+          sourceState: { address: addresses.sourceStateAddress },
+          mint: {
+            address: addresses.tokenMintAddress,
+            mintAuthority: addresses.mintAuthorityAddress,
+          },
+          material: { address: addresses.nativeVerifierMaterialAddress },
+          mintAuthority: addresses.mintAuthorityAddress,
+        },
       },
       {
         id: "post-deploy-live-evidence",
@@ -229,6 +261,7 @@ const buildAuthoritativeReadbackFixture = () => {
     routeId: "taira_sol_xor",
     assetKey: "xor",
     ...REQUIRED_PACKAGE_HASHES,
+    publicRegistrySha256: registrySummary.registrySha256,
     tairaToSolana: {
       amount: "0.0001",
       messageId: HASH_A,
@@ -250,10 +283,10 @@ const buildAuthoritativeReadbackFixture = () => {
   const messageReceiptAddress = deriveProgramAddress(
     [
       Buffer.from("sccp-message-receipt", "utf8"),
-      new PublicKey(addresses.verifierStateAddress).toBuffer(),
+      new PublicKey(addresses.destinationStateAddress).toBuffer(),
       Buffer.from(normalizedEvidence.tairaToSolana.messageId, "hex"),
     ],
-    addresses.verifierProgramAddress,
+    addresses.destinationProgramAddress,
   );
   const sourceBurnReceiptAddress = deriveProgramAddress(
     [
@@ -262,11 +295,11 @@ const buildAuthoritativeReadbackFixture = () => {
       new PublicKey(addresses.reverseOwner).toBuffer(),
       sourceNonceBytes,
     ],
-    addresses.sourceBridgeProgramAddress,
+    addresses.sourceProgramAddress,
   );
   const forwardAccounts = [
     addresses.forwardPayer,
-    addresses.verifierStateAddress,
+    addresses.destinationStateAddress,
     addresses.tokenMintAddress,
     addresses.destinationTokenAccount,
     addresses.mintAuthorityAddress,
@@ -372,7 +405,7 @@ const buildAuthoritativeReadbackFixture = () => {
   recipientLength.writeUInt16LE(recipientBytes.length);
   const sourceEventHash = createHash("sha256")
     .update(Buffer.from(SOURCE_BURN_EVENT_PREFIX))
-    .update(new PublicKey(addresses.sourceBridgeProgramAddress).toBuffer())
+    .update(new PublicKey(addresses.sourceProgramAddress).toBuffer())
     .update(new PublicKey(addresses.sourceStateAddress).toBuffer())
     .update(new PublicKey(addresses.tokenMintAddress).toBuffer())
     .update(new PublicKey(addresses.reverseOwner).toBuffer())
@@ -388,7 +421,7 @@ const buildAuthoritativeReadbackFixture = () => {
       SOLANA_SIG_A,
       makeTransaction({
         signature: SOLANA_SIG_A,
-        programId: addresses.verifierProgramAddress,
+        programId: addresses.destinationProgramAddress,
         accounts: forwardAccounts,
         data: forwardData,
         tokenAccount: addresses.destinationTokenAccount,
@@ -401,7 +434,7 @@ const buildAuthoritativeReadbackFixture = () => {
       SOLANA_SIG_B,
       makeTransaction({
         signature: SOLANA_SIG_B,
-        programId: addresses.sourceBridgeProgramAddress,
+        programId: addresses.sourceProgramAddress,
         accounts: reverseAccounts,
         data: reverseData,
         tokenAccount: addresses.sourceTokenAccount,
@@ -411,18 +444,7 @@ const buildAuthoritativeReadbackFixture = () => {
       }),
     ],
   ]);
-  const pins = {
-    bridgeProgramAddress: addresses.bridgeProgramAddress,
-    tokenMintAddress: addresses.tokenMintAddress,
-    sourceBridgeProgramAddress: addresses.sourceBridgeProgramAddress,
-    verifierProgramAddress: addresses.verifierProgramAddress,
-    nativeVerifierProgramAddress: addresses.nativeVerifierProgramAddress,
-    verifierStateAddress: addresses.verifierStateAddress,
-    sourceStateAddress: addresses.sourceStateAddress,
-    mintAuthorityAddress: addresses.mintAuthorityAddress,
-    ...hashes,
-    settlementAssetDefinitionId,
-  };
+  const pins = extractSolanaLiveRegistryPins(preflightReport);
   const transactionRecord = ({
     hash,
     messageId,
@@ -440,7 +462,7 @@ const buildAuthoritativeReadbackFixture = () => {
     direction,
     messageId,
     amountBaseUnits,
-    manifestPins: pins,
+    registryPins: pins,
     ...(payloadHash ? { payloadHash } : {}),
     ...(transactionSourceEventHash
       ? { sourceEventHash: transactionSourceEventHash }
@@ -489,7 +511,7 @@ const buildAuthoritativeReadbackFixture = () => {
     ...(messageSourceEventHash
       ? { sourceEventHash: messageSourceEventHash }
       : {}),
-    manifestPins: pins,
+    registryPins: pins,
   });
   const tairaTransactions = new Map([
     [
@@ -555,20 +577,11 @@ const buildAuthoritativeReadbackFixture = () => {
     readSolanaTransaction: async (signature) =>
       solanaTransactions.get(signature) ?? null,
     readTairaChainMetadata: async () => ({
-      chain_id: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      chain_id: "fc56984b-2be7-431d-840e-21514d1883f0",
       network_prefix: 369,
     }),
     readTairaTransaction: async (hash) => tairaTransactions.get(hash) ?? null,
-    readTairaRouteManifest: async () => ({
-      manifests: [
-        {
-          routeId: "taira_sol_xor",
-          assetKey: "xor",
-          solanaNetwork: "solana-testnet",
-          ...pins,
-        },
-      ],
-    }),
+    readTairaRegistry: async () => structuredClone(registry),
     readTairaSccpMessage: async (messageId) =>
       tairaMessages.get(messageId) ?? null,
   };
@@ -576,6 +589,8 @@ const buildAuthoritativeReadbackFixture = () => {
     addresses,
     hashes,
     pins,
+    registry,
+    registrySummary,
     preflightReport,
     liveEvidence: normalizedEvidence,
     readbacks,
@@ -613,23 +628,98 @@ describe("Solana SCCP live video gate", () => {
     expect(() => parseArgs(["--skip-solana-rpc", "maybe"])).toThrow(
       "--skip-solana-rpc must be true or false when a value is provided.",
     );
+    expect(
+      parseArgs([
+        "--prover-governance-approval-sha256",
+        REQUIRED_PACKAGE_HASHES.publicRegistrySha256,
+        "--live-capture-video",
+        "/tmp/real-capture.mp4",
+        "--live-capture-video-sha256",
+        HASH_A,
+        "--live-capture-witness",
+        "/tmp/capture-witness.json",
+        "--live-capture-witness-sha256",
+        HASH_B,
+      ]),
+    ).toEqual({
+      "prover-governance-approval-sha256":
+        REQUIRED_PACKAGE_HASHES.publicRegistrySha256,
+      "live-capture-video": "/tmp/real-capture.mp4",
+      "live-capture-video-sha256": HASH_A,
+      "live-capture-witness": "/tmp/capture-witness.json",
+      "live-capture-witness-sha256": HASH_B,
+    });
+    for (const option of [
+      "production-requirements",
+      "handoff-verification",
+      "proof-material-bundle",
+      "deployment-video-transcript",
+    ]) {
+      expect(() => parseArgs([`--${option}`, "retired.json"])).toThrow(
+        /Unknown option/u,
+      );
+    }
   });
 
   const canonicalSuccessDiagnostics = () => ({
-    publishReadiness: {
-      toriiUrl: "https://taira-validator-1.sora.org",
-      mcpUrl: "https://taira-validator-1.sora.org/v1/mcp",
-      publicationTargetReady: true,
-      directPublicNodePublicationReady: true,
-      target: {
+    governance: {
+      registration: {
         toriiUrl: "https://taira-validator-1.sora.org",
-        mcpUrl: "https://taira-validator-1.sora.org/v1/mcp",
-        targetKind: "explicit-taira-public-node",
-        canonicalPublicNodeRoot: true,
-        canonicalRolloutTargetReady: true,
-        mcpMatchesToriiRoot: true,
       },
+      activation: { toriiUrl: "https://taira-validator-1.sora.org" },
+      evidence: { ready: true },
     },
+  });
+
+  it("binds the fresh production gate to the pinned prover approval path", () => {
+    const pinnedApprovalPath = "/tmp/pinned/exact-prover-approval.json";
+    const snapshot = {
+      preLiveInputSnapshotSha256: HASH_D,
+      inputs: {
+        captureReviewPolicy: {
+          path: "/tmp/pinned/capture-review-policy.json",
+          sha256: HASH_D,
+        },
+        proverGovernanceApproval: {
+          path: pinnedApprovalPath,
+          sha256: HASH_A,
+        },
+        governancePlan: { path: "/tmp/pinned/governance-plan.json" },
+        governanceRegistration: {
+          path: "/tmp/pinned/governance-registration.json",
+          sha256: HASH_B,
+        },
+        governanceActivation: {
+          path: "/tmp/pinned/governance-activation.json",
+          sha256: HASH_C,
+        },
+        orderedInitializationEvidence: {
+          path: "/tmp/pinned/ordered-initialization.json",
+          sha256: HASH_D,
+        },
+        smokeReadiness: { path: "/tmp/pinned/smoke-readiness.json" },
+      },
+    };
+
+    const options = productionGateOptionsFromPreLiveSnapshot({
+      snapshot,
+      productionGateReport: {
+        artifacts: {
+          proverGovernanceApprovalPath:
+            "/tmp/forged-sidecar/exact-prover-approval.json",
+        },
+        governanceEvidence: { planSha256: HASH_A },
+      },
+      outputDir: "/tmp/live-video",
+      proverGovernanceApprovalSha256: HASH_A,
+    });
+
+    expect(options).toMatchObject({
+      proverGovernanceApproval: pinnedApprovalPath,
+      proverGovernanceApprovalSha256: HASH_A,
+      expectedPreLiveInputSnapshotSha256: HASH_D,
+    });
+    expect(options.proverGovernanceApproval).not.toContain("forged-sidecar");
   });
 
   it("permits success qualification only on fresh canonical governance-pinned roots", () => {
@@ -640,6 +730,12 @@ describe("Solana SCCP live video gate", () => {
         skipSolanaRpc: false,
         productionGateSnapshot: "/tmp/pre-live-production-gate.json",
         productionGateSnapshotSha256: HASH_A,
+        liveCaptureVideo: "/tmp/real-bidirectional-capture.mp4",
+        liveCaptureVideoSha256: HASH_B,
+        liveCaptureWitness: "/tmp/reviewed-capture-witness.json",
+        liveCaptureWitnessSha256: HASH_C,
+        liveCaptureReviewAttestation: "/tmp/reviewed-capture-attestation.json",
+        liveCaptureReviewAttestationSha256: HASH_D,
       },
       diagnostics: canonicalSuccessDiagnostics(),
       freshPreflightCompleted: true,
@@ -656,7 +752,30 @@ describe("Solana SCCP live video gate", () => {
       freshProductionGateCompleted: true,
       nativeNetworkClientsUsed: true,
       problems: [],
+      liveCapturePinned: true,
+      liveCaptureWitnessPinned: true,
     });
+  });
+
+  it("requires an independently pinned real capture for success qualification", () => {
+    const policy = buildSolanaLiveVideoSuccessEvidencePolicy({
+      options: {
+        toriiUrl: "https://taira-validator-1.sora.org",
+        solanaRpcUrl: "https://api.testnet.solana.com",
+        skipSolanaRpc: false,
+        productionGateSnapshot: "/tmp/pre-live-production-gate.json",
+        productionGateSnapshotSha256: HASH_A,
+      },
+      diagnostics: canonicalSuccessDiagnostics(),
+      freshPreflightCompleted: true,
+      freshProductionGateCompleted: true,
+    });
+
+    expect(policy.ready).toBe(false);
+    expect(policy.liveCapturePinned).toBe(false);
+    expect(policy.problems.map((problem) => problem.id)).toContain(
+      "pinned-real-live-capture",
+    );
   });
 
   it.each([
@@ -690,8 +809,6 @@ describe("Solana SCCP live video gate", () => {
     "rejects %s endpoint evidence even when reports coherently claim ready",
     (_name, toriiUrl, solanaRpcUrl) => {
       const diagnostics = canonicalSuccessDiagnostics();
-      diagnostics.publishReadiness.toriiUrl = toriiUrl;
-      diagnostics.publishReadiness.target.toriiUrl = toriiUrl;
       const policy = buildSolanaLiveVideoSuccessEvidencePolicy({
         options: { toriiUrl, solanaRpcUrl, skipSolanaRpc: false },
         diagnostics,
@@ -716,7 +833,6 @@ describe("Solana SCCP live video gate", () => {
         toriiUrl: "https://taira-validator-1.sora.org",
         solanaRpcUrl: "https://api.testnet.solana.com",
         preflightReport: "/tmp/coherent-forged-preflight.json",
-        productionRequirements: "/tmp/coherent-forged-requirements.json",
         productionGate: "/tmp/coherent-forged-gate.json",
         skipSolanaRpc: true,
         readbacks: {},
@@ -735,10 +851,7 @@ describe("Solana SCCP live video gate", () => {
         "native-read-only-network-clients",
       ]),
     );
-    expect(policy.prerequisiteReportOverrideIds).toEqual([
-      "production-gate",
-      "production-requirements",
-    ]);
+    expect(policy.prerequisiteReportOverrideIds).toEqual(["production-gate"]);
   });
 
   it("rejects caller-declared trusted chains and production-gate option bags", () => {
@@ -766,10 +879,10 @@ describe("Solana SCCP live video gate", () => {
     );
   });
 
-  it("rejects self-attested canonical target booleans when the MCP root is mismatched", () => {
+  it("rejects mismatched governance registration and activation roots", () => {
     const diagnostics = canonicalSuccessDiagnostics();
-    diagnostics.publishReadiness.target.mcpUrl =
-      "https://taira-validator-2.sora.org/v1/mcp";
+    diagnostics.governance.activation.toriiUrl =
+      "https://taira-validator-2.sora.org";
     const policy = buildSolanaLiveVideoSuccessEvidencePolicy({
       options: {
         toriiUrl: "https://taira-validator-1.sora.org",
@@ -798,7 +911,7 @@ describe("Solana SCCP live video gate", () => {
         ...buildAuthoritativeReadbackFixture().preflightReport,
         taira: {
           toriiUrl: "https://localhost",
-          chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+          chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
           networkPrefix: 369,
         },
         solana: {
@@ -837,6 +950,16 @@ describe("Solana SCCP live video gate", () => {
       await expect(
         access(path.join(outputDir, "sccp-solana-live-video-blocked.json")),
       ).resolves.toBeUndefined();
+      const blockedTranscript = JSON.parse(
+        await readFile(result.transcriptPath, "utf8"),
+      );
+      expect(blockedTranscript.mediaVerification).toMatchObject({
+        ready: false,
+        encodingReady: true,
+        productionReady: false,
+        diagnosticOnly: true,
+        notLiveTransferEvidence: true,
+      });
     } finally {
       await rm(outputDir, { recursive: true, force: true });
     }
@@ -936,1055 +1059,225 @@ describe("Solana SCCP live video gate", () => {
     expect(blockerIds).not.toContain("source-prover-module-url");
   });
 
-  it("summarizes blocked live-video prerequisites without claiming MP4 evidence", () => {
+  it("categorizes malformed prerequisite diagnostics without echoing report text", () => {
+    const secretMarker = "malformed-live-video-secret-marker";
     const diagnostics = buildSolanaLiveVideoBlockedDiagnostics({
-      productionRequirementsReport: {
-        readyToBuildIsi: false,
-        readyToSubmitWithCurrentRuntime: false,
-        blockers: [
-          { id: "destination-proof-admission" },
-          { id: "source-verifier-material" },
-        ],
-      },
-      productionRequirementsPath: "/tmp/requirements.json",
-      publishReadinessReport: {
-        readyForRuntimeSigner: false,
-        readyToSubmitWithCurrentRuntime: false,
-        publicEndpoint: {
-          endpointReady: true,
-          preflightReady: false,
-          mcpTransactionTools: {
-            ready: true,
-            presentTools: [
-              "iroha.transactions.submit",
-              "iroha.transactions.submit_and_wait",
-            ],
-            missingTools: [],
-          },
-        },
-        runtimeSigning: {
-          authorityReady: false,
-          permissionAudit: {
-            authority: null,
-            checked: false,
-            ready: false,
-            requiredPermission: "CanManageSccpRouteManifests",
-            hasRequiredPermission: false,
-          },
-          privateKeyEnvPresent: false,
-        },
-        blockers: [{ id: "runtime-signing-key" }],
-      },
-      publishReadinessPath: "/tmp/publish-readiness.json",
-      routePublicationRequestReport: {
-        schema: "iroha-demo-sccp-solana-route-publication-request/v1",
-        readyForRouteManagerReview: true,
-        productionRouteReady: false,
-        readyToSubmitWithCurrentRuntime: false,
-        reviewPackageHash: `0x${"88".repeat(32)}`,
-        manifest: {
-          routeIdentityReady: true,
-          productionReadyForIsi: false,
-          manifestSha256: `0x${"99".repeat(32)}`,
-          error:
-            "Production Solana route manifest must not include manifest.disabledReason.",
-        },
-        proofMaterialBundle: {
-          readyForProofMaterialCeremony: true,
-          bundleManifestSha256: `0x${"33".repeat(32)}`,
-          includedArtifactCount: 16,
-        },
-        blockers: [{ id: "route-manifest-production-shape" }],
-        upstreamBlockerIds: ["production-requirements"],
-      },
-      routePublicationRequestPath: "/tmp/route-publication-request.json",
       smokeReadinessReport: {
-        schema: "iroha-demo-sccp-solana-live-smoke-readiness/v1",
-        routeId: "taira_sol_xor",
         ready: false,
-        blockerIds: [
-          "route-preflight",
-          "walletconnect-project-id",
-          "destination-prover-module-url",
-          "source-prover-module-url",
-        ],
+        blockerIds: [secretMarker],
+        rootCauseBlockerIds: [secretMarker],
+        missingProductionInputs: [{ id: secretMarker, password: secretMarker }],
+        nextActions: [{ id: secretMarker, title: secretMarker }],
         checks: [
-          { id: "route-preflight", status: "fail", detail: "route missing" },
-          {
-            id: "walletconnect-project-id",
-            status: "fail",
-            detail: "WalletConnect missing",
-          },
-          {
-            id: "destination-prover-module-url",
-            status: "fail",
-            detail: "Destination prover package is fail-closed",
-          },
-          {
-            id: "source-prover-module-url",
-            status: "fail",
-            detail: "Source prover package is fail-closed",
-          },
-          {
-            id: "smoke-readiness-runbook-contract",
-            status: "pass",
-            detail:
-              "Solana live smoke-readiness exposes a complete operator runbook.",
-            evidence: {
-              problems: [],
-            },
-          },
-        ],
-        nextActions: [
-          { id: "refresh-solana-route-preflight" },
-          { id: "configure-solana-walletconnect" },
-          {
-            id: "publish-solana-production-prover-packages",
-            command: [
-              "npm",
-              "run",
-              "sccp:solana:deploy",
-              "--",
-              "proof-material-bundle",
-            ],
-            requiredInputs: [
-              "solana-destination-production-prover-package",
-              "solana-source-production-prover-package",
-            ],
-          },
-        ],
-        missingProductionInputs: [
-          { id: "solana-public-route-report" },
-          { id: "walletconnect-project-id" },
-          { id: "solana-destination-production-prover-package" },
-          { id: "solana-source-production-prover-package" },
+          { id: secretMarker, status: secretMarker, detail: secretMarker },
         ],
       },
-      smokeReadinessPath: "/tmp/smoke-readiness.json",
       handoffVerificationReport: {
-        ready: true,
         statuses: [
-          { id: "handoff-schema", status: "pass" },
-          { id: "route-canary-signature-finalized", status: "pass" },
+          { id: secretMarker, status: secretMarker, detail: secretMarker },
         ],
-        blockers: [],
+        blockerIds: [secretMarker],
       },
-      handoffVerificationPath: "/tmp/handoff.verification.json",
-      proofMaterialBundleReport: {
-        schema: "iroha-demo-sccp-solana-proof-material-bundle/v1",
-        readyForProofMaterialCeremony: true,
-        productionRouteReady: false,
-        readyToSubmitWithCurrentRuntime: false,
-        productionProofMaterialIncluded: false,
-        bundleManifestSha256: `0x${"33".repeat(32)}`,
-        includedArtifactCount: 16,
-        blockers: [],
-        upstreamBlockerIds: ["production-requirements", "publish-readiness"],
-      },
-      proofMaterialBundlePath: "/tmp/proof-material-bundle.json",
-      activationPackageReport: {
-        schema: "iroha-demo-sccp-solana-activation-package/v1",
-        readyForActivationReview: false,
-        productionActivationReady: false,
-        readyToSubmitWithCurrentRuntime: false,
-        publicRouteAlreadyPublished: false,
-        activationPackageHash: `0x${"44".repeat(32)}`,
-        requiredRouteManager: {
-          authority: "EFopJQRwoAgQcSL124wixwbTvgTvidHy1GQbEyJPQKTf",
-          authorityReady: false,
-          authorityFormatReady: false,
-          requiredPermission: "CanManageSccpRouteManifests",
-          hasRequiredPermission: false,
-        },
-        runtimeSigning: {
-          privateKeyEnv: "SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY",
-          privateKeyEnvPresent: false,
-          privateKeyStoredInReport: false,
-        },
-        publicTaira: {
-          ready: false,
-          publicSolanaLane: {
-            present: true,
-            ready: false,
-            check: {
-              status: "fail",
-              detail: "Solana lane disabled",
-            },
-            blockerIds: ["immutable Solana verifier program"],
-          },
-        },
-        artifacts: {
-          proofMaterialBundle: {
-            present: true,
-            schema: "iroha-demo-sccp-solana-proof-material-bundle/v1",
-            stableHash: `0x${"33".repeat(32)}`,
-            blockerIds: ["production-requirements"],
-            readyForProofMaterialCeremony: true,
-            productionRouteReady: false,
-            readyToSubmitWithCurrentRuntime: false,
-          },
-          routePublicationRequest: {
-            present: true,
-            schema: "iroha-demo-sccp-solana-route-publication-request/v1",
-            stableHash: `0x${"88".repeat(32)}`,
-            blockerIds: ["route-manifest-production-shape"],
-            readyForRouteManagerReview: true,
-            productionRouteReady: false,
-            readyToSubmitWithCurrentRuntime: false,
-          },
-          routeManagerAccessRequest: {
-            present: true,
-            schema: "iroha-demo-sccp-solana-route-manager-access-request/v1",
-            stableHash: `0x${"99".repeat(32)}`,
-            blockerIds: ["route-manager-authority"],
-            readyForOperatorReview: false,
-            accessReady: false,
-            readyToSubmitWithCurrentRuntime: false,
-          },
-          laneActivationRequest: {
-            present: true,
-            schema: "iroha-demo-sccp-solana-lane-activation-request/v1",
-            stableHash: `0x${"55".repeat(32)}`,
-            blockerIds: ["public-solana-lane"],
-            ready: true,
-            productionReady: false,
-            submitReady: false,
-          },
-          operatorHandoff: {
-            present: true,
-            schema: "iroha-demo-sccp-solana-operator-handoff/v1",
-            stableHash: `0x${"66".repeat(32)}`,
-            blockerIds: ["route-manager-authority"],
-            ready: false,
-            productionReady: false,
-            submitReady: false,
-          },
-          publishReadiness: {
-            present: true,
-            schema: "iroha-demo-sccp-solana-route-publish-readiness/v1",
-            blockerIds: ["runtime-signing-key"],
-            readyToSubmitWithCurrentRuntime: false,
-          },
-          productionRequirements: {
-            present: true,
-            schema: "iroha-demo-sccp-solana-production-requirements/v1",
-            blockerIds: ["source-verifier-material"],
-            readyToBuildIsi: false,
-          },
-          smokeReadiness: {
-            present: true,
-            schema: "iroha-demo-sccp-solana-live-smoke-readiness/v1",
-            blockerIds: [
-              "route-preflight",
-              "walletconnect-project-id",
-              "destination-prover-module-url",
-              "source-prover-module-url",
-            ],
-            ready: false,
-            productionReady: false,
-            submitReady: false,
-            failedCheckIds: [
-              "route-preflight",
-              "walletconnect-project-id",
-              "destination-prover-module-url",
-              "source-prover-module-url",
-            ],
-            missingProductionInputIds: [
-              "solana-public-route-report",
-              "walletconnect-project-id",
-              "solana-destination-production-prover-package",
-              "solana-source-production-prover-package",
-            ],
-            nextActionIds: [
-              "refresh-solana-route-preflight",
-              "configure-solana-walletconnect",
-              "publish-solana-production-prover-packages",
-            ],
-          },
-        },
-        blockers: [
-          { id: "public-solana-lane" },
-          { id: "runtime-route-manager" },
-        ],
-        nextActionDetails: [
-          {
-            id: "activate-public-solana-lane",
-            title: "Activate public Solana lane",
-            blockedBy: [{ id: "public-solana-lane" }],
-            command: ["npm", "run", "e2e:sccp:solana-preflight"],
-            requiredInputs: ["public-solana-lane-activation"],
-          },
-        ],
-      },
-      activationPackagePath: "/tmp/activation-package.json",
-      deploymentVideoTranscriptReport: {
-        schema: "iroha-demo-sccp-solana-deployment-video/v1",
-        ready: false,
-        routeId: "taira_sol_xor",
-        checkedAt: "2026-07-05T00:10:00.000Z",
-        deployment: {
-          activationPackage: {
-            activationPackageHash: `0x${"44".repeat(32)}`,
-            smokeReadiness: {
-              present: true,
-              schema: "iroha-demo-sccp-solana-live-smoke-readiness/v1",
-              blockerIds: [
-                "route-preflight",
-                "walletconnect-project-id",
-                "destination-prover-module-url",
-                "source-prover-module-url",
-              ],
-              ready: false,
-              productionReady: false,
-              submitReady: false,
-              failedCheckIds: [
-                "route-preflight",
-                "walletconnect-project-id",
-                "destination-prover-module-url",
-                "source-prover-module-url",
-              ],
-              missingProductionInputIds: [
-                "solana-public-route-report",
-                "walletconnect-project-id",
-                "solana-destination-production-prover-package",
-                "solana-source-production-prover-package",
-              ],
-              nextActionIds: [
-                "refresh-solana-route-preflight",
-                "configure-solana-walletconnect",
-                "publish-solana-production-prover-packages",
-              ],
-            },
-          },
-        },
-        videoArtifacts: [
-          {
-            path: "/tmp/sccp-solana-deployment-video.mp4",
-            mediaType: "video/mp4",
-          },
-          {
-            path: "/tmp/sccp-solana-deployment-video.vtt",
-            mediaType: "text/vtt",
-          },
-        ],
-      },
-      deploymentVideoTranscriptPath: "/tmp/sccp-solana-deployment-video.json",
-      operatorHandoffReport: {
-        schema: "iroha-demo-sccp-solana-operator-handoff/v1",
-        readyForOperatorReview: false,
-        productionRouteReady: false,
-        readyToPublish: false,
-        publicRouteAlreadyPublished: false,
-        handoffHash: `0x${"77".repeat(32)}`,
-        requiredRouteManager: {
-          authority: "EFopJQRwoAgQcSL124wixwbTvgTvidHy1GQbEyJPQKTf",
-          authorityReady: false,
-          authorityFormatReady: false,
-          requiredPermission: "CanManageSccpRouteManifests",
-          hasRequiredPermission: false,
-        },
-        runtimeSigning: {
-          privateKeyEnv: "SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY",
-          privateKeyEnvPresent: false,
-          privateKeyStoredInReport: false,
-        },
-        artifacts: {
-          proofMaterialBundle: {
-            present: true,
-            schema: "iroha-demo-sccp-solana-proof-material-bundle/v1",
-            stableHash: `0x${"33".repeat(32)}`,
-            blockerIds: ["production-requirements"],
-            readyForProofMaterialCeremony: true,
-            productionRouteReady: false,
-            readyToSubmitWithCurrentRuntime: false,
-          },
-          routePublicationRequest: {
-            present: true,
-            schema: "iroha-demo-sccp-solana-route-publication-request/v1",
-            stableHash: `0x${"88".repeat(32)}`,
-            blockerIds: ["route-manifest-production-shape"],
-            readyForRouteManagerReview: true,
-            productionRouteReady: false,
-            readyToSubmitWithCurrentRuntime: false,
-          },
-          routeManagerAccessRequest: {
-            present: true,
-            schema: "iroha-demo-sccp-solana-route-manager-access-request/v1",
-            stableHash: `0x${"99".repeat(32)}`,
-            blockerIds: ["route-manager-authority"],
-            readyForOperatorReview: false,
-            accessReady: false,
-            readyToSubmitWithCurrentRuntime: false,
-          },
-          laneActivationRequest: {
-            present: true,
-            schema: "iroha-demo-sccp-solana-lane-activation-request/v1",
-            stableHash: `0x${"55".repeat(32)}`,
-            blockerIds: ["public-solana-lane"],
-            readyForLaneGovernanceReview: true,
-            publicLaneReady: false,
-            productionProofMaterialReady: false,
-            productionLaneReady: false,
-          },
-          publishReadiness: {
-            present: true,
-            schema: "iroha-demo-sccp-solana-route-publish-readiness/v1",
-            blockerIds: ["runtime-signing-key"],
-            readyToSubmitWithCurrentRuntime: false,
-          },
-          productionRequirements: {
-            present: true,
-            schema: "iroha-demo-sccp-solana-production-requirements/v1",
-            blockerIds: ["source-verifier-material"],
-            readyToBuildIsi: false,
-          },
-          smokeReadiness: {
-            present: true,
-            schema: "iroha-demo-sccp-solana-live-smoke-readiness/v1",
-            blockerIds: [
-              "route-preflight",
-              "walletconnect-project-id",
-              "destination-prover-module-url",
-              "source-prover-module-url",
-            ],
-            ready: false,
-            failedCheckIds: [
-              "route-preflight",
-              "walletconnect-project-id",
-              "destination-prover-module-url",
-              "source-prover-module-url",
-            ],
-            missingProductionInputIds: [
-              "solana-public-route-report",
-              "walletconnect-project-id",
-              "solana-destination-production-prover-package",
-              "solana-source-production-prover-package",
-            ],
-            nextActionIds: [
-              "refresh-solana-route-preflight",
-              "configure-solana-walletconnect",
-              "publish-solana-production-prover-packages",
-            ],
-          },
-        },
-        blockers: [
-          { id: "route-manager-authority" },
-          { id: "runtime-signing-key" },
-        ],
-        nextActions: [
-          "grant-taira-route-manager-access",
-          "set-runtime-route-manager-private-key",
-        ],
-        nextActionDetails: [
-          {
-            id: "set-runtime-route-manager-private-key",
-            title: "Set runtime route-manager private key",
-            blockedBy: [{ id: "runtime-signing-key" }],
-            command: [
-              "SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY=<runtime-only-private-key-hex>",
-              "npm",
-              "run",
-              "sccp:solana:deploy",
-              "--",
-              "publish-route-manifest",
-              "--submit",
-              "true",
-            ],
-            requiredInputs: ["SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY"],
-          },
-        ],
-      },
-      operatorHandoffPath: "/tmp/operator-handoff.json",
       productionGateReport: {
-        schema: "iroha-demo-sccp-solana-production-gate/v1",
         ready: false,
-        checkedAt: "2026-07-05T00:00:00.000Z",
+        governanceEvidence: {
+          ready: false,
+          publicRegistrySha256: secretMarker,
+          password: secretMarker,
+        },
         checks: [
-          {
-            id: "activation-package-ready",
-            status: "fail",
-            detail: "activation blocked",
-          },
-          {
-            id: "operator-handoff-ready",
-            status: "fail",
-            detail: "handoff blocked",
-          },
+          { id: secretMarker, status: secretMarker, detail: secretMarker },
         ],
-        nextRequiredActions: [
-          "Activate the public TAIRA Solana SCCP lane.",
-          "Publish a production-ready route manifest.",
+        nextRequiredActions: [secretMarker],
+        nextActionDetails: [{ id: secretMarker, title: secretMarker }],
+      },
+    });
+
+    expect(JSON.stringify(diagnostics)).not.toContain(secretMarker);
+    expect(diagnostics.smokeReadiness.failedChecks).toEqual([
+      {
+        id: "invalid-report-check",
+        status: "fail",
+        detail: "Referenced report contains a failed or invalid check.",
+      },
+    ]);
+    const transcript = buildBlockedSolanaLiveVideoTranscript({
+      preflightReport: {
+        ready: false,
+        publicSolanaCapability: { password: secretMarker },
+        publicSolanaLane: { detail: secretMarker },
+        checks: [
+          { id: secretMarker, status: secretMarker, detail: secretMarker },
         ],
-        nextActionDetails: [
-          {
-            id: "record-bidirectional-live-video",
-            title: "Record bidirectional live-transfer MP4",
-            blockedBy: [{ id: "live-bidirectional-video" }],
-            command: [
-              "npm",
-              "run",
-              "e2e:sccp:solana-video",
-              "--",
-              "--live-evidence",
-              "<completed-solana-bidirectional-live-evidence.json>",
-              "--production-gate",
-              "output/sccp-solana-production-gate/sccp-solana-production-gate.json",
-              "--smoke-readiness",
-              "output/sccp-solana-smoke-readiness/latest.json",
-              "--activation-package",
-              "output/sccp-solana-deploy/taira-solana-xor-activation-package.json",
-              "--operator-handoff",
-              "output/sccp-solana-deploy/taira-solana-xor-operator-handoff.json",
-              "--skip-solana-rpc",
-              "false",
-            ],
-            requiredInputs: [
-              "public-solana-route-preflight-ready",
-              "walletconnect-project-id",
-              "production-solana-prover-packages",
-              "funded-taira-and-solana-test-wallets",
-              "completed-solana-bidirectional-live-evidence",
-            ],
-          },
-        ],
+      },
+      reason: "Blocked prerequisite report validation failed.",
+      diagnostics,
+    });
+    expect(JSON.stringify(transcript)).not.toContain(secretMarker);
+    expect(transcript.publicSolanaCapability).toEqual({
+      present: true,
+      ready: false,
+    });
+  });
+
+  it("does not echo invalid pinned production-gate contents into blocked artifacts", async () => {
+    const secretMarker = "pinned-gate-secret-marker";
+    const outputDir = await mkdtemp(
+      path.join(os.tmpdir(), "sccp-solana-pinned-redaction-"),
+    );
+    const gatePath = path.join(outputDir, "pinned-gate.json");
+    const gateBytes = Buffer.from(
+      `${JSON.stringify({
+        schema: secretMarker,
+        failedCheckIds: [secretMarker],
+        preLiveInputSnapshot: { password: secretMarker },
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(gatePath, gateBytes);
+    try {
+      const result = await runSccpSolanaLiveVideoGate({
+        outputDir,
+        productionGateSnapshot: gatePath,
+        productionGateSnapshotSha256: `0x${createHash("sha256")
+          .update(gateBytes)
+          .digest("hex")}`,
+      });
+      const blockedJson = await readFile(result.transcriptPath, "utf8");
+      const blockedVtt = await readFile(result.subtitlesPath, "utf8");
+      expect(result.ready).toBe(false);
+      expect(result.reason).not.toContain(secretMarker);
+      expect(blockedJson).not.toContain(secretMarker);
+      expect(blockedVtt).not.toContain(secretMarker);
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("never overwrites a pinned input with a blocked diagnostic artifact", async () => {
+    const outputDir = await mkdtemp(
+      path.join(os.tmpdir(), "sccp-solana-blocked-output-collision-"),
+    );
+    const pinnedPath = path.join(
+      outputDir,
+      "sccp-solana-live-video-blocked.json",
+    );
+    const pinnedBytes = Buffer.from('{"invalid":true}\n', "utf8");
+    await writeFile(pinnedPath, pinnedBytes);
+    try {
+      await expect(
+        runSccpSolanaLiveVideoGate({
+          outputDir,
+          productionGateSnapshot: pinnedPath,
+          productionGateSnapshotSha256: `0x${createHash("sha256")
+            .update(pinnedBytes)
+            .digest("hex")}`,
+        }),
+      ).rejects.toThrow(/disjoint from every pinned input/u);
+      await expect(readFile(pinnedPath)).resolves.toEqual(pinnedBytes);
+      await expect(
+        access(path.join(outputDir, "sccp-solana-live-video-blocked.vtt")),
+      ).rejects.toThrow();
+      await expect(
+        access(path.join(outputDir, "sccp-solana-live-video-blocked.mp4")),
+      ).rejects.toThrow();
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  });
+
+  it("summarizes governance blockers without resurrecting retired publication artifacts", () => {
+    const diagnostics = buildSolanaLiveVideoBlockedDiagnostics({
+      governancePlanReport: {
+        schema: "iroha-sccp-solana-route-governance-plan/v1",
+        plan_sha256: REQUIRED_PACKAGE_HASHES.governancePlanSha256,
+      },
+      governancePlanPath: "/tmp/governance-plan.json",
+      governanceRegistrationReport: {
+        phase: "register",
+        plan_sha256: REQUIRED_PACKAGE_HASHES.governancePlanSha256,
+        torii_url: "https://taira-validator-1.sora.org",
+        submitted: true,
+      },
+      governanceRegistrationPath: "/tmp/governance-register.json",
+      governanceActivationReport: {
+        phase: "activate",
+        plan_sha256: REQUIRED_PACKAGE_HASHES.governancePlanSha256,
+        torii_url: "https://taira-validator-1.sora.org",
+        submitted: true,
+      },
+      governanceActivationPath: "/tmp/governance-activate.json",
+      productionRequirementsReport: {
+        ready: false,
+        blockerIds: ["destination-proof-admission"],
+      },
+      smokeReadinessReport: {
+        ready: false,
+        blockerIds: SMOKE_PRODUCTION_BLOCKER_IDS,
+      },
+      productionGateReport: {
+        ready: false,
+        governanceEvidence: {
+          ready: false,
+          planSha256: REQUIRED_PACKAGE_HASHES.governancePlanSha256,
+          registrationArtifactSha256:
+            REQUIRED_PACKAGE_HASHES.governanceRegistrationSha256,
+          activationArtifactSha256:
+            REQUIRED_PACKAGE_HASHES.governanceActivationSha256,
+          publicRegistrySha256: REQUIRED_PACKAGE_HASHES.publicRegistrySha256,
+        },
+        failedCheckIds: ["governance-enactment-readback"],
       },
       productionGatePath: "/tmp/production-gate.json",
     });
 
     expect(diagnostics).toMatchObject({
-      productionRequirements: {
-        present: true,
-        readyToBuildIsi: false,
-        blockerIds: ["destination-proof-admission", "source-verifier-material"],
-      },
-      publishReadiness: {
-        present: true,
-        endpointReady: true,
-        preflightReady: false,
-        mcpTransactionToolsReady: true,
-        authorityReady: false,
-        authorityPermissionReady: false,
-        privateKeyEnvPresent: false,
-        blockerIds: ["runtime-signing-key"],
-      },
-      routePublicationRequest: {
-        present: true,
-        readyForRouteManagerReview: true,
-        productionRouteReady: false,
-        readyToSubmitWithCurrentRuntime: false,
-        reviewPackageHash: `0x${"88".repeat(32)}`,
-        manifest: {
-          routeIdentityReady: true,
-          productionReadyForIsi: false,
-          manifestSha256: `0x${"99".repeat(32)}`,
-        },
-        proofMaterialBundle: {
-          readyForProofMaterialCeremony: true,
-          bundleManifestSha256: `0x${"33".repeat(32)}`,
-          includedArtifactCount: 16,
-        },
-        blockerIds: ["route-manifest-production-shape"],
-        upstreamBlockerIds: ["production-requirements"],
-      },
-      sourceMaterialHandoffVerification: {
-        present: true,
-        ready: true,
-        statusCount: 2,
-        blockerIds: [],
-      },
-      proofMaterialBundle: {
-        present: true,
-        readyForProofMaterialCeremony: true,
-        productionRouteReady: false,
-        readyToSubmitWithCurrentRuntime: false,
-        productionProofMaterialIncluded: false,
-        bundleManifestSha256: `0x${"33".repeat(32)}`,
-        includedArtifactCount: 16,
-        blockerIds: [],
-        upstreamBlockerIds: ["production-requirements", "publish-readiness"],
-      },
-      activationPackage: {
-        present: true,
-        readyForActivationReview: false,
-        productionActivationReady: false,
-        readyToSubmitWithCurrentRuntime: false,
-        activationPackageHash: `0x${"44".repeat(32)}`,
-        publicSolanaLane: {
+      governance: {
+        plan: {
           present: true,
+          planSha256: REQUIRED_PACKAGE_HASHES.governancePlanSha256,
+        },
+        registration: {
+          phase: "register",
+          toriiUrl: "https://taira-validator-1.sora.org",
+          submitted: true,
+        },
+        activation: {
+          phase: "activate",
+          toriiUrl: "https://taira-validator-1.sora.org",
+          submitted: true,
+        },
+        evidence: {
           ready: false,
-          blockerIds: ["immutable Solana verifier program"],
+          publicRegistrySha256: REQUIRED_PACKAGE_HASHES.publicRegistrySha256,
         },
-        artifacts: {
-          laneActivationRequest: {
-            present: true,
-            stableHash: `0x${"55".repeat(32)}`,
-            blockerIds: ["public-solana-lane"],
-            ready: true,
-            productionReady: false,
-          },
-          operatorHandoff: {
-            present: true,
-            stableHash: `0x${"66".repeat(32)}`,
-            blockerIds: ["route-manager-authority"],
-          },
-          smokeReadiness: {
-            present: true,
-            ready: false,
-            blockerIds: SMOKE_PRODUCTION_BLOCKER_IDS,
-            failedCheckIds: [
-              "route-preflight",
-              "walletconnect-project-id",
-              "destination-prover-module-url",
-              "source-prover-module-url",
-            ],
-            missingProductionInputIds: [
-              "solana-public-route-report",
-              "walletconnect-project-id",
-              "solana-destination-production-prover-package",
-              "solana-source-production-prover-package",
-            ],
-          },
-        },
-        blockerIds: ["public-solana-lane", "runtime-route-manager"],
-      },
-      deploymentVideo: {
-        present: true,
-        ready: false,
-        routeId: "taira_sol_xor",
-        checkedAt: "2026-07-05T00:10:00.000Z",
-        activationPackageHash: `0x${"44".repeat(32)}`,
-        activationSmokeReadiness: {
-          present: true,
-          ready: false,
-          blockerIds: SMOKE_PRODUCTION_BLOCKER_IDS,
-          failedCheckIds: [
-            "route-preflight",
-            "walletconnect-project-id",
-            "destination-prover-module-url",
-            "source-prover-module-url",
-          ],
-          missingProductionInputIds: [
-            "solana-public-route-report",
-            "walletconnect-project-id",
-            "solana-destination-production-prover-package",
-            "solana-source-production-prover-package",
-          ],
-          nextActionIds: [
-            "refresh-solana-route-preflight",
-            "configure-solana-walletconnect",
-            "publish-solana-production-prover-packages",
-          ],
-        },
-        videoArtifacts: [
-          {
-            path: "/tmp/sccp-solana-deployment-video.mp4",
-            mediaType: "video/mp4",
-          },
-          {
-            path: "/tmp/sccp-solana-deployment-video.vtt",
-            mediaType: "text/vtt",
-          },
-        ],
-      },
-      operatorHandoff: {
-        present: true,
-        readyForOperatorReview: false,
-        productionRouteReady: false,
-        readyToPublish: false,
-        handoffHash: `0x${"77".repeat(32)}`,
-        artifacts: {
-          laneActivationRequest: {
-            present: true,
-            readyForLaneGovernanceReview: true,
-            publicLaneReady: false,
-            productionProofMaterialReady: false,
-            productionLaneReady: false,
-          },
-          smokeReadiness: {
-            present: true,
-            ready: false,
-            blockerIds: SMOKE_PRODUCTION_BLOCKER_IDS,
-            failedCheckIds: [
-              "route-preflight",
-              "walletconnect-project-id",
-              "destination-prover-module-url",
-              "source-prover-module-url",
-            ],
-            missingProductionInputIds: [
-              "solana-public-route-report",
-              "walletconnect-project-id",
-              "solana-destination-production-prover-package",
-              "solana-source-production-prover-package",
-            ],
-          },
-        },
-        blockerIds: ["route-manager-authority", "runtime-signing-key"],
-        nextActionIds: [
-          "grant-taira-route-manager-access",
-          "set-runtime-route-manager-private-key",
-        ],
       },
       productionGate: {
         present: true,
         ready: false,
-        checkedAt: "2026-07-05T00:00:00.000Z",
-        failedChecks: [
-          {
-            id: "activation-package-ready",
-            status: "fail",
-            detail: "activation blocked",
-          },
-          {
-            id: "operator-handoff-ready",
-            status: "fail",
-            detail: "handoff blocked",
-          },
-        ],
-      },
-      smokeReadiness: {
-        present: true,
-        ready: false,
-        blockerIds: SMOKE_PRODUCTION_BLOCKER_IDS,
-        runbookReady: true,
-        runbookDetail:
-          "Solana live smoke-readiness exposes a complete operator runbook.",
-        runbookProblems: [],
-        failedChecks: [
-          { id: "route-preflight", status: "fail", detail: "route missing" },
-          {
-            id: "walletconnect-project-id",
-            status: "fail",
-            detail: "WalletConnect missing",
-          },
-          {
-            id: "destination-prover-module-url",
-            status: "fail",
-            detail: "Destination prover package is fail-closed",
-          },
-          {
-            id: "source-prover-module-url",
-            status: "fail",
-            detail: "Source prover package is fail-closed",
-          },
-        ],
-        nextActionIds: [
-          "refresh-solana-route-preflight",
-          "configure-solana-walletconnect",
-          "publish-solana-production-prover-packages",
-        ],
-        missingProductionInputIds: [
-          "solana-public-route-report",
-          "walletconnect-project-id",
-          "solana-destination-production-prover-package",
-          "solana-source-production-prover-package",
-        ],
       },
     });
-    expect(
-      solanaLiveVideoSuccessPrerequisiteProblems({ diagnostics }).map(
-        (problem) => problem.id,
-      ),
-    ).toEqual([
-      "production-requirements-ready",
-      "publish-readiness-submit-ready",
-      "route-publication-request-submit-ready",
-      "route-publication-request-production-ready",
-      "proof-material-bundle-production-ready",
-      "proof-material-bundle-submit-ready",
-      "proof-material-included",
-      "activation-package-submit-ready",
-      "activation-public-solana-lane-ready",
-      "operator-handoff-publish-ready",
-      "smoke-readiness-ready",
-      "production-gate-non-video-checks",
-    ]);
+    expect(diagnostics).not.toHaveProperty("publishReadiness");
+    expect(diagnostics).not.toHaveProperty("routePublicationRequest");
+    expect(diagnostics).not.toHaveProperty("operatorHandoff");
+    expect(diagnostics).not.toHaveProperty("activationPackage");
 
     const transcript = buildBlockedSolanaLiveVideoTranscript({
-      preflightReport: {
-        ready: false,
-        publicSolanaCapability: {
-          chain: "sol",
-          productionReady: false,
-          productionReadiness: {
-            blockers: [
-              "source verifier material is not production-ready for this SCCP lane",
-            ],
-          },
-        },
-        publicSolanaLane: {
-          chain: "sol",
-          productionReady: false,
-          destinationRollout: {
-            blockers: [
-              "immutable Solana verifier program is not deployed for this SCCP lane",
-            ],
-          },
-        },
-        checks: [
-          { id: "taira-endpoint", status: "pass", detail: "ok" },
-          {
-            id: "route-manifest-shape",
-            status: "fail",
-            detail: "No taira_sol_xor manifest found.",
-          },
-        ],
-      },
-      reason: "blocked for test",
+      reason: "Parliament evidence is incomplete.",
       diagnostics,
-      checkedAt: "2026-07-05T00:00:00.000Z",
+      successPrerequisiteProblems: [
+        {
+          id: "governance-evidence-ready",
+          detail: "Fresh exact registry readback is required.",
+        },
+      ],
     });
-
-    expect(transcript.ready).toBe(false);
-    expect(transcript.videoArtifacts).toEqual([]);
-    expect(transcript.preflightReady).toBe(false);
-    expect(transcript.failedChecks).toEqual([
-      {
-        id: "route-manifest-shape",
-        status: "fail",
-        detail: "No taira_sol_xor manifest found.",
-      },
-    ]);
-    expect(transcript.checks).toEqual(transcript.failedChecks);
-    expect(transcript.blockers.map((blocker) => blocker.id)).toEqual([
-      "preflight:route-manifest-shape",
-      "destination-proof-admission",
-      "source-verifier-material",
-      "runtime-signing-key",
-      "route-manifest-production-shape",
-      ...SMOKE_PRODUCTION_BLOCKER_IDS,
-      "public-solana-lane",
-      "runtime-route-manager",
-      "route-manager-authority",
-      "production-gate:activation-package-ready",
-      "production-gate:operator-handoff-ready",
-    ]);
-    expect(transcript.nextActionIds).toEqual([
-      "smoke:refresh-solana-route-preflight",
-      "smoke:configure-solana-walletconnect",
-      "smoke:publish-solana-production-prover-packages",
-      "activation-smoke:refresh-solana-route-preflight",
-      "activation-smoke:configure-solana-walletconnect",
-      "activation-smoke:publish-solana-production-prover-packages",
-      "operator:grant-taira-route-manager-access",
-      "operator:set-runtime-route-manager-private-key",
-      "production-gate:record-bidirectional-live-video",
-      "activation:activate-public-solana-lane",
-    ]);
-    expect(transcript.nextActionDetails).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "smoke:publish-solana-production-prover-packages",
-          command: [
-            "npm",
-            "run",
-            "sccp:solana:deploy",
-            "--",
-            "proof-material-bundle",
-          ],
-          requiredInputs: [
-            "solana-destination-production-prover-package",
-            "solana-source-production-prover-package",
-          ],
-        }),
-        expect.objectContaining({
-          id: "activation:activate-public-solana-lane",
-          blockedBy: [{ id: "public-solana-lane", detail: null }],
-          command: ["npm", "run", "e2e:sccp:solana-preflight"],
-          requiredInputs: ["public-solana-lane-activation"],
-        }),
-        expect.objectContaining({
-          id: "operator:set-runtime-route-manager-private-key",
-          command: [
-            "SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY=<runtime-only-private-key-hex>",
-            "npm",
-            "run",
-            "sccp:solana:deploy",
-            "--",
-            "publish-route-manifest",
-            "--submit",
-            "true",
-          ],
-          requiredInputs: ["SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY"],
-        }),
-        expect.objectContaining({
-          id: "production-gate:record-bidirectional-live-video",
-          command: [
-            "npm",
-            "run",
-            "e2e:sccp:solana-video",
-            "--",
-            "--live-evidence",
-            "<completed-solana-bidirectional-live-evidence.json>",
-            "--production-gate",
-            "output/sccp-solana-production-gate/sccp-solana-production-gate.json",
-            "--smoke-readiness",
-            "output/sccp-solana-smoke-readiness/latest.json",
-            "--activation-package",
-            "output/sccp-solana-deploy/taira-solana-xor-activation-package.json",
-            "--operator-handoff",
-            "output/sccp-solana-deploy/taira-solana-xor-operator-handoff.json",
-            "--skip-solana-rpc",
-            "false",
-          ],
-          requiredInputs: [
-            "public-solana-route-preflight-ready",
-            "walletconnect-project-id",
-            "production-solana-prover-packages",
-            "funded-taira-and-solana-test-wallets",
-            "completed-solana-bidirectional-live-evidence",
-          ],
-        }),
-      ]),
+    expect(transcript.diagnosticVideoOnly).toBe(true);
+    expect(transcript.notLiveTransferEvidence).toBe(true);
+    expect(JSON.stringify(transcript)).not.toMatch(
+      /route-manager|operator-handoff|activation-package/iu,
     );
-    expect(transcript.nextActionDetails.map((action) => action.id)).not.toEqual(
-      expect.arrayContaining([
-        "activation-smoke:refresh-solana-route-preflight",
-        "activation-smoke:configure-solana-walletconnect",
-        "activation-smoke:publish-solana-production-prover-packages",
-        "production-gate:Activate the public TAIRA Solana SCCP lane.",
-      ]),
-    );
-    expect(JSON.stringify(transcript.nextActionDetails)).not.toContain(
-      "do-not-leak",
-    );
-    expect(transcript.diagnostics.sourceMaterialHandoffVerification.ready).toBe(
-      true,
-    );
-    expect(
-      transcript.diagnostics.proofMaterialBundle.readyForProofMaterialCeremony,
-    ).toBe(true);
-    expect(
-      transcript.diagnostics.proofMaterialBundle.bundleManifestSha256,
-    ).toBe(`0x${"33".repeat(32)}`);
-    expect(
-      transcript.diagnostics.routePublicationRequest.readyForRouteManagerReview,
-    ).toBe(true);
-    expect(
-      transcript.diagnostics.routePublicationRequest.reviewPackageHash,
-    ).toBe(`0x${"88".repeat(32)}`);
-    expect(transcript.activationPackage.activationPackageHash).toBe(
-      `0x${"44".repeat(32)}`,
-    );
-    expect(transcript.deploymentVideo.activationPackageHash).toBe(
-      `0x${"44".repeat(32)}`,
-    );
-    expect(transcript.deploymentVideo.videoArtifacts).toEqual([
-      {
-        path: "/tmp/sccp-solana-deployment-video.mp4",
-        mediaType: "video/mp4",
-      },
-      {
-        path: "/tmp/sccp-solana-deployment-video.vtt",
-        mediaType: "text/vtt",
-      },
-    ]);
-    expect(
-      transcript.deploymentVideo.activationSmokeReadiness.failedCheckIds,
-    ).toEqual([
-      "route-preflight",
-      "walletconnect-project-id",
-      "destination-prover-module-url",
-      "source-prover-module-url",
-    ]);
-    expect(
-      transcript.deploymentVideo.activationSmokeReadiness.blockerIds,
-    ).toEqual(SMOKE_PRODUCTION_BLOCKER_IDS);
-    expect(
-      transcript.activationPackage.artifacts.laneActivationRequest.ready,
-    ).toBe(true);
-    expect(
-      transcript.activationPackage.artifacts.smokeReadiness.failedCheckIds,
-    ).toEqual([
-      "route-preflight",
-      "walletconnect-project-id",
-      "destination-prover-module-url",
-      "source-prover-module-url",
-    ]);
-    expect(
-      transcript.activationPackage.artifacts.smokeReadiness.blockerIds,
-    ).toEqual(SMOKE_PRODUCTION_BLOCKER_IDS);
-    expect(
-      transcript.activationPackage.artifacts.smokeReadiness.nextActionIds,
-    ).toEqual([
-      "refresh-solana-route-preflight",
-      "configure-solana-walletconnect",
-      "publish-solana-production-prover-packages",
-    ]);
-    expect(transcript.operatorHandoff.handoffHash).toBe(`0x${"77".repeat(32)}`);
-    expect(transcript.operatorHandoff.artifacts.proofMaterialBundle.ready).toBe(
-      true,
-    );
-    expect(
-      transcript.operatorHandoff.artifacts.routePublicationRequest.ready,
-    ).toBe(true);
-    expect(
-      transcript.operatorHandoff.artifacts.routeManagerAccessRequest.ready,
-    ).toBe(false);
-    expect(transcript.operatorHandoff.artifacts.publishReadiness.ready).toBe(
-      false,
-    );
-    expect(
-      transcript.operatorHandoff.artifacts.productionRequirements.ready,
-    ).toBe(false);
-    expect(
-      transcript.operatorHandoff.artifacts.laneActivationRequest
-        .productionLaneReady,
-    ).toBe(false);
-    expect(
-      transcript.operatorHandoff.artifacts.laneActivationRequest.ready,
-    ).toBe(true);
-    expect(
-      transcript.operatorHandoff.artifacts.smokeReadiness.failedCheckIds,
-    ).toEqual([
-      "route-preflight",
-      "walletconnect-project-id",
-      "destination-prover-module-url",
-      "source-prover-module-url",
-    ]);
-    expect(
-      transcript.operatorHandoff.artifacts.smokeReadiness.blockerIds,
-    ).toEqual(SMOKE_PRODUCTION_BLOCKER_IDS);
-    expect(
-      transcript.productionGate.failedChecks.map((check) => check.id),
-    ).toEqual(["activation-package-ready", "operator-handoff-ready"]);
-    expect(transcript.diagnostics.smokeReadiness.failedChecks).toEqual([
-      { id: "route-preflight", status: "fail", detail: "route missing" },
-      {
-        id: "walletconnect-project-id",
-        status: "fail",
-        detail: "WalletConnect missing",
-      },
-      {
-        id: "destination-prover-module-url",
-        status: "fail",
-        detail: "Destination prover package is fail-closed",
-      },
-      {
-        id: "source-prover-module-url",
-        status: "fail",
-        detail: "Source prover package is fail-closed",
-      },
-    ]);
-    expect(
-      transcript.diagnostics.publishReadiness.mcpTransactionTools.presentTools,
-    ).toEqual([
-      "iroha.transactions.submit",
-      "iroha.transactions.submit_and_wait",
-    ]);
-    expect(
-      transcript.diagnostics.publishReadiness.permissionAudit
-        .requiredPermission,
-    ).toBe("CanManageSccpRouteManifests");
-    expect(
-      transcript.publicSolanaCapability.productionReadiness.blockers,
-    ).toEqual([
-      "source verifier material is not production-ready for this SCCP lane",
-    ]);
-    expect(transcript.publicSolanaLane.destinationRollout.blockers).toEqual([
-      "immutable Solana verifier program is not deployed for this SCCP lane",
-    ]);
   });
-
   it("allows a success video only when the production gate is blocked solely by the live-video check", () => {
     expect(
       solanaLiveVideoSuccessPrerequisiteProblems({
@@ -1992,13 +1285,7 @@ describe("Solana SCCP live video gate", () => {
           productionRequirements: {
             readyToBuildIsi: true,
           },
-          publishReadiness: {
-            readyToSubmitWithCurrentRuntime: true,
-          },
-          routePublicationRequest: {
-            readyToSubmitWithCurrentRuntime: true,
-            productionRouteReady: true,
-          },
+          governance: { evidence: { ready: true } },
           sourceMaterialHandoffVerification: {
             ready: true,
           },
@@ -2006,15 +1293,6 @@ describe("Solana SCCP live video gate", () => {
             productionRouteReady: true,
             readyToSubmitWithCurrentRuntime: true,
             productionProofMaterialIncluded: true,
-          },
-          activationPackage: {
-            readyToSubmitWithCurrentRuntime: true,
-            publicSolanaLane: {
-              ready: true,
-            },
-          },
-          operatorHandoff: {
-            readyToPublish: true,
           },
           smokeReadiness: {
             ready: true,
@@ -2075,8 +1353,7 @@ describe("Solana SCCP live video gate", () => {
           schema: "iroha-demo-sccp-solana-live-transfer-evidence/v1",
           routeId: "taira_sol_xor",
           assetKey: "xor",
-          activationPackageHash: `0x${"44".repeat(32)}`,
-          operatorHandoffHash: `0x${"77".repeat(32)}`,
+          ...REQUIRED_PACKAGE_HASHES,
           tairaToSolana: {
             amount: "0.0001",
             messageId: HASH_A,
@@ -2101,8 +1378,7 @@ describe("Solana SCCP live video gate", () => {
       schema: "iroha-demo-sccp-solana-live-transfer-evidence/v1",
       routeId: "taira_sol_xor",
       assetKey: "xor",
-      activationPackageHash: `0x${"44".repeat(32)}`,
-      operatorHandoffHash: `0x${"77".repeat(32)}`,
+      ...REQUIRED_PACKAGE_HASHES,
       evidencePath: "/tmp/live-evidence.json",
       checkedAt: "2026-07-05T00:00:00.000Z",
       tairaToSolana: {
@@ -2188,20 +1464,16 @@ describe("Solana SCCP live video gate", () => {
     );
   });
 
-  it("rejects completed live evidence without both production package hashes", () => {
+  it("rejects completed live evidence without every governance package hash", () => {
     const fixture = buildAuthoritativeReadbackFixture();
-    expect(() =>
-      normalizeSolanaLiveTransferEvidence({
-        ...fixture.liveEvidence,
-        activationPackageHash: undefined,
-      }),
-    ).toThrow("live evidence activationPackageHash is required.");
-    expect(() =>
-      normalizeSolanaLiveTransferEvidence({
-        ...fixture.liveEvidence,
-        operatorHandoffHash: undefined,
-      }),
-    ).toThrow("live evidence operatorHandoffHash is required.");
+    for (const key of Object.keys(REQUIRED_PACKAGE_HASHES)) {
+      expect(() =>
+        normalizeSolanaLiveTransferEvidence({
+          ...fixture.liveEvidence,
+          [key]: undefined,
+        }),
+      ).toThrow(`live evidence ${key} is required.`);
+    }
   });
 
   it("rejects Solana live evidence that is not explicitly bound to XOR", () => {
@@ -2299,16 +1571,17 @@ describe("Solana SCCP live video gate", () => {
   });
 
   it("requires and validates live evidence package hash bindings", () => {
-    const liveEvidence = {
-      activationPackageHash: `0x${"44".repeat(32)}`,
-      operatorHandoffHash: `0x${"77".repeat(32)}`,
-    };
+    const liveEvidence = { ...REQUIRED_PACKAGE_HASHES };
     const diagnostics = {
-      activationPackage: {
-        activationPackageHash: `0x${"44".repeat(32)}`,
-      },
-      operatorHandoff: {
-        handoffHash: `0x${"77".repeat(32)}`,
+      governance: {
+        evidence: {
+          planSha256: REQUIRED_PACKAGE_HASHES.governancePlanSha256,
+          registrationArtifactSha256:
+            REQUIRED_PACKAGE_HASHES.governanceRegistrationSha256,
+          activationArtifactSha256:
+            REQUIRED_PACKAGE_HASHES.governanceActivationSha256,
+          publicRegistrySha256: REQUIRED_PACKAGE_HASHES.publicRegistrySha256,
+        },
       },
     };
 
@@ -2320,65 +1593,50 @@ describe("Solana SCCP live video gate", () => {
       solanaLiveEvidencePackageHashProblems({
         liveEvidence: {
           ...liveEvidence,
-          activationPackageHash: `0x${"55".repeat(32)}`,
+          governancePlanSha256: `0x${"99".repeat(32)}`,
         },
         diagnostics,
       }),
-    ).toEqual([
-      {
-        id: "live-evidence-activation-package-hash",
-        detail: `activationPackageHash 0x${"55".repeat(32)} does not match diagnostics value 0x${"44".repeat(32)}.`,
-      },
-    ]);
+    ).toMatchObject([{ id: "live-evidence-governance-plan-hash" }]);
 
     expect(
       solanaLiveEvidencePackageHashProblems({
         liveEvidence,
         diagnostics: {
-          activationPackage: {},
-          operatorHandoff: diagnostics.operatorHandoff,
-        },
-      }),
-    ).toEqual([
-      {
-        id: "live-evidence-activation-package-hash",
-        detail:
-          "activationPackageHash is missing from the freshly loaded production package.",
-      },
-    ]);
-
-    expect(
-      solanaLiveEvidencePackageHashProblems({
-        liveEvidence,
-        diagnostics: {
-          activationPackage: {
-            activationPackageHash: "not-a-hash",
+          governance: {
+            evidence: {
+              ...diagnostics.governance.evidence,
+              planSha256: "",
+            },
           },
-          operatorHandoff: diagnostics.operatorHandoff,
         },
       }),
-    ).toEqual([
-      {
-        id: "live-evidence-activation-package-hash",
-        detail:
-          "activationPackageHash expected hash is invalid: activationPackageHash expected hash must be a 32-byte transaction/message hash.",
-      },
-    ]);
+    ).toMatchObject([{ id: "live-evidence-governance-plan-hash" }]);
+
+    expect(
+      solanaLiveEvidencePackageHashProblems({
+        liveEvidence,
+        diagnostics: {
+          governance: {
+            evidence: {
+              ...diagnostics.governance.evidence,
+              planSha256: "not-a-hash",
+            },
+          },
+        },
+      }),
+    ).toMatchObject([{ id: "live-evidence-governance-plan-hash" }]);
 
     expect(
       solanaLiveEvidencePackageHashProblems({
         liveEvidence: {},
         diagnostics,
       }),
-    ).toEqual([
-      {
-        id: "live-evidence-activation-package-hash",
-        detail: "activationPackageHash is required in live evidence.",
-      },
-      {
-        id: "live-evidence-operator-handoff-hash",
-        detail: "operatorHandoffHash is required in live evidence.",
-      },
+    ).toMatchObject([
+      { id: "live-evidence-governance-plan-hash" },
+      { id: "live-evidence-governance-registration-hash" },
+      { id: "live-evidence-governance-activation-hash" },
+      { id: "live-evidence-public-registry-hash" },
     ]);
   });
 
@@ -2391,22 +1649,22 @@ describe("Solana SCCP live video gate", () => {
       readOnly: true,
       solanaGenesisHash: SOLANA_TESTNET_GENESIS_HASH,
       taira: {
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         networkPrefix: 369,
       },
       tairaToSolana: {
         solanaFinalize: {
           messageId: fixture.liveEvidence.tairaToSolana.messageId,
           amountBaseUnits: "100000",
-          bridgeProgramAddress: fixture.addresses.verifierProgramAddress,
+          destinationProgramAddress:
+            fixture.addresses.destinationProgramAddress,
           mint: fixture.addresses.tokenMintAddress,
         },
       },
       solanaToTaira: {
         solanaSource: {
           amountBaseUnits: "100000",
-          sourceBridgeProgramAddress:
-            fixture.addresses.sourceBridgeProgramAddress,
+          sourceProgramAddress: fixture.addresses.sourceProgramAddress,
           mint: fixture.addresses.tokenMintAddress,
         },
         tairaSettlement: { status: "committed" },
@@ -2435,24 +1693,67 @@ describe("Solana SCCP live video gate", () => {
     ).rejects.toThrow("Solana RPC cluster identity changed during readback.");
   });
 
-  it("re-reads and pins the public TAIRA route manifest", async () => {
-    const wrongManifest = buildAuthoritativeReadbackFixture();
-    wrongManifest.readbacks.readTairaRouteManifest = async () => ({
-      manifests: [
-        {
-          routeId: "taira_sol_xor",
-          assetKey: "xor",
-          solanaNetwork: "solana-testnet",
-          ...wrongManifest.pins,
-          tokenMintAddress: testPublicKey(13),
-        },
-      ],
-    });
+  it("re-reads and pins the public TAIRA typed registry", async () => {
+    const changingRegistry = buildAuthoritativeReadbackFixture();
+    let reads = 0;
+    changingRegistry.readbacks.readTairaRegistry = async () => {
+      reads += 1;
+      const registry = structuredClone(changingRegistry.registry);
+      if (reads === 2) {
+        registry.lanes[0].routes[0].activation = {
+          activation: "staged",
+          direction: null,
+        };
+      }
+      return registry;
+    };
 
     await expect(
-      verifySolanaLiveTransferReadbacks(wrongManifest),
+      verifySolanaLiveTransferReadbacks(changingRegistry),
     ).rejects.toThrow(
-      "Public taira_sol_xor manifest tokenMintAddress pin is invalid.",
+      "taira_sol_xor must be bidirectional before production acceptance.",
+    );
+  });
+
+  it("rejects legacy public manifests and a fourth Solana program role", async () => {
+    const legacy = buildAuthoritativeReadbackFixture();
+    legacy.preflightReport.manifestSource = "public";
+    await expect(verifySolanaLiveTransferReadbacks(legacy)).rejects.toThrow(
+      "exact v2 public typed-registry preflight",
+    );
+
+    const fourRole = buildAuthoritativeReadbackFixture();
+    fourRole.preflightReport.registrySummary = {
+      ...fourRole.preflightReport.registrySummary,
+      programs: {
+        ...fourRole.preflightReport.registrySummary.programs,
+        outerVerifier: testPublicKey(13),
+      },
+    };
+    await expect(verifySolanaLiveTransferReadbacks(fourRole)).rejects.toThrow(
+      "program roles must contain exactly destination, nativeVerifier, source",
+    );
+
+    const publicFourRole = buildAuthoritativeReadbackFixture();
+    publicFourRole.readbacks.readTairaRegistry = async () => {
+      const registry = structuredClone(publicFourRole.registry);
+      registry.lanes[0].routes[0].destination.deployment.outer_verifier_program_id =
+        "0D".repeat(32);
+      return registry;
+    };
+    await expect(
+      verifySolanaLiveTransferReadbacks(publicFourRole),
+    ).rejects.toThrow();
+
+    const legacyReadback = buildAuthoritativeReadbackFixture();
+    delete legacyReadback.readbacks.readTairaRegistry;
+    legacyReadback.readbacks.readTairaRouteManifest = async () => ({
+      manifests: [],
+    });
+    await expect(
+      verifySolanaLiveTransferReadbacks(legacyReadback),
+    ).rejects.toThrow(
+      "Live evidence readback dependency readTairaRegistry is missing.",
     );
   });
 
@@ -2803,18 +2104,29 @@ describe("Solana SCCP live video gate", () => {
       error: "TAIRA settlement transaction is not committed.",
     },
     {
-      name: "wrong manifest pin",
+      name: "wrong exact registry pin",
       mutate: (fixture) => {
         const message = fixture.tairaMessages.get(
           fixture.liveEvidence.solanaToTaira.messageId,
         );
-        message.manifestPins = {
-          ...message.manifestPins,
+        message.registryPins = {
+          ...message.registryPins,
           tokenMintAddress: testPublicKey(13),
         };
       },
       error:
-        "solana_to_taira SCCP message tokenMintAddress does not match the public manifest.",
+        "solana_to_taira SCCP message exact pins do not match the public typed registry.",
+    },
+    {
+      name: "retired manifest pins",
+      mutate: (fixture) => {
+        const message = fixture.tairaMessages.get(
+          fixture.liveEvidence.solanaToTaira.messageId,
+        );
+        message.manifestPins = message.registryPins;
+        delete message.registryPins;
+      },
+      error: "solana_to_taira SCCP message uses retired manifest pins.",
     },
   ])("rejects invented live evidence: $name", async ({ mutate, error }) => {
     const fixture = buildAuthoritativeReadbackFixture();
@@ -2864,6 +2176,26 @@ describe("Solana SCCP live video gate", () => {
     }
   });
 
+  it("uses the full 2 GiB capture cap for streamed final MP4 hashing", () => {
+    const mp4Limit = 2 * 1024 * 1024 * 1024;
+    expect(solanaLiveVideoMediaArtifactMaxBytes("video/mp4")).toBe(mp4Limit);
+    expect(
+      solanaLiveVideoMediaArtifactSizeAllowed({
+        mediaType: "video/mp4",
+        size: mp4Limit,
+      }),
+    ).toBe(true);
+    expect(
+      solanaLiveVideoMediaArtifactSizeAllowed({
+        mediaType: "video/mp4",
+        size: mp4Limit + 1,
+      }),
+    ).toBe(false);
+    expect(solanaLiveVideoMediaArtifactMaxBytes("text/vtt")).toBe(
+      4 * 1024 * 1024,
+    );
+  });
+
   it("verifies Solana live MP4 media streams for completed transcript evidence", () => {
     const report = buildSolanaLiveVideoMediaVerification({
       ffprobe: {
@@ -2899,6 +2231,273 @@ describe("Solana SCCP live video gate", () => {
     });
   });
 
+  it("qualifies a changing, audible, duration-bounded real screen capture", () => {
+    const frameHashes = Array.from({ length: 41 }, (_, index) =>
+      `${(index % 8).toString(16)}`.repeat(32),
+    );
+    const inspection = buildSolanaLiveCaptureInspection({
+      ffprobe: {
+        streams: [
+          {
+            codec_type: "video",
+            codec_name: "h264",
+            width: 1280,
+            height: 720,
+          },
+          { codec_type: "audio", codec_name: "aac" },
+        ],
+        format: { duration: "41.25", format_name: "mov,mp4,m4a,3gp,3g2,mj2" },
+      },
+      frameHashes,
+      audioFrameHashes: Array.from({ length: 41 }, (_, index) =>
+        `${(index % 7).toString(16)}`.repeat(32),
+      ),
+      audioMaxVolumeDb: -12.5,
+      videoEssenceSha256: HASH_B,
+      audioEssenceSha256: HASH_C,
+      size: 1_000_000,
+      sha256: HASH_A,
+      semanticWitnessAnalysis: {
+        ready: true,
+        semanticallyBound: true,
+        reviewAuthentication: {
+          ready: true,
+          authenticated: true,
+        },
+      },
+    });
+
+    expect(inspection).toMatchObject({
+      ready: true,
+      verifiedRealCapture: true,
+      sampledFrameCount: 41,
+      uniqueFrameCount: 8,
+      audioMaxVolumeDb: -12.5,
+      blockers: [],
+    });
+  });
+
+  it("rejects unrelated changing and audible media without semantic receipt witnesses", () => {
+    const inspection = buildSolanaLiveCaptureInspection({
+      ffprobe: {
+        streams: [
+          {
+            codec_type: "video",
+            codec_name: "h264",
+            width: 1280,
+            height: 720,
+          },
+          { codec_type: "audio", codec_name: "aac" },
+        ],
+        format: { duration: "41", format_name: "mov,mp4,m4a,3gp,3g2,mj2" },
+      },
+      frameHashes: Array.from({ length: 41 }, (_, index) =>
+        `${(index % 8).toString(16)}`.repeat(32),
+      ),
+      audioFrameHashes: Array.from({ length: 41 }, (_, index) =>
+        `${(index % 7).toString(16)}`.repeat(32),
+      ),
+      audioMaxVolumeDb: -10,
+      size: 1_000_000,
+      sha256: HASH_A,
+    });
+
+    expect(inspection.ready).toBe(false);
+    expect(inspection.blockers).toContain("capture-semantic-witness");
+  });
+
+  it("refuses ready output when the generated MP4 differs from source frames, audio, semantic markers, or VTT", () => {
+    const sourceCapture = {
+      sampledFrameSha256: HASH_A,
+      audioSampleSha256: HASH_B,
+      semanticWitnessAnalysis: { markers: [{ id: "public-registry" }] },
+    };
+    const binding = buildSolanaGeneratedLiveVideoBinding({
+      inspection: {
+        blockers: [],
+        sampledFrameSha256: HASH_C,
+        audioSampleSha256: HASH_B,
+        semanticWitnessAnalysis: { markers: [{ id: "unrelated-media" }] },
+      },
+      sourceCapture,
+      embeddedSubtitleSummary: {
+        cueCount: 8,
+        numberedStepCount: 8,
+        cueTextSha256: HASH_C,
+      },
+      subtitleSummary: {
+        cueCount: 8,
+        numberedStepCount: 8,
+        cueTextSha256: HASH_D,
+      },
+    });
+
+    expect(binding).toMatchObject({
+      ready: false,
+      verifiedGeneratedMedia: false,
+      subtitleMatches: false,
+      sourceContentMatches: false,
+      blockers: expect.arrayContaining([
+        "generated-embedded-vtt-binding",
+        "generated-source-capture-content-binding",
+      ]),
+    });
+  });
+
+  it("binds source and final media to identical essence, shape, and stream timelines", () => {
+    const videoTimeline = {
+      ready: true,
+      timeBase: "1/10240",
+      startTime: "0.000000",
+      duration: "41.000000",
+      frameCount: 410,
+    };
+    const audioTimeline = {
+      ready: true,
+      timeBase: "1/48000",
+      startTime: "0.000000",
+      duration: "41.000000",
+      frameCount: 1923,
+    };
+    const sourceCapture = {
+      blockers: [],
+      durationSeconds: 41,
+      streams: {
+        video: { codec: "h264", width: 1280, height: 720 },
+        audio: { codec: "aac" },
+      },
+      streamShape: {
+        videoCount: 1,
+        audioCount: 1,
+        subtitleCount: 0,
+        unexpectedCount: 0,
+      },
+      streamTimeline: { video: videoTimeline, audio: audioTimeline },
+      sampledFrameSha256: HASH_A,
+      audioSampleSha256: HASH_B,
+      videoEssenceSha256: HASH_C,
+      audioEssenceSha256: HASH_D,
+      semanticWitnessAnalysis: { markers: [{ id: "public-registry" }] },
+    };
+    const inspection = {
+      ...structuredClone(sourceCapture),
+      streamShape: {
+        videoCount: 1,
+        audioCount: 1,
+        subtitleCount: 1,
+        subtitleCodec: "mov_text",
+        unexpectedCount: 0,
+      },
+    };
+    const subtitle = {
+      cueCount: 8,
+      numberedStepCount: 8,
+      cueTextSha256: HASH_A,
+      cueTimelineSha256: HASH_B,
+    };
+    const bound = buildSolanaGeneratedLiveVideoBinding({
+      inspection,
+      sourceCapture,
+      embeddedSubtitleSummary: subtitle,
+      subtitleSummary: subtitle,
+    });
+    expect(bound).toMatchObject({
+      ready: true,
+      sourceContentMatches: true,
+      streamTimelineMatches: true,
+      streamShapeMatches: true,
+    });
+
+    const shifted = structuredClone(inspection);
+    shifted.streamTimeline.video.startTime = "0.100000";
+    expect(
+      buildSolanaGeneratedLiveVideoBinding({
+        inspection: shifted,
+        sourceCapture,
+        embeddedSubtitleSummary: subtitle,
+        subtitleSummary: subtitle,
+      }),
+    ).toMatchObject({
+      ready: false,
+      streamTimelineMatches: false,
+      sourceContentMatches: false,
+    });
+
+    expect(
+      buildSolanaGeneratedLiveVideoBinding({
+        inspection,
+        sourceCapture,
+        embeddedSubtitleSummary: {
+          ...subtitle,
+          cueTimelineSha256: HASH_C,
+        },
+        subtitleSummary: subtitle,
+      }),
+    ).toMatchObject({
+      ready: false,
+      subtitleMatches: false,
+      sourceContentMatches: true,
+      blockers: expect.arrayContaining(["generated-embedded-vtt-binding"]),
+    });
+  });
+
+  it("rejects subtitle timing shifts even when ordered cue text is unchanged", () => {
+    const cues = [
+      {
+        start: "00:00.000",
+        end: "00:02.000",
+        text: "Step 1: public registry",
+        step: 1,
+      },
+      {
+        start: "00:02.000",
+        end: "00:04.000",
+        text: "Step 2: finalized transfer",
+        step: 2,
+      },
+    ];
+    const shifted = structuredClone(cues);
+    shifted[1].start = "00:02.250";
+    shifted[1].end = "00:04.250";
+    const originalSummary = summarizeSolanaLiveVideoSubtitleCues(cues);
+    const shiftedSummary = summarizeSolanaLiveVideoSubtitleCues(shifted);
+
+    expect(shiftedSummary.cueTextSha256).toBe(originalSummary.cueTextSha256);
+    expect(shiftedSummary.cueTimelineSha256).not.toBe(
+      originalSummary.cueTimelineSha256,
+    );
+  });
+
+  it("rejects a blank, silent capture even when container streams exist", () => {
+    const inspection = buildSolanaLiveCaptureInspection({
+      ffprobe: {
+        streams: [
+          {
+            codec_type: "video",
+            codec_name: "h264",
+            width: 1280,
+            height: 720,
+          },
+          { codec_type: "audio", codec_name: "aac" },
+        ],
+        format: { duration: "41", format_name: "mov,mp4,m4a,3gp,3g2,mj2" },
+      },
+      frameHashes: Array(41).fill("a".repeat(32)),
+      audioFrameHashes: Array(41).fill("b".repeat(32)),
+      audioMaxVolumeDb: null,
+      size: 10_000,
+      sha256: HASH_A,
+    });
+
+    expect(inspection.ready).toBe(false);
+    expect(inspection.blockers).toEqual(
+      expect.arrayContaining([
+        "capture-frame-variation",
+        "capture-non-silent-audio",
+      ]),
+    );
+  });
+
   it("fails Solana live MP4 media verification without subtitle evidence", () => {
     const report = buildSolanaLiveVideoMediaVerification({
       ffprobe: {
@@ -2920,5 +2519,23 @@ describe("Solana SCCP live video gate", () => {
       "subtitle-cues",
       "numbered-steps",
     ]);
+  });
+
+  it("rejects a non-H.264 video stream even when audio and subtitles exist", () => {
+    const report = buildSolanaLiveVideoMediaVerification({
+      ffprobe: {
+        streams: [
+          { codec_type: "video", codec_name: "vp9" },
+          { codec_type: "audio", codec_name: "aac" },
+          { codec_type: "subtitle", codec_name: "mov_text" },
+        ],
+        format: { duration: "25.000000" },
+      },
+      subtitleSummary: { cueCount: 5, numberedStepCount: 5 },
+    });
+    expect(report).toMatchObject({
+      ready: false,
+      blockers: ["video-codec-h264"],
+    });
   });
 });

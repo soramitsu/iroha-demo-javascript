@@ -25,6 +25,7 @@ import {
   DEFAULT_SIGNING_ALGORITHM,
   signingAlgorithmLabel,
 } from "../src/utils/signingAlgorithms";
+import { buildAuthorityFeePaymentIntent } from "./feePayment";
 
 type VpnAvailabilityInput = {
   toriiUrl: string;
@@ -595,6 +596,7 @@ export class VpnRuntime {
         chainId,
         authority: accountId,
         instructions: normalizeVpnTxInstructions(quote.txInstructions),
+        feePayment: buildAuthorityFeePaymentIntent(),
         privateKey,
         privateKeyAlgorithm: signingAlgorithm,
       });
@@ -901,7 +903,7 @@ export class VpnRuntime {
     const receipts = await this.getClient(auth.toriiUrl).listVpnReceipts({
       canonicalAuth: buildVpnCanonicalAuth(auth, "VPN receipt sync"),
     });
-    this.receipts = receipts
+    this.receipts = receipts.items
       .map((item) =>
         normalizeReceipt(item as unknown as VpnReceipt, auth.toriiUrl, "torii"),
       )

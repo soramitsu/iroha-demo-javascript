@@ -1,9 +1,12 @@
 import type {
   EvmSccpProveFn,
-  SolanaSccpProveFn,
   TonSccpProveFn,
   TronSccpProveFn,
-} from "@iroha/iroha-js/sccp";
+} from "@/legacy/sccpLegacySdk";
+import type {
+  SolanaDestinationProofResultV1,
+  SolanaDestinationProverInputV1,
+} from "@/utils/sccpSolanaDestination";
 import type {
   BscToTairaSourceProofPackageInput,
   SolanaToTairaSourceProofPackageInput,
@@ -44,10 +47,12 @@ export type TronSccpProverModule = {
   solanaSccpProve?: unknown;
   proveSolana?: unknown;
   proveSolanaSccpDestination?: unknown;
+  solanaSccpDestinationProverSelfTest?: unknown;
   irohaSccpSolanaSourceProve?: unknown;
   solanaSccpSourceProve?: unknown;
   proveSolanaSource?: unknown;
   proveSolanaSccpSource?: unknown;
+  solanaSccpSourceProverSelfTest?: unknown;
 };
 
 export type TronSccpProverGlobal = {
@@ -89,6 +94,10 @@ export type TonSccpProverGlobal = Pick<
 
 export type SolanaSccpProverModule = TronSccpProverModule;
 
+export type SolanaSccpProveFn = (
+  input: SolanaDestinationProverInputV1,
+) => SolanaDestinationProofResultV1 | unknown | Promise<unknown>;
+
 export type SolanaSccpProverGlobal = Pick<
   TronSccpProverGlobal,
   | "irohaSccpSolanaProve"
@@ -112,10 +121,6 @@ export type TonSccpSourceProveFn = (
 export type SolanaSccpSourceProveFn = (
   input: SolanaToTairaSourceProofPackageInput,
 ) => unknown | Promise<unknown>;
-
-type SccpProverModuleBytesFetcher = (
-  moduleUrl: string,
-) => Promise<ArrayBuffer | ArrayBufferView | string>;
 
 type SccpProverExportName =
   | keyof TronSccpProverModule
@@ -155,116 +160,6 @@ const resolveSccpProverImportUrl = (moduleUrl: string): string => {
     return `${rendererRoot}${moduleUrl}`;
   }
   return moduleUrl;
-};
-
-const normalizeSccpProverModuleHash = (
-  value: string,
-  label: string,
-): string => {
-  const normalized = `0x${value.trim().toLowerCase().replace(/^0x/u, "")}`;
-  if (!/^0x[0-9a-f]{64}$/u.test(normalized)) {
-    throw new Error(`${label} must be a 32-byte hex value.`);
-  }
-  return normalized;
-};
-
-const snapshotSccpProverModuleBytes = (
-  value: ArrayBuffer | ArrayBufferView | string,
-): Uint8Array => {
-  if (typeof value === "string") {
-    return new TextEncoder().encode(value);
-  }
-  const source =
-    value instanceof ArrayBuffer
-      ? new Uint8Array(value)
-      : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  const snapshot = new Uint8Array(source.byteLength);
-  snapshot.set(source);
-  return snapshot;
-};
-
-const copyBytesToArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
-  const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
-  return copy.buffer;
-};
-
-const bytesToBase64 = (bytes: Uint8Array): string => {
-  const alphabet =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  let encoded = "";
-  for (let offset = 0; offset < bytes.length; offset += 3) {
-    const first = bytes[offset] ?? 0;
-    const hasSecond = offset + 1 < bytes.length;
-    const hasThird = offset + 2 < bytes.length;
-    const second = hasSecond ? bytes[offset + 1] : 0;
-    const third = hasThird ? bytes[offset + 2] : 0;
-    encoded += alphabet[first >> 2];
-    encoded += alphabet[((first & 0x03) << 4) | (second >> 4)];
-    encoded += hasSecond
-      ? alphabet[((second & 0x0f) << 2) | (third >> 6)]
-      : "=";
-    encoded += hasThird ? alphabet[third & 0x3f] : "=";
-  }
-  return encoded;
-};
-
-const immutableSccpProverModuleImportUrl = (bytes: Uint8Array): string =>
-  `data:text/javascript;base64,${bytesToBase64(bytes)}`;
-
-const sha256Hex = async (value: Uint8Array): Promise<string> => {
-  const subtle = globalThis.crypto?.subtle;
-  if (!subtle) {
-    throw new Error("SCCP prover module hash verification needs WebCrypto.");
-  }
-  const digest = await subtle.digest("SHA-256", copyBytesToArrayBuffer(value));
-  return `0x${Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")}`;
-};
-
-const defaultFetchSccpProverModuleBytes: SccpProverModuleBytesFetcher = async (
-  moduleUrl,
-) => {
-  if (typeof fetch !== "function") {
-    throw new Error("SCCP prover module hash verification needs fetch.");
-  }
-  const response = await fetch(moduleUrl, {
-    cache: "no-store",
-    credentials: "omit",
-  });
-  if (!response.ok) {
-    throw new Error(
-      `SCCP prover module hash verification failed to fetch ${moduleUrl}: HTTP ${response.status}.`,
-    );
-  }
-  return response.arrayBuffer();
-};
-
-const fetchVerifiedSccpProverModuleBytes = async (input: {
-  moduleUrl: string;
-  moduleHash: string;
-  moduleBytesFetcher?: SccpProverModuleBytesFetcher;
-}): Promise<Uint8Array> => {
-  const expectedHash = input.moduleHash.trim();
-  if (!expectedHash) {
-    throw new Error("SCCP prover module hash is required.");
-  }
-  const normalizedExpected = normalizeSccpProverModuleHash(
-    expectedHash,
-    "SCCP prover module hash",
-  );
-  const fetched = await (
-    input.moduleBytesFetcher ?? defaultFetchSccpProverModuleBytes
-  )(input.moduleUrl);
-  const bytes = snapshotSccpProverModuleBytes(fetched);
-  const actualHash = await sha256Hex(bytes);
-  if (actualHash !== normalizedExpected) {
-    throw new Error(
-      `SCCP prover module hash mismatch for ${input.moduleUrl}: expected ${normalizedExpected}, got ${actualHash}.`,
-    );
-  }
-  return bytes;
 };
 
 export const normalizeTronSccpProverModuleUrl = normalizeSccpProverModuleUrl;
@@ -389,33 +284,222 @@ export const pickSolanaSccpProveFn = (
     : undefined;
 };
 
+const readOwnSccpProverDataField = (
+  value: unknown,
+  key: string,
+  label: string,
+): unknown => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be a plain object.`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new Error(`${label} must be a plain object.`);
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+    throw new Error(`${label}.${key} must be an enumerable data property.`);
+  }
+  return descriptor.value;
+};
+
+const SOLANA_PROVER_ROUTE_ID = "taira_sol_xor";
+const SOLANA_PROVER_ASSET_KEY = "xor";
+const SOLANA_PROVER_NETWORK = "solana-testnet";
+const SOLANA_PROVER_GENESIS_HASH =
+  "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY";
+const SOLANA_PROVER_BACKEND = "solana-groth16-bn254-v1";
+
+const readMatchingSolanaSelfTestAliases = (
+  record: unknown,
+  camelKey: string,
+  snakeKey: string,
+  label: string,
+): unknown => {
+  const camel = readOwnSccpProverDataField(record, camelKey, label);
+  const snake = readOwnSccpProverDataField(record, snakeKey, label);
+  if (JSON.stringify(camel) !== JSON.stringify(snake)) {
+    throw new Error(
+      `${label}.${camelKey} and ${label}.${snakeKey} must agree exactly.`,
+    );
+  }
+  return camel;
+};
+
+const validateSolanaProductionProverSelfTest = (
+  result: unknown,
+  direction: "destination" | "source",
+): void => {
+  const label = `Solana ${direction} prover self-test`;
+  const sourceDomain = direction === "destination" ? 0 : 3;
+  const targetDomain = direction === "destination" ? 3 : 0;
+  if (
+    readOwnSccpProverDataField(result, "ready", label) !== true ||
+    readOwnSccpProverDataField(result, "linked", label) !== true ||
+    readMatchingSolanaSelfTestAliases(
+      result,
+      "productionProofsReady",
+      "production_proofs_ready",
+      label,
+    ) !== true ||
+    readMatchingSolanaSelfTestAliases(result, "routeId", "route_id", label) !==
+      SOLANA_PROVER_ROUTE_ID ||
+    readMatchingSolanaSelfTestAliases(
+      result,
+      "assetKey",
+      "asset_key",
+      label,
+    ) !== SOLANA_PROVER_ASSET_KEY ||
+    readMatchingSolanaSelfTestAliases(
+      result,
+      "solanaNetwork",
+      "solana_network",
+      label,
+    ) !== SOLANA_PROVER_NETWORK ||
+    readOwnSccpProverDataField(result, "network", label) !==
+      SOLANA_PROVER_NETWORK ||
+    readMatchingSolanaSelfTestAliases(
+      result,
+      "genesisHash",
+      "genesis_hash",
+      label,
+    ) !== SOLANA_PROVER_GENESIS_HASH ||
+    readOwnSccpProverDataField(result, "direction", label) !== direction ||
+    readMatchingSolanaSelfTestAliases(
+      result,
+      "sourceDomain",
+      "source_domain",
+      label,
+    ) !== sourceDomain ||
+    readMatchingSolanaSelfTestAliases(
+      result,
+      "targetDomain",
+      "target_domain",
+      label,
+    ) !== targetDomain ||
+    readMatchingSolanaSelfTestAliases(
+      result,
+      "proofBackend",
+      "proof_backend",
+      label,
+    ) !== SOLANA_PROVER_BACKEND ||
+    readMatchingSolanaSelfTestAliases(
+      result,
+      "requiredProofBackend",
+      "required_proof_backend",
+      label,
+    ) !== SOLANA_PROVER_BACKEND
+  ) {
+    throw new Error(
+      `Solana ${direction} prover self-test must be production-ready and exactly route, network, direction, domain, and backend bound.`,
+    );
+  }
+  const missingArtifactIds = readMatchingSolanaSelfTestAliases(
+    result,
+    "missingArtifactIds",
+    "missing_artifact_ids",
+    label,
+  );
+  if (!Array.isArray(missingArtifactIds) || missingArtifactIds.length !== 0) {
+    throw new Error(
+      `Solana ${direction} prover self-test must report no missing production artifacts.`,
+    );
+  }
+};
+
+export const validateSolanaDestinationProverSelfTest = async (input: {
+  moduleExports: SolanaSccpProverModule;
+  semanticProofProfile: SolanaDestinationProverInputV1["proof_request"]["semantic_proof_profile"];
+}): Promise<void> => {
+  const selfTest = readSccpProverExport(
+    input.moduleExports,
+    "solanaSccpDestinationProverSelfTest",
+  );
+  if (typeof selfTest !== "function") {
+    throw new Error(
+      "Solana destination prover must export solanaSccpDestinationProverSelfTest.",
+    );
+  }
+  const result = await selfTest();
+  validateSolanaProductionProverSelfTest(result, "destination");
+  const profile = readOwnSccpProverDataField(
+    result,
+    "semantic_proof_profile",
+    "Solana prover self-test",
+  );
+  const commitments = readOwnSccpProverDataField(
+    profile,
+    "commitments",
+    "Solana prover self-test semantic_proof_profile",
+  );
+  const expected = input.semanticProofProfile;
+  if (
+    readOwnSccpProverDataField(
+      profile,
+      "profile",
+      "Solana prover self-test semantic_proof_profile",
+    ) !== expected.profile ||
+    readOwnSccpProverDataField(
+      commitments,
+      "version",
+      "Solana prover self-test commitments",
+    ) !== expected.commitments.version ||
+    readOwnSccpProverDataField(
+      commitments,
+      "circuit_commitment",
+      "Solana prover self-test commitments",
+    ) !== expected.commitments.circuit_commitment ||
+    readOwnSccpProverDataField(
+      commitments,
+      "witness_generator_commitment",
+      "Solana prover self-test commitments",
+    ) !== expected.commitments.witness_generator_commitment ||
+    readOwnSccpProverDataField(
+      commitments,
+      "public_signal_schema_hash",
+      "Solana prover self-test commitments",
+    ) !== expected.commitments.public_signal_schema_hash
+  ) {
+    throw new Error(
+      "Solana destination prover self-test commitments do not match the typed route outbound proof policy.",
+    );
+  }
+};
+
+export const validateSolanaSourceProverSelfTest = async (input: {
+  moduleExports: SolanaSccpProverModule;
+}): Promise<void> => {
+  const selfTest = readSccpProverExport(
+    input.moduleExports,
+    "solanaSccpSourceProverSelfTest",
+  );
+  if (typeof selfTest !== "function") {
+    throw new Error(
+      "Solana source prover must export solanaSccpSourceProverSelfTest.",
+    );
+  }
+  validateSolanaProductionProverSelfTest(await selfTest(), "source");
+};
+
 export const loadSolanaSccpProveFn = async (input: {
   globalScope: SolanaSccpProverGlobal;
   moduleUrl?: string | null;
-  moduleHash?: string | null;
-  moduleBytesFetcher?: SccpProverModuleBytesFetcher;
+  semanticProofProfile: SolanaDestinationProverInputV1["proof_request"]["semantic_proof_profile"];
   importer?: (moduleUrl: string) => Promise<SolanaSccpProverModule>;
 }): Promise<SolanaSccpProveFn | undefined> => {
   const moduleUrl = normalizeSccpProverModuleUrl(input.moduleUrl);
   if (!moduleUrl) {
     throw new Error("Solana SCCP destination prover module URL is required.");
   }
-  if (!input.moduleHash?.trim()) {
-    throw new Error("Solana SCCP destination prover module hash is required.");
-  }
   const importer =
     input.importer ??
     ((url: string) =>
       import(/* @vite-ignore */ url) as Promise<SolanaSccpProverModule>);
-  const importUrl = resolveSccpProverImportUrl(moduleUrl);
-  const moduleBytes = await fetchVerifiedSccpProverModuleBytes({
-    moduleUrl: importUrl,
-    moduleHash: input.moduleHash,
-    moduleBytesFetcher: input.moduleBytesFetcher,
+  const moduleExports = await importer(resolveSccpProverImportUrl(moduleUrl));
+  await validateSolanaDestinationProverSelfTest({
+    moduleExports,
+    semanticProofProfile: input.semanticProofProfile,
   });
-  const moduleExports = await importer(
-    immutableSccpProverModuleImportUrl(moduleBytes),
-  );
   return pickSolanaSccpProveFn(input.globalScope, moduleExports);
 };
 
@@ -536,29 +620,17 @@ export const pickSolanaSccpSourceProveFn = (
 export const loadSolanaSccpSourceProveFn = async (input: {
   globalScope: SolanaSccpProverGlobal;
   moduleUrl?: string | null;
-  moduleHash?: string | null;
-  moduleBytesFetcher?: SccpProverModuleBytesFetcher;
   importer?: (moduleUrl: string) => Promise<SolanaSccpProverModule>;
 }): Promise<SolanaSccpSourceProveFn | undefined> => {
   const moduleUrl = normalizeSccpProverModuleUrl(input.moduleUrl);
   if (!moduleUrl) {
     throw new Error("Solana SCCP source prover module URL is required.");
   }
-  if (!input.moduleHash?.trim()) {
-    throw new Error("Solana SCCP source prover module hash is required.");
-  }
   const importer =
     input.importer ??
     ((url: string) =>
       import(/* @vite-ignore */ url) as Promise<SolanaSccpProverModule>);
-  const importUrl = resolveSccpProverImportUrl(moduleUrl);
-  const moduleBytes = await fetchVerifiedSccpProverModuleBytes({
-    moduleUrl: importUrl,
-    moduleHash: input.moduleHash,
-    moduleBytesFetcher: input.moduleBytesFetcher,
-  });
-  const moduleExports = await importer(
-    immutableSccpProverModuleImportUrl(moduleBytes),
-  );
+  const moduleExports = await importer(resolveSccpProverImportUrl(moduleUrl));
+  await validateSolanaSourceProverSelfTest({ moduleExports });
   return pickSolanaSccpSourceProveFn(input.globalScope, moduleExports);
 };

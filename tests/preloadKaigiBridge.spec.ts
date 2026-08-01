@@ -49,6 +49,11 @@ const LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID =
   "61CtjvNd9T3THAR65GsMVHr82Bjc";
 const RELAY_TX_HASH = "ab".repeat(32);
 const MINAMOTO_CHAIN_ID = "00000000-0000-0000-0000-000000000000";
+const AUTHORITY_FEE_PAYMENT = {
+  payer: "authority",
+  chargeLimits: [],
+  gasLimit: null,
+};
 const TRON_BROADCAST_PRIVATE_KEY = new Uint8Array(32).fill(7);
 const OTHER_TRON_BROADCAST_PRIVATE_KEY = new Uint8Array(32).fill(8);
 const TRON_BROADCAST_ADDRESS_BASE58 = deriveTronTestSignerAddressFromPrivateKey(
@@ -92,9 +97,6 @@ const tronPayloadHexFromPrivateKey = (
   const addressHash = keccak_256(publicKey.slice(1));
   return `41${Buffer.from(addressHash.slice(-20)).toString("hex")}`;
 };
-
-const exposedEd25519PrivateKey = (privateKeyHex: string): string =>
-  `ed25519:802620${privateKeyHex.toUpperCase()}`;
 
 const concatBytes = (...parts: Uint8Array[]): Uint8Array => {
   const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
@@ -1530,47 +1532,86 @@ describe("preload Kaigi bridge", () => {
   it("submits SCCP bridge payloads with stored vault authority only", async () => {
     const bridge = await loadBridge();
     const privateKeyHex = "11".repeat(32);
-    const messageBundle = {
-      commitment: {
-        message_id: "22".repeat(32),
-        payload_hash: "33".repeat(32),
-      },
-      payload: {
-        kind: "Transfer",
-      },
-    };
+    const destinationProofB64 =
+      Buffer.from("destination-proof").toString("base64");
+    const nativeProofB64 = Buffer.from("native-proof").toString("base64");
+    const signingMessageB64 = Buffer.alloc(32, 0x44).toString("base64");
+    const proofPayloadB64 = Buffer.from("proof-transaction").toString("base64");
+    const messagePayloadB64 = Buffer.from("message-transaction").toString(
+      "base64",
+    );
+    mocks.submitBridgeProofMock.mockReset();
+    mocks.submitBridgeProofMock
+      .mockResolvedValueOnce({
+        submitted: false,
+        transaction_payload_b64: proofPayloadB64,
+        signing_message_b64: signingMessageB64,
+        creation_time_ms: 101,
+      })
+      .mockResolvedValueOnce({ ok: true });
+    mocks.submitBridgeMessageMock.mockReset();
+    mocks.submitBridgeMessageMock
+      .mockResolvedValueOnce({
+        submitted: false,
+        transaction_payload_b64: messagePayloadB64,
+        signing_message_b64: signingMessageB64,
+        creation_time_ms: 102,
+      })
+      .mockResolvedValueOnce({ ok: true });
     mocks.storedAccountSecrets.set(ALICE_ACCOUNT_ID, privateKeyHex);
 
     await expect(
       bridge.submitSccpBridgeProof({
         toriiUrl: "https://taira.sora.org",
         accountId: ALICE_ACCOUNT_ID,
-        networkIdHex: "0x" + "44".repeat(32),
-        tronVerifierAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
-        messageBundle,
+        destinationProofB64,
       }),
     ).resolves.toEqual({ ok: true });
     await expect(
       bridge.submitSccpBridgeMessage({
         toriiUrl: "https://taira.sora.org",
         accountId: ALICE_ACCOUNT_ID,
-        messageBundle,
-        settlement: { finalize_inbound: true },
+        nativeProofB64,
       }),
     ).resolves.toEqual({ ok: true });
 
-    expect(mocks.submitBridgeProofMock).toHaveBeenCalledWith({
+    expect(mocks.submitBridgeProofMock).toHaveBeenNthCalledWith(1, {
       authority: ALICE_ACCOUNT_ID,
-      privateKey: exposedEd25519PrivateKey(privateKeyHex),
-      messageBundle,
-      networkIdHex: "0x" + "44".repeat(32),
-      tronVerifierAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+      fee_payment: {
+        payer: "authority",
+        value: { charge_limits: [], gas_limit: null },
+      },
+      destination_proof_b64: destinationProofB64,
     });
-    expect(mocks.submitBridgeMessageMock).toHaveBeenCalledWith({
+    expect(mocks.submitBridgeProofMock).toHaveBeenNthCalledWith(2, {
       authority: ALICE_ACCOUNT_ID,
-      privateKey: exposedEd25519PrivateKey(privateKeyHex),
-      messageBundle,
-      settlement: { finalize_inbound: true },
+      creation_time_ms: 101,
+      destination_proof_b64: destinationProofB64,
+      fee_payment: {
+        payer: "authority",
+        value: { charge_limits: [], gas_limit: null },
+      },
+      signature_b64: expect.any(String),
+      transaction_payload_b64: proofPayloadB64,
+    });
+    expect(mocks.submitBridgeMessageMock).toHaveBeenNthCalledWith(1, {
+      authority: ALICE_ACCOUNT_ID,
+      fee_payment: {
+        payer: "authority",
+        value: { charge_limits: [], gas_limit: null },
+      },
+      native_proof_b64: nativeProofB64,
+    });
+    expect(mocks.submitBridgeMessageMock).toHaveBeenNthCalledWith(2, {
+      authority: ALICE_ACCOUNT_ID,
+      creation_time_ms: 102,
+      fee_payment: {
+        payer: "authority",
+        value: { charge_limits: [], gas_limit: null },
+      },
+      native_proof_b64: nativeProofB64,
+      signature_b64: expect.any(String),
+      transaction_payload_b64: messagePayloadB64,
     });
   });
 
@@ -1579,11 +1620,10 @@ describe("preload Kaigi bridge", () => {
     const baseInput = {
       toriiUrl: "https://taira.sora.org",
       accountId: ALICE_ACCOUNT_ID,
-      messageBundle: {
-        commitment: {
-          message_id: "22".repeat(32),
-        },
-      },
+      destinationProofB64: Buffer.from("destination-proof").toString("base64"),
+    };
+    const legacyMessageBundle = {
+      commitment: { message_id: "22".repeat(32) },
     };
 
     await expect(
@@ -1597,22 +1637,22 @@ describe("preload Kaigi bridge", () => {
         ...baseInput,
         publicKeyHex: "11".repeat(32),
       }),
-    ).rejects.toThrow(/both publicKeyHex and signatureB64/);
+    ).rejects.toThrow(/Legacy SCCP submit fields.*publicKeyHex/);
     await expect(
       bridge.submitSccpBridgeProof({
         ...baseInput,
         signatureB64: Buffer.from("signature").toString("base64"),
       }),
-    ).rejects.toThrow(/both publicKeyHex and signatureB64/);
+    ).rejects.toThrow(/Detached SCCP submission requires/);
     await expect(
       bridge.submitSccpBridgeProof({
         ...baseInput,
         messageBundle: {
-          ...baseInput.messageBundle,
+          ...legacyMessageBundle,
           privateKeyHex: "11".repeat(32),
         },
       }),
-    ).rejects.toThrow(/SCCP messageBundle\.privateKeyHex/);
+    ).rejects.toThrow(/Legacy SCCP submit fields.*messageBundle/);
     await expect(
       bridge.submitSccpBridgeProof({
         ...baseInput,
@@ -1620,25 +1660,25 @@ describe("preload Kaigi bridge", () => {
           records: [{ seedPhrase: "do not submit this" }],
         },
       }),
-    ).rejects.toThrow(/SCCP burnBundle\.records\[0\]\.seedPhrase/);
+    ).rejects.toThrow(/Legacy SCCP submit fields.*burnBundle/);
     await expect(
       bridge.submitSccpBridgeProof({
         ...baseInput,
         messageBundle: {
-          ...baseInput.messageBundle,
+          ...legacyMessageBundle,
           note: VALID_MNEMONIC,
         },
       }),
-    ).rejects.toThrow(/SCCP messageBundle\.note.*Torii submission/);
+    ).rejects.toThrow(/Legacy SCCP submit fields.*messageBundle/);
     await expect(
       bridge.submitSccpBridgeProof({
         ...baseInput,
         messageBundle: {
-          ...baseInput.messageBundle,
+          ...legacyMessageBundle,
           signature_b64: Buffer.from("detached").toString("base64"),
         },
       }),
-    ).rejects.toThrow(/SCCP messageBundle\.signature_b64.*helper payloads/);
+    ).rejects.toThrow(/Legacy SCCP submit fields.*messageBundle/);
     await expect(
       bridge.submitSccpBridgeMessage({
         ...baseInput,
@@ -1648,16 +1688,16 @@ describe("preload Kaigi bridge", () => {
           },
         },
       }),
-    ).rejects.toThrow(/SCCP settlement\.finalize_inbound\.recoveryPhrase/);
+    ).rejects.toThrow(/Legacy SCCP submit fields.*settlement/);
     await expect(
       bridge.submitSccpBridgeMessage({
         ...baseInput,
         messageBundle: null,
       }),
-    ).rejects.toThrow(/SCCP messageBundle must be an object/);
+    ).rejects.toThrow(/SCCP nativeProofB64 is required/);
 
     const accessorMessageBundle = {
-      ...baseInput.messageBundle,
+      ...legacyMessageBundle,
     };
     const accessedSccpBundleFields: string[] = [];
     Object.defineProperty(accessorMessageBundle, "debug", {
@@ -1672,7 +1712,7 @@ describe("preload Kaigi bridge", () => {
         ...baseInput,
         messageBundle: accessorMessageBundle,
       }),
-    ).rejects.toThrow(/SCCP messageBundle.*SCCP proof data/);
+    ).rejects.toThrow(/Legacy SCCP submit fields.*messageBundle/);
     expect(accessedSccpBundleFields).toEqual([]);
 
     expect(mocks.submitBridgeProofMock).not.toHaveBeenCalled();
@@ -1770,7 +1810,7 @@ describe("preload Kaigi bridge", () => {
     }
   });
 
-  it("snapshots SCCP submission bundles before resolving wallet authority", async () => {
+  it("rejects legacy SCCP bundle submission before resolving wallet authority", async () => {
     const bridge = await loadBridge();
     const privateKeyHex = "11".repeat(32);
     const messageBundle: Record<string, unknown> = {
@@ -1792,19 +1832,10 @@ describe("preload Kaigi bridge", () => {
     messageBundle.privateKeyHex = "ff".repeat(32);
     settlement.finalize_inbound = { seedPhrase: "mutated after validation" };
 
-    await expect(submitPromise).resolves.toEqual({ ok: true });
-    expect(mocks.submitBridgeMessageMock).toHaveBeenCalledWith({
-      authority: ALICE_ACCOUNT_ID,
-      privateKey: exposedEd25519PrivateKey(privateKeyHex),
-      messageBundle: {
-        commitment: {
-          message_id: "22".repeat(32),
-        },
-      },
-      settlement: {
-        finalize_inbound: true,
-      },
-    });
+    await expect(submitPromise).rejects.toThrow(
+      /Legacy SCCP submit fields.*messageBundle.*settlement/,
+    );
+    expect(mocks.submitBridgeMessageMock).not.toHaveBeenCalled();
   });
 
   it("submits ZK IVM proved transactions with the stored vault key only", async () => {
@@ -1815,7 +1846,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.submitZkIvmProvedTransaction({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         accountId: ALICE_ACCOUNT_ID,
         proved: { overlay: [] },
         attachment: {
@@ -1833,6 +1864,12 @@ describe("preload Kaigi bridge", () => {
       expect.objectContaining({
         authority: ALICE_ACCOUNT_ID,
         creationTimeMs: expect.any(Number),
+        feePayment: {
+          payer: "authority",
+          chargeLimits: [],
+          gasLimit: 1000,
+        },
+        metadata: {},
         privateKey: Buffer.from(privateKeyHex, "hex"),
         ttlMs: 10 * 60 * 1000,
       }),
@@ -1875,7 +1912,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.submitZkIvmProvedTransaction({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         accountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "12".repeat(32),
         proved: { overlay: [] },
@@ -1890,7 +1927,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.submitZkIvmProvedTransaction({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         accountId: ALICE_ACCOUNT_ID,
         proved: { overlay: [] },
         attachment: {
@@ -3065,6 +3102,21 @@ describe("preload Kaigi bridge", () => {
     );
   });
 
+  it("falls back to the current public TAIRA chain metadata", async () => {
+    mocks.nodeFetchMock.mockResolvedValue(jsonResponse({}, 404));
+
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.getChainMetadata({
+        toriiUrl: "https://taira.sora.org",
+      }),
+    ).resolves.toEqual({
+      chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
+      networkPrefix: 369,
+    });
+  });
+
   it("loads current governance council payloads with non-Vrf derivation labels", async () => {
     mocks.nodeFetchMock.mockImplementation(async (input: unknown) => {
       const href = String(input);
@@ -3932,7 +3984,7 @@ describe("preload Kaigi bridge", () => {
     expect(mocks.getStatusSnapshotMock).toHaveBeenCalledTimes(5);
   });
 
-  it("adds TAIRA gas metadata to generic instruction transactions", async () => {
+  it("uses a signature-bound authority fee intent for generic instruction transactions", async () => {
     const bridge = await loadBridge();
     mocks.getTransactionStatusMock.mockResolvedValue({
       status: {
@@ -3943,7 +3995,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.registerCitizen({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         accountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         amount: "10000",
@@ -3954,9 +4006,8 @@ describe("preload Kaigi bridge", () => {
 
     expect(mocks.buildTransactionMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        metadata: {
-          gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-        },
+        feePayment: AUTHORITY_FEE_PAYMENT,
+        metadata: {},
       }),
     );
   });
@@ -4036,7 +4087,7 @@ describe("preload Kaigi bridge", () => {
     try {
       await bridge.registerCitizen({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         accountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         amount: "10000",
@@ -4075,7 +4126,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.registerCitizen({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         accountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         amount: "10000",
@@ -4108,7 +4159,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.registerCitizen({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         accountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         amount: "10000",
@@ -4165,7 +4216,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.registerCitizen({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         accountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         amount: "10000",
@@ -4192,7 +4243,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.registerCitizen({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         accountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         amount: "10000",
@@ -4204,7 +4255,7 @@ describe("preload Kaigi bridge", () => {
     expect(mocks.buildTransactionMock).toHaveBeenCalled();
   });
 
-  it("adds TAIRA gas metadata to public transfers without dropping memos", async () => {
+  it("keeps public-transfer memos separate from the authority fee intent", async () => {
     const bridge = await loadBridge();
     mocks.getTransactionStatusMock.mockResolvedValue({
       status: {
@@ -4215,7 +4266,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.transferAsset({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         assetDefinitionId: "xor#universal",
         accountId: ALICE_ACCOUNT_ID,
         destinationAccountId: BOB_ACCOUNT_ID,
@@ -4231,9 +4282,9 @@ describe("preload Kaigi bridge", () => {
 
     expect(mocks.buildTransferAssetTransactionMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        feePayment: AUTHORITY_FEE_PAYMENT,
         metadata: {
           memo: "hello from test",
-          gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
         },
       }),
     );
@@ -4289,7 +4340,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.transferAsset({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         assetDefinitionId: "xor#universal",
         accountId: ALICE_ACCOUNT_ID,
         destinationAccountId: BOB_ACCOUNT_ID,
@@ -4357,7 +4408,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.transferAsset({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         assetDefinitionId: "xor#universal",
         accountId: ALICE_ACCOUNT_ID,
         destinationAccountId: BOB_ACCOUNT_ID,
@@ -4430,7 +4481,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.transferAsset({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         assetDefinitionId: "xor#universal",
         accountId: ALICE_ACCOUNT_ID,
         destinationAccountId: BOB_ACCOUNT_ID,
@@ -4625,7 +4676,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.transferAsset({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
         accountId: ALICE_ACCOUNT_ID,
         destinationAccountId: "bob@universal",
@@ -4691,7 +4742,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.createKaigiMeeting({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         hostAccountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         callId: "wonderland:kaigi-private-room",
@@ -4791,7 +4842,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.createKaigiMeeting({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         hostAccountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         callId: "wonderland:kaigi-private-room",
@@ -4829,7 +4880,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.joinKaigiMeeting({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         participantAccountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "22".repeat(32),
         callId: "wonderland:kaigi-private-room",
@@ -4902,7 +4953,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.endKaigiMeeting({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         hostAccountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         callId: "wonderland:kaigi-private-room",
@@ -4936,7 +4987,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.transferAsset({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         assetDefinitionId: "xor#universal",
         accountId: ALICE_ACCOUNT_ID,
         destinationAccountId: ALICE_ACCOUNT_ID,
@@ -4951,7 +5002,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.getConfidentialAssetBalance({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         accountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         assetDefinitionId: "xor#universal",
@@ -4979,7 +5030,7 @@ describe("preload Kaigi bridge", () => {
     const nullifierHex = deriveWalletConfidentialNullifierHex({
       privateKeyHex: "11".repeat(32),
       assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
-      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
       rhoHex: note.rho_hex,
     });
     mocks.buildConfidentialUnshieldProofV2Mock.mockImplementationOnce(() => ({
@@ -5072,7 +5123,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.transferAsset({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         assetDefinitionId: "xor#universal",
         accountId: ALICE_ACCOUNT_ID,
         destinationAccountId: ALICE_ACCOUNT_ID,
@@ -5100,8 +5151,9 @@ describe("preload Kaigi bridge", () => {
     );
     expect(mocks.buildUnshieldTransactionMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        metadata: expect.objectContaining({
-          gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        feePayment: AUTHORITY_FEE_PAYMENT,
+        metadata: expect.not.objectContaining({
+          gas_asset_id: expect.anything(),
         }),
         unshield: expect.objectContaining({
           assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
@@ -5114,7 +5166,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.getConfidentialAssetBalance({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         accountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         assetDefinitionId: "xor#universal",
@@ -5133,7 +5185,7 @@ describe("preload Kaigi bridge", () => {
     const nullifierHex = deriveWalletConfidentialNullifierHex({
       privateKeyHex: "11".repeat(32),
       assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
-      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
       rhoHex: note.rho_hex,
     });
     mocks.buildConfidentialUnshieldProofV2Mock.mockImplementationOnce(() => ({
@@ -5240,7 +5292,7 @@ describe("preload Kaigi bridge", () => {
 
     const transferPromise = bridge.transferAsset({
       toriiUrl: "https://taira.sora.org",
-      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
       assetDefinitionId: "xor#universal",
       accountId: ALICE_ACCOUNT_ID,
       destinationAccountId: ALICE_ACCOUNT_ID,
@@ -5268,7 +5320,7 @@ describe("preload Kaigi bridge", () => {
     const nullifierHex = deriveWalletConfidentialNullifierHex({
       privateKeyHex: "11".repeat(32),
       assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
-      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
       rhoHex: note.rho_hex,
     });
     mocks.buildConfidentialUnshieldProofV2Mock.mockImplementationOnce(() => ({
@@ -5375,7 +5427,7 @@ describe("preload Kaigi bridge", () => {
 
     const transferPromise = bridge.transferAsset({
       toriiUrl: "https://taira.sora.org",
-      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
       assetDefinitionId: "xor#universal",
       accountId: ALICE_ACCOUNT_ID,
       destinationAccountId: ALICE_ACCOUNT_ID,
@@ -5403,7 +5455,7 @@ describe("preload Kaigi bridge", () => {
     const inputNullifierHex = deriveWalletConfidentialNullifierHex({
       privateKeyHex: "11".repeat(32),
       assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
-      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
       rhoHex: note.rho_hex,
     });
     const metadata = buildWalletConfidentialMetadata({
@@ -5519,7 +5571,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.transferAsset({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         assetDefinitionId: "xor#universal",
         accountId: ALICE_ACCOUNT_ID,
         destinationAccountId: ALICE_ACCOUNT_ID,
@@ -5548,8 +5600,9 @@ describe("preload Kaigi bridge", () => {
     );
     expect(mocks.buildUnshieldTransactionMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        metadata: expect.objectContaining({
-          gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        feePayment: AUTHORITY_FEE_PAYMENT,
+        metadata: expect.not.objectContaining({
+          gas_asset_id: expect.anything(),
         }),
         unshield: expect.objectContaining({
           assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
@@ -5563,7 +5616,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.getConfidentialAssetBalance({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         accountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         assetDefinitionId: "xor#universal",
@@ -5688,7 +5741,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.transferAsset({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         assetDefinitionId: "xor#universal",
         accountId: ALICE_ACCOUNT_ID,
         destinationAccountId: ALICE_ACCOUNT_ID,
@@ -5703,7 +5756,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.getConfidentialAssetBalance({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         accountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         assetDefinitionId: "xor#universal",
@@ -5716,8 +5769,9 @@ describe("preload Kaigi bridge", () => {
 
     expect(mocks.buildShieldTransactionMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        metadata: expect.objectContaining({
-          gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        feePayment: AUTHORITY_FEE_PAYMENT,
+        metadata: expect.not.objectContaining({
+          gas_asset_id: expect.anything(),
         }),
         shield: expect.objectContaining({
           assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
@@ -5906,7 +5960,7 @@ describe("preload Kaigi bridge", () => {
 
     await bridge.transferAsset({
       toriiUrl: "https://taira.sora.org",
-      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
       assetDefinitionId: "xor#universal",
       accountId: ALICE_ACCOUNT_ID,
       destinationAccountId: ALICE_ACCOUNT_ID,
@@ -5918,7 +5972,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.transferAsset({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         assetDefinitionId: "xor#universal",
         accountId: ALICE_ACCOUNT_ID,
         destinationAccountId: BOB_ACCOUNT_ID,
@@ -5933,7 +5987,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.getConfidentialAssetBalance({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         accountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         assetDefinitionId: "xor#universal",
@@ -6056,7 +6110,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.transferAsset({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         assetDefinitionId: "xor#universal",
         accountId: ALICE_ACCOUNT_ID,
         destinationAccountId: BOB_ACCOUNT_ID,
@@ -6074,8 +6128,9 @@ describe("preload Kaigi bridge", () => {
 
     expect(mocks.buildZkTransferTransactionMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        metadata: expect.objectContaining({
-          gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        feePayment: AUTHORITY_FEE_PAYMENT,
+        metadata: expect.not.objectContaining({
+          gas_asset_id: expect.anything(),
         }),
       }),
     );
@@ -6206,7 +6261,7 @@ describe("preload Kaigi bridge", () => {
 
     const transferPromise = bridge.transferAsset({
       toriiUrl: "https://taira.sora.org",
-      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
       assetDefinitionId: "xor#universal",
       accountId: ALICE_ACCOUNT_ID,
       destinationAccountId: BOB_ACCOUNT_ID,
@@ -6356,7 +6411,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.transferAsset({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         assetDefinitionId: "xor#universal",
         accountId: ALICE_ACCOUNT_ID,
         destinationAccountId: BOB_ACCOUNT_ID,
@@ -6396,7 +6451,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.selfShieldPrivateKaigiXor({
         toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
         accountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         amount: "1.2",
@@ -6407,8 +6462,9 @@ describe("preload Kaigi bridge", () => {
 
     expect(mocks.buildShieldTransactionMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        metadata: expect.objectContaining({
-          gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        feePayment: AUTHORITY_FEE_PAYMENT,
+        metadata: expect.not.objectContaining({
+          gas_asset_id: expect.anything(),
         }),
         shield: expect.objectContaining({
           assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
@@ -6463,7 +6519,7 @@ describe("preload Kaigi bridge", () => {
 
     const exported = await bridge.exportConfidentialWalletBackup({
       toriiUrl: "https://taira.sora.org",
-      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
       accountId: ALICE_ACCOUNT_ID,
       mnemonic:
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",

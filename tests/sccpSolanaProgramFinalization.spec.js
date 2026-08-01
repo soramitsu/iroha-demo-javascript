@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -128,6 +129,7 @@ const readbacks = ({
             executableSha256: hash(`${spec.role}:live-executable`),
             executableLength: 8192,
             executableElf: true,
+            sbpfVersion: "V3",
             immutable,
             upgradeAuthorityOption: immutable ? 0 : 1,
             upgradeAuthorityAddress: immutable
@@ -1130,7 +1132,7 @@ describe("Solana program finalization CLI safety", () => {
     }
   });
 
-  it("fails the fresh readiness gate before consulting runtime signer material", () => {
+  it("rejects the retired mutation command before consulting runtime signer material", () => {
     const outputDir = mkdtempSync(
       path.join(tmpdir(), "solana-finalization-readiness-gate-"),
     );
@@ -1161,22 +1163,19 @@ describe("Solana program finalization CLI safety", () => {
       );
 
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("fresh complete readiness gate");
+      expect(result.stderr).toContain(
+        "retired Solana deploy, upgrade, recovery, and finalization command surface is disabled",
+      );
       expect(result.stderr).not.toContain(sentinel);
       expect(result.stderr).not.toContain("runtime Solana signer");
-      const readiness = JSON.parse(
-        readFileSync(
+      expect(
+        existsSync(
           path.join(
             outputDir,
             "taira-solana-xor-program-finalization-readiness.json",
           ),
-          "utf8",
         ),
-      );
-      expect(readiness.ready).toBe(false);
-      expect(readiness.blockerIds).toContain(
-        "program-finalization-governed-preconfiguration-intent",
-      );
+      ).toBe(false);
     } finally {
       rmSync(outputDir, { recursive: true, force: true });
     }
@@ -1202,18 +1201,24 @@ describe("Solana program finalization CLI safety", () => {
     }
   });
 
-  it("orders finish-production finalization before its production gate", () => {
+  it("keeps finish-production evidence-only and delegates lifecycle validation to the gate", () => {
     const source = readFileSync("scripts/sccp-solana-deploy.mjs", "utf8");
     const finish = source.slice(
       source.indexOf("const finishProduction = async"),
       source.indexOf("const refreshEvidence = async"),
     );
-    const finalizationIndex = finish.indexOf(
+    const retiredMutationIndex = finish.indexOf(
       'record("program-finalization", () => finalizePrograms(args))',
     );
-    const requirementsIndex = finish.indexOf('"production-requirements"');
-    expect(finalizationIndex).toBeGreaterThan(0);
-    expect(requirementsIndex).toBeGreaterThan(finalizationIndex);
+    const evidenceOnlyIndex = finish.indexOf(
+      '"finish-production is read-only;',
+    );
+    const preLiveGateIndex = finish.indexOf('"production-gate-pre-live"');
+    expect(retiredMutationIndex).toBe(-1);
+    expect(evidenceOnlyIndex).toBeGreaterThan(0);
+    expect(preLiveGateIndex).toBeGreaterThan(evidenceOnlyIndex);
+    expect(finish).not.toContain("renderDeploymentVideo");
+    expect(finish).not.toContain("routePublicationRequest");
   });
 
   it("recomputes complete readiness before any direct finalization signer can be loaded", () => {

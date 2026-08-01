@@ -6,12 +6,12 @@ import {
   sccpMerkleRootFromCommitment,
   sccpPayloadHash,
   sccpTransferMessageId,
-} from "@iroha/iroha-js/sccp";
+} from "@/legacy/sccpLegacySdk";
 import type {
   SccpHubCommitment,
   SccpTransferPayload,
   TairaXorTronBoundBurnStartedEvent,
-} from "@iroha/iroha-js/sccp";
+} from "@/legacy/sccpLegacySdk";
 import {
   bindTronSourceDataForProof,
   bridgeDecimalToBaseUnits,

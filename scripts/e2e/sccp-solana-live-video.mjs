@@ -2,10 +2,12 @@
 /* global BigInt, globalThis */
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { rename, rm } from "node:fs/promises";
+import { fstatSync, readSync } from "node:fs";
+import { lstat, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
+import QRCode from "qrcode";
 import {
   DEFAULT_SOLANA_TESTNET_RPC_URL,
   SCCP_SOLANA_XOR_ROUTE_ID,
@@ -17,15 +19,46 @@ import {
   CANONICAL_SOLANA_TESTNET_RPC_URL,
 } from "./sccp-solana-success-evidence-policy.mjs";
 import {
+  SOLANA_SCCP_REGISTRY_PATH,
+  canonicalSccpJson,
+  canonicalSccpObjectSha256,
+  selectExactSolanaRegistryRoute,
+  summarizeExactSolanaRegistryRoute,
+} from "./sccp-solana-exact-registry.mjs";
+import {
+  SOLANA_EXACT_PROVER_APPROVAL_SHA256_ENV,
+  buildExactSolanaProductionProverApprovalValidation,
+  canonicalSolanaExactProverApprovalJson,
+} from "./sccp-solana-exact-prover-governance.mjs";
+import {
+  parseSolanaGovernanceCanonicalJsonBytes,
+  parseSolanaGovernanceDuplicateFreeJsonText,
+} from "./sccp-solana-governance-json.mjs";
+import {
+  SOLANA_LIVE_CAPTURE_WITNESS_FRAME_HEIGHT,
+  SOLANA_LIVE_CAPTURE_WITNESS_FRAME_WIDTH,
+  SOLANA_LIVE_CAPTURE_WITNESS_DWELL_OFFSETS_MILLISECONDS,
+  SOLANA_LIVE_CAPTURE_WITNESS_IDS,
+  SOLANA_LIVE_CAPTURE_REVIEW_SIGNATURE_DOMAIN,
+  analyzeSolanaLiveCaptureWitnessFrames,
+  buildSolanaLiveCaptureReviewSigningPackage,
+  buildSolanaLiveCaptureWitnessPayloads,
+  buildUnreviewedSolanaLiveCaptureReview,
+  decodeSolanaLiveCaptureWitnessQr,
+  normalizeSolanaLiveCaptureReviewPolicy,
+  normalizeSolanaLiveCaptureWitness,
+  verifySolanaLiveCaptureReviewAttestation,
+} from "./sccp-solana-live-capture-witness.mjs";
+import {
   assertSafeOutputDestination,
   commitGeneratedFileSync,
   DEFAULT_SOLANA_TEXT_MAX_BYTES,
   ensureSafeOutputDirectory,
   parseStrictCliArgs,
-  readStableJsonFile,
   readStableJsonFileIfExists,
   readStableRegularFile,
   removeGeneratedFileSync,
+  withStableRegularFileDescriptorsSync,
   writeAtomicFile,
   writeAtomicJsonFile,
 } from "./sccp-solana-report-io.mjs";
@@ -36,42 +69,22 @@ const repoRoot = path.resolve(
 );
 const DEFAULT_OUTPUT_DIR = path.join(repoRoot, "output/sccp-solana-live-video");
 const DEFAULT_DEPLOY_DIR = path.join(repoRoot, "output/sccp-solana-deploy");
-const DEFAULT_PRODUCTION_REQUIREMENTS_PATH = path.join(
-  DEFAULT_DEPLOY_DIR,
-  "taira-solana-xor-production-requirements.json",
-);
 const DEFAULT_SMOKE_READINESS_PATH = path.join(
   repoRoot,
   "output/sccp-solana-smoke-readiness",
   "latest.json",
 );
-const DEFAULT_PUBLISH_READINESS_PATH = path.join(
+const DEFAULT_GOVERNANCE_PLAN_PATH = path.join(
   DEFAULT_DEPLOY_DIR,
-  "taira-solana-xor-route.publish-readiness.json",
+  "taira-solana-xor-governance-plan.json",
 );
-const DEFAULT_ROUTE_PUBLICATION_REQUEST_PATH = path.join(
+const DEFAULT_GOVERNANCE_REGISTER_RESULT_PATH = path.join(
   DEFAULT_DEPLOY_DIR,
-  "taira-solana-xor-route-publication-request.json",
+  "taira-solana-xor-governance-register.json",
 );
-const DEFAULT_HANDOFF_VERIFICATION_PATH = path.join(
+const DEFAULT_GOVERNANCE_ACTIVATE_RESULT_PATH = path.join(
   DEFAULT_DEPLOY_DIR,
-  "taira-solana-xor-source-material-handoff.verification.json",
-);
-const DEFAULT_PROOF_MATERIAL_BUNDLE_PATH = path.join(
-  DEFAULT_DEPLOY_DIR,
-  "taira-solana-xor-proof-material-bundle.json",
-);
-const DEFAULT_ACTIVATION_PACKAGE_PATH = path.join(
-  DEFAULT_DEPLOY_DIR,
-  "taira-solana-xor-activation-package.json",
-);
-const DEFAULT_DEPLOYMENT_VIDEO_TRANSCRIPT_PATH = path.join(
-  DEFAULT_DEPLOY_DIR,
-  "sccp-solana-deployment-video.json",
-);
-const DEFAULT_OPERATOR_HANDOFF_PATH = path.join(
-  DEFAULT_DEPLOY_DIR,
-  "taira-solana-xor-operator-handoff.json",
+  "taira-solana-xor-governance-activate.json",
 );
 const DEFAULT_PRODUCTION_GATE_PATH = path.join(
   repoRoot,
@@ -87,7 +100,7 @@ export const SOLANA_TESTNET_GENESIS_HASH =
   "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY";
 const SOLANA_TESTNET_NETWORK_ID = "solana-testnet";
 const SOLANA_TESTNET_CAIP_CHAIN_ID = "solana:4uhcVJyU9pJkvQyS88uRDiswHXSCkY3z";
-const TAIRA_CHAIN_ID = "809574f5-fee7-5e69-bfcf-52451e42d50f";
+const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 const TAIRA_NETWORK_PREFIX = 369;
 const SCCP_SORA_DOMAIN = 0;
 const SCCP_SOLANA_DOMAIN = 3;
@@ -100,17 +113,24 @@ const SOLANA_SYSTEM_PROGRAM_ID = SystemProgram.programId.toBase58();
 const SCCP_SOLANA_MESSAGE_RECEIPT_SEED = "sccp-message-receipt";
 const SCCP_SOLANA_SOURCE_BURN_RECEIPT_SEED = "sccp-source-burn-receipt";
 const SCCP_SOLANA_SOURCE_BURN_EVENT_PREFIX = "sccp:solana:source-burn:v1";
+const SCCP_SOLANA_EXACT_MINT_AUTHORITY_SEED = "sccp-mint-authority-v1";
+const MAX_SOLANA_LIVE_CAPTURE_BYTES = 2 * 1024 * 1024 * 1024;
+const SOLANA_LIVE_CAPTURE_MIN_DURATION_SECONDS = 40;
+const SOLANA_LIVE_CAPTURE_MAX_DURATION_SECONDS = 60 * 60;
+const SOLANA_LIVE_CAPTURE_MIN_WIDTH = 640;
+const SOLANA_LIVE_CAPTURE_MIN_HEIGHT = 360;
+const SOLANA_LIVE_CAPTURE_MIN_SAMPLED_FRAMES = 10;
+const SOLANA_LIVE_CAPTURE_MIN_UNIQUE_FRAMES = 4;
+const SOLANA_LIVE_CAPTURE_MIN_AUDIO_MAX_VOLUME_DB = -45;
+const SOLANA_LIVE_CAPTURE_PROBE_TIMEOUT_MS = 120_000;
+const SOLANA_LIVE_CAPTURE_ESSENCE_TIMEOUT_MS = 5 * 60_000;
+const SOLANA_LIVE_CAPTURE_PROBE_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 
 const SUCCESS_PREREQUISITE_OVERRIDE_OPTIONS = Object.freeze([
-  ["productionRequirements", "production-requirements"],
-  ["publishReadiness", "publish-readiness"],
-  ["routePublicationRequest", "route-publication-request"],
+  ["governancePlan", "governance-plan"],
+  ["governanceRegistration", "governance-registration"],
+  ["governanceActivation", "governance-activation"],
   ["smokeReadiness", "smoke-readiness"],
-  ["handoffVerification", "handoff-verification"],
-  ["proofMaterialBundle", "proof-material-bundle"],
-  ["activationPackage", "activation-package"],
-  ["deploymentVideoTranscript", "deployment-video-transcript"],
-  ["operatorHandoff", "operator-handoff"],
   ["productionGate", "production-gate"],
 ]);
 
@@ -136,6 +156,8 @@ export const buildSolanaLiveVideoMediaVerification = ({
   const blockers = [];
   if (!video) {
     blockers.push("video-stream");
+  } else if (video.codec_name !== "h264") {
+    blockers.push("video-codec-h264");
   }
   if (!audio) {
     blockers.push("audio-stream");
@@ -217,19 +239,25 @@ export const parseArgs = (argv) => {
       "fetch-attempts",
       "live-evidence",
       "write-live-evidence-template",
-      "production-requirements",
+      "write-live-capture-witness-kit",
+      "write-live-capture-witness-review-request",
+      "write-live-capture-review-signing-package",
+      "live-capture-marker-times-ms",
       "preflight-report",
-      "publish-readiness",
-      "route-publication-request",
+      "governance-plan",
+      "governance-register-result",
+      "governance-activate-result",
       "smoke-readiness",
-      "handoff-verification",
-      "proof-material-bundle",
-      "activation-package",
-      "deployment-video-transcript",
-      "operator-handoff",
       "production-gate",
       "production-gate-snapshot",
       "production-gate-snapshot-sha256",
+      "prover-governance-approval-sha256",
+      "live-capture-video",
+      "live-capture-video-sha256",
+      "live-capture-witness",
+      "live-capture-witness-sha256",
+      "live-capture-review-attestation",
+      "live-capture-review-attestation-sha256",
       "output-dir",
     ],
   });
@@ -259,32 +287,45 @@ Options:
   --live-evidence PATH   JSON evidence from completed real bidirectional transfers
   --write-live-evidence-template PATH
                          Write a non-secret JSON template for --live-evidence
-  --production-requirements PATH
-                         Production-requirements report for blocked diagnostics
+  --write-live-capture-witness-kit DIR
+                         Write four exact QR cards after live evidence exists; never edits video
+  --write-live-capture-witness-review-request PATH
+                         Scan four supplied marker times in a pinned capture and write a human-review request
+  --write-live-capture-review-signing-package PATH
+                         Validate a pinned reviewed witness and emit exact domain-separated bytes/hash for external signing; accepts no private key
+  --live-capture-marker-times-ms CSV
+                         Four ordered center times for the review request (milliseconds)
   --preflight-report PATH
                          Diagnostic-only preflight override; can never produce success
-  --publish-readiness PATH
-                         Route publish-readiness report for blocked diagnostics
-  --route-publication-request PATH
-                         Route-manager publication request for blocked diagnostics
+  --governance-plan PATH
+                         Reviewed exact Solana governance plan for diagnostics
+  --governance-register-result PATH
+                         Staged-registration governance result for diagnostics
+  --governance-activate-result PATH
+                         Bidirectional-activation governance result for diagnostics
   --smoke-readiness PATH
                          Solana app smoke-readiness report for blocked diagnostics
-  --handoff-verification PATH
-                         Source-material handoff verification report for blocked diagnostics
-  --proof-material-bundle PATH
-                         Proof-material bundle manifest for blocked diagnostics
-  --activation-package PATH
-                         TAIRA activation package for blocked diagnostics
-  --deployment-video-transcript PATH
-                         Deployment walkthrough transcript for blocked diagnostics
-  --operator-handoff PATH
-                         Consolidated operator handoff for blocked diagnostics
   --production-gate PATH
                          Production-gate snapshot for blocked diagnostics only
   --production-gate-snapshot PATH
                          Exact pre-live production-gate report required for success
   --production-gate-snapshot-sha256 HASH
                          Exact SHA-256 of --production-gate-snapshot
+  --live-capture-video PATH
+                         Real H.264/AAC screen capture of the completed bidirectional transfer
+  --live-capture-video-sha256 HASH
+                         Independently pinned SHA-256 of --live-capture-video
+  --live-capture-witness PATH
+                         Independently reviewed semantic frame-witness JSON
+  --live-capture-witness-sha256 HASH
+                         Independently pinned SHA-256 of --live-capture-witness
+  --live-capture-review-attestation PATH
+                         Detached threshold-Ed25519 review attestation JSON
+  --live-capture-review-attestation-sha256 HASH
+                         Independently pinned SHA-256 of the detached attestation
+  --prover-governance-approval-sha256 HASH
+                         Independent exact prover-approval artifact hash
+                         (env: ${SOLANA_EXACT_PROVER_APPROVAL_SHA256_ENV})
   --output-dir PATH      Output directory (default: output/sccp-solana-live-video)
   --allow-incomplete     Write blocked transcript/subtitles/diagnostic MP4 and exit 0
   --skip-solana-rpc      Diagnostic-only; skipped RPC checks can never produce success
@@ -324,6 +365,35 @@ const readJsonIfExists = async (file) => {
   });
 };
 
+export const parseSolanaLiveVideoPinnedJsonBytes = (bytes, label) => {
+  if (!(bytes instanceof Uint8Array)) {
+    throw new TypeError(`${label} must be supplied as stable bytes.`);
+  }
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      bytes,
+    );
+  } catch {
+    throw new Error(`${label} must contain valid UTF-8.`);
+  }
+  return parseSolanaGovernanceDuplicateFreeJsonText(text, label);
+};
+
+export const parseSolanaLiveCaptureCanonicalArtifactBytes = (bytes, label) => {
+  const value = parseSolanaLiveVideoPinnedJsonBytes(bytes, label);
+  if (!isRecord(value)) {
+    throw new Error(`${label} must contain one JSON object.`);
+  }
+  const canonicalBytes = Buffer.from(`${canonicalSccpJson(value)}\n`, "utf8");
+  if (!canonicalBytes.equals(bytes)) {
+    throw new Error(
+      `${label} must use exact compact canonical SCCP JSON plus one LF.`,
+    );
+  }
+  return value;
+};
+
 const readPinnedProductionGateSnapshot = async ({ file, expectedSha256 }) => {
   if (
     typeof file !== "string" ||
@@ -345,15 +415,80 @@ const readPinnedProductionGateSnapshot = async ({ file, expectedSha256 }) => {
       `Pinned pre-live Solana production-gate report SHA-256 mismatch: expected ${expectedSha256}, got ${actual}.`,
     );
   }
-  let report;
-  try {
-    report = JSON.parse(bytes.toString("utf8"));
-  } catch {
+  const report = parseSolanaLiveVideoPinnedJsonBytes(
+    bytes,
+    "Pinned pre-live Solana production-gate report",
+  );
+  return { path: resolved, sha256: actual, report };
+};
+
+const readPinnedLiveCaptureWitness = async ({ file, expectedSha256 }) => {
+  if (
+    typeof file !== "string" ||
+    !file.trim() ||
+    !/^0x[0-9a-f]{64}$/u.test(String(expectedSha256 ?? "").toLowerCase())
+  ) {
     throw new Error(
-      "Pinned pre-live Solana production-gate report is invalid JSON.",
+      "Solana live-video success requires a semantic capture witness path and exact canonical SHA-256.",
     );
   }
-  return { path: resolved, sha256: actual, report };
+  const resolved = path.resolve(file);
+  const bytes = await readStableRegularFile(resolved, {
+    label: "Pinned Solana live capture semantic witness",
+    maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
+  });
+  const actual = `0x${createHash("sha256").update(bytes).digest("hex")}`;
+  if (actual !== String(expectedSha256).toLowerCase()) {
+    throw new Error(
+      `Pinned Solana live capture witness SHA-256 mismatch: expected ${expectedSha256}, got ${actual}.`,
+    );
+  }
+  const witness = parseSolanaLiveCaptureCanonicalArtifactBytes(
+    bytes,
+    "Pinned Solana live capture semantic witness",
+  );
+  return {
+    path: resolved,
+    size: bytes.length,
+    sha256: actual,
+    witness,
+  };
+};
+
+const readPinnedLiveCaptureReviewAttestation = async ({
+  file,
+  expectedSha256,
+}) => {
+  if (
+    typeof file !== "string" ||
+    !file.trim() ||
+    !/^0x[0-9a-f]{64}$/u.test(String(expectedSha256 ?? "").toLowerCase())
+  ) {
+    throw new Error(
+      "Solana live-video success requires a detached capture-review attestation path and exact canonical SHA-256.",
+    );
+  }
+  const resolved = path.resolve(file);
+  const bytes = await readStableRegularFile(resolved, {
+    label: "Pinned Solana live capture review attestation",
+    maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
+  });
+  const actual = `0x${createHash("sha256").update(bytes).digest("hex")}`;
+  if (actual !== String(expectedSha256).toLowerCase()) {
+    throw new Error(
+      `Pinned Solana live capture review attestation SHA-256 mismatch: expected ${expectedSha256}, got ${actual}.`,
+    );
+  }
+  const attestation = parseSolanaLiveCaptureCanonicalArtifactBytes(
+    bytes,
+    "Pinned Solana live capture review attestation",
+  );
+  return {
+    path: resolved,
+    size: bytes.length,
+    sha256: actual,
+    attestation,
+  };
 };
 
 const readPinnedPreLiveSnapshotJson = async (snapshot, id) => {
@@ -369,53 +504,118 @@ const readPinnedPreLiveSnapshotJson = async (snapshot, id) => {
       `Pinned Solana live-video prerequisite ${id} changed after the production gate snapshot.`,
     );
   }
-  try {
-    return JSON.parse(bytes.toString("utf8"));
-  } catch {
-    throw new Error(
-      `Pinned Solana live-video prerequisite ${id} is invalid JSON.`,
-    );
-  }
+  return parseSolanaLiveVideoPinnedJsonBytes(
+    bytes,
+    `Pinned Solana live-video prerequisite ${id}`,
+  );
 };
 
-const productionGateOptionsFromPreLiveSnapshot = ({ snapshot, outputDir }) => {
+const readPinnedCaptureReviewTrust = async ({
+  snapshot,
+  expectedProverGovernanceApprovalSha256,
+}) => {
+  const approvalEntry = snapshot?.inputs?.proverGovernanceApproval;
+  const policyEntry = snapshot?.inputs?.captureReviewPolicy;
+  if (!approvalEntry?.present || !policyEntry?.present) {
+    throw new Error(
+      "Pinned pre-live snapshot is missing the prover approval or capture-review policy.",
+    );
+  }
+  const readExact = async (entry, label) => {
+    const bytes = await readStableRegularFile(entry.path, {
+      label,
+      maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
+    });
+    const sha256 = `0x${createHash("sha256").update(bytes).digest("hex")}`;
+    if (bytes.length !== entry.size || sha256 !== entry.sha256) {
+      throw new Error(`${label} changed after the pre-live snapshot.`);
+    }
+    const value = parseSolanaGovernanceCanonicalJsonBytes(bytes, label);
+    if (!isRecord(value)) {
+      throw new Error(`${label} must contain one canonical JSON object.`);
+    }
+    return { bytes, sha256, value };
+  };
+  const approval = await readExact(
+    approvalEntry,
+    "Pinned exact Solana prover-governance approval",
+  );
+  const canonicalApprovalBytes = Buffer.from(
+    `${canonicalSolanaExactProverApprovalJson(approval.value)}\n`,
+    "utf8",
+  );
+  if (!canonicalApprovalBytes.equals(approval.bytes)) {
+    throw new Error(
+      "Pinned exact Solana prover-governance approval is not compact canonical JSON.",
+    );
+  }
+  const approvalValidation = buildExactSolanaProductionProverApprovalValidation(
+    {
+      approvalRecord: approval.value,
+      approvalPath: approvalEntry.path,
+      approvalSha256: approval.sha256,
+      expectedApprovalSha256: expectedProverGovernanceApprovalSha256,
+    },
+  );
+  if (!approvalValidation.ready) {
+    throw new Error(
+      "Pinned exact Solana prover-governance approval v2 failed fresh validation.",
+    );
+  }
+  const policy = await readExact(
+    policyEntry,
+    "Pinned Solana live capture review policy",
+  );
+  const canonicalPolicyBytes = Buffer.from(
+    `${canonicalSccpJson(policy.value)}\n`,
+    "utf8",
+  );
+  if (!canonicalPolicyBytes.equals(policy.bytes)) {
+    throw new Error(
+      "Pinned Solana live capture review policy is not compact canonical SCCP JSON.",
+    );
+  }
+  const normalizedPolicy = normalizeSolanaLiveCaptureReviewPolicy(
+    policy.value,
+    {
+      actualPolicySha256: policy.sha256,
+      expectedPolicySha256: approvalValidation.pins.captureReviewPolicySha256,
+    },
+  );
+  return {
+    approvalValidation,
+    policy: normalizedPolicy,
+    policyPath: policyEntry.path,
+    policySha256: policy.sha256,
+  };
+};
+
+export const productionGateOptionsFromPreLiveSnapshot = ({
+  snapshot,
+  productionGateReport,
+  outputDir,
+  proverGovernanceApprovalSha256,
+}) => {
   const pathFor = (id) => snapshot.inputs[id].path;
   return {
-    requirements: pathFor("requirements"),
-    postDeployEvidence: pathFor("postDeployEvidence"),
-    proverReadiness: pathFor("proverReadiness"),
-    productionMaterialInventory: pathFor("productionMaterialInventory"),
-    routeManifest: pathFor("routeManifest"),
-    publishReadiness: pathFor("publishReadiness"),
-    routePublishBlocked: pathFor("routePublishBlocked"),
-    routePublicationRequest: pathFor("routePublicationRequest"),
-    routePublicationRequestSha256:
-      snapshot.inputs.routePublicationRequest.sha256,
-    routeManagerAccess: pathFor("routeManagerAccess"),
-    routeManagerAccessSha256: snapshot.inputs.routeManagerAccess.sha256,
-    operatorHandoff: pathFor("operatorHandoff"),
-    operatorHandoffSha256: snapshot.inputs.operatorHandoff.sha256,
-    activationPackage: pathFor("activationPackage"),
-    activationPackageSha256: snapshot.inputs.activationPackage.sha256,
-    laneActivationRequest: pathFor("laneActivationRequest"),
-    laneActivationRequestSha256: snapshot.inputs.laneActivationRequest.sha256,
-    laneActivationProposal: pathFor("laneActivationProposal"),
-    laneActivationProposalSha256: snapshot.inputs.laneActivationProposal.sha256,
-    sourceMaterialHandoff: pathFor("sourceMaterialHandoff"),
-    handoffVerification: pathFor("handoffVerification"),
-    sourceBurnReadiness: pathFor("sourceBurnReadiness"),
-    sourceBurnSubmission: pathFor("sourceBurnSubmission"),
-    proofMaterialRequest: pathFor("proofMaterialRequest"),
-    proofMaterialBundle: pathFor("proofMaterialBundle"),
-    proofMaterialCeremonyPackage: pathFor("proofMaterialCeremonyPackage"),
+    captureReviewPolicy: pathFor("captureReviewPolicy"),
+    captureReviewPolicySha256: snapshot.inputs.captureReviewPolicy.sha256,
+    proverGovernanceApproval: pathFor("proverGovernanceApproval"),
+    governancePlan: pathFor("governancePlan"),
+    governancePlanSha256: productionGateReport?.governanceEvidence?.planSha256,
+    governanceRegistration: pathFor("governanceRegistration"),
+    governanceRegistrationSha256: snapshot.inputs.governanceRegistration.sha256,
+    governanceActivation: pathFor("governanceActivation"),
+    governanceActivationSha256: snapshot.inputs.governanceActivation.sha256,
+    orderedInitializationEvidence: pathFor("orderedInitializationEvidence"),
+    orderedInitializationEvidenceSha256:
+      snapshot.inputs.orderedInitializationEvidence.sha256,
     smokeReadiness: pathFor("smokeReadiness"),
-    deploymentVideoTranscript: pathFor("deploymentVideoTranscript"),
-    deploymentVideoMp4: pathFor("deploymentVideoMp4"),
-    deploymentVideoVtt: pathFor("deploymentVideoVtt"),
     liveVideoTranscript: path.join(outputDir, "sccp-solana-live-video.json"),
     liveVideoMp4: path.join(outputDir, "sccp-solana-live-video.mp4"),
     liveVideoVtt: path.join(outputDir, "sccp-solana-live-video.vtt"),
     expectedPreLiveInputSnapshotSha256: snapshot.preLiveInputSnapshotSha256,
+    proverGovernanceApprovalSha256,
   };
 };
 
@@ -506,15 +706,6 @@ const normalizeActionDetail = (action, source, prefix = "") => {
   };
 };
 
-const actionDetails = (record, source, prefix = "") => [
-  ...readArray(record, "nextActionDetails")
-    .map((action) => normalizeActionDetail(action, source, prefix))
-    .filter(Boolean),
-  ...readArray(record, "nextActions")
-    .map((action) => normalizeActionDetail(action, source, prefix))
-    .filter(Boolean),
-];
-
 const uniqueActionDetails = (actions) => {
   const byId = new Map();
   for (const action of actions.filter(Boolean)) {
@@ -562,8 +753,56 @@ const parseWebVttCues = (webvtt) => {
   return cues;
 };
 
-const summarizeSubtitleCues = (subtitleCues) => {
+const webVttTimestampMilliseconds = (value) => {
+  const match = /^(?:(\d{2,}):)?(\d{2}):(\d{2})\.(\d{3})$/u.exec(
+    String(value ?? ""),
+  );
+  if (!match) return null;
+  const hours = Number(match[1] ?? 0);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3]);
+  const milliseconds = Number(match[4]);
+  if (
+    !Number.isSafeInteger(hours) ||
+    minutes >= 60 ||
+    seconds >= 60 ||
+    milliseconds >= 1000
+  ) {
+    return null;
+  }
+  return ((hours * 60 + minutes) * 60 + seconds) * 1000 + milliseconds;
+};
+
+const canonicalSubtitleCueTimeline = (subtitleCues) => {
+  if (!Array.isArray(subtitleCues)) return null;
+  const normalized = subtitleCues.map((cue, index) => {
+    const startMilliseconds = webVttTimestampMilliseconds(cue?.start);
+    const endMilliseconds = webVttTimestampMilliseconds(cue?.end);
+    const text = typeof cue?.text === "string" ? cue.text : null;
+    if (
+      startMilliseconds === null ||
+      endMilliseconds === null ||
+      endMilliseconds <= startMilliseconds ||
+      text === null
+    ) {
+      return null;
+    }
+    const parsedStep = Number(text.match(/^Step\s+(\d+):/u)?.[1] ?? 0);
+    return {
+      index: index + 1,
+      startMilliseconds,
+      endMilliseconds,
+      text,
+      step:
+        Number.isSafeInteger(parsedStep) && parsedStep > 0 ? parsedStep : null,
+    };
+  });
+  return normalized.every(Boolean) ? normalized : null;
+};
+
+export const summarizeSolanaLiveVideoSubtitleCues = (subtitleCues) => {
   const cueTexts = subtitleCues.map((cue) => cue.text);
+  const cueTimeline = canonicalSubtitleCueTimeline(subtitleCues);
   return {
     cueCount: subtitleCues.length,
     numberedStepCount: new Set(
@@ -572,60 +811,958 @@ const summarizeSubtitleCues = (subtitleCues) => {
         .filter((step) => Number.isSafeInteger(step) && step > 0),
     ).size,
     cueTextSha256: cueTextHash(cueTexts),
+    cueTimelineSha256: cueTimeline
+      ? sha256Hex(canonicalSccpJson(cueTimeline))
+      : null,
   };
 };
 
-const renderSolanaLiveVideoMp4 = ({
+const hashStableMediaDescriptor = (fd) => {
+  const info = fstatSync(fd);
+  const digest = createHash("sha256");
+  const chunk = Buffer.allocUnsafe(1024 * 1024);
+  let offset = 0;
+  while (offset < info.size) {
+    const bytesRead = readSync(
+      fd,
+      chunk,
+      0,
+      Math.min(chunk.length, info.size - offset),
+      offset,
+    );
+    if (bytesRead <= 0) {
+      throw new Error("Solana live capture ended while it was being hashed.");
+    }
+    digest.update(chunk.subarray(0, bytesRead));
+    offset += bytesRead;
+  }
+  return {
+    size: info.size,
+    sha256: `0x${digest.digest("hex")}`,
+  };
+};
+
+const parseFrameMd5Hashes = (output) =>
+  String(output ?? "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .map((line) => line.split(",").at(-1)?.trim().toLowerCase() ?? "")
+    .filter((value) => /^[0-9a-f]{32,64}$/u.test(value));
+
+const parseAudioMaxVolumeDb = (output) => {
+  const matches = [
+    ...String(output ?? "").matchAll(/max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB/giu),
+  ];
+  const value = Number(matches.at(-1)?.[1]);
+  return Number.isFinite(value) ? value : null;
+};
+
+const parseDecodedEssenceSha256 = (output, streamType) => {
+  const match = new RegExp(`^0,${streamType},SHA256=([0-9a-f]{64})$`, "u").exec(
+    String(output ?? "").trim(),
+  );
+  return match ? `0x${match[1]}` : null;
+};
+
+const hashDecodedMediaEssence = ({ descriptorFd, streamType }) => {
+  if (!Number.isInteger(descriptorFd) || !["v", "a"].includes(streamType)) {
+    throw new Error("Stable decoded-essence descriptor is invalid.");
+  }
+  const streamArgs =
+    streamType === "v"
+      ? [
+          "-map",
+          "0:v:0",
+          "-c:v",
+          "rawvideo",
+          "-fps_mode:v",
+          "passthrough",
+          "-an",
+        ]
+      : ["-map", "0:a:0", "-c:a", "pcm_f32le", "-vn"];
+  const result = spawnSync(
+    "ffmpeg",
+    [
+      "-v",
+      "error",
+      "-bitexact",
+      "-xerror",
+      "-max_error_rate",
+      "0",
+      "-abort_on",
+      "empty_output_stream",
+      "-err_detect",
+      "explode",
+      "-protocol_whitelist",
+      "file,pipe",
+      "-i",
+      "/dev/fd/3",
+      ...streamArgs,
+      "-f",
+      "streamhash",
+      "-hash",
+      "sha256",
+      "pipe:1",
+    ],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe", descriptorFd],
+      timeout: SOLANA_LIVE_CAPTURE_ESSENCE_TIMEOUT_MS,
+      maxBuffer: 1024,
+    },
+  );
+  const sha256 =
+    result.status === 0
+      ? parseDecodedEssenceSha256(result.stdout, streamType)
+      : null;
+  if (!sha256) {
+    throw new Error(
+      `ffmpeg failed strict full decoded ${streamType === "v" ? "video" : "audio"} essence hashing: ${String(result.stderr ?? "")}`,
+    );
+  }
+  return sha256;
+};
+
+const sampleHashSequenceSha256 = (hashes) =>
+  Array.isArray(hashes) && hashes.length > 0
+    ? `0x${createHash("sha256").update(hashes.join("\n"), "utf8").digest("hex")}`
+    : null;
+
+const normalizedStreamTimeline = (stream) => {
+  const timeBase = String(stream?.time_base ?? "");
+  const startTime = String(stream?.start_time ?? "");
+  const duration = String(stream?.duration ?? "");
+  const frameCountText = String(
+    stream?.nb_read_frames ?? stream?.nb_frames ?? "",
+  );
+  const frameCount = Number(frameCountText);
+  const ready =
+    /^\d+\/[1-9]\d*$/u.test(timeBase) &&
+    /^-?\d+(?:\.\d+)?$/u.test(startTime) &&
+    /^\d+(?:\.\d+)?$/u.test(duration) &&
+    Number.isSafeInteger(frameCount) &&
+    frameCount > 0;
+  return {
+    ready,
+    timeBase: ready ? timeBase : null,
+    startTime: ready ? startTime : null,
+    duration: ready ? duration : null,
+    frameCount: ready ? frameCount : null,
+  };
+};
+
+export const buildSolanaLiveCaptureInspection = ({
+  ffprobe = null,
+  frameHashes = [],
+  audioFrameHashes = [],
+  audioMaxVolumeDb = null,
+  size = null,
+  sha256 = null,
+  videoEssenceSha256 = null,
+  audioEssenceSha256 = null,
+  semanticWitnessAnalysis = null,
+  expectedSubtitleCount = null,
+} = {}) => {
+  const streams = Array.isArray(ffprobe?.streams) ? ffprobe.streams : [];
+  const videoStreams = streams.filter(
+    (stream) => stream?.codec_type === "video",
+  );
+  const audioStreams = streams.filter(
+    (stream) => stream?.codec_type === "audio",
+  );
+  const subtitleStreams = streams.filter(
+    (stream) => stream?.codec_type === "subtitle",
+  );
+  const unexpectedStreams = streams.filter(
+    (stream) => !["video", "audio", "subtitle"].includes(stream?.codec_type),
+  );
+  const video = videoStreams[0] ?? null;
+  const audio = audioStreams[0] ?? null;
+  const videoTimeline = normalizedStreamTimeline(video);
+  const audioTimeline = normalizedStreamTimeline(audio);
+  const durationSeconds = Number(ffprobe?.format?.duration);
+  const width = Number(video?.width);
+  const height = Number(video?.height);
+  const normalizedFrameHashes = Array.isArray(frameHashes)
+    ? frameHashes.filter((value) => /^[0-9a-f]{32,64}$/u.test(String(value)))
+    : [];
+  const uniqueFrameCount = new Set(normalizedFrameHashes).size;
+  const normalizedAudioFrameHashes = Array.isArray(audioFrameHashes)
+    ? audioFrameHashes.filter((value) =>
+        /^[0-9a-f]{32,64}$/u.test(String(value)),
+      )
+    : [];
+  const formatName = String(ffprobe?.format?.format_name ?? "");
+  const blockers = [];
+  if (!Number.isSafeInteger(size) || size <= 0) blockers.push("capture-bytes");
+  if (!/^0x[0-9a-f]{64}$/u.test(String(sha256 ?? ""))) {
+    blockers.push("capture-sha256");
+  }
+  if (!video) {
+    blockers.push("capture-video-stream");
+  } else if (video.codec_name !== "h264") {
+    blockers.push("capture-video-codec-h264");
+  } else if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width < SOLANA_LIVE_CAPTURE_MIN_WIDTH ||
+    height < SOLANA_LIVE_CAPTURE_MIN_HEIGHT
+  ) {
+    blockers.push("capture-video-resolution");
+  }
+  if (videoStreams.length !== 1) {
+    blockers.push("capture-video-stream-shape");
+  }
+  if (!audio) {
+    blockers.push("capture-audio-stream");
+  } else if (audio.codec_name !== "aac") {
+    blockers.push("capture-audio-codec-aac");
+  }
+  if (audioStreams.length !== 1) {
+    blockers.push("capture-audio-stream-shape");
+  }
+  if (
+    Number.isSafeInteger(expectedSubtitleCount) &&
+    (subtitleStreams.length !== expectedSubtitleCount ||
+      (expectedSubtitleCount === 1 &&
+        subtitleStreams[0]?.codec_name !== "mov_text"))
+  ) {
+    blockers.push("capture-subtitle-stream-shape");
+  }
+  if (unexpectedStreams.length > 0) {
+    blockers.push("capture-unexpected-streams");
+  }
+  if (
+    Number.isSafeInteger(expectedSubtitleCount) &&
+    (!videoTimeline.ready || !audioTimeline.ready)
+  ) {
+    blockers.push("capture-stream-timeline");
+  }
+  if (!/(^|,)mov|mp4|m4a|3gp|3g2|mj2(,|$)/u.test(formatName)) {
+    blockers.push("capture-container-mp4");
+  }
+  if (
+    !Number.isFinite(durationSeconds) ||
+    durationSeconds < SOLANA_LIVE_CAPTURE_MIN_DURATION_SECONDS ||
+    durationSeconds > SOLANA_LIVE_CAPTURE_MAX_DURATION_SECONDS
+  ) {
+    blockers.push("capture-duration");
+  }
+  if (normalizedFrameHashes.length < SOLANA_LIVE_CAPTURE_MIN_SAMPLED_FRAMES) {
+    blockers.push("capture-frame-samples");
+  }
+  if (uniqueFrameCount < SOLANA_LIVE_CAPTURE_MIN_UNIQUE_FRAMES) {
+    blockers.push("capture-frame-variation");
+  }
+  if (normalizedAudioFrameHashes.length === 0) {
+    blockers.push("capture-audio-samples");
+  }
+  if (
+    !Number.isFinite(audioMaxVolumeDb) ||
+    audioMaxVolumeDb < SOLANA_LIVE_CAPTURE_MIN_AUDIO_MAX_VOLUME_DB
+  ) {
+    blockers.push("capture-non-silent-audio");
+  }
+  if (!/^0x[0-9a-f]{64}$/u.test(String(videoEssenceSha256 ?? ""))) {
+    blockers.push("capture-full-video-essence");
+  }
+  if (!/^0x[0-9a-f]{64}$/u.test(String(audioEssenceSha256 ?? ""))) {
+    blockers.push("capture-full-audio-essence");
+  }
+  if (
+    semanticWitnessAnalysis?.ready !== true ||
+    semanticWitnessAnalysis?.semanticallyBound !== true
+  ) {
+    blockers.push("capture-semantic-witness");
+  }
+  if (
+    semanticWitnessAnalysis?.reviewAuthentication?.ready !== true ||
+    semanticWitnessAnalysis?.reviewAuthentication?.authenticated !== true
+  ) {
+    blockers.push("capture-review-authentication");
+  }
+  return {
+    ready: blockers.length === 0,
+    verifiedRealCapture: blockers.length === 0,
+    size: Number.isSafeInteger(size) ? size : null,
+    sha256: /^0x[0-9a-f]{64}$/u.test(String(sha256 ?? "")) ? sha256 : null,
+    durationSeconds: Number.isFinite(durationSeconds) ? durationSeconds : null,
+    streams: {
+      video: video
+        ? {
+            present: true,
+            codec: video.codec_name ?? null,
+            width: Number.isFinite(width) ? width : null,
+            height: Number.isFinite(height) ? height : null,
+          }
+        : { present: false },
+      audio: audio
+        ? { present: true, codec: audio.codec_name ?? null }
+        : { present: false },
+    },
+    sampledFrameCount: normalizedFrameHashes.length,
+    uniqueFrameCount,
+    sampledFrameSha256: sampleHashSequenceSha256(normalizedFrameHashes),
+    audioSampleCount: normalizedAudioFrameHashes.length,
+    audioSampleSha256: sampleHashSequenceSha256(normalizedAudioFrameHashes),
+    videoEssenceSha256: /^0x[0-9a-f]{64}$/u.test(
+      String(videoEssenceSha256 ?? ""),
+    )
+      ? videoEssenceSha256
+      : null,
+    audioEssenceSha256: /^0x[0-9a-f]{64}$/u.test(
+      String(audioEssenceSha256 ?? ""),
+    )
+      ? audioEssenceSha256
+      : null,
+    audioMaxVolumeDb: Number.isFinite(audioMaxVolumeDb)
+      ? audioMaxVolumeDb
+      : null,
+    semanticWitnessAnalysis,
+    streamShape: {
+      videoCount: videoStreams.length,
+      audioCount: audioStreams.length,
+      subtitleCount: subtitleStreams.length,
+      expectedSubtitleCount: Number.isSafeInteger(expectedSubtitleCount)
+        ? expectedSubtitleCount
+        : null,
+      subtitleCodec: subtitleStreams[0]?.codec_name ?? null,
+      unexpectedCount: unexpectedStreams.length,
+    },
+    streamTimeline: {
+      video: videoTimeline,
+      audio: audioTimeline,
+    },
+    thresholds: {
+      minimumDurationSeconds: SOLANA_LIVE_CAPTURE_MIN_DURATION_SECONDS,
+      maximumDurationSeconds: SOLANA_LIVE_CAPTURE_MAX_DURATION_SECONDS,
+      minimumWidth: SOLANA_LIVE_CAPTURE_MIN_WIDTH,
+      minimumHeight: SOLANA_LIVE_CAPTURE_MIN_HEIGHT,
+      minimumSampledFrames: SOLANA_LIVE_CAPTURE_MIN_SAMPLED_FRAMES,
+      minimumUniqueFrames: SOLANA_LIVE_CAPTURE_MIN_UNIQUE_FRAMES,
+      minimumAudioMaxVolumeDb: SOLANA_LIVE_CAPTURE_MIN_AUDIO_MAX_VOLUME_DB,
+    },
+    blockers,
+  };
+};
+
+const extractNormalizedSemanticWitnessFrame = ({
+  descriptorFd,
+  atMilliseconds,
+  timeoutMs = SOLANA_LIVE_CAPTURE_PROBE_TIMEOUT_MS,
+}) => {
+  if (!Number.isInteger(descriptorFd)) {
+    throw new Error("Stable semantic witness frame descriptor is missing.");
+  }
+  const frame = spawnSync(
+    "ffmpeg",
+    [
+      "-v",
+      "error",
+      "-ss",
+      (atMilliseconds / 1000).toFixed(3),
+      "-i",
+      "/dev/fd/3",
+      "-map",
+      "0:v:0",
+      "-frames:v",
+      "1",
+      "-vf",
+      `scale=${SOLANA_LIVE_CAPTURE_WITNESS_FRAME_WIDTH}:${SOLANA_LIVE_CAPTURE_WITNESS_FRAME_HEIGHT}:force_original_aspect_ratio=decrease,pad=${SOLANA_LIVE_CAPTURE_WITNESS_FRAME_WIDTH}:${SOLANA_LIVE_CAPTURE_WITNESS_FRAME_HEIGHT}:(ow-iw)/2:(oh-ih)/2,format=gray`,
+      "-f",
+      "rawvideo",
+      "pipe:1",
+    ],
+    {
+      encoding: null,
+      stdio: ["ignore", "pipe", "pipe", descriptorFd],
+      timeout: timeoutMs,
+      maxBuffer:
+        SOLANA_LIVE_CAPTURE_WITNESS_FRAME_WIDTH *
+        SOLANA_LIVE_CAPTURE_WITNESS_FRAME_HEIGHT *
+        2,
+    },
+  );
+  if (frame.status !== 0) {
+    throw new Error(
+      `ffmpeg failed to extract a semantic witness frame: ${String(frame.stderr ?? "")}`,
+    );
+  }
+  const grayscaleBytes = new Uint8Array(
+    frame.stdout.buffer,
+    frame.stdout.byteOffset,
+    frame.stdout.byteLength,
+  );
+  return {
+    normalizedFrameSha256: `0x${createHash("sha256")
+      .update(grayscaleBytes)
+      .digest("hex")}`,
+    decodedPayload: decodeSolanaLiveCaptureWitnessQr({ grayscaleBytes }),
+  };
+};
+
+const extractSemanticWitnessSamples = ({ normalizedWitness, descriptorFd }) =>
+  normalizedWitness.markers.map((marker) => ({
+    id: marker.id,
+    atMilliseconds: marker.atMilliseconds,
+    dwellFrames: SOLANA_LIVE_CAPTURE_WITNESS_DWELL_OFFSETS_MILLISECONDS.map(
+      (offsetMilliseconds) => ({
+        offsetMilliseconds,
+        ...extractNormalizedSemanticWitnessFrame({
+          descriptorFd,
+          atMilliseconds: marker.atMilliseconds + offsetMilliseconds,
+        }),
+      }),
+    ),
+  }));
+
+export const buildSolanaGeneratedLiveVideoBinding = ({
+  inspection,
+  sourceCapture,
+  embeddedSubtitleSummary,
+  subtitleSummary,
+}) => {
+  const subtitleMatches =
+    embeddedSubtitleSummary?.cueCount === subtitleSummary?.cueCount &&
+    embeddedSubtitleSummary?.numberedStepCount ===
+      subtitleSummary?.numberedStepCount &&
+    embeddedSubtitleSummary?.cueTextSha256 === subtitleSummary?.cueTextSha256 &&
+    /^0x[0-9a-f]{64}$/u.test(
+      String(embeddedSubtitleSummary?.cueTimelineSha256 ?? ""),
+    ) &&
+    embeddedSubtitleSummary?.cueTimelineSha256 ===
+      subtitleSummary?.cueTimelineSha256;
+  const durationMatches =
+    Number.isFinite(Number(inspection?.durationSeconds)) &&
+    Number.isFinite(Number(sourceCapture?.durationSeconds)) &&
+    Math.abs(
+      Number(inspection.durationSeconds) -
+        Number(sourceCapture.durationSeconds),
+    ) <= 0.05;
+  const streamShapeMatches =
+    inspection?.streams?.video?.codec === "h264" &&
+    sourceCapture?.streams?.video?.codec === "h264" &&
+    inspection?.streams?.audio?.codec === "aac" &&
+    sourceCapture?.streams?.audio?.codec === "aac" &&
+    inspection?.streams?.video?.width ===
+      sourceCapture?.streams?.video?.width &&
+    inspection?.streams?.video?.height ===
+      sourceCapture?.streams?.video?.height &&
+    inspection?.streamShape?.videoCount === 1 &&
+    inspection?.streamShape?.audioCount === 1 &&
+    inspection?.streamShape?.subtitleCount === 1 &&
+    inspection?.streamShape?.subtitleCodec === "mov_text" &&
+    inspection?.streamShape?.unexpectedCount === 0 &&
+    sourceCapture?.streamShape?.videoCount === 1 &&
+    sourceCapture?.streamShape?.audioCount === 1 &&
+    sourceCapture?.streamShape?.subtitleCount === 0 &&
+    sourceCapture?.streamShape?.unexpectedCount === 0;
+  const streamTimelineMatches =
+    inspection?.streamTimeline?.video?.ready === true &&
+    inspection?.streamTimeline?.audio?.ready === true &&
+    sourceCapture?.streamTimeline?.video?.ready === true &&
+    sourceCapture?.streamTimeline?.audio?.ready === true &&
+    canonicalSccpJson(inspection.streamTimeline.video) ===
+      canonicalSccpJson(sourceCapture.streamTimeline.video) &&
+    canonicalSccpJson(inspection.streamTimeline.audio) ===
+      canonicalSccpJson(sourceCapture.streamTimeline.audio);
+  const sourceContentMatches =
+    durationMatches &&
+    streamShapeMatches &&
+    streamTimelineMatches &&
+    inspection?.sampledFrameSha256 === sourceCapture?.sampledFrameSha256 &&
+    inspection?.audioSampleSha256 === sourceCapture?.audioSampleSha256 &&
+    inspection?.videoEssenceSha256 === sourceCapture?.videoEssenceSha256 &&
+    inspection?.audioEssenceSha256 === sourceCapture?.audioEssenceSha256 &&
+    canonicalSccpJson(inspection?.semanticWitnessAnalysis?.markers ?? []) ===
+      canonicalSccpJson(sourceCapture?.semanticWitnessAnalysis?.markers ?? []);
+  const blockers = Array.isArray(inspection?.blockers)
+    ? [...inspection.blockers]
+    : ["generated-media-inspection"];
+  if (!subtitleMatches) blockers.push("generated-embedded-vtt-binding");
+  if (!sourceContentMatches) {
+    blockers.push("generated-source-capture-content-binding");
+  }
+  return {
+    ...inspection,
+    ready: blockers.length === 0,
+    verifiedGeneratedMedia: blockers.length === 0,
+    embeddedSubtitleSummary,
+    subtitleMatches,
+    durationMatches,
+    streamShapeMatches,
+    streamTimelineMatches,
+    sourceContentMatches,
+    blockers,
+  };
+};
+
+const renderPinnedSolanaLiveCapture = ({
+  captureVideoPath,
+  expectedCaptureSha256,
+  captureWitness,
+  captureReviewAttestation,
+  captureWitnessArtifactSha256,
+  captureReviewPolicy,
+  liveEvidence,
+  preLiveInputSnapshotSha256,
+  subtitlesPath,
+  temporaryVideoPath,
+}) => {
+  if (process.platform === "win32") {
+    throw new Error(
+      "Stable descriptor-bound Solana live capture verification is unavailable on Windows.",
+    );
+  }
+  const expected = String(expectedCaptureSha256 ?? "").toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/u.test(expected)) {
+    throw new Error(
+      "Solana live capture requires an independently supplied lowercase 0x SHA-256.",
+    );
+  }
+  return withStableRegularFileDescriptorsSync(
+    captureVideoPath,
+    (
+      [
+        probeFd,
+        frameFd,
+        audioFd,
+        videoEssenceFd,
+        audioEssenceFd,
+        muxFd,
+        hashFd,
+        ...semanticFrameFds
+      ],
+      resolved,
+    ) => {
+      const descriptorPath = "/dev/fd/3";
+      const childOptions = (fd) => ({
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe", fd],
+        timeout: SOLANA_LIVE_CAPTURE_PROBE_TIMEOUT_MS,
+        maxBuffer: SOLANA_LIVE_CAPTURE_PROBE_MAX_BUFFER_BYTES,
+      });
+      const artifact = hashStableMediaDescriptor(hashFd);
+      if (artifact.sha256 !== expected) {
+        throw new Error(
+          `Solana live capture SHA-256 mismatch: expected ${expected}, got ${artifact.sha256}.`,
+        );
+      }
+      const ffprobe = spawnSync(
+        "ffprobe",
+        [
+          "-v",
+          "error",
+          "-count_frames",
+          "-show_entries",
+          "format=duration,format_name:stream=index,codec_name,codec_type,width,height,time_base,start_time,duration,nb_frames,nb_read_frames",
+          "-of",
+          "json",
+          descriptorPath,
+        ],
+        childOptions(probeFd),
+      );
+      if (ffprobe.status !== 0) {
+        throw new Error(
+          `ffprobe failed to inspect the Solana live capture: ${ffprobe.stderr || ffprobe.stdout}`,
+        );
+      }
+      let mediaProbe;
+      try {
+        mediaProbe = JSON.parse(ffprobe.stdout || "{}");
+      } catch {
+        throw new Error("ffprobe returned invalid Solana live capture JSON.");
+      }
+      const normalizedWitness = normalizeSolanaLiveCaptureWitness(
+        captureWitness,
+        {
+          liveEvidence,
+          preLiveInputSnapshotSha256,
+          expectedCaptureSha256: artifact.sha256,
+          reviewPolicySha256: captureReviewPolicy.policySha256,
+          durationSeconds: Number(mediaProbe?.format?.duration),
+        },
+      );
+      const captureReviewAuthentication =
+        verifySolanaLiveCaptureReviewAttestation({
+          attestation: captureReviewAttestation,
+          witness: normalizedWitness,
+          witnessArtifactSha256: captureWitnessArtifactSha256,
+          reviewPolicy: captureReviewPolicy,
+        });
+      const semanticSamples = extractSemanticWitnessSamples({
+        normalizedWitness,
+        descriptorFd: semanticFrameFds[0],
+      });
+      const semanticWitnessAnalysis = analyzeSolanaLiveCaptureWitnessFrames({
+        witness: normalizedWitness,
+        samples: semanticSamples,
+      });
+      semanticWitnessAnalysis.reviewAuthentication =
+        captureReviewAuthentication;
+      const frames = spawnSync(
+        "ffmpeg",
+        [
+          "-v",
+          "error",
+          "-i",
+          descriptorPath,
+          "-an",
+          "-vf",
+          "fps=1,scale=160:-2",
+          "-f",
+          "framemd5",
+          "pipe:1",
+        ],
+        childOptions(frameFd),
+      );
+      if (frames.status !== 0) {
+        throw new Error(
+          `ffmpeg failed to sample the Solana live capture: ${frames.stderr || frames.stdout}`,
+        );
+      }
+      const audio = spawnSync(
+        "ffmpeg",
+        [
+          "-hide_banner",
+          "-nostats",
+          "-i",
+          descriptorPath,
+          "-map",
+          "0:a:0",
+          "-af",
+          "volumedetect",
+          "-f",
+          "framemd5",
+          "pipe:1",
+        ],
+        childOptions(audioFd),
+      );
+      if (audio.status !== 0) {
+        throw new Error(
+          `ffmpeg failed to analyze Solana live capture audio: ${audio.stderr || audio.stdout}`,
+        );
+      }
+      const inspection = buildSolanaLiveCaptureInspection({
+        ffprobe: mediaProbe,
+        frameHashes: parseFrameMd5Hashes(frames.stdout),
+        audioFrameHashes: parseFrameMd5Hashes(audio.stdout),
+        audioMaxVolumeDb: parseAudioMaxVolumeDb(audio.stderr),
+        videoEssenceSha256: hashDecodedMediaEssence({
+          descriptorFd: videoEssenceFd,
+          streamType: "v",
+        }),
+        audioEssenceSha256: hashDecodedMediaEssence({
+          descriptorFd: audioEssenceFd,
+          streamType: "a",
+        }),
+        semanticWitnessAnalysis,
+        expectedSubtitleCount: 0,
+        ...artifact,
+      });
+      if (!inspection.ready) {
+        throw new Error(
+          `Solana live capture is blank, silent, too short, or otherwise invalid: ${inspection.blockers.join(", ")}.`,
+        );
+      }
+      const mux = spawnSync(
+        "ffmpeg",
+        [
+          "-y",
+          "-i",
+          descriptorPath,
+          "-i",
+          subtitlesPath,
+          "-map",
+          "0:v:0",
+          "-map",
+          "0:a:0",
+          "-map",
+          "1:s:0",
+          "-c:v",
+          "copy",
+          "-c:a",
+          "copy",
+          "-c:s",
+          "mov_text",
+          "-movflags",
+          "+faststart",
+          temporaryVideoPath,
+        ],
+        childOptions(muxFd),
+      );
+      if (mux.status !== 0) {
+        throw new Error(
+          `ffmpeg failed to mux the Solana live capture: ${mux.stderr || mux.stdout}`,
+        );
+      }
+      return {
+        path: resolved,
+        mediaType: "video/mp4",
+        semanticWitness: normalizedWitness,
+        ...inspection,
+      };
+    },
+    {
+      label: "Pinned real Solana bidirectional live capture",
+      maxBytes: MAX_SOLANA_LIVE_CAPTURE_BYTES,
+      descriptorCount: 8,
+    },
+  );
+};
+
+const inspectGeneratedSolanaLiveVideoMp4 = ({
+  file,
+  sourceCapture,
+  captureWitness,
+  captureReviewAttestation,
+  captureWitnessArtifactSha256,
+  captureReviewPolicy,
+  liveEvidence,
+  preLiveInputSnapshotSha256,
+  subtitleSummary,
+}) =>
+  withStableRegularFileDescriptorsSync(
+    file,
+    ([
+      probeFd,
+      frameFd,
+      audioFd,
+      subtitleFd,
+      videoEssenceFd,
+      audioEssenceFd,
+      hashFd,
+      semanticFd,
+    ]) => {
+      const descriptorPath = "/dev/fd/3";
+      const run = (command, args, fd, encoding = "utf8") =>
+        spawnSync(command, args, {
+          encoding,
+          stdio: ["ignore", "pipe", "pipe", fd],
+          timeout: SOLANA_LIVE_CAPTURE_PROBE_TIMEOUT_MS,
+          maxBuffer: SOLANA_LIVE_CAPTURE_PROBE_MAX_BUFFER_BYTES,
+        });
+      const artifact = hashStableMediaDescriptor(hashFd);
+      const probe = run(
+        "ffprobe",
+        [
+          "-v",
+          "error",
+          "-count_frames",
+          "-show_entries",
+          "format=duration,format_name:stream=index,codec_name,codec_type,width,height,time_base,start_time,duration,nb_frames,nb_read_frames",
+          "-of",
+          "json",
+          descriptorPath,
+        ],
+        probeFd,
+      );
+      if (probe.status !== 0) {
+        throw new Error("Final Solana MP4 ffprobe verification failed.");
+      }
+      let parsed;
+      try {
+        parsed = JSON.parse(probe.stdout || "{}");
+      } catch {
+        throw new Error("Final Solana MP4 ffprobe JSON is invalid.");
+      }
+      const normalizedWitness = normalizeSolanaLiveCaptureWitness(
+        captureWitness,
+        {
+          liveEvidence,
+          preLiveInputSnapshotSha256,
+          expectedCaptureSha256: sourceCapture.sha256,
+          reviewPolicySha256: captureReviewPolicy.policySha256,
+          durationSeconds: Number(parsed?.format?.duration),
+        },
+      );
+      const captureReviewAuthentication =
+        verifySolanaLiveCaptureReviewAttestation({
+          attestation: captureReviewAttestation,
+          witness: normalizedWitness,
+          witnessArtifactSha256: captureWitnessArtifactSha256,
+          reviewPolicy: captureReviewPolicy,
+        });
+      const semanticWitnessAnalysis = analyzeSolanaLiveCaptureWitnessFrames({
+        witness: normalizedWitness,
+        samples: extractSemanticWitnessSamples({
+          normalizedWitness,
+          descriptorFd: semanticFd,
+        }),
+      });
+      semanticWitnessAnalysis.reviewAuthentication =
+        captureReviewAuthentication;
+      const frames = run(
+        "ffmpeg",
+        [
+          "-v",
+          "error",
+          "-i",
+          descriptorPath,
+          "-an",
+          "-vf",
+          "fps=1,scale=160:-2",
+          "-f",
+          "framemd5",
+          "pipe:1",
+        ],
+        frameFd,
+      );
+      const audio = run(
+        "ffmpeg",
+        [
+          "-hide_banner",
+          "-nostats",
+          "-i",
+          descriptorPath,
+          "-map",
+          "0:a:0",
+          "-af",
+          "volumedetect",
+          "-f",
+          "framemd5",
+          "pipe:1",
+        ],
+        audioFd,
+      );
+      const subtitles = run(
+        "ffmpeg",
+        [
+          "-v",
+          "error",
+          "-i",
+          descriptorPath,
+          "-map",
+          "0:s:0",
+          "-f",
+          "webvtt",
+          "pipe:1",
+        ],
+        subtitleFd,
+      );
+      if (frames.status !== 0 || audio.status !== 0 || subtitles.status !== 0) {
+        throw new Error(
+          "Final Solana MP4 frame, audio, or embedded-subtitle verification failed.",
+        );
+      }
+      const inspection = buildSolanaLiveCaptureInspection({
+        ffprobe: parsed,
+        frameHashes: parseFrameMd5Hashes(frames.stdout),
+        audioFrameHashes: parseFrameMd5Hashes(audio.stdout),
+        audioMaxVolumeDb: parseAudioMaxVolumeDb(audio.stderr),
+        videoEssenceSha256: hashDecodedMediaEssence({
+          descriptorFd: videoEssenceFd,
+          streamType: "v",
+        }),
+        audioEssenceSha256: hashDecodedMediaEssence({
+          descriptorFd: audioEssenceFd,
+          streamType: "a",
+        }),
+        semanticWitnessAnalysis,
+        expectedSubtitleCount: 1,
+        ...artifact,
+      });
+      const embeddedSubtitleSummary = summarizeSolanaLiveVideoSubtitleCues(
+        parseWebVttCues(subtitles.stdout),
+      );
+      return buildSolanaGeneratedLiveVideoBinding({
+        inspection,
+        sourceCapture,
+        embeddedSubtitleSummary,
+        subtitleSummary,
+      });
+    },
+    {
+      label: "Generated Solana SCCP live MP4",
+      maxBytes: MAX_SOLANA_LIVE_CAPTURE_BYTES,
+      descriptorCount: 8,
+    },
+  );
+
+export const renderSolanaLiveVideoMp4 = ({
   subtitlesPath,
   videoPath,
   durationSeconds,
   subtitleSummary,
+  liveCaptureVideo = null,
+  liveCaptureVideoSha256 = null,
+  liveCaptureWitness = null,
+  liveCaptureReviewAttestation = null,
+  liveCaptureWitnessArtifactSha256 = null,
+  captureReviewPolicy = null,
+  liveEvidence = null,
+  preLiveInputSnapshotSha256 = null,
 }) => {
   if (!commandExists("ffmpeg")) {
     throw new Error("ffmpeg is required to render the Solana SCCP MP4.");
+  }
+  if (
+    liveCaptureVideo &&
+    path.resolve(liveCaptureVideo) === path.resolve(videoPath)
+  ) {
+    throw new Error(
+      "The real Solana live capture cannot be overwritten by the generated MP4.",
+    );
   }
   const temporaryVideoPath = path.join(
     path.dirname(videoPath),
     `.${path.basename(videoPath)}.${process.pid}.${randomUUID()}.tmp.mp4`,
   );
   try {
-    const ffmpeg = spawnSync(
-      "ffmpeg",
-      [
-        "-y",
-        "-f",
-        "lavfi",
-        "-i",
-        `color=c=0x111827:s=1280x720:r=30:d=${durationSeconds}`,
-        "-f",
-        "lavfi",
-        "-i",
-        "anullsrc=channel_layout=stereo:sample_rate=48000",
-        "-i",
+    let sourceCapture = null;
+    if (liveCaptureVideo) {
+      sourceCapture = renderPinnedSolanaLiveCapture({
+        captureVideoPath: liveCaptureVideo,
+        expectedCaptureSha256: liveCaptureVideoSha256,
+        captureWitness: liveCaptureWitness,
+        captureReviewAttestation: liveCaptureReviewAttestation,
+        captureWitnessArtifactSha256: liveCaptureWitnessArtifactSha256,
+        captureReviewPolicy,
+        liveEvidence,
+        preLiveInputSnapshotSha256,
         subtitlesPath,
-        "-shortest",
-        "-map",
-        "0:v:0",
-        "-map",
-        "1:a:0",
-        "-map",
-        "2:s:0",
-        "-c:v",
-        "libx264",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-c:s",
-        "mov_text",
         temporaryVideoPath,
-      ],
-      { encoding: "utf8" },
-    );
-    if (ffmpeg.status !== 0) {
-      throw new Error(
-        `ffmpeg failed to render Solana SCCP MP4: ${ffmpeg.stderr || ffmpeg.stdout}`,
+      });
+    } else {
+      const ffmpeg = spawnSync(
+        "ffmpeg",
+        [
+          "-y",
+          "-f",
+          "lavfi",
+          "-i",
+          `color=c=0x111827:s=1280x720:r=30:d=${durationSeconds}`,
+          "-f",
+          "lavfi",
+          "-i",
+          "anullsrc=channel_layout=stereo:sample_rate=48000",
+          "-i",
+          subtitlesPath,
+          "-shortest",
+          "-map",
+          "0:v:0",
+          "-map",
+          "1:a:0",
+          "-map",
+          "2:s:0",
+          "-c:v",
+          "libx264",
+          "-pix_fmt",
+          "yuv420p",
+          "-c:a",
+          "aac",
+          "-c:s",
+          "mov_text",
+          temporaryVideoPath,
+        ],
+        { encoding: "utf8" },
       );
+      if (ffmpeg.status !== 0) {
+        throw new Error(
+          `ffmpeg failed to render Solana SCCP diagnostic MP4: ${ffmpeg.stderr || ffmpeg.stdout}`,
+        );
+      }
     }
     if (!commandExists("ffprobe")) {
       throw new Error("ffprobe is required to verify the Solana SCCP MP4.");
@@ -651,12 +1788,8 @@ const renderSolanaLiveVideoMp4 = ({
     let mediaProbe = null;
     try {
       mediaProbe = JSON.parse(ffprobe.stdout);
-    } catch (error) {
-      throw new Error(
-        `ffprobe returned invalid Solana SCCP MP4 JSON: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+    } catch {
+      throw new Error("ffprobe returned invalid Solana SCCP MP4 JSON.");
     }
     const mediaVerification = buildSolanaLiveVideoMediaVerification({
       ffprobe: mediaProbe,
@@ -667,21 +1800,161 @@ const renderSolanaLiveVideoMp4 = ({
         `Solana SCCP MP4 verification failed: ${mediaVerification.blockers.join(", ")}`,
       );
     }
+    if (sourceCapture) {
+      mediaVerification.outputVerification = inspectGeneratedSolanaLiveVideoMp4(
+        {
+          file: temporaryVideoPath,
+          sourceCapture,
+          captureWitness: liveCaptureWitness,
+          captureReviewAttestation: liveCaptureReviewAttestation,
+          captureWitnessArtifactSha256: liveCaptureWitnessArtifactSha256,
+          captureReviewPolicy,
+          liveEvidence,
+          preLiveInputSnapshotSha256,
+          subtitleSummary,
+        },
+      );
+      if (mediaVerification.outputVerification.ready !== true) {
+        throw new Error(
+          `Generated Solana SCCP MP4 failed immediate semantic/content verification: ${mediaVerification.outputVerification.blockers.join(", ")}.`,
+        );
+      }
+    }
     commitGeneratedFileSync(temporaryVideoPath, videoPath);
-    return mediaVerification;
+    return sourceCapture
+      ? { ...mediaVerification, sourceCapture }
+      : mediaVerification;
   } catch (error) {
     removeGeneratedFileSync(temporaryVideoPath);
     throw error;
   }
 };
 
+export const solanaLiveVideoMediaArtifactMaxBytes = (mediaType) => {
+  if (mediaType === "video/mp4") return MAX_SOLANA_LIVE_CAPTURE_BYTES;
+  if (mediaType === "text/vtt") return DEFAULT_SOLANA_TEXT_MAX_BYTES;
+  throw new Error(`Unsupported Solana live-video media type: ${mediaType}.`);
+};
+
+export const solanaLiveVideoMediaArtifactSizeAllowed = ({
+  mediaType,
+  size,
+} = {}) =>
+  Number.isSafeInteger(size) &&
+  size > 0 &&
+  size <= solanaLiveVideoMediaArtifactMaxBytes(mediaType);
+
+const hashSuccessfulMediaArtifact = async (file, mediaType) => {
+  const label = `Solana live-video ${mediaType} artifact`;
+  const maxBytes = solanaLiveVideoMediaArtifactMaxBytes(mediaType);
+  if (mediaType === "video/mp4") {
+    return withStableRegularFileDescriptorsSync(
+      file,
+      ([hashFd], resolved) => {
+        const artifact = hashStableMediaDescriptor(hashFd);
+        if (
+          !solanaLiveVideoMediaArtifactSizeAllowed({ mediaType, ...artifact })
+        ) {
+          throw new Error(`${label} is empty or exceeds its byte limit.`);
+        }
+        return { path: resolved, mediaType, ...artifact };
+      },
+      { label, maxBytes, descriptorCount: 1 },
+    );
+  }
+  const bytes = await readStableRegularFile(file, { label, maxBytes });
+  if (
+    !solanaLiveVideoMediaArtifactSizeAllowed({
+      mediaType,
+      size: bytes.length,
+    })
+  ) {
+    throw new Error(`${label} is empty or exceeds its byte limit.`);
+  }
+  return {
+    path: path.resolve(file),
+    mediaType,
+    size: bytes.length,
+    sha256: `0x${createHash("sha256").update(bytes).digest("hex")}`,
+  };
+};
+
+const SAFE_DIAGNOSTIC_IDS = new Set([
+  "route-preflight",
+  "walletconnect-project-id",
+  "destination-prover-module-url",
+  "source-prover-module-url",
+  "smoke-readiness-runbook-contract",
+  "solana-public-route-report",
+  "solana-exact-prover-governance-approval",
+  "solana-destination-production-prover-package",
+  "solana-source-production-prover-package",
+  "destination-proof-admission",
+  "pre-live-input-snapshot-valid",
+  "pre-live-input-reports-loaded",
+  "public-preflight-ready",
+  "public-solana-lane-ready",
+  "public-exact-programdata-immutable",
+  "public-exact-runtime-state",
+  "governance-plan-reviewed",
+  "governance-ordered-initialization-evidence",
+  "governance-register-evidence",
+  "governance-activate-evidence",
+  "governance-phases-distinct",
+  "governance-enactment-readback",
+  "smoke-readiness-ready",
+  "smoke-readiness-artifact-consistency",
+  "live-bidirectional-video",
+  "sccp-capabilities-load",
+  "sccp-submit-capabilities",
+  "sccp-registry-load",
+  "solana-lane-publication",
+  "solana-route-instance-publication",
+  "route-registry-shape",
+  "production-ready-flag",
+  "solana-live-exact-programdata-evidence",
+  "solana-live-exact-runtime-state",
+  "taira-chain-metadata",
+  "sccp-registry-stability",
+  "solana-testnet-rpc-health",
+]);
+
+const safeDiagnosticId = (value, fallback) =>
+  typeof value === "string" && SAFE_DIAGNOSTIC_IDS.has(value)
+    ? value
+    : fallback;
+
+const safeDiagnosticIds = (values, fallback) => {
+  if (!Array.isArray(values) || values.length === 0) return [];
+  return uniqueStrings(
+    values.map((value) =>
+      safeDiagnosticId(
+        typeof value === "string" ? value : readStringValue(value, "id"),
+        fallback,
+      ),
+    ),
+  );
+};
+
+const safeHash = (value) =>
+  typeof value === "string" && HEX32.test(value) ? value : null;
+
+const safeGovernanceToriiUrl = (value) =>
+  typeof value === "string" &&
+  /^https:\/\/taira-validator-[1-4]\.sora\.org$/u.test(value)
+    ? value
+    : null;
+
 const failedCheckSummaries = (report) =>
   readArray(report, "checks")
     .filter((check) => check?.status !== "pass")
     .map((check) => ({
-      id: readStringValue(check, "id"),
-      status: readStringValue(check, "status"),
-      detail: readStringValue(check, "detail"),
+      id: safeDiagnosticId(
+        readStringValue(check, "id"),
+        "invalid-report-check",
+      ),
+      status: "fail",
+      detail: "Referenced report contains a failed or invalid check.",
     }))
     .filter((check) => check.id);
 
@@ -689,9 +1962,12 @@ const failedStatusSummaries = (report) =>
   readArray(report, "statuses")
     .filter((status) => status?.status !== "pass")
     .map((status) => ({
-      id: readStringValue(status, "id"),
-      status: readStringValue(status, "status"),
-      detail: readStringValue(status, "detail"),
+      id: safeDiagnosticId(
+        readStringValue(status, "id"),
+        "invalid-report-status",
+      ),
+      status: "fail",
+      detail: "Referenced report contains a failed or invalid status.",
     }))
     .filter((status) => status.id);
 
@@ -701,231 +1977,34 @@ const checkById = (report, id) =>
   ) ?? null;
 
 const buildReportReference = (report, reportPath) => ({
-  path: reportPath ? path.resolve(reportPath) : null,
+  path: reportPath ? "[public-report-supplied]" : null,
   present: isRecord(report),
 });
 
-const firstBoolean = (...values) =>
-  values.find((value) => typeof value === "boolean");
-
-const summarizeArtifactReady = (artifact) =>
-  firstBoolean(
-    readBoolean(artifact, "ready"),
-    readBoolean(artifact, "readyForRouteManagerReview"),
-    readBoolean(artifact, "readyForOperatorReview"),
-    readBoolean(artifact, "readyForLaneGovernanceReview"),
-    readBoolean(artifact, "readyForProofMaterialCeremony"),
-    readBoolean(artifact, "readyForActivationReview"),
-    readBoolean(artifact, "readyToBuildIsi"),
-    readBoolean(artifact, "readyToPublish"),
-    readBoolean(artifact, "accessReady"),
-    readBoolean(artifact, "readyToSubmitWithCurrentRuntime"),
-    readBoolean(artifact, "productionActivationReady"),
-    readBoolean(artifact, "productionRouteReady"),
-    readBoolean(artifact, "productionLaneReady"),
-    readBoolean(artifact, "productionProofMaterialReady"),
-    readBoolean(artifact, "publicLaneReady"),
-  ) ?? false;
-
-const booleanStatus = (value) => value === true;
-
-const normalizeReadinessArtifactStatus = (artifact) => {
-  if (!isRecord(artifact)) {
-    return artifact;
-  }
-  return {
-    ...artifact,
-    ready: summarizeArtifactReady(artifact),
-    productionReady: booleanStatus(
-      readBoolean(artifact, "productionReady") ??
-        readBoolean(artifact, "productionRouteReady"),
-    ),
-    submitReady: booleanStatus(
-      readBoolean(artifact, "submitReady") ??
-        readBoolean(artifact, "readyToSubmitWithCurrentRuntime"),
-    ),
-    readyForLaneGovernanceReview:
-      readBoolean(artifact, "readyForLaneGovernanceReview") === true,
-    publicLaneReady: readBoolean(artifact, "publicLaneReady") === true,
-    productionProofMaterialReady:
-      readBoolean(artifact, "productionProofMaterialReady") === true,
-    productionLaneReady: readBoolean(artifact, "productionLaneReady") === true,
-  };
-};
-
-const summarizeReadinessArtifact = (artifact) =>
-  isRecord(artifact)
-    ? (() => {
-        const status = normalizeReadinessArtifactStatus(artifact);
-        const rootCauseBlockerIds = stringIds(artifact, "rootCauseBlockerIds");
-        const missingProductionInputIds = stringIds(
-          artifact,
-          "missingProductionInputIds",
-        );
-        return {
-          present: readBoolean(artifact, "present") ?? true,
-          schema: readStringValue(artifact, "schema"),
-          stableHash: readStringValue(artifact, "stableHash"),
-          blockerIds:
-            rootCauseBlockerIds.length > 0
-              ? rootCauseBlockerIds
-              : missingProductionInputIds.length > 0
-                ? missingProductionInputIds
-                : mixedBlockerIds(artifact, "blockerIds"),
-          rootCauseBlockerIds,
-          ready: status.ready,
-          productionReady: status.productionReady,
-          submitReady: status.submitReady,
-          readyForLaneGovernanceReview: status.readyForLaneGovernanceReview,
-          publicLaneReady: status.publicLaneReady,
-          productionProofMaterialReady: status.productionProofMaterialReady,
-          productionLaneReady: status.productionLaneReady,
-          failedCheckIds: stringIds(artifact, "failedCheckIds"),
-          missingProductionInputIds,
-          nextActionIds: uniqueStrings([
-            ...actionIds(artifact, "nextActionIds"),
-            ...actionIds(artifact, "nextActions"),
-          ]),
-          nextActionDetails: actionDetails(artifact, "artifact"),
-        };
-      })()
-    : null;
-
-const normalizeDiagnosticArtifactGroup = (diagnostic) => {
-  if (!isRecord(diagnostic)) {
-    return diagnostic;
-  }
-  const artifacts = readNestedRecord(diagnostic, "artifacts");
-  if (!isRecord(artifacts)) {
-    return diagnostic;
-  }
-  return {
-    ...diagnostic,
-    artifacts: Object.fromEntries(
-      Object.entries(artifacts).map(([key, artifact]) => [
-        key,
-        normalizeReadinessArtifactStatus(artifact),
-      ]),
-    ),
-  };
-};
-
 const normalizeBlockedLiveVideoDiagnostics = (diagnostics = {}) => {
-  if (!isRecord(diagnostics)) {
-    return {};
-  }
-  const normalized = {
-    ...diagnostics,
-    activationPackage: normalizeDiagnosticArtifactGroup(
-      diagnostics.activationPackage,
-    ),
-    operatorHandoff: normalizeDiagnosticArtifactGroup(
-      diagnostics.operatorHandoff,
-    ),
-  };
-  const activationSmokeReadiness =
-    diagnostics.deploymentVideo?.activationSmokeReadiness;
-  if (isRecord(diagnostics.deploymentVideo)) {
-    normalized.deploymentVideo = {
-      ...diagnostics.deploymentVideo,
-      ...(isRecord(activationSmokeReadiness)
-        ? {
-            activationSmokeReadiness: normalizeReadinessArtifactStatus(
-              activationSmokeReadiness,
-            ),
-          }
-        : {}),
-    };
-  }
-  return normalized;
+  return isRecord(diagnostics) ? { ...diagnostics } : {};
 };
-
-const summarizeRequiredRouteManager = (record) =>
-  isRecord(record)
-    ? {
-        authority: readStringValue(record, "authority"),
-        authorityReady: readBoolean(record, "authorityReady"),
-        authorityFormatReady: readBoolean(record, "authorityFormatReady"),
-        requiredPermission: readStringValue(record, "requiredPermission"),
-        hasRequiredPermission: readBoolean(record, "hasRequiredPermission"),
-      }
-    : null;
-
-const summarizeRuntimeSigning = (record) =>
-  isRecord(record)
-    ? {
-        privateKeyEnv: readStringValue(record, "privateKeyEnv"),
-        privateKeyEnvPresent: readBoolean(record, "privateKeyEnvPresent"),
-        privateKeyStoredInReport: readBoolean(
-          record,
-          "privateKeyStoredInReport",
-        ),
-      }
-    : null;
 
 export const buildSolanaLiveVideoBlockedDiagnostics = ({
   productionRequirementsReport = null,
   productionRequirementsPath = null,
-  publishReadinessReport = null,
-  publishReadinessPath = null,
-  routePublicationRequestReport = null,
-  routePublicationRequestPath = null,
+  governancePlanReport = null,
+  governancePlanPath = null,
+  governanceRegistrationReport = null,
+  governanceRegistrationPath = null,
+  governanceActivationReport = null,
+  governanceActivationPath = null,
   smokeReadinessReport = null,
   smokeReadinessPath = null,
   handoffVerificationReport = null,
   handoffVerificationPath = null,
   proofMaterialBundleReport = null,
   proofMaterialBundlePath = null,
-  activationPackageReport = null,
-  activationPackagePath = null,
   deploymentVideoTranscriptReport = null,
   deploymentVideoTranscriptPath = null,
-  operatorHandoffReport = null,
-  operatorHandoffPath = null,
   productionGateReport = null,
   productionGatePath = null,
 } = {}) => {
-  const publishEndpoint = readNestedRecord(
-    publishReadinessReport,
-    "publicEndpoint",
-  );
-  const publishTarget = readNestedRecord(publishEndpoint, "target");
-  const publishRuntimeSigning = readNestedRecord(
-    publishReadinessReport,
-    "runtimeSigning",
-  );
-  const routePublicationManifest = readNestedRecord(
-    routePublicationRequestReport,
-    "manifest",
-  );
-  const routePublicationProofBundle = readNestedRecord(
-    routePublicationRequestReport,
-    "proofMaterialBundle",
-  );
-  const activationPublicTaira = readNestedRecord(
-    activationPackageReport,
-    "publicTaira",
-  );
-  const activationPublicSolanaLane = readNestedRecord(
-    activationPublicTaira,
-    "publicSolanaLane",
-  );
-  const activationArtifacts = readNestedRecord(
-    activationPackageReport,
-    "artifacts",
-  );
-  const deploymentVideoDeployment = readNestedRecord(
-    deploymentVideoTranscriptReport,
-    "deployment",
-  );
-  const deploymentVideoActivationPackage = readNestedRecord(
-    deploymentVideoDeployment,
-    "activationPackage",
-  );
-  const operatorArtifacts = readNestedRecord(
-    operatorHandoffReport,
-    "artifacts",
-  );
   const smokeFailedChecks = failedCheckSummaries(smokeReadinessReport);
   const smokeReportBlockerIds = mixedBlockerIds(
     smokeReadinessReport,
@@ -943,7 +2022,74 @@ export const buildSolanaLiveVideoBlockedDiagnostics = ({
     smokeReadinessReport,
     "smoke-readiness-runbook-contract",
   );
+  const governanceEvidence = isRecord(productionGateReport?.governanceEvidence)
+    ? productionGateReport.governanceEvidence
+    : null;
+  const safeGovernanceEvidence = governanceEvidence
+    ? {
+        ready: governanceEvidence.ready === true,
+        planSha256: safeHash(governanceEvidence.planSha256),
+        registrationArtifactSha256: safeHash(
+          governanceEvidence.registrationArtifactSha256,
+        ),
+        activationArtifactSha256: safeHash(
+          governanceEvidence.activationArtifactSha256,
+        ),
+        publicRegistrySha256: safeHash(governanceEvidence.publicRegistrySha256),
+      }
+    : null;
   return {
+    governance: {
+      plan: {
+        ...buildReportReference(governancePlanReport, governancePlanPath),
+        planSha256: safeHash(
+          readStringValue(governancePlanReport, "plan_sha256"),
+        ),
+      },
+      registration: {
+        ...buildReportReference(
+          governanceRegistrationReport,
+          governanceRegistrationPath,
+        ),
+        phase:
+          readStringValue(governanceRegistrationReport, "phase") === "register"
+            ? "register"
+            : null,
+        planSha256: safeHash(
+          readStringValue(governanceRegistrationReport, "plan_sha256"),
+        ),
+        toriiUrl: safeGovernanceToriiUrl(
+          readStringValue(governanceRegistrationReport, "torii_url"),
+        ),
+        submitted: readBoolean(governanceRegistrationReport, "submitted"),
+        alreadyEnacted: readBoolean(
+          governanceRegistrationReport,
+          "already_enacted",
+        ),
+      },
+      activation: {
+        ...buildReportReference(
+          governanceActivationReport,
+          governanceActivationPath,
+        ),
+        phase:
+          readStringValue(governanceActivationReport, "phase") === "activate"
+            ? "activate"
+            : null,
+        planSha256: safeHash(
+          readStringValue(governanceActivationReport, "plan_sha256"),
+        ),
+        toriiUrl: safeGovernanceToriiUrl(
+          readStringValue(governanceActivationReport, "torii_url"),
+        ),
+        submitted: readBoolean(governanceActivationReport, "submitted"),
+        alreadyEnacted: readBoolean(
+          governanceActivationReport,
+          "already_enacted",
+        ),
+      },
+      evidence: safeGovernanceEvidence,
+    },
     productionRequirements: {
       ...buildReportReference(
         productionRequirementsReport,
@@ -957,134 +2103,15 @@ export const buildSolanaLiveVideoBlockedDiagnostics = ({
         productionRequirementsReport,
         "readyToSubmitWithCurrentRuntime",
       ),
-      blockerIds: blockerIds(productionRequirementsReport),
-    },
-    publishReadiness: {
-      ...buildReportReference(publishReadinessReport, publishReadinessPath),
-      toriiUrl: readStringValue(publishEndpoint, "toriiUrl"),
-      mcpUrl: readStringValue(publishEndpoint, "mcpUrl"),
-      publicationTargetReady: readBoolean(
-        publishEndpoint,
-        "publicationTargetReady",
-      ),
-      directPublicNodePublicationReady: readBoolean(
-        publishEndpoint,
-        "directPublicNodePublicationReady",
-      ),
-      target: publishTarget
-        ? {
-            toriiUrl: readStringValue(publishTarget, "toriiUrl"),
-            mcpUrl: readStringValue(publishTarget, "mcpUrl"),
-            targetKind: readStringValue(publishTarget, "targetKind"),
-            canonicalPublicNodeRoot: readBoolean(
-              publishTarget,
-              "canonicalPublicNodeRoot",
-            ),
-            canonicalRolloutTargetReady: readBoolean(
-              publishTarget,
-              "canonicalRolloutTargetReady",
-            ),
-            mcpMatchesToriiRoot: readBoolean(
-              publishTarget,
-              "mcpMatchesToriiRoot",
-            ),
-          }
-        : null,
-      readyForRuntimeSigner: readBoolean(
-        publishReadinessReport,
-        "readyForRuntimeSigner",
-      ),
-      readyToSubmitWithCurrentRuntime: readBoolean(
-        publishReadinessReport,
-        "readyToSubmitWithCurrentRuntime",
-      ),
-      endpointReady: readBoolean(publishEndpoint, "endpointReady"),
-      preflightReady: readBoolean(publishEndpoint, "preflightReady"),
-      mcpTransactionToolsReady: readBoolean(
-        readNestedRecord(publishEndpoint, "mcpTransactionTools"),
-        "ready",
-      ),
-      mcpTransactionTools: readNestedRecord(
-        publishEndpoint,
-        "mcpTransactionTools",
-      ),
-      authorityReady: readBoolean(publishRuntimeSigning, "authorityReady"),
-      authorityPermissionReady: readBoolean(
-        readNestedRecord(publishRuntimeSigning, "permissionAudit"),
-        "ready",
-      ),
-      permissionAudit: readNestedRecord(
-        publishRuntimeSigning,
-        "permissionAudit",
-      ),
-      privateKeyEnvPresent: readBoolean(
-        publishRuntimeSigning,
-        "privateKeyEnvPresent",
-      ),
-      blockerIds: blockerIds(publishReadinessReport),
-    },
-    routePublicationRequest: {
-      ...buildReportReference(
-        routePublicationRequestReport,
-        routePublicationRequestPath,
-      ),
-      readyForRouteManagerReview: readBoolean(
-        routePublicationRequestReport,
-        "readyForRouteManagerReview",
-      ),
-      productionRouteReady: readBoolean(
-        routePublicationRequestReport,
-        "productionRouteReady",
-      ),
-      readyToSubmitWithCurrentRuntime: readBoolean(
-        routePublicationRequestReport,
-        "readyToSubmitWithCurrentRuntime",
-      ),
-      reviewPackageHash: readStringValue(
-        routePublicationRequestReport,
-        "reviewPackageHash",
-      ),
-      manifest: routePublicationManifest
-        ? {
-            routeIdentityReady: readBoolean(
-              routePublicationManifest,
-              "routeIdentityReady",
-            ),
-            productionReadyForIsi: readBoolean(
-              routePublicationManifest,
-              "productionReadyForIsi",
-            ),
-            manifestSha256: readStringValue(
-              routePublicationManifest,
-              "manifestSha256",
-            ),
-            error: readStringValue(routePublicationManifest, "error"),
-          }
-        : null,
-      proofMaterialBundle: routePublicationProofBundle
-        ? {
-            readyForProofMaterialCeremony: readBoolean(
-              routePublicationProofBundle,
-              "readyForProofMaterialCeremony",
-            ),
-            bundleManifestSha256: readStringValue(
-              routePublicationProofBundle,
-              "bundleManifestSha256",
-            ),
-            includedArtifactCount:
-              routePublicationProofBundle.includedArtifactCount ?? null,
-          }
-        : null,
-      blockerIds: blockerIds(routePublicationRequestReport),
-      upstreamBlockerIds: stringIds(
-        routePublicationRequestReport,
-        "upstreamBlockerIds",
+      blockerIds: safeDiagnosticIds(
+        blockerIds(productionRequirementsReport),
+        "production-requirements-not-ready",
       ),
     },
     smokeReadiness: {
       ...buildReportReference(smokeReadinessReport, smokeReadinessPath),
       ready: readBoolean(smokeReadinessReport, "ready"),
-      blockerIds: uniqueStrings(
+      blockerIds: safeDiagnosticIds(
         smokeRootCauseBlockerIds.length > 0
           ? smokeRootCauseBlockerIds
           : smokeMissingProductionInputIds.length > 0
@@ -1092,18 +2119,27 @@ export const buildSolanaLiveVideoBlockedDiagnostics = ({
             : smokeReportBlockerIds.length > 0
               ? smokeReportBlockerIds
               : smokeFailedChecks.map((check) => check.id),
+        "smoke-readiness-not-ready",
       ),
-      rootCauseBlockerIds: smokeRootCauseBlockerIds,
+      rootCauseBlockerIds: safeDiagnosticIds(
+        smokeRootCauseBlockerIds,
+        "smoke-readiness-not-ready",
+      ),
       failedChecks: smokeFailedChecks,
       runbookReady: smokeRunbookCheck?.status === "pass",
-      runbookDetail: readStringValue(smokeRunbookCheck, "detail"),
-      runbookProblems: readArray(
+      runbookProblemCount: readArray(
         readNestedRecord(smokeRunbookCheck, "evidence"),
         "problems",
-      ).filter((problem) => typeof problem === "string" && problem.trim()),
-      nextActionIds: actionIds(smokeReadinessReport, "nextActions"),
-      nextActionDetails: actionDetails(smokeReadinessReport, "smoke-readiness"),
-      missingProductionInputIds: smokeMissingProductionInputIds,
+      ).length,
+      nextActionIds:
+        actionIds(smokeReadinessReport, "nextActions").length > 0
+          ? ["review-smoke-readiness"]
+          : [],
+      nextActionDetails: [],
+      missingProductionInputIds: safeDiagnosticIds(
+        smokeMissingProductionInputIds,
+        "smoke-readiness-input-missing",
+      ),
     },
     sourceMaterialHandoffVerification: {
       ...buildReportReference(
@@ -1113,7 +2149,10 @@ export const buildSolanaLiveVideoBlockedDiagnostics = ({
       ready: readBoolean(handoffVerificationReport, "ready"),
       statusCount: readArray(handoffVerificationReport, "statuses").length,
       failedStatuses: failedStatusSummaries(handoffVerificationReport),
-      blockerIds: blockerIds(handoffVerificationReport),
+      blockerIds:
+        blockerIds(handoffVerificationReport).length > 0
+          ? ["source-material-handoff-not-ready"]
+          : [],
     },
     proofMaterialBundle: {
       ...buildReportReference(
@@ -1136,91 +2175,26 @@ export const buildSolanaLiveVideoBlockedDiagnostics = ({
         proofMaterialBundleReport,
         "productionProofMaterialIncluded",
       ),
-      bundleManifestSha256: readStringValue(
-        proofMaterialBundleReport,
-        "bundleManifestSha256",
+      bundleManifestSha256: safeHash(
+        readStringValue(proofMaterialBundleReport, "bundleManifestSha256"),
       ),
       includedArtifactCount: isRecord(proofMaterialBundleReport)
-        ? (proofMaterialBundleReport.includedArtifactCount ?? null)
+        ? typeof proofMaterialBundleReport.includedArtifactCount === "number" &&
+          Number.isSafeInteger(
+            proofMaterialBundleReport.includedArtifactCount,
+          ) &&
+          proofMaterialBundleReport.includedArtifactCount >= 0
+          ? proofMaterialBundleReport.includedArtifactCount
+          : null
         : null,
-      blockerIds: blockerIds(proofMaterialBundleReport),
-      upstreamBlockerIds: stringIds(
-        proofMaterialBundleReport,
-        "upstreamBlockerIds",
-      ),
-    },
-    activationPackage: {
-      ...buildReportReference(activationPackageReport, activationPackagePath),
-      readyForActivationReview: readBoolean(
-        activationPackageReport,
-        "readyForActivationReview",
-      ),
-      productionActivationReady: readBoolean(
-        activationPackageReport,
-        "productionActivationReady",
-      ),
-      readyToSubmitWithCurrentRuntime: readBoolean(
-        activationPackageReport,
-        "readyToSubmitWithCurrentRuntime",
-      ),
-      publicRouteAlreadyPublished: readBoolean(
-        activationPackageReport,
-        "publicRouteAlreadyPublished",
-      ),
-      activationPackageHash: readStringValue(
-        activationPackageReport,
-        "activationPackageHash",
-      ),
-      requiredRouteManager: summarizeRequiredRouteManager(
-        readNestedRecord(activationPackageReport, "requiredRouteManager"),
-      ),
-      runtimeSigning: summarizeRuntimeSigning(
-        readNestedRecord(activationPackageReport, "runtimeSigning"),
-      ),
-      publicTairaReady: readBoolean(activationPublicTaira, "ready"),
-      publicSolanaLane: isRecord(activationPublicSolanaLane)
-        ? {
-            present: readBoolean(activationPublicSolanaLane, "present"),
-            ready: readBoolean(activationPublicSolanaLane, "ready"),
-            check: readNestedRecord(activationPublicSolanaLane, "check"),
-            blockerIds: mixedBlockerIds(
-              activationPublicSolanaLane,
-              "blockerIds",
-            ),
-          }
-        : null,
-      artifacts: {
-        proofMaterialBundle: summarizeReadinessArtifact(
-          readNestedRecord(activationArtifacts, "proofMaterialBundle"),
-        ),
-        routePublicationRequest: summarizeReadinessArtifact(
-          readNestedRecord(activationArtifacts, "routePublicationRequest"),
-        ),
-        routeManagerAccessRequest: summarizeReadinessArtifact(
-          readNestedRecord(activationArtifacts, "routeManagerAccessRequest"),
-        ),
-        laneActivationRequest: summarizeReadinessArtifact(
-          readNestedRecord(activationArtifacts, "laneActivationRequest"),
-        ),
-        publishReadiness: summarizeReadinessArtifact(
-          readNestedRecord(activationArtifacts, "publishReadiness"),
-        ),
-        productionRequirements: summarizeReadinessArtifact(
-          readNestedRecord(activationArtifacts, "productionRequirements"),
-        ),
-        operatorHandoff: summarizeReadinessArtifact(
-          readNestedRecord(activationArtifacts, "operatorHandoff"),
-        ),
-        smokeReadiness: summarizeReadinessArtifact(
-          readNestedRecord(activationArtifacts, "smokeReadiness"),
-        ),
-      },
-      blockerIds: blockerIds(activationPackageReport),
-      nextActionIds: actionIds(activationPackageReport, "nextActions"),
-      nextActionDetails: actionDetails(
-        activationPackageReport,
-        "activation-package",
-      ),
+      blockerIds:
+        blockerIds(proofMaterialBundleReport).length > 0
+          ? ["proof-material-bundle-not-ready"]
+          : [],
+      upstreamBlockerIds:
+        stringIds(proofMaterialBundleReport, "upstreamBlockerIds").length > 0
+          ? ["proof-material-upstream-not-ready"]
+          : [],
     },
     deploymentVideo: {
       ...buildReportReference(
@@ -1228,88 +2202,29 @@ export const buildSolanaLiveVideoBlockedDiagnostics = ({
         deploymentVideoTranscriptPath,
       ),
       ready: readBoolean(deploymentVideoTranscriptReport, "ready"),
-      checkedAt: readStringValue(deploymentVideoTranscriptReport, "checkedAt"),
-      routeId: readStringValue(deploymentVideoTranscriptReport, "routeId"),
-      activationPackageHash: readStringValue(
-        deploymentVideoActivationPackage,
-        "activationPackageHash",
-      ),
-      activationSmokeReadiness: summarizeReadinessArtifact(
-        readNestedRecord(deploymentVideoActivationPackage, "smokeReadiness"),
-      ),
-      videoArtifacts: readArray(
+      routeId:
+        readStringValue(deploymentVideoTranscriptReport, "routeId") ===
+        SCCP_SOLANA_XOR_ROUTE_ID
+          ? SCCP_SOLANA_XOR_ROUTE_ID
+          : null,
+      videoArtifactCount: readArray(
         deploymentVideoTranscriptReport,
         "videoArtifacts",
-      )
-        .map((artifact) => ({
-          path: readStringValue(artifact, "path"),
-          mediaType: readStringValue(artifact, "mediaType"),
-        }))
-        .filter((artifact) => artifact.path && artifact.mediaType),
-    },
-    operatorHandoff: {
-      ...buildReportReference(operatorHandoffReport, operatorHandoffPath),
-      readyForOperatorReview: readBoolean(
-        operatorHandoffReport,
-        "readyForOperatorReview",
-      ),
-      productionRouteReady: readBoolean(
-        operatorHandoffReport,
-        "productionRouteReady",
-      ),
-      readyToPublish: readBoolean(operatorHandoffReport, "readyToPublish"),
-      publicRouteAlreadyPublished: readBoolean(
-        operatorHandoffReport,
-        "publicRouteAlreadyPublished",
-      ),
-      handoffHash: readStringValue(operatorHandoffReport, "handoffHash"),
-      requiredRouteManager: summarizeRequiredRouteManager(
-        readNestedRecord(operatorHandoffReport, "requiredRouteManager"),
-      ),
-      runtimeSigning: summarizeRuntimeSigning(
-        readNestedRecord(operatorHandoffReport, "runtimeSigning"),
-      ),
-      artifacts: {
-        proofMaterialBundle: summarizeReadinessArtifact(
-          readNestedRecord(operatorArtifacts, "proofMaterialBundle"),
-        ),
-        routePublicationRequest: summarizeReadinessArtifact(
-          readNestedRecord(operatorArtifacts, "routePublicationRequest"),
-        ),
-        routeManagerAccessRequest: summarizeReadinessArtifact(
-          readNestedRecord(operatorArtifacts, "routeManagerAccessRequest"),
-        ),
-        laneActivationRequest: summarizeReadinessArtifact(
-          readNestedRecord(operatorArtifacts, "laneActivationRequest"),
-        ),
-        publishReadiness: summarizeReadinessArtifact(
-          readNestedRecord(operatorArtifacts, "publishReadiness"),
-        ),
-        productionRequirements: summarizeReadinessArtifact(
-          readNestedRecord(operatorArtifacts, "productionRequirements"),
-        ),
-        smokeReadiness: summarizeReadinessArtifact(
-          readNestedRecord(operatorArtifacts, "smokeReadiness"),
-        ),
-      },
-      blockerIds: blockerIds(operatorHandoffReport),
-      nextActionIds: actionIds(operatorHandoffReport, "nextActions"),
-      nextActionDetails: actionDetails(
-        operatorHandoffReport,
-        "operator-handoff",
-      ),
+      ).length,
     },
     productionGate: {
       ...buildReportReference(productionGateReport, productionGatePath),
       ready: readBoolean(productionGateReport, "ready"),
-      checkedAt: readStringValue(productionGateReport, "checkedAt"),
       failedChecks: failedCheckSummaries(productionGateReport),
-      nextRequiredActions: stringIds(
-        productionGateReport,
-        "nextRequiredActions",
-      ),
-      nextActionIds: actionIds(productionGateReport, "nextActionDetails"),
-      nextActionDetails: actionDetails(productionGateReport, "production-gate"),
+      nextRequiredActions:
+        stringIds(productionGateReport, "nextRequiredActions").length > 0
+          ? ["review-production-gate"]
+          : [],
+      nextActionIds:
+        actionIds(productionGateReport, "nextActionDetails").length > 0
+          ? ["review-production-gate"]
+          : [],
+      nextActionDetails: [],
     },
   };
 };
@@ -1322,27 +2237,13 @@ export const buildSolanaLiveVideoSuccessEvidencePolicy = ({
   freshPreflightCompleted = false,
   freshProductionGateCompleted = false,
 } = {}) => {
-  const publicationTarget = diagnostics.publishReadiness?.target;
   const governancePinnedToriiUrl =
-    publicationTarget?.toriiUrl ?? diagnostics.publishReadiness?.toriiUrl;
-  const normalizedGovernanceToriiUrl = String(
-    governancePinnedToriiUrl ?? "",
-  ).replace(/\/+$/u, "");
+    diagnostics.governance?.registration?.toriiUrl ?? null;
   const governancePinReady =
-    diagnostics.publishReadiness?.publicationTargetReady === true &&
-    diagnostics.publishReadiness?.directPublicNodePublicationReady === true &&
-    String(diagnostics.publishReadiness?.toriiUrl ?? "").replace(
-      /\/+$/u,
-      "",
-    ) === normalizedGovernanceToriiUrl &&
-    publicationTarget?.targetKind === "explicit-taira-public-node" &&
-    String(publicationTarget?.mcpUrl ?? "").replace(/\/+$/u, "") ===
-      `${normalizedGovernanceToriiUrl}/v1/mcp` &&
-    String(diagnostics.publishReadiness?.mcpUrl ?? "").replace(/\/+$/u, "") ===
-      `${normalizedGovernanceToriiUrl}/v1/mcp` &&
-    publicationTarget?.canonicalPublicNodeRoot === true &&
-    publicationTarget?.canonicalRolloutTargetReady === true &&
-    publicationTarget?.mcpMatchesToriiRoot === true;
+    diagnostics.governance?.evidence?.ready === true &&
+    typeof governancePinnedToriiUrl === "string" &&
+    governancePinnedToriiUrl.length > 0 &&
+    diagnostics.governance?.activation?.toriiUrl === governancePinnedToriiUrl;
   const injectedReadbackOverride =
     ownDataValue(options, "readbacks") !== undefined ||
     ownDataValue(options, "fetchImpl") !== undefined;
@@ -1355,6 +2256,27 @@ export const buildSolanaLiveVideoSuccessEvidencePolicy = ({
     /^0x[0-9a-f]{64}$/u.test(
       String(
         ownDataValue(options, "productionGateSnapshotSha256") ?? "",
+      ).toLowerCase(),
+    );
+  const liveCapturePinned =
+    hasSuppliedPathOption(options, "liveCaptureVideo") &&
+    /^0x[0-9a-f]{64}$/u.test(
+      String(
+        ownDataValue(options, "liveCaptureVideoSha256") ?? "",
+      ).toLowerCase(),
+    );
+  const liveCaptureWitnessPinned =
+    hasSuppliedPathOption(options, "liveCaptureWitness") &&
+    /^0x[0-9a-f]{64}$/u.test(
+      String(
+        ownDataValue(options, "liveCaptureWitnessSha256") ?? "",
+      ).toLowerCase(),
+    );
+  const liveCaptureReviewAttestationPinned =
+    hasSuppliedPathOption(options, "liveCaptureReviewAttestation") &&
+    /^0x[0-9a-f]{64}$/u.test(
+      String(
+        ownDataValue(options, "liveCaptureReviewAttestationSha256") ?? "",
       ).toLowerCase(),
     );
   const base = buildSccpSolanaSuccessNetworkPolicy({
@@ -1394,6 +2316,30 @@ export const buildSolanaLiveVideoSuccessEvidencePolicy = ({
       ),
     );
   }
+  if (!liveCapturePinned) {
+    problems.push(
+      successProblem(
+        "pinned-real-live-capture",
+        "Success evidence requires an exact-byte-pinned real screen capture of the completed bidirectional transfer.",
+      ),
+    );
+  }
+  if (!liveCaptureWitnessPinned) {
+    problems.push(
+      successProblem(
+        "pinned-live-capture-semantic-witness",
+        "Success evidence requires an independently reviewed, exact-byte-pinned semantic witness for ordered registry and bidirectional receipt frames.",
+      ),
+    );
+  }
+  if (!liveCaptureReviewAttestationPinned) {
+    problems.push(
+      successProblem(
+        "pinned-live-capture-review-attestation",
+        "Success evidence requires a detached threshold-Ed25519 attestation from reviewers authorized before capture.",
+      ),
+    );
+  }
   if (!freshPreflightCompleted) {
     problems.push(
       successProblem(
@@ -1420,6 +2366,9 @@ export const buildSolanaLiveVideoSuccessEvidencePolicy = ({
     freshProductionGateCompleted,
     nativeNetworkClientsUsed: !injectedReadbackOverride,
     productionGateSnapshotReady,
+    liveCapturePinned,
+    liveCaptureWitnessPinned,
+    liveCaptureReviewAttestationPinned,
     problems,
   };
 };
@@ -1435,59 +2384,9 @@ export const solanaLiveVideoSuccessPrerequisiteProblems = ({
   };
 
   requireReady(
-    "production-requirements-ready",
-    diagnostics.productionRequirements?.readyToBuildIsi,
-    "Production requirements must be ready before recording the live bidirectional video.",
-  );
-  requireReady(
-    "publish-readiness-submit-ready",
-    diagnostics.publishReadiness?.readyToSubmitWithCurrentRuntime,
-    "Route publish-readiness must be submit-ready before recording the live bidirectional video.",
-  );
-  requireReady(
-    "route-publication-request-submit-ready",
-    diagnostics.routePublicationRequest?.readyToSubmitWithCurrentRuntime,
-    "The route-publication request must be submit-ready before recording the live bidirectional video.",
-  );
-  requireReady(
-    "route-publication-request-production-ready",
-    diagnostics.routePublicationRequest?.productionRouteReady,
-    "The route-publication request must be production-ready before recording the live bidirectional video.",
-  );
-  requireReady(
-    "source-material-handoff-verified",
-    diagnostics.sourceMaterialHandoffVerification?.ready,
-    "Source-material handoff verification must pass before recording the live bidirectional video.",
-  );
-  requireReady(
-    "proof-material-bundle-production-ready",
-    diagnostics.proofMaterialBundle?.productionRouteReady,
-    "The proof-material bundle must be production-ready before recording the live bidirectional video.",
-  );
-  requireReady(
-    "proof-material-bundle-submit-ready",
-    diagnostics.proofMaterialBundle?.readyToSubmitWithCurrentRuntime,
-    "The proof-material bundle must be submit-ready before recording the live bidirectional video.",
-  );
-  requireReady(
-    "proof-material-included",
-    diagnostics.proofMaterialBundle?.productionProofMaterialIncluded,
-    "Governed production proof material must be included before recording the live bidirectional video.",
-  );
-  requireReady(
-    "activation-package-submit-ready",
-    diagnostics.activationPackage?.readyToSubmitWithCurrentRuntime,
-    "The TAIRA activation package must be runtime-submit-ready before recording the live bidirectional video.",
-  );
-  requireReady(
-    "activation-public-solana-lane-ready",
-    diagnostics.activationPackage?.publicSolanaLane?.ready,
-    "The activation package must prove the public Solana lane is ready before recording the live bidirectional video.",
-  );
-  requireReady(
-    "operator-handoff-publish-ready",
-    diagnostics.operatorHandoff?.readyToPublish,
-    "The operator handoff must be publish-ready before recording the live bidirectional video.",
+    "governance-evidence-ready",
+    diagnostics.governance?.evidence?.ready,
+    "Reviewed registration and activation evidence plus exact public typed-registry readback must pass before recording the live bidirectional video.",
   );
   requireReady(
     "smoke-readiness-ready",
@@ -1552,14 +2451,13 @@ export const buildBlockedSolanaLiveVideoTranscript = ({
     normalizeBlockedLiveVideoDiagnostics(diagnostics);
   const diagnosticBlockerIds = [
     ...(normalizedDiagnostics.productionRequirements?.blockerIds ?? []),
-    ...(normalizedDiagnostics.publishReadiness?.blockerIds ?? []),
-    ...(normalizedDiagnostics.routePublicationRequest?.blockerIds ?? []),
+    ...(normalizedDiagnostics.governance?.evidence?.ready === true
+      ? []
+      : ["governance-evidence"]),
     ...(normalizedDiagnostics.smokeReadiness?.blockerIds ?? []),
     ...(normalizedDiagnostics.sourceMaterialHandoffVerification?.blockerIds ??
       []),
     ...(normalizedDiagnostics.proofMaterialBundle?.blockerIds ?? []),
-    ...(normalizedDiagnostics.activationPackage?.blockerIds ?? []),
-    ...(normalizedDiagnostics.operatorHandoff?.blockerIds ?? []),
     ...(normalizedDiagnostics.productionGate?.failedChecks ?? []).map(
       (check) => `production-gate:${check.id}`,
     ),
@@ -1589,33 +2487,6 @@ export const buildBlockedSolanaLiveVideoTranscript = ({
       "smoke-readiness",
     ),
     ...prefixedDetails(
-      normalizedDiagnostics.activationPackage?.artifacts?.smokeReadiness
-        ?.nextActionDetails,
-      "activation-smoke",
-      "activation-package-smoke-readiness",
-    ),
-    ...prefixedDetails(
-      normalizedDiagnostics.activationPackage?.artifacts?.smokeReadiness
-        ?.nextActionIds,
-      "activation-smoke",
-      "activation-package-smoke-readiness",
-    ),
-    ...prefixedDetails(
-      normalizedDiagnostics.activationPackage?.nextActionDetails,
-      "activation",
-      "activation-package",
-    ),
-    ...prefixedDetails(
-      normalizedDiagnostics.operatorHandoff?.nextActionDetails,
-      "operator",
-      "operator-handoff",
-    ),
-    ...prefixedDetails(
-      normalizedDiagnostics.operatorHandoff?.nextActionIds,
-      "operator",
-      "operator-handoff",
-    ),
-    ...prefixedDetails(
       normalizedDiagnostics.productionGate?.nextActionDetails,
       "production-gate",
       "production-gate",
@@ -1630,13 +2501,6 @@ export const buildBlockedSolanaLiveVideoTranscript = ({
     ...(normalizedDiagnostics.smokeReadiness?.nextActionIds ?? []).map(
       (id) => `smoke:${id}`,
     ),
-    ...(
-      normalizedDiagnostics.activationPackage?.artifacts?.smokeReadiness
-        ?.nextActionIds ?? []
-    ).map((id) => `activation-smoke:${id}`),
-    ...(normalizedDiagnostics.operatorHandoff?.nextActionIds ?? []).map(
-      (id) => `operator:${id}`,
-    ),
     ...(normalizedDiagnostics.productionGate?.nextActionIds ?? []).map(
       (id) => `production-gate:${id}`,
     ),
@@ -1648,6 +2512,8 @@ export const buildBlockedSolanaLiveVideoTranscript = ({
   return {
     schema: "iroha-demo-sccp-solana-live-video-blocked/v1",
     ready: false,
+    diagnosticVideoOnly: true,
+    notLiveTransferEvidence: true,
     routeId: "taira_sol_xor",
     checkedAt,
     reason,
@@ -1664,19 +2530,24 @@ export const buildBlockedSolanaLiveVideoTranscript = ({
     nextActionIds,
     nextActionDetails,
     publicSolanaCapability: isRecord(preflightReport?.publicSolanaCapability)
-      ? preflightReport.publicSolanaCapability
+      ? {
+          present: true,
+          ready: preflightReport.publicSolanaCapability.ready === true,
+        }
       : null,
     publicSolanaLane: isRecord(preflightReport?.publicSolanaLane)
-      ? preflightReport.publicSolanaLane
+      ? {
+          present: true,
+          ready: preflightReport.publicSolanaLane.ready === true,
+        }
       : null,
-    activationPackage: normalizedDiagnostics.activationPackage ?? null,
+    governance: normalizedDiagnostics.governance ?? null,
     deploymentVideo: normalizedDiagnostics.deploymentVideo ?? null,
-    operatorHandoff: normalizedDiagnostics.operatorHandoff ?? null,
     productionGate: normalizedDiagnostics.productionGate ?? null,
     successPrerequisiteProblems,
     diagnostics: normalizedDiagnostics,
     requiredRealSteps: [
-      "TAIRA public endpoint publishes a production-ready taira_sol_xor Solana testnet manifest.",
+      "Parliament enacts the reviewed staged registration and separate bidirectional activation, and fresh typed-registry readback matches both.",
       "Solana testnet bridge/token/source/verifier programs and TAIRA burn-record material pass preflight.",
       "A connected Solana testnet wallet approves the destination finalize transaction.",
       "A real TAIRA -> Solana transfer and a real Solana -> TAIRA transfer complete with validated transaction links.",
@@ -1689,12 +2560,9 @@ const diagnosticSubtitleLines = (diagnostics = {}) => {
   const handoff = diagnostics.sourceMaterialHandoffVerification;
   const proofBundle = diagnostics.proofMaterialBundle;
   const requirements = diagnostics.productionRequirements;
-  const publishReadiness = diagnostics.publishReadiness;
-  const routePublicationRequest = diagnostics.routePublicationRequest;
+  const governance = diagnostics.governance;
   const smokeReadiness = diagnostics.smokeReadiness;
-  const activationPackage = diagnostics.activationPackage;
   const deploymentVideo = diagnostics.deploymentVideo;
-  const operatorHandoff = diagnostics.operatorHandoff;
   const productionGate = diagnostics.productionGate;
   const handoffLine =
     handoff?.ready === true
@@ -1707,19 +2575,16 @@ const diagnosticSubtitleLines = (diagnostics = {}) => {
   const requirementBlockers = Array.isArray(requirements?.blockerIds)
     ? requirements.blockerIds
     : [];
-  const publishBlockers = Array.isArray(publishReadiness?.blockerIds)
-    ? publishReadiness.blockerIds
-    : [];
   const requirementLine = requirementBlockers.length
     ? `Production requirements still block: ${requirementBlockers.join(", ")}.`
     : "Production requirements report has no remaining blockers.";
-  const publishLine = publishBlockers.length
-    ? `Route publish readiness still blocks: ${publishBlockers.join(", ")}.`
-    : "Route publish readiness has no remaining blockers.";
-  const routePublicationLine =
-    routePublicationRequest?.readyForRouteManagerReview === true
-      ? `Route-publication request is ready for route-manager review; ${routePublicationRequest.reviewPackageHash ?? "hash unavailable"}.`
-      : "Route-publication request is missing or not ready for route-manager review.";
+  const governancePlanLine = governance?.plan?.planSha256
+    ? `Reviewed governance plan ${governance.plan.planSha256} is present.`
+    : "Reviewed exact Solana governance plan is missing.";
+  const governanceEnactmentLine =
+    governance?.evidence?.ready === true
+      ? `Registration, activation, and public registry evidence match; ${governance.evidence.publicRegistrySha256 ?? "registry hash unavailable"}.`
+      : "Pinned registration/activation evidence or matching public registry readback is missing.";
   const smokeFailedChecks = Array.isArray(smokeReadiness?.failedChecks)
     ? smokeReadiness.failedChecks
     : [];
@@ -1738,25 +2603,10 @@ const diagnosticSubtitleLines = (diagnostics = {}) => {
         : smokeFailedChecks.length
           ? `Solana app smoke-readiness still blocks: ${smokeFailedChecks.map((check) => check.id).join(", ")}.`
           : "Solana app smoke-readiness has not passed.";
-  const activationLine =
-    activationPackage?.readyToSubmitWithCurrentRuntime === true
-      ? `TAIRA activation package is runtime-submit-ready; ${activationPackage.activationPackageHash ?? "hash unavailable"}.`
-      : activationPackage?.activationPackageHash
-        ? `TAIRA activation package is not submit-ready; ${activationPackage.activationPackageHash}.`
-        : "TAIRA activation package is missing or not submit-ready.";
   const deploymentVideoLine =
     deploymentVideo?.present === true
-      ? `Deployment walkthrough MP4 evidence is present; activation package ${deploymentVideo.activationPackageHash ?? "hash unavailable"}.`
+      ? "Deployment walkthrough MP4 evidence is present."
       : "Deployment walkthrough MP4 evidence is missing from blocked diagnostics.";
-  const laneActivation =
-    operatorHandoff?.artifacts?.laneActivationRequest ?? null;
-  const handoffSmoke = operatorHandoff?.artifacts?.smokeReadiness ?? null;
-  const operatorLine =
-    operatorHandoff?.readyToPublish === true
-      ? `Operator handoff is publish-ready; ${operatorHandoff.handoffHash ?? "hash unavailable"}.`
-      : operatorHandoff?.handoffHash
-        ? `Operator handoff is not publish-ready; lane activation production ready is ${laneActivation?.productionLaneReady === true}, smoke readiness is ${handoffSmoke?.ready === true}.`
-        : "Operator handoff is missing or not publish-ready.";
   const gateFailedChecks = Array.isArray(productionGate?.failedChecks)
     ? productionGate.failedChecks
     : [];
@@ -1770,12 +2620,10 @@ const diagnosticSubtitleLines = (diagnostics = {}) => {
     handoffLine,
     proofBundleLine,
     requirementLine,
-    publishLine,
-    routePublicationLine,
+    governancePlanLine,
+    governanceEnactmentLine,
     smokeLine,
-    activationLine,
     deploymentVideoLine,
-    operatorLine,
     productionGateLine,
   };
 };
@@ -1786,6 +2634,7 @@ const writeBlockedArtifacts = async ({
   reason,
   diagnostics = {},
   successPrerequisiteProblems = [],
+  protectedInputPaths = [],
 }) => {
   await ensureSafeOutputDirectory(outputDir);
   const transcript = buildBlockedSolanaLiveVideoTranscript({
@@ -1798,12 +2647,10 @@ const writeBlockedArtifacts = async ({
     handoffLine,
     proofBundleLine,
     requirementLine,
-    publishLine,
-    routePublicationLine,
+    governancePlanLine,
+    governanceEnactmentLine,
     smokeLine,
-    activationLine,
     deploymentVideoLine,
-    operatorLine,
     productionGateLine,
   } = diagnosticSubtitleLines(diagnostics);
   const subtitleText = `WEBVTT
@@ -1827,32 +2674,33 @@ Step 5: ${proofBundleLine}
 Step 6: ${requirementLine}
 
 00:32.000 --> 00:38.000
-Step 7: ${publishLine}
+Step 7: ${governancePlanLine}
 
 00:38.000 --> 00:44.000
-Step 8: ${routePublicationLine}
+Step 8: ${governanceEnactmentLine}
 
 00:44.000 --> 00:50.000
 Step 9: ${smokeLine}
 
 00:50.000 --> 00:56.000
-Step 10: ${activationLine}
+Step 10: Parliament evidence is never replaced by a route-manager signer or generic manifest upsert.
 
 00:56.000 --> 01:02.000
 Step 11: ${deploymentVideoLine}
 
 01:02.000 --> 01:08.000
-Step 12: ${operatorLine}
+Step 12: Fresh typed-registry readback is the only route-enactment authority.
 
 01:08.000 --> 01:14.000
 Step 13: ${productionGateLine}
 
 01:14.000 --> 01:20.000
-Step 14: Publish the real route manifest and enable Solana wallet/proof execution, then rerun this command.
+Step 14: Finish governed proof material and wallet execution prerequisites, then rerun this command.
 `;
   const subtitleCues = parseWebVttCues(subtitleText);
   transcript.subtitleCues = subtitleCues;
-  transcript.subtitleSummary = summarizeSubtitleCues(subtitleCues);
+  transcript.subtitleSummary =
+    summarizeSolanaLiveVideoSubtitleCues(subtitleCues);
   transcript.diagnosticVideoOnly = true;
   transcript.notLiveTransferEvidence = true;
   const transcriptPath = path.join(
@@ -1864,19 +2712,26 @@ Step 14: Publish the real route manifest and enable Solana wallet/proof executio
     "sccp-solana-live-video-blocked.vtt",
   );
   const videoPath = path.join(outputDir, "sccp-solana-live-video-blocked.mp4");
-  await Promise.all(
-    [transcriptPath, subtitlesPath, videoPath].map((file) =>
-      assertSafeOutputDestination(file),
-    ),
-  );
+  await assertSolanaLiveCaptureOutputsDisjoint({
+    outputPaths: [transcriptPath, subtitlesPath, videoPath],
+    protectedInputPaths,
+  });
   await writeAtomicFile(subtitlesPath, subtitleText);
   try {
-    transcript.mediaVerification = renderSolanaLiveVideoMp4({
+    const encodingVerification = renderSolanaLiveVideoMp4({
       subtitlesPath,
       videoPath,
       durationSeconds: 81,
       subtitleSummary: transcript.subtitleSummary,
     });
+    transcript.mediaVerification = {
+      ...encodingVerification,
+      ready: false,
+      encodingReady: encodingVerification.ready === true,
+      productionReady: false,
+      diagnosticOnly: true,
+      notLiveTransferEvidence: true,
+    };
   } catch (error) {
     await rm(subtitlesPath, { force: true }).catch(() => {});
     throw error;
@@ -2057,10 +2912,14 @@ export const buildSolanaLiveTransferEvidenceTemplate = ({
   routeId: SCCP_SOLANA_XOR_ROUTE_ID,
   assetKey: SCCP_XOR_ASSET_KEY,
   checkedAt,
-  activationPackageHash:
-    "<required 0x-prefixed hash from taira-solana-xor-activation-package.json>",
-  operatorHandoffHash:
-    "<required 0x-prefixed hash from taira-solana-xor-operator-handoff.json>",
+  governancePlanSha256:
+    "<required canonical hash from taira-solana-xor-governance-plan.json>",
+  governanceRegistrationSha256:
+    "<required exact file hash of taira-solana-xor-governance-register.json>",
+  governanceActivationSha256:
+    "<required exact file hash of taira-solana-xor-governance-activate.json>",
+  publicRegistrySha256:
+    "<required canonical hash from fresh public typed-registry readback>",
   tairaToSolana: {
     amount: "<positive XOR amount finalized on Solana>",
     messageId: "<32-byte SCCP message id hex>",
@@ -2083,7 +2942,7 @@ export const buildSolanaLiveTransferEvidenceTemplate = ({
     "change schema to iroha-demo-sccp-solana-live-transfer-evidence/v1",
     "keep TAIRA hashes and Solana signatures distinct across both directions",
     "use only explorer.solana.com testnet and taira-explorer.sora.org transaction URLs",
-    "bind activationPackageHash and operatorHandoffHash to the exact reviewed production packages",
+    "bind all four governance and public-registry hashes to the exact reviewed production gate",
   ],
 });
 
@@ -2147,19 +3006,21 @@ export const normalizeSolanaLiveTransferEvidence = (
   const assetKey = normalizeLiveEvidenceAssetKey(
     readString(evidence, "assetKey", "asset_key", "asset"),
   );
-  const activationPackageHash = normalizeRequiredHash32(
-    readString(evidence, "activationPackageHash", "activation_package_hash"),
-    "live evidence activationPackageHash",
+  const governancePlanSha256 = normalizeRequiredHash32(
+    readString(evidence, "governancePlanSha256"),
+    "live evidence governancePlanSha256",
   );
-  const operatorHandoffHash = normalizeRequiredHash32(
-    readString(
-      evidence,
-      "operatorHandoffHash",
-      "operator_handoff_hash",
-      "handoffHash",
-      "handoff_hash",
-    ),
-    "live evidence operatorHandoffHash",
+  const governanceRegistrationSha256 = normalizeRequiredHash32(
+    readString(evidence, "governanceRegistrationSha256"),
+    "live evidence governanceRegistrationSha256",
+  );
+  const governanceActivationSha256 = normalizeRequiredHash32(
+    readString(evidence, "governanceActivationSha256"),
+    "live evidence governanceActivationSha256",
+  );
+  const publicRegistrySha256 = normalizeRequiredHash32(
+    readString(evidence, "publicRegistrySha256"),
+    "live evidence publicRegistrySha256",
   );
   const forward = readRecord(evidence, "tairaToSolana", "taira_to_solana");
   const reverse = readRecord(evidence, "solanaToTaira", "solana_to_taira");
@@ -2180,8 +3041,10 @@ export const normalizeSolanaLiveTransferEvidence = (
     schema: "iroha-demo-sccp-solana-live-transfer-evidence/v1",
     routeId: SCCP_SOLANA_XOR_ROUTE_ID,
     assetKey,
-    activationPackageHash,
-    operatorHandoffHash,
+    governancePlanSha256,
+    governanceRegistrationSha256,
+    governanceActivationSha256,
+    publicRegistrySha256,
     evidencePath,
     checkedAt,
     tairaToSolana: {
@@ -2346,21 +3209,332 @@ const passedPreflightCheckEvidence = (report, id) => {
   return evidence;
 };
 
-const readPinHash = (record, label, ...keys) =>
-  normalizeNonZeroHex32(readString(record, ...keys), label);
+const requireExactKeys = (record, expectedKeys, label) => {
+  if (!isRecord(record)) {
+    throw new Error(`${label} is missing.`);
+  }
+  const actualKeys = Object.keys(record).sort();
+  const canonicalKeys = [...expectedKeys].sort();
+  if (canonicalSccpJson(actualKeys) !== canonicalSccpJson(canonicalKeys)) {
+    throw new Error(
+      `${label} must contain exactly ${canonicalKeys.join(", ")}.`,
+    );
+  }
+  return record;
+};
 
-export const extractSolanaLiveManifestPins = (preflightReport) => {
+const exactPositiveInteger = (value, label) => {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive safe integer.`);
+  }
+  return parsed;
+};
+
+const buildExactSolanaRegistryPins = (summary) => {
+  if (!isRecord(summary)) {
+    throw new Error("Exact Solana typed-registry summary is missing.");
+  }
+  if (
+    summary.routeId !== SCCP_SOLANA_XOR_ROUTE_ID ||
+    summary.assetKey !== SCCP_XOR_ASSET_KEY ||
+    summary.revision !== 1 ||
+    summary.activation !== "bidirectional"
+  ) {
+    throw new Error(
+      "Exact Solana typed-registry route must be bidirectional taira_sol_xor revision 1.",
+    );
+  }
+  const programs = requireExactKeys(
+    summary.programs,
+    ["destination", "source", "nativeVerifier"],
+    "Exact Solana typed-registry program roles",
+  );
+  const accounts = requireExactKeys(
+    summary.accounts,
+    [
+      "tokenMint",
+      "destinationProgram",
+      "destinationProgramData",
+      "destinationState",
+      "nativeVerifierProgram",
+      "nativeVerifierProgramData",
+      "nativeVerifierMaterial",
+      "sourceProgram",
+      "sourceProgramData",
+      "sourceState",
+    ],
+    "Exact Solana typed-registry account roles",
+  );
+  const programDataSlots = requireExactKeys(
+    summary.programDataSlots,
+    ["destination", "source", "nativeVerifier"],
+    "Exact Solana typed-registry ProgramData slots",
+  );
+  const codeHashes = requireExactKeys(
+    summary.codeHashes,
+    ["destination", "source", "nativeVerifier"],
+    "Exact Solana typed-registry code hashes",
+  );
+  for (const [role, accountRole] of [
+    ["destination", "destinationProgram"],
+    ["source", "sourceProgram"],
+    ["nativeVerifier", "nativeVerifierProgram"],
+  ]) {
+    if (programs[role] !== accounts[accountRole]) {
+      throw new Error(
+        `Exact Solana typed-registry ${role} program role is inconsistent.`,
+      );
+    }
+  }
+  const normalizedAccounts = Object.fromEntries(
+    Object.entries(accounts).map(([role, value]) => [
+      role,
+      normalizeSolanaPublicKey(value, `typed-registry ${role}`),
+    ]),
+  );
+  if (
+    new Set(Object.values(normalizedAccounts)).size !==
+    Object.keys(normalizedAccounts).length
+  ) {
+    throw new Error(
+      "Exact Solana typed-registry program, ProgramData, state, mint, and material roles must be distinct.",
+    );
+  }
+  const mintAuthorityAddress = deriveSolanaProgramAddress(
+    [
+      Buffer.from(SCCP_SOLANA_EXACT_MINT_AUTHORITY_SEED, "utf8"),
+      new PublicKey(normalizedAccounts.destinationState).toBuffer(),
+    ],
+    normalizedAccounts.destinationProgram,
+  );
+  const requiredString = (value, label) => {
+    if (typeof value !== "string" || !value.trim()) {
+      throw new Error(`${label} is missing.`);
+    }
+    return value;
+  };
+  if (summary.payloadAmountScale !== SCCP_SOLANA_TOKEN_DECIMALS) {
+    throw new Error(
+      "Exact Solana typed-registry settlement must use the nine-decimal XOR scale.",
+    );
+  }
+  return Object.freeze({
+    registrySha256: normalizeNonZeroHex32(
+      summary.registrySha256,
+      "typed-registry hash",
+    ),
+    routeId: summary.routeId,
+    assetKey: summary.assetKey,
+    routeRevision: summary.revision,
+    activation: summary.activation,
+    destinationProgramAddress: normalizedAccounts.destinationProgram,
+    sourceProgramAddress: normalizedAccounts.sourceProgram,
+    nativeVerifierProgramAddress: normalizedAccounts.nativeVerifierProgram,
+    destinationProgramDataAddress: normalizedAccounts.destinationProgramData,
+    sourceProgramDataAddress: normalizedAccounts.sourceProgramData,
+    nativeVerifierProgramDataAddress:
+      normalizedAccounts.nativeVerifierProgramData,
+    destinationProgramDataSlot: String(
+      exactPositiveInteger(
+        programDataSlots.destination,
+        "typed-registry destination ProgramData slot",
+      ),
+    ),
+    sourceProgramDataSlot: String(
+      exactPositiveInteger(
+        programDataSlots.source,
+        "typed-registry source ProgramData slot",
+      ),
+    ),
+    nativeVerifierProgramDataSlot: String(
+      exactPositiveInteger(
+        programDataSlots.nativeVerifier,
+        "typed-registry native-verifier ProgramData slot",
+      ),
+    ),
+    destinationProgramCodeHash: normalizeNonZeroHex32(
+      codeHashes.destination,
+      "typed-registry destination code hash",
+    ),
+    sourceProgramCodeHash: normalizeNonZeroHex32(
+      codeHashes.source,
+      "typed-registry source code hash",
+    ),
+    nativeVerifierProgramCodeHash: normalizeNonZeroHex32(
+      codeHashes.nativeVerifier,
+      "typed-registry native-verifier code hash",
+    ),
+    tokenMintAddress: normalizedAccounts.tokenMint,
+    destinationStateAddress: normalizedAccounts.destinationState,
+    sourceStateAddress: normalizedAccounts.sourceState,
+    nativeVerifierMaterialAddress: normalizedAccounts.nativeVerifierMaterial,
+    mintAuthorityAddress,
+    destinationBindingHash: normalizeNonZeroHex32(
+      summary.destinationBindingHash,
+      "typed-registry destination binding hash",
+    ),
+    deploymentConfigHash: normalizeNonZeroHex32(
+      summary.deploymentConfigHash,
+      "typed-registry deployment config hash",
+    ),
+    routeConfigurationHash: normalizeNonZeroHex32(
+      summary.routeConfigurationHash,
+      "typed-registry route configuration hash",
+    ),
+    sourceEmitterIdentityHash: normalizeNonZeroHex32(
+      summary.sourceEmitterIdentityHash,
+      "typed-registry source emitter identity hash",
+    ),
+    sourceIdentityHash: normalizeNonZeroHex32(
+      summary.sourceIdentityHash,
+      "typed-registry source identity hash",
+    ),
+    verifierKeyHash: normalizeNonZeroHex32(
+      summary.verifierKeyHash,
+      "typed-registry verifier key hash",
+    ),
+    nativeVerifierConfigHash: normalizeNonZeroHex32(
+      summary.nativeVerifierConfigHash,
+      "typed-registry native-verifier config hash",
+    ),
+    proofPolicySha256: normalizeNonZeroHex32(
+      canonicalSccpObjectSha256(summary.proofPolicy),
+      "typed-registry proof-policy hash",
+    ),
+    currentNativeTrustAnchorHash: normalizeNonZeroHex32(
+      summary.currentNativeTrustAnchorHash,
+      "typed-registry native trust-anchor hash",
+    ),
+    settlementAssetDefinitionId: requiredString(
+      summary.settlementAssetDefinitionId,
+      "typed-registry settlement asset definition id",
+    ),
+    custodyAccountId: requiredString(
+      summary.custodyAccountId,
+      "typed-registry custody account id",
+    ),
+    payloadAmountScale: summary.payloadAmountScale,
+  });
+};
+
+const requireExactProgramdataEvidence = (preflightReport, pins) => {
+  const evidence = passedPreflightCheckEvidence(
+    preflightReport,
+    "solana-live-exact-programdata-evidence",
+  );
+  requireExactKeys(
+    evidence,
+    ["destination", "source", "nativeVerifier"],
+    "Exact Solana immutable-program evidence roles",
+  );
+  for (const [role, expected] of [
+    [
+      "destination",
+      {
+        programAddress: pins.destinationProgramAddress,
+        programdataAddress: pins.destinationProgramDataAddress,
+        programdataSlot: pins.destinationProgramDataSlot,
+        programCodeHash: pins.destinationProgramCodeHash,
+      },
+    ],
+    [
+      "source",
+      {
+        programAddress: pins.sourceProgramAddress,
+        programdataAddress: pins.sourceProgramDataAddress,
+        programdataSlot: pins.sourceProgramDataSlot,
+        programCodeHash: pins.sourceProgramCodeHash,
+      },
+    ],
+    [
+      "nativeVerifier",
+      {
+        programAddress: pins.nativeVerifierProgramAddress,
+        programdataAddress: pins.nativeVerifierProgramDataAddress,
+        programdataSlot: pins.nativeVerifierProgramDataSlot,
+        programCodeHash: pins.nativeVerifierProgramCodeHash,
+      },
+    ],
+  ]) {
+    const live = readRecord(evidence, role);
+    if (
+      !live ||
+      readString(live, "role") !== role ||
+      live.immutable !== true ||
+      live.upgradeAuthority !== null ||
+      readString(live, "programAddress") !== expected.programAddress ||
+      readString(live, "programdataAddress") !== expected.programdataAddress ||
+      String(live.programdataSlot ?? "") !== expected.programdataSlot ||
+      normalizeNonZeroHex32(
+        readString(live, "programCodeHash"),
+        `${role} live program code hash`,
+      ) !== expected.programCodeHash
+    ) {
+      throw new Error(
+        `Exact Solana ${role} immutable-program evidence differs from the typed registry.`,
+      );
+    }
+  }
+};
+
+const requireExactRuntimeEvidence = (preflightReport, pins) => {
+  const evidence = passedPreflightCheckEvidence(
+    preflightReport,
+    "solana-live-exact-runtime-state",
+  );
+  for (const [key, address] of [
+    ["destinationState", pins.destinationStateAddress],
+    ["sourceState", pins.sourceStateAddress],
+    ["mint", pins.tokenMintAddress],
+    ["material", pins.nativeVerifierMaterialAddress],
+  ]) {
+    if (readString(readRecord(evidence, key), "address") !== address) {
+      throw new Error(
+        `Exact Solana ${key} runtime evidence differs from the typed registry.`,
+      );
+    }
+  }
+  const observedMintAuthority = readString(
+    evidence,
+    "mintAuthority",
+    "mint_authority",
+  );
+  const embeddedMintAuthority = readString(
+    readRecord(evidence, "mint"),
+    "mintAuthority",
+    "mint_authority",
+  );
+  if (
+    observedMintAuthority !== pins.mintAuthorityAddress ||
+    (embeddedMintAuthority &&
+      embeddedMintAuthority !== pins.mintAuthorityAddress)
+  ) {
+    throw new Error(
+      "Exact Solana live mint authority differs from the destination-state PDA.",
+    );
+  }
+};
+
+export const extractSolanaLiveRegistryPins = (preflightReport) => {
   if (!isRecord(preflightReport) || preflightReport.ready !== true) {
     throw new Error("Solana route preflight must be ready for live evidence.");
   }
-  if (readString(preflightReport, "manifestSource") !== "public") {
+  if (
+    readString(preflightReport, "schema") !==
+      "iroha-demo-sccp-solana-route-preflight/v2" ||
+    readString(preflightReport, "protocolSource") !==
+      "typed-sccp-registry-v1" ||
+    readString(preflightReport, "manifestSource") !== "public-registry"
+  ) {
     throw new Error(
-      "Solana live evidence requires a manifest loaded from public TAIRA.",
+      "Solana live evidence requires the exact v2 public typed-registry preflight.",
     );
   }
   if (
     readString(preflightReport, "routeId") !== SCCP_SOLANA_XOR_ROUTE_ID ||
-    readString(preflightReport, "assetKey") !== SCCP_XOR_ASSET_KEY
+    readString(preflightReport, "assetKey") !== SCCP_XOR_ASSET_KEY ||
+    Number(preflightReport.routeRevision) !== 1
   ) {
     throw new Error(
       "Solana live evidence preflight route identity is invalid.",
@@ -2370,157 +3544,40 @@ export const extractSolanaLiveManifestPins = (preflightReport) => {
   const solana = readRecord(preflightReport, "solana");
   if (
     readString(taira, "chainId") !== TAIRA_CHAIN_ID ||
-    Number(taira?.networkPrefix) !== TAIRA_NETWORK_PREFIX
+    Number(taira?.networkPrefix) !== TAIRA_NETWORK_PREFIX ||
+    readString(taira, "registryPath") !== SOLANA_SCCP_REGISTRY_PATH
   ) {
     throw new Error("Solana live evidence preflight does not target TAIRA.");
   }
   if (
     readString(solana, "network") !== SOLANA_TESTNET_NETWORK_ID ||
-    readString(solana, "caipChainId") !== SOLANA_TESTNET_CAIP_CHAIN_ID
+    readString(solana, "caipChainId") !== SOLANA_TESTNET_CAIP_CHAIN_ID ||
+    readString(solana, "genesisHash") !== SOLANA_TESTNET_GENESIS_HASH
   ) {
     throw new Error(
       "Solana live evidence preflight does not target canonical Solana testnet.",
     );
   }
 
-  const addresses = passedPreflightCheckEvidence(
-    preflightReport,
-    "solana-deployment-addresses",
+  const registryState = readRecord(preflightReport, "registryState");
+  const pins = buildExactSolanaRegistryPins(
+    readRecord(preflightReport, "registrySummary"),
   );
-  const rollout = passedPreflightCheckEvidence(
-    preflightReport,
-    "solana-rollout-material",
-  );
-  const tokenState = passedPreflightCheckEvidence(
-    preflightReport,
-    "solana-live-token-state-evidence",
-  );
-  const sourceLane = passedPreflightCheckEvidence(
-    preflightReport,
-    "source-lane-material",
-  );
-  const burnRecord = passedPreflightCheckEvidence(
-    preflightReport,
-    "taira-burn-record-material",
-  );
-  const verifier = readRecord(sourceLane, "verifier");
-  const adapter = readRecord(sourceLane, "adapter");
-  if (!verifier || !adapter) {
-    throw new Error("Solana source-lane manifest pins are missing.");
-  }
-  const pins = {
-    bridgeProgramAddress: normalizeSolanaPublicKey(
-      readString(addresses, "bridgeProgramAddress"),
-      "manifest bridge program",
-    ),
-    tokenMintAddress: normalizeSolanaPublicKey(
-      readString(addresses, "tokenMintAddress"),
-      "manifest token mint",
-    ),
-    sourceBridgeProgramAddress: normalizeSolanaPublicKey(
-      readString(addresses, "sourceBridgeProgramAddress"),
-      "manifest source bridge program",
-    ),
-    verifierProgramAddress: normalizeSolanaPublicKey(
-      readString(addresses, "verifierProgramAddress"),
-      "manifest verifier program",
-    ),
-    nativeVerifierProgramAddress: normalizeSolanaPublicKey(
-      readString(addresses, "nativeVerifierProgramAddress"),
-      "manifest native verifier program",
-    ),
-    verifierStateAddress: normalizeSolanaPublicKey(
-      readString(addresses, "verifierStateAddress"),
-      "manifest verifier state",
-    ),
-    sourceStateAddress: normalizeSolanaPublicKey(
-      readString(addresses, "sourceStateAddress"),
-      "manifest source state",
-    ),
-    mintAuthorityAddress: normalizeSolanaPublicKey(
-      readString(tokenState, "expectedMintAuthority", "mintAuthority"),
-      "manifest mint authority",
-    ),
-    verifierCodeHash: readPinHash(
-      rollout,
-      "manifest verifier code hash",
-      "verifierCodeHash",
-    ),
-    verifierKeyHash: readPinHash(
-      rollout,
-      "manifest verifier key hash",
-      "verifierKeyHash",
-    ),
-    destinationBindingHash: readPinHash(
-      rollout,
-      "manifest destination binding hash",
-      "destinationBindingHash",
-    ),
-    sourceTrustAnchorHash: readPinHash(
-      verifier,
-      "manifest source trust anchor hash",
-      "sourceTrustAnchorHash",
-      "source_trust_anchor_hash",
-    ),
-    consensusVerifierHash: readPinHash(
-      verifier,
-      "manifest consensus verifier hash",
-      "consensusVerifierHash",
-      "consensus_verifier_hash",
-    ),
-    messageInclusionVerifierHash: readPinHash(
-      verifier,
-      "manifest message inclusion verifier hash",
-      "messageInclusionVerifierHash",
-      "message_inclusion_verifier_hash",
-    ),
-    finalityPolicyHash: readPinHash(
-      verifier,
-      "manifest finality policy hash",
-      "finalityPolicyHash",
-      "finality_policy_hash",
-    ),
-    sourceStateVerifierHash: readPinHash(
-      verifier,
-      "manifest source state verifier hash",
-      "sourceStateVerifierHash",
-      "source_state_verifier_hash",
-    ),
-    adapterVerifierVkHash: readPinHash(
-      adapter,
-      "manifest adapter verifier VK hash",
-      "adapterVerifierVkHash",
-      "adapter_verifier_vk_hash",
-    ),
-    adapterDeploymentReceiptHash: readPinHash(
-      adapter,
-      "manifest adapter deployment receipt hash",
-      "deploymentReceiptHash",
-      "deployment_receipt_hash",
-    ),
-    settlementAssetDefinitionId: readString(
-      burnRecord,
-      "settlementAssetDefinitionId",
-    ),
-  };
-  if (!pins.settlementAssetDefinitionId) {
-    throw new Error("Manifest settlement asset definition id is missing.");
-  }
-  const addressesToCompare = [
-    pins.bridgeProgramAddress,
-    pins.tokenMintAddress,
-    pins.sourceBridgeProgramAddress,
-    pins.verifierProgramAddress,
-    pins.nativeVerifierProgramAddress,
-    pins.verifierStateAddress,
-    pins.sourceStateAddress,
-    pins.mintAuthorityAddress,
-  ];
-  if (new Set(addressesToCompare).size !== addressesToCompare.length) {
+  if (
+    registryState?.lanePresent !== true ||
+    registryState?.routePresent !== true ||
+    readString(registryState, "activation") !== "bidirectional" ||
+    normalizeNonZeroHex32(
+      readString(registryState, "currentNativeTrustAnchorHash"),
+      "preflight current native trust-anchor hash",
+    ) !== pins.currentNativeTrustAnchorHash
+  ) {
     throw new Error(
-      "Solana live manifest program, state, and mint pins collide.",
+      "Solana live evidence preflight does not prove the exact active typed-registry route.",
     );
   }
+  requireExactProgramdataEvidence(preflightReport, pins);
+  requireExactRuntimeEvidence(preflightReport, pins);
   return pins;
 };
 
@@ -2853,7 +3910,7 @@ const verifyTairaToSolanaTransaction = ({
   const label = "TAIRA-to-Solana finalize transaction";
   const bridge = findSolanaBridgeInstruction(
     transaction,
-    pins.verifierProgramAddress,
+    pins.destinationProgramAddress,
     label,
   );
   const vectors = decodeLengthPrefixedVectors(bridge.data, `${label} envelope`);
@@ -2889,16 +3946,16 @@ const verifyTairaToSolanaTransaction = ({
   const messageReceiptAddress = deriveSolanaProgramAddress(
     [
       Buffer.from(SCCP_SOLANA_MESSAGE_RECEIPT_SEED, "utf8"),
-      new PublicKey(pins.verifierStateAddress).toBuffer(),
+      new PublicKey(pins.destinationStateAddress).toBuffer(),
       Buffer.from(publicInputs.messageId, "hex"),
     ],
-    pins.verifierProgramAddress,
+    pins.destinationProgramAddress,
   );
   assertExactInstructionAccounts(
     bridge.accounts,
     [
       bridge.accounts[0],
-      pins.verifierStateAddress,
+      pins.destinationStateAddress,
       pins.tokenMintAddress,
       destinationTokenAccount,
       pins.mintAuthorityAddress,
@@ -2934,7 +3991,7 @@ const verifyTairaToSolanaTransaction = ({
     amountBaseUnits,
     destinationTokenAccount,
     messageReceiptAddress,
-    bridgeProgramAddress: bridge.programId,
+    destinationProgramAddress: bridge.programId,
     mint: pins.tokenMintAddress,
   };
 };
@@ -2947,7 +4004,7 @@ const verifySolanaToTairaTransaction = ({
   const label = "Solana-to-TAIRA source burn transaction";
   const bridge = findSolanaBridgeInstruction(
     transaction,
-    pins.sourceBridgeProgramAddress,
+    pins.sourceProgramAddress,
     label,
   );
   const vectors = decodeLengthPrefixedVectors(bridge.data, `${label} envelope`);
@@ -2984,7 +4041,7 @@ const verifySolanaToTairaTransaction = ({
       new PublicKey(owner).toBuffer(),
       vectors[3],
     ],
-    pins.sourceBridgeProgramAddress,
+    pins.sourceProgramAddress,
   );
   assertExactInstructionAccounts(
     bridge.accounts,
@@ -3024,10 +4081,7 @@ const verifySolanaToTairaTransaction = ({
   const sourceEventHash = createHash("sha256")
     .update(Buffer.from(SCCP_SOLANA_SOURCE_BURN_EVENT_PREFIX, "utf8"))
     .update(
-      decodeBase58(
-        pins.sourceBridgeProgramAddress,
-        `${label} source bridge program`,
-      ),
+      decodeBase58(pins.sourceProgramAddress, `${label} source bridge program`),
     )
     .update(decodeBase58(pins.sourceStateAddress, `${label} source state`))
     .update(decodeBase58(pins.tokenMintAddress, `${label} mint`))
@@ -3048,7 +4102,7 @@ const verifySolanaToTairaTransaction = ({
     tairaRecipient,
     nonce,
     sourceEventHash,
-    sourceBridgeProgramAddress: bridge.programId,
+    sourceProgramAddress: bridge.programId,
     mint: pins.tokenMintAddress,
   };
 };
@@ -3064,21 +4118,21 @@ const normalizeTairaStatus = (record) => {
   return "";
 };
 
-const requireExactManifestPins = (record, expectedPins, label) => {
-  const actual = readRecord(record, "manifestPins", "manifest_pins");
-  if (!actual) {
-    throw new Error(`${label} manifest pins are missing.`);
+const requireExactRegistryPins = (record, expectedPins, label) => {
+  if (
+    Object.prototype.hasOwnProperty.call(record, "manifestPins") ||
+    Object.prototype.hasOwnProperty.call(record, "manifest_pins")
+  ) {
+    throw new Error(`${label} uses retired manifest pins.`);
   }
-  const snakeCase = (key) =>
-    key.replace(/[A-Z]/gu, (match) => `_${match.toLowerCase()}`);
-  for (const [key, expected] of Object.entries(expectedPins)) {
-    const actualValue = readString(actual, key, snakeCase(key));
-    const normalizedActual = HEX32.test(expected)
-      ? normalizeHex32(actualValue, `${label} ${key}`)
-      : actualValue;
-    if (normalizedActual !== expected) {
-      throw new Error(`${label} ${key} does not match the public manifest.`);
-    }
+  const actual = readRecord(record, "registryPins", "registry_pins");
+  if (!actual) {
+    throw new Error(`${label} exact typed-registry pins are missing.`);
+  }
+  if (canonicalSccpJson(actual) !== canonicalSccpJson(expectedPins)) {
+    throw new Error(
+      `${label} exact pins do not match the public typed registry.`,
+    );
   }
 };
 
@@ -3249,7 +4303,7 @@ const verifyTairaTransactionRecord = ({
       label,
     });
   }
-  requireExactManifestPins(record, pins, label);
+  requireExactRegistryPins(record, pins, label);
   return { hash, status: "committed", direction, messageId, amountBaseUnits };
 };
 
@@ -3345,7 +4399,7 @@ const verifyTairaSccpMessageRecord = ({
   ) {
     throw new Error(`${label} domain pair is invalid.`);
   }
-  requireExactManifestPins(record, pins, label);
+  requireExactRegistryPins(record, pins, label);
   return {
     messageId,
     status,
@@ -3391,213 +4445,28 @@ const verifyTairaChainMetadata = (metadata) => {
   return { chainId, networkPrefix: prefix };
 };
 
-const publicManifestRecords = (value) => {
-  if (Array.isArray(value)) {
-    return value.filter(isRecord);
-  }
-  if (!isRecord(value)) {
-    return [];
-  }
-  if (readString(value, "routeId", "route_id", "route", "id")) {
-    return [value];
-  }
-  return [
-    ...readArray(value, "manifests"),
-    ...readArray(value, "routes"),
-    ...readArray(value, "items"),
-    ...readArray(value, "data"),
-  ].filter(isRecord);
-};
-
-const recursiveStringValues = (value, keys, depth = 0) => {
-  if (!isRecord(value) || depth > 8) {
-    return [];
-  }
-  const values = [];
-  for (const [key, child] of Object.entries(value)) {
-    if (keys.includes(key) && typeof child === "string" && child.trim()) {
-      values.push(child.trim());
-    }
-    if (isRecord(child)) {
-      values.push(...recursiveStringValues(child, keys, depth + 1));
-    }
-  }
-  return values;
-};
-
-const PUBLIC_MANIFEST_PIN_ALIASES = Object.freeze({
-  bridgeProgramAddress: [
-    "bridgeProgramAddress",
-    "bridge_program_address",
-    "tairaXorSolanaProgramId",
-    "taira_xor_solana_program_id",
-    "solanaProgramId",
-    "solana_program_id",
-  ],
-  tokenMintAddress: [
-    "tokenMintAddress",
-    "token_mint_address",
-    "tairaXorTokenMint",
-    "taira_xor_token_mint",
-    "solanaTokenMint",
-    "solana_token_mint",
-    "tairaXorTokenAddress",
-    "taira_xor_token_address",
-    "tokenMint",
-    "token_mint",
-  ],
-  sourceBridgeProgramAddress: [
-    "sourceBridgeProgramAddress",
-    "source_bridge_program_address",
-    "sccpSolanaSourceBridgeAddress",
-    "sccp_solana_source_bridge_address",
-    "solanaSourceBridgeAddress",
-    "solana_source_bridge_address",
-    "sourceBridgeProgramId",
-    "source_bridge_program_id",
-  ],
-  verifierProgramAddress: [
-    "verifierProgramAddress",
-    "verifier_program_address",
-    "solanaVerifierProgramId",
-    "solana_verifier_program_id",
-    "destinationVerifierProgramId",
-    "destination_verifier_program_id",
-  ],
-  nativeVerifierProgramAddress: [
-    "nativeVerifierProgramAddress",
-    "native_verifier_program_address",
-    "nativeVerifierProgramId",
-    "native_verifier_program_id",
-    "solanaNativeVerifierProgramId",
-    "solana_native_verifier_program_id",
-  ],
-  verifierStateAddress: [
-    "verifierStateAddress",
-    "verifier_state_address",
-    "solanaVerifierStateAddress",
-    "solana_verifier_state_address",
-  ],
-  sourceStateAddress: [
-    "sourceStateAddress",
-    "source_state_address",
-    "solanaSourceStateAddress",
-    "solana_source_state_address",
-    "sourceBridgeStateAddress",
-    "source_bridge_state_address",
-    "sccpSolanaSourceStateAddress",
-    "sccp_solana_source_state_address",
-  ],
-  mintAuthorityAddress: [
-    "mintAuthorityAddress",
-    "mint_authority_address",
-    "solanaMintAuthorityAddress",
-    "solana_mint_authority_address",
-  ],
-  verifierCodeHash: ["verifierCodeHash", "verifier_code_hash"],
-  verifierKeyHash: ["verifierKeyHash", "verifier_key_hash"],
-  destinationBindingHash: [
-    "destinationBindingHash",
-    "destination_binding_hash",
-    "expectedDestinationBindingHashHex",
-    "expected_destination_binding_hash_hex",
-  ],
-  sourceTrustAnchorHash: ["sourceTrustAnchorHash", "source_trust_anchor_hash"],
-  consensusVerifierHash: ["consensusVerifierHash", "consensus_verifier_hash"],
-  messageInclusionVerifierHash: [
-    "messageInclusionVerifierHash",
-    "message_inclusion_verifier_hash",
-  ],
-  finalityPolicyHash: ["finalityPolicyHash", "finality_policy_hash"],
-  sourceStateVerifierHash: [
-    "sourceStateVerifierHash",
-    "source_state_verifier_hash",
-  ],
-  adapterVerifierVkHash: ["adapterVerifierVkHash", "adapter_verifier_vk_hash"],
-  adapterDeploymentReceiptHash: [
-    "adapterDeploymentReceiptHash",
-    "adapter_deployment_receipt_hash",
-    "deploymentReceiptHash",
-    "deployment_receipt_hash",
-  ],
-  settlementAssetDefinitionId: [
-    "settlementAssetDefinitionId",
-    "settlement_asset_definition_id",
-    "taira_burn_record_settlement_asset_definition_id",
-  ],
-});
-
-const publicManifestPinScope = (manifest, key) => {
-  if (
-    [
-      "sourceTrustAnchorHash",
-      "consensusVerifierHash",
-      "messageInclusionVerifierHash",
-      "finalityPolicyHash",
-      "sourceStateVerifierHash",
-    ].includes(key)
-  ) {
-    return (
-      readRecord(
-        manifest,
-        "sourceVerifierMaterial",
-        "source_verifier_material",
-      ) ?? manifest
-    );
-  }
-  if (["adapterVerifierVkHash", "adapterDeploymentReceiptHash"].includes(key)) {
-    return (
-      readRecord(
-        manifest,
-        "sourceAdapterEngineDeployment",
-        "source_adapter_engine_deployment",
-      ) ?? manifest
-    );
-  }
-  return manifest;
-};
-
-const verifyPublicRouteManifestPins = (manifestSet, expectedPins) => {
-  const matches = publicManifestRecords(manifestSet).filter(
-    (manifest) =>
-      readString(manifest, "routeId", "route_id", "route", "id") ===
-        SCCP_SOLANA_XOR_ROUTE_ID &&
-      readString(manifest, "assetKey", "asset_key", "asset") ===
-        SCCP_XOR_ASSET_KEY,
-  );
-  if (matches.length !== 1) {
+const verifyPublicTypedRegistryPins = (registryValue, expectedPins) => {
+  selectExactSolanaRegistryRoute(registryValue, {
+    requireBidirectional: true,
+    requireCurrentTrustAnchor: true,
+  });
+  const summary = summarizeExactSolanaRegistryRoute(registryValue, {
+    requireBidirectional: true,
+    requireCurrentTrustAnchor: true,
+  });
+  const observedPins = buildExactSolanaRegistryPins(summary);
+  if (canonicalSccpJson(observedPins) !== canonicalSccpJson(expectedPins)) {
     throw new Error(
-      "Public TAIRA must expose exactly one taira_sol_xor route manifest.",
+      "Public TAIRA typed-registry route differs from the exact preflight pins.",
     );
   }
-  const manifest = matches[0];
-  const network = readString(
-    manifest,
-    "solanaNetwork",
-    "solana_network",
-    "network",
-  ).toLowerCase();
-  if (!["solana-testnet", "testnet"].includes(network)) {
-    throw new Error("Public taira_sol_xor manifest is not Solana testnet.");
-  }
-  for (const [key, expected] of Object.entries(expectedPins)) {
-    const aliases = PUBLIC_MANIFEST_PIN_ALIASES[key];
-    const rawValues = recursiveStringValues(
-      publicManifestPinScope(manifest, key),
-      aliases,
-    );
-    const values = new Set(
-      rawValues.map((value) =>
-        HEX32.test(expected)
-          ? normalizeHex32(value, `public manifest ${key}`)
-          : value,
-      ),
-    );
-    if (values.size !== 1 || !values.has(expected)) {
-      throw new Error(`Public taira_sol_xor manifest ${key} pin is invalid.`);
-    }
-  }
-  return { routeId: SCCP_SOLANA_XOR_ROUTE_ID, assetKey: SCCP_XOR_ASSET_KEY };
+  return Object.freeze({
+    routeId: summary.routeId,
+    assetKey: summary.assetKey,
+    routeRevision: summary.revision,
+    activation: summary.activation,
+    registrySha256: observedPins.registrySha256,
+  });
 };
 
 const jsonResponse = async (
@@ -3720,29 +4589,7 @@ const buildReadOnlyLiveEvidenceClients = ({
           );
         }
       }
-      if (
-        tairaEndpoint.protocol !== "https:" ||
-        tairaEndpoint.hostname !== "taira.sora.org"
-      ) {
-        throw new Error("TAIRA chain metadata readback is unavailable.");
-      }
-      const capabilities = await tairaGet(
-        "/v1/sccp/capabilities",
-        "TAIRA SCCP capabilities",
-      );
-      if (
-        Number(capabilities?.local_domain) !== SCCP_SORA_DOMAIN ||
-        readString(capabilities, "local_chain") !== "sora"
-      ) {
-        throw new Error(
-          "Canonical TAIRA endpoint capability identity is invalid.",
-        );
-      }
-      return {
-        chain_id: TAIRA_CHAIN_ID,
-        network_prefix: TAIRA_NETWORK_PREFIX,
-        identity_source: "canonical-taira-endpoint-and-sccp-capabilities",
-      };
+      throw new Error("TAIRA chain metadata readback is unavailable.");
     },
     readTairaTransaction: async (hash) => {
       const transaction = await tairaGet(
@@ -3759,8 +4606,23 @@ const buildReadOnlyLiveEvidenceClients = ({
         )
       );
     },
-    readTairaRouteManifest: () =>
-      tairaGet("/v1/sccp/manifests", "TAIRA SCCP route manifests"),
+    readTairaRegistry: async () =>
+      jsonResponse(
+        await fetchImpl(
+          tairaUrl(SOLANA_SCCP_REGISTRY_PATH, {
+            readback_nonce: randomUUID(),
+          }),
+          {
+            method: "GET",
+            headers: {
+              accept: "application/json",
+              "cache-control": "no-cache, no-store",
+              pragma: "no-cache",
+            },
+          },
+        ),
+        "TAIRA typed SCCP registry",
+      ),
     readTairaSccpMessage: async (messageId) => {
       const direct = await tairaGet(
         `/v1/sccp/messages/${encodeURIComponent(messageId)}`,
@@ -3868,7 +4730,7 @@ export const verifySolanaLiveTransferReadbacks = async ({
   if (!isRecord(liveEvidence)) {
     throw new Error("Normalized Solana live evidence is required.");
   }
-  const pins = extractSolanaLiveManifestPins(preflightReport);
+  const pins = extractSolanaLiveRegistryPins(preflightReport);
   assertNoTransactionReuse(liveEvidence, preflightReport);
   const clients =
     readbacks ??
@@ -3884,7 +4746,7 @@ export const verifySolanaLiveTransferReadbacks = async ({
     "readSolanaTransaction",
     "readTairaChainMetadata",
     "readTairaTransaction",
-    "readTairaRouteManifest",
+    "readTairaRegistry",
     "readTairaSccpMessage",
   ]) {
     if (typeof clients?.[method] !== "function") {
@@ -3901,8 +4763,8 @@ export const verifySolanaLiveTransferReadbacks = async ({
   const firstTairaIdentity = verifyTairaChainMetadata(
     await clients.readTairaChainMetadata(),
   );
-  const firstManifestIdentity = verifyPublicRouteManifestPins(
-    await clients.readTairaRouteManifest(),
+  const firstRegistryIdentity = verifyPublicTypedRegistryPins(
+    await clients.readTairaRegistry(),
     pins,
   );
   const [
@@ -4002,28 +4864,28 @@ export const verifySolanaLiveTransferReadbacks = async ({
     sourceEventHash: reverseSolana.sourceEventHash,
     pins,
   });
-  const [secondGenesis, secondTairaMetadata, secondManifestSet] =
+  const [secondGenesis, secondTairaMetadata, secondRegistry] =
     await Promise.all([
       clients.readSolanaGenesisHash(),
       clients.readTairaChainMetadata(),
-      clients.readTairaRouteManifest(),
+      clients.readTairaRegistry(),
     ]);
   if (secondGenesis !== SOLANA_TESTNET_GENESIS_HASH) {
     throw new Error("Solana RPC cluster identity changed during readback.");
   }
   const secondTairaIdentity = verifyTairaChainMetadata(secondTairaMetadata);
-  const secondManifestIdentity = verifyPublicRouteManifestPins(
-    secondManifestSet,
+  const secondRegistryIdentity = verifyPublicTypedRegistryPins(
+    secondRegistry,
     pins,
   );
   if (
     JSON.stringify(firstTairaIdentity) !==
       JSON.stringify(secondTairaIdentity) ||
-    JSON.stringify(firstManifestIdentity) !==
-      JSON.stringify(secondManifestIdentity)
+    canonicalSccpJson(firstRegistryIdentity) !==
+      canonicalSccpJson(secondRegistryIdentity)
   ) {
     throw new Error(
-      "TAIRA endpoint or public route identity changed during readback.",
+      "TAIRA endpoint or public typed-registry identity changed during readback.",
     );
   }
   return {
@@ -4031,7 +4893,7 @@ export const verifySolanaLiveTransferReadbacks = async ({
     readOnly: true,
     solanaGenesisHash: SOLANA_TESTNET_GENESIS_HASH,
     taira: firstTairaIdentity,
-    manifestPins: pins,
+    registryPins: pins,
     tairaToSolana: {
       tairaSource,
       solanaFinalize: forwardSolana,
@@ -4081,21 +4943,36 @@ const compareRequiredLiveEvidenceHash = ({ actual, expected, id, label }) => {
 export const solanaLiveEvidencePackageHashProblems = ({
   liveEvidence,
   diagnostics,
-} = {}) =>
-  [
+} = {}) => {
+  const governanceEvidence =
+    diagnostics?.governanceEvidence ?? diagnostics?.governance?.evidence;
+  return [
     compareRequiredLiveEvidenceHash({
-      actual: liveEvidence?.activationPackageHash,
-      expected: diagnostics?.activationPackage?.activationPackageHash,
-      id: "live-evidence-activation-package-hash",
-      label: "activationPackageHash",
+      actual: liveEvidence?.governancePlanSha256,
+      expected: governanceEvidence?.planSha256,
+      id: "live-evidence-governance-plan-hash",
+      label: "governancePlanSha256",
     }),
     compareRequiredLiveEvidenceHash({
-      actual: liveEvidence?.operatorHandoffHash,
-      expected: diagnostics?.operatorHandoff?.handoffHash,
-      id: "live-evidence-operator-handoff-hash",
-      label: "operatorHandoffHash",
+      actual: liveEvidence?.governanceRegistrationSha256,
+      expected: governanceEvidence?.registrationArtifactSha256,
+      id: "live-evidence-governance-registration-hash",
+      label: "governanceRegistrationSha256",
+    }),
+    compareRequiredLiveEvidenceHash({
+      actual: liveEvidence?.governanceActivationSha256,
+      expected: governanceEvidence?.activationArtifactSha256,
+      id: "live-evidence-governance-activation-hash",
+      label: "governanceActivationSha256",
+    }),
+    compareRequiredLiveEvidenceHash({
+      actual: liveEvidence?.publicRegistrySha256,
+      expected: governanceEvidence?.publicRegistrySha256,
+      id: "live-evidence-public-registry-hash",
+      label: "publicRegistrySha256",
     }),
   ].filter(Boolean);
+};
 
 const loadLiveEvidence = async (file) => {
   if (!file) {
@@ -4104,12 +4981,384 @@ const loadLiveEvidence = async (file) => {
     );
   }
   const liveEvidencePath = path.resolve(file);
-  const evidence = await readStableJsonFile(liveEvidencePath, {
+  const bytes = await readStableRegularFile(liveEvidencePath, {
     label: "Solana live transfer evidence",
+    maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
   });
+  const evidence = parseSolanaLiveVideoPinnedJsonBytes(
+    bytes,
+    "Solana live transfer evidence",
+  );
   return normalizeSolanaLiveTransferEvidence(evidence, {
     evidencePath: liveEvidencePath,
   });
+};
+
+const sha256Bytes = (bytes) =>
+  `0x${createHash("sha256").update(bytes).digest("hex")}`;
+
+const escapeHtml = (value) =>
+  String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+
+export const assertSolanaLiveCaptureOutputsDisjoint = async ({
+  outputPaths,
+  protectedInputPaths,
+}) => {
+  const outputs = (Array.isArray(outputPaths) ? outputPaths : [])
+    .filter((file) => typeof file === "string" && file.trim())
+    .map((file) => path.resolve(file));
+  const inputs = (Array.isArray(protectedInputPaths) ? protectedInputPaths : [])
+    .filter((file) => typeof file === "string" && file.trim())
+    .map((file) => path.resolve(file));
+  if (new Set(outputs).size !== outputs.length) {
+    throw new Error("Solana live capture outputs must use distinct paths.");
+  }
+  const existingOutputIdentities = new Set();
+  for (const output of outputs) {
+    await assertSafeOutputDestination(output);
+    if (inputs.includes(output)) {
+      throw new Error(
+        "Solana live capture output must be disjoint from every pinned input.",
+      );
+    }
+    let outputInfo = null;
+    try {
+      outputInfo = await lstat(output);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    if (!outputInfo) continue;
+    const outputIdentity = `${outputInfo.dev}:${outputInfo.ino}`;
+    if (existingOutputIdentities.has(outputIdentity)) {
+      throw new Error(
+        "Solana live capture outputs must not alias the same inode.",
+      );
+    }
+    existingOutputIdentities.add(outputIdentity);
+    for (const input of inputs) {
+      let inputInfo;
+      try {
+        inputInfo = await lstat(input);
+      } catch (error) {
+        if (error?.code === "ENOENT") continue;
+        throw error;
+      }
+      if (
+        outputInfo.dev === inputInfo.dev &&
+        outputInfo.ino === inputInfo.ino
+      ) {
+        throw new Error(
+          "Solana live capture output aliases a pinned input inode.",
+        );
+      }
+    }
+  }
+};
+
+export const writeSolanaLiveCaptureWitnessKit = async ({
+  outputDir,
+  liveEvidence,
+  preLiveInputSnapshotSha256,
+  protectedInputPaths = [],
+}) => {
+  const resolvedOutputDir = path.resolve(outputDir);
+  await ensureSafeOutputDirectory(resolvedOutputDir);
+  const built = buildSolanaLiveCaptureWitnessPayloads({
+    liveEvidence,
+    preLiveInputSnapshotSha256,
+  });
+  const kitOutputPaths = [
+    ...SOLANA_LIVE_CAPTURE_WITNESS_IDS.map((id, index) =>
+      path.join(resolvedOutputDir, `${index + 1}-${id}.png`),
+    ),
+    path.join(resolvedOutputDir, "index.html"),
+    path.join(resolvedOutputDir, "manifest.json"),
+  ];
+  await assertSolanaLiveCaptureOutputsDisjoint({
+    outputPaths: kitOutputPaths,
+    protectedInputPaths,
+  });
+  const cards = [];
+  for (const [index, id] of SOLANA_LIVE_CAPTURE_WITNESS_IDS.entries()) {
+    const filename = `${index + 1}-${id}.png`;
+    const png = await QRCode.toBuffer(built.payloads[id], {
+      type: "png",
+      errorCorrectionLevel: "H",
+      margin: 4,
+      width: 512,
+    });
+    const file = path.join(resolvedOutputDir, filename);
+    await writeAtomicFile(file, png);
+    cards.push({
+      id,
+      order: index + 1,
+      filename,
+      payload: built.payloads[id],
+      payloadSha256: built.stageHashes[id],
+      pngSha256: sha256Bytes(png),
+    });
+  }
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>taira_sol_xor live capture witnesses</title>
+<style>body{margin:0;background:#0b1020;color:#fff;font:18px system-ui}main{display:grid;gap:48px;padding:48px}.card{min-height:90vh;display:grid;place-items:center;text-align:center;border:2px solid #6ee7b7;border-radius:24px;background:#111827}.card img{width:min(60vw,512px);image-rendering:auto}.hash{max-width:90vw;overflow-wrap:anywhere;font:14px ui-monospace,monospace}</style></head>
+<body><main>${cards
+    .map(
+      (card) =>
+        `<section class="card" id="${escapeHtml(card.id)}"><div><h1>${card.order}. ${escapeHtml(card.id)}</h1><img alt="${escapeHtml(card.id)} exact SCCP witness QR" src="${escapeHtml(card.filename)}"><p>Route: taira_sol_xor · revision 1</p><p class="hash">${escapeHtml(card.payload)}</p></div></section>`,
+    )
+    .join("")}</main></body></html>\n`;
+  await writeAtomicFile(path.join(resolvedOutputDir, "index.html"), html);
+  const manifest = {
+    schema: "iroha-demo-sccp-solana-live-capture-witness-kit/v1",
+    productionReady: false,
+    diagnosticOnly: true,
+    modifiesCapture: false,
+    routeId: SCCP_SOLANA_XOR_ROUTE_ID,
+    evidenceBindingSha256: built.evidenceBindingSha256,
+    binding: built.binding,
+    cards,
+    instructions: [
+      "Record the genuine completed bidirectional UI flow before showing these cards in order.",
+      "Keep each card visibly on screen for at least one second so center-minus/plus-250ms samples decode.",
+      "Do not composite these cards over unrelated footage; an independent reviewer must reject overlay-only media.",
+      "This kit is signer-free and never opens, overlays, or modifies the capture file.",
+    ],
+  };
+  const manifestPath = path.join(resolvedOutputDir, "manifest.json");
+  await writeAtomicJsonFile(manifestPath, manifest);
+  return { outputDir: resolvedOutputDir, manifestPath, report: manifest };
+};
+
+const parseLiveCaptureMarkerTimes = (value) => {
+  const times = String(value ?? "")
+    .split(",")
+    .map((entry) => Number(entry.trim()));
+  if (
+    times.length !== 4 ||
+    times.some((time) => !Number.isSafeInteger(time) || time < 500)
+  ) {
+    throw new Error(
+      "--live-capture-marker-times-ms must contain four positive integer millisecond centers.",
+    );
+  }
+  for (let index = 1; index < times.length; index += 1) {
+    if (times[index] - times[index - 1] < 1_500) {
+      throw new Error(
+        "Live capture marker centers must be ordered at least 1500ms apart.",
+      );
+    }
+  }
+  return times;
+};
+
+export const writeSolanaLiveCaptureWitnessReviewRequest = async ({
+  outputPath,
+  captureVideoPath,
+  expectedCaptureSha256,
+  markerTimesMilliseconds,
+  liveEvidence,
+  preLiveInputSnapshotSha256,
+  reviewPolicy,
+  reviewPolicySha256,
+  protectedInputPaths = [],
+}) => {
+  if (process.platform === "win32") {
+    throw new Error(
+      "Stable descriptor-bound capture witness scanning is unavailable on Windows.",
+    );
+  }
+  const expectedCapture = String(expectedCaptureSha256 ?? "").toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/u.test(expectedCapture)) {
+    throw new Error(
+      "Capture witness scanning requires an independently supplied lowercase 0x SHA-256.",
+    );
+  }
+  const resolvedCaptureVideoPath = path.resolve(captureVideoPath);
+  const resolvedOutputPath = path.resolve(outputPath);
+  await assertSolanaLiveCaptureOutputsDisjoint({
+    outputPaths: [resolvedOutputPath],
+    protectedInputPaths: [resolvedCaptureVideoPath, ...protectedInputPaths],
+  });
+  const times = Array.isArray(markerTimesMilliseconds)
+    ? parseLiveCaptureMarkerTimes(markerTimesMilliseconds.join(","))
+    : parseLiveCaptureMarkerTimes(markerTimesMilliseconds);
+  const built = buildSolanaLiveCaptureWitnessPayloads({
+    liveEvidence,
+    preLiveInputSnapshotSha256,
+  });
+  const scan = withStableRegularFileDescriptorsSync(
+    resolvedCaptureVideoPath,
+    ([hashFd, frameFd], resolved) => {
+      const captureArtifact = hashStableMediaDescriptor(hashFd);
+      if (captureArtifact.sha256 !== expectedCapture) {
+        throw new Error(
+          `Capture witness scan SHA-256 mismatch: expected ${expectedCapture}, got ${captureArtifact.sha256}.`,
+        );
+      }
+      const samples = SOLANA_LIVE_CAPTURE_WITNESS_IDS.map((id, index) => ({
+        id,
+        atMilliseconds: times[index],
+        dwellFrames: SOLANA_LIVE_CAPTURE_WITNESS_DWELL_OFFSETS_MILLISECONDS.map(
+          (offsetMilliseconds) => ({
+            offsetMilliseconds,
+            ...extractNormalizedSemanticWitnessFrame({
+              descriptorFd: frameFd,
+              atMilliseconds: times[index] + offsetMilliseconds,
+            }),
+          }),
+        ),
+      }));
+      for (const [index, sample] of samples.entries()) {
+        const expectedPayload = built.payloads[sample.id];
+        if (
+          sample.dwellFrames.some(
+            (frame) => frame.decodedPayload !== expectedPayload,
+          )
+        ) {
+          throw new Error(
+            `Capture witness ${sample.id} did not decode through its full ±250ms dwell window.`,
+          );
+        }
+        if (sample.atMilliseconds !== times[index]) {
+          throw new Error("Capture witness scan order changed unexpectedly.");
+        }
+      }
+      return { resolved, captureArtifact, samples };
+    },
+    {
+      label: "Pinned Solana live capture witness scan input",
+      maxBytes: MAX_SOLANA_LIVE_CAPTURE_BYTES,
+      descriptorCount: 2,
+    },
+  );
+  const markers = scan.samples.map((sample) => ({
+    id: sample.id,
+    atMilliseconds: sample.atMilliseconds,
+    normalizedFrameSha256: sample.dwellFrames.find(
+      (frame) => frame.offsetMilliseconds === 0,
+    ).normalizedFrameSha256,
+  }));
+  if (
+    new Set(markers.map((marker) => marker.normalizedFrameSha256)).size !== 4
+  ) {
+    throw new Error(
+      "Capture witness review request requires four distinct center frames.",
+    );
+  }
+  const candidateWitness = {
+    schema: "iroha-demo-sccp-solana-live-capture-witness/v2",
+    reviewPolicySha256,
+    preLiveInputSnapshotSha256,
+    captureSha256: scan.captureArtifact.sha256,
+    evidenceBindingSha256: built.evidenceBindingSha256,
+    independentReview: buildUnreviewedSolanaLiveCaptureReview(),
+    markers,
+  };
+  const request = {
+    schema: "iroha-demo-sccp-solana-live-capture-witness-review-request/v1",
+    productionReady: false,
+    captureSha256Verified: true,
+    capturePath: "[independently-pinned-capture]",
+    captureSha256: scan.captureArtifact.sha256,
+    evidenceBindingSha256: built.evidenceBindingSha256,
+    candidateWitness,
+    detachedReviewAttestation: {
+      required: true,
+      schema: "iroha-demo-sccp-solana-live-capture-review-attestation/v1",
+      signatureAlgorithm: "ed25519",
+      threshold: reviewPolicy.threshold,
+      authorizedReviewerIds: reviewPolicy.reviewers.map(
+        (reviewer) => reviewer.reviewerId,
+      ),
+      reviewPolicySha256,
+      preLiveInputSnapshotSha256,
+      privateKeyInputsAccepted: false,
+    },
+    deterministicSigningRecipe: {
+      validationOnlyHelper:
+        "buildSolanaLiveCaptureReviewSigningPackage in scripts/e2e/sccp-solana-live-capture-witness.mjs",
+      privateKeyInputsAccepted: false,
+      witnessArtifactSha256:
+        "SHA-256 of the exact saved reviewed-witness artifact bytes, including its final LF when present",
+      signedPayloadSchema:
+        "iroha-demo-sccp-solana-live-capture-review-signed-payload/v1",
+      signedPayloadFieldsInCanonicalOrder: [
+        "schema",
+        "routeId",
+        "assetKey",
+        "routeRevision",
+        "witnessArtifactSha256",
+        "reviewPolicySha256",
+        "preLiveInputSnapshotSha256",
+        "captureSha256",
+        "evidenceBindingSha256",
+        "reviewClaims",
+        "markers",
+      ],
+      canonicalPayloadEncoding:
+        "UTF-8 bytes of canonicalSccpJson(signedPayload), with no trailing LF",
+      signatureDomainUtf8: SOLANA_LIVE_CAPTURE_REVIEW_SIGNATURE_DOMAIN,
+      signatureDomainHex: Buffer.from(
+        SOLANA_LIVE_CAPTURE_REVIEW_SIGNATURE_DOMAIN,
+        "utf8",
+      ).toString("hex"),
+      signaturePayloadConstruction:
+        "domain UTF-8 bytes concatenated with canonical signed-payload UTF-8 bytes",
+      signedPayloadSha256:
+        "SHA-256 of the full domain-separated signature payload bytes",
+      signatureAlgorithm: "ed25519",
+      attestationShape: {
+        schema: "iroha-demo-sccp-solana-live-capture-review-attestation/v1",
+        signedPayload: "the exact constructed signed payload object",
+        signatures:
+          "reviewerId-sorted detached signatures carrying algorithm, signedPayloadSha256, and canonical 64-byte signatureBase64",
+      },
+    },
+    decodedDwellWindows: scan.samples.map((sample) => ({
+      id: sample.id,
+      atMilliseconds: sample.atMilliseconds,
+      offsetsMilliseconds: sample.dwellFrames.map(
+        (frame) => frame.offsetMilliseconds,
+      ),
+      payloadSha256: built.stageHashes[sample.id],
+    })),
+    independentReviewRequired: [
+      "Confirm the recording continuously shows the genuine bidirectional SCCP UI flow.",
+      "Confirm exact public registry, TAIRA-to-Solana receipts, and Solana-to-TAIRA receipts are human-visible.",
+      "Confirm unrelated footage is absent and the QR cards were not composited as an overlay over unrelated media.",
+      "Only after review, update the six review booleans to true and qrOverlayOnly to false, save candidateWitness as canonical JSON, and independently pin its SHA-256.",
+      "Construct the exact domain-separated signed payload from the reviewed witness and obtain the policy threshold of detached Ed25519 signatures externally; this repository never accepts reviewer private keys or signs review claims.",
+      "Use the signer-free buildSolanaLiveCaptureReviewSigningPackage helper to emit and verify the exact canonical payload bytes/hash before external signing.",
+    ],
+  };
+  await writeAtomicJsonFile(resolvedOutputPath, request);
+  return { reportPath: resolvedOutputPath, report: request };
+};
+
+export const writeSolanaLiveCaptureReviewSigningPackage = async ({
+  outputPath,
+  witnessArtifact,
+} = {}) => {
+  if (!isRecord(witnessArtifact)) {
+    throw new Error("Pinned reviewed witness artifact is required.");
+  }
+  const resolvedOutputPath = path.resolve(outputPath);
+  await assertSolanaLiveCaptureOutputsDisjoint({
+    outputPaths: [resolvedOutputPath],
+    protectedInputPaths: [witnessArtifact.path],
+  });
+  const signingPackage = buildSolanaLiveCaptureReviewSigningPackage({
+    witness: witnessArtifact.witness,
+    witnessArtifactSha256: witnessArtifact.sha256,
+  });
+  await writeAtomicJsonFile(resolvedOutputPath, signingPackage);
+  return { reportPath: resolvedOutputPath, report: signingPackage };
 };
 
 const writeSuccessfulArtifacts = async ({
@@ -4121,8 +5370,29 @@ const writeSuccessfulArtifacts = async ({
   successEvidencePolicy,
   freshProductionGateReport,
   freshProductionGatePath,
+  liveCaptureVideo,
+  liveCaptureVideoSha256,
+  liveCaptureWitness,
+  liveCaptureWitnessArtifact,
+  liveCaptureReviewAttestation,
+  liveCaptureReviewAttestationArtifact,
+  authenticatedCaptureReview,
+  captureReviewPolicy,
+  protectedInputPaths = [],
 }) => {
   await ensureSafeOutputDirectory(outputDir);
+  const normalizedLiveCaptureSha256 = String(
+    liveCaptureVideoSha256 ?? "",
+  ).toLowerCase();
+  if (
+    typeof liveCaptureVideo !== "string" ||
+    !liveCaptureVideo.trim() ||
+    !/^0x[0-9a-f]{64}$/u.test(normalizedLiveCaptureSha256)
+  ) {
+    throw new Error(
+      "A real live capture path and independent lowercase 0x SHA-256 are required for a successful Solana SCCP video.",
+    );
+  }
   const transcript = {
     schema: "iroha-demo-sccp-solana-live-video/v1",
     ready: true,
@@ -4148,56 +5418,101 @@ const writeSuccessfulArtifacts = async ({
         reportPath: freshProductionGatePath,
         checkedAt: freshProductionGateReport?.checkedAt ?? null,
         ready: freshProductionGateReport?.ready === true,
+        preLiveInputSnapshotSha256:
+          freshProductionGateReport?.preLiveInputSnapshotSha256 ?? null,
         failedCheckIds: readArray(freshProductionGateReport, "checks")
           .filter((check) => check?.status !== "pass")
           .map((check) => readStringValue(check, "id"))
           .filter(Boolean),
       },
-      activationPackageHash: liveEvidence.activationPackageHash,
-      operatorHandoffHash: liveEvidence.operatorHandoffHash,
+      governancePlanSha256: liveEvidence.governancePlanSha256,
+      governanceRegistrationSha256: liveEvidence.governanceRegistrationSha256,
+      governanceActivationSha256: liveEvidence.governanceActivationSha256,
+      publicRegistrySha256: liveEvidence.publicRegistrySha256,
+      liveCaptureSha256: normalizedLiveCaptureSha256,
+      liveCaptureWitnessPinned: true,
+      liveCaptureWitnessSha256: liveCaptureWitnessArtifact.sha256,
+      liveCaptureReviewAttestationPinned: true,
+      liveCaptureReviewAttestationSha256:
+        liveCaptureReviewAttestationArtifact.sha256,
     },
     authoritativeReadbackVerified: authoritativeReadback?.ready === true,
     authoritativeReadback,
     liveEvidence,
+    captureSemanticWitness: liveCaptureWitness,
+    captureSemanticWitnessArtifact: {
+      path: "[independently-reviewed-capture-witness]",
+      size: liveCaptureWitnessArtifact.size,
+      sha256: liveCaptureWitnessArtifact.sha256,
+    },
+    captureReviewAttestation: liveCaptureReviewAttestation,
+    captureReviewAttestationArtifact: {
+      path: "[detached-ed25519-review-attestation]",
+      size: liveCaptureReviewAttestationArtifact.size,
+      sha256: liveCaptureReviewAttestationArtifact.sha256,
+    },
+    captureReviewAuthentication: authenticatedCaptureReview,
   };
+  const preLiveInputSnapshotSha256 =
+    freshProductionGateReport?.preLiveInputSnapshotSha256;
+  if (!/^0x[0-9a-f]{64}$/u.test(preLiveInputSnapshotSha256 ?? "")) {
+    throw new Error(
+      "Fresh Solana production gate did not provide a canonical pre-live input snapshot hash.",
+    );
+  }
   const subtitleText = `WEBVTT
 
 00:00.000 --> 00:05.000
-Step 1: Public TAIRA published a production-ready ${SCCP_SOLANA_XOR_ROUTE_ID} manifest and the route preflight passed.
+Step 1: Public TAIRA typed-registry revision 1 for ${SCCP_SOLANA_XOR_ROUTE_ID} is bidirectional. Exact pre-live input snapshot ${preLiveInputSnapshotSha256}.
 
 00:05.000 --> 00:10.000
-Step 2: The TAIRA wallet submitted source transaction ${liveEvidence.tairaToSolana.tairaSourceTx} and burn-record SCCP message ${liveEvidence.tairaToSolana.messageId}.
+Step 2: Fresh Solana readback proved distinct destination, source, and native verifier Loader-v3 programs, exact SBPF V3, immutable ProgramData, and initialized SCCPMAT1 and route PDAs.
 
 00:10.000 --> 00:15.000
-Step 3: The connected Solana wallet approved finalize on testnet transaction ${liveEvidence.tairaToSolana.solanaTxId}.
+Step 3: Separate enacted Parliament registration and activation artifacts are pinned to the same reviewed route and typed-registry hash.
 
 00:15.000 --> 00:20.000
-Step 4: The Solana wallet submitted the return burn transaction ${liveEvidence.solanaToTaira.solanaSourceTx}.
+Step 4: The TAIRA wallet submitted source transaction ${liveEvidence.tairaToSolana.tairaSourceTx} and SCCP message ${liveEvidence.tairaToSolana.messageId}.
 
 00:20.000 --> 00:25.000
-Step 5: TAIRA accepted the bound Solana source proof in settlement transaction ${liveEvidence.solanaToTaira.tairaSettlementTx}.
+Step 5: The connected Solana wallet approved the destination finalize transaction ${liveEvidence.tairaToSolana.solanaTxId}.
 
 00:25.000 --> 00:30.000
-Step 6: Canonical testnet and TAIRA readbacks proved both finalized transactions, exact manifest pins, SCCP message bindings, and successful XOR state deltas.
+Step 6: The Solana wallet submitted the return source-burn transaction ${liveEvidence.solanaToTaira.solanaSourceTx}.
+
+00:30.000 --> 00:35.000
+Step 7: TAIRA accepted the bound Solana source proof in settlement transaction ${liveEvidence.solanaToTaira.tairaSettlementTx}.
+
+00:35.000 --> 00:40.000
+Step 8: Fresh canonical Solana and TAIRA readbacks proved both finalized directions, exact SCCP bindings, replay protection, and successful XOR state deltas. This real screen capture is pinned by ${normalizedLiveCaptureSha256}.
 `;
   const subtitleCues = parseWebVttCues(subtitleText);
   transcript.subtitleCues = subtitleCues;
-  transcript.subtitleSummary = summarizeSubtitleCues(subtitleCues);
+  transcript.subtitleSummary =
+    summarizeSolanaLiveVideoSubtitleCues(subtitleCues);
   const transcriptPath = path.join(outputDir, "sccp-solana-live-video.json");
   const subtitlesPath = path.join(outputDir, "sccp-solana-live-video.vtt");
   const videoPath = path.join(outputDir, "sccp-solana-live-video.mp4");
   const stagingSuffix = `.next-${randomUUID()}`;
   const stagingSubtitlesPath = `${subtitlesPath}${stagingSuffix}`;
   const stagingVideoPath = `${videoPath}${stagingSuffix}`;
-  await Promise.all(
-    [
+  const resolvedLiveCaptureVideo = path.resolve(liveCaptureVideo);
+  await assertSolanaLiveCaptureOutputsDisjoint({
+    outputPaths: [
       transcriptPath,
       subtitlesPath,
       videoPath,
       stagingSubtitlesPath,
       stagingVideoPath,
-    ].map((file) => assertSafeOutputDestination(file)),
-  );
+    ],
+    protectedInputPaths: [
+      resolvedLiveCaptureVideo,
+      liveEvidence.evidencePath,
+      liveCaptureWitnessArtifact.path,
+      liveCaptureReviewAttestationArtifact.path,
+      ...protectedInputPaths,
+    ],
+  });
   transcript.videoArtifacts = [
     { path: videoPath, mediaType: "video/mp4" },
     { path: subtitlesPath, mediaType: "text/vtt" },
@@ -4207,9 +5522,23 @@ Step 6: Canonical testnet and TAIRA readbacks proved both finalized transactions
     transcript.mediaVerification = renderSolanaLiveVideoMp4({
       subtitlesPath: stagingSubtitlesPath,
       videoPath: stagingVideoPath,
-      durationSeconds: 31,
+      durationSeconds: 41,
       subtitleSummary: transcript.subtitleSummary,
+      liveCaptureVideo: resolvedLiveCaptureVideo,
+      liveCaptureVideoSha256: normalizedLiveCaptureSha256,
+      liveCaptureWitness,
+      liveCaptureReviewAttestation,
+      liveCaptureWitnessArtifactSha256: liveCaptureWitnessArtifact.sha256,
+      captureReviewPolicy,
+      liveEvidence,
+      preLiveInputSnapshotSha256,
     });
+    transcript.sourceCapture = transcript.mediaVerification.sourceCapture;
+    if (transcript.sourceCapture?.verifiedRealCapture !== true) {
+      throw new Error(
+        "The successful Solana SCCP MP4 was not derived from a verified real capture.",
+      );
+    }
     commitGeneratedFileSync(stagingVideoPath, videoPath);
     await rename(stagingSubtitlesPath, subtitlesPath);
   } catch (error) {
@@ -4219,6 +5548,10 @@ Step 6: Canonical testnet and TAIRA readbacks proved both finalized transactions
     ]);
     throw error;
   }
+  transcript.mediaArtifacts = {
+    mp4: await hashSuccessfulMediaArtifact(videoPath, "video/mp4"),
+    vtt: await hashSuccessfulMediaArtifact(subtitlesPath, "text/vtt"),
+  };
   await writeAtomicJsonFile(transcriptPath, transcript);
   return { transcriptPath, subtitlesPath, videoPath, report: transcript };
 };
@@ -4236,8 +5569,27 @@ export const removeStaleSuccessfulArtifacts = async (outputDir) => {
 
 export const runSccpSolanaLiveVideoGate = async (options = {}) => {
   const outputDir = path.resolve(options.outputDir || DEFAULT_OUTPUT_DIR);
+  const blockedArtifactProtectedInputPaths = [
+    options.governancePlan,
+    options.governanceRegistration,
+    options.governanceActivation,
+    options.smokeReadiness,
+    options.productionGate,
+    options.productionGateSnapshot,
+    options.preflightReport,
+    options.liveEvidence,
+    options.liveCaptureVideo,
+    options.liveCaptureWitness,
+    options.liveCaptureReviewAttestation,
+  ];
+  const writeBlocked = (args) =>
+    writeBlockedArtifacts({
+      ...args,
+      protectedInputPaths: blockedArtifactProtectedInputPaths,
+    });
   let pinnedProductionGateSnapshot = null;
   let pinnedPreLiveInputSnapshot = null;
+  let pinnedCaptureReviewTrust = null;
   if (
     options.productionGateSnapshot !== undefined ||
     options.productionGateSnapshotSha256 !== undefined
@@ -4255,6 +5607,17 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
         validateSolanaProductionGatePreLiveInputSnapshot(
           report?.preLiveInputSnapshot,
         );
+      pinnedCaptureReviewTrust = await readPinnedCaptureReviewTrust({
+        snapshot: pinnedPreLiveInputSnapshot,
+        expectedProverGovernanceApprovalSha256:
+          options.proverGovernanceApprovalSha256 ??
+          process.env[SOLANA_EXACT_PROVER_APPROVAL_SHA256_ENV],
+      });
+      blockedArtifactProtectedInputPaths.push(
+        ...Object.values(pinnedPreLiveInputSnapshot?.inputs ?? {}).map(
+          (input) => input.path,
+        ),
+      );
       const nonVideoFailures = readArray(report, "failedCheckIds").filter(
         (id) => id !== "live-bidirectional-video",
       );
@@ -4267,15 +5630,12 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
         nonVideoFailures.length > 0
       ) {
         throw new Error(
-          `Pinned pre-live production gate is not success-eligible: ${
-            nonVideoFailures.join(", ") || "success-execution-policy"
-          }.`,
+          "Pinned pre-live production gate is not success-eligible.",
         );
       }
-    } catch (error) {
-      const reason = `Solana SCCP live video blocked: pinned production-gate snapshot validation failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`;
+    } catch {
+      const reason =
+        "Solana SCCP live video blocked: pinned production-gate snapshot validation failed.";
       const preflightReport = {
         schema: "iroha-demo-sccp-solana-route-preflight/v1",
         ready: false,
@@ -4288,7 +5648,7 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
           },
         ],
       };
-      const blocked = await writeBlockedArtifacts({
+      const blocked = await writeBlocked({
         outputDir,
         preflightReport,
         reason,
@@ -4308,47 +5668,27 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
   }
   const snapshotPath = (id, fallback) =>
     pinnedPreLiveInputSnapshot?.inputs?.[id]?.path ?? fallback;
-  const productionRequirementsPath = path.resolve(
-    options.productionRequirements ||
-      snapshotPath("requirements", DEFAULT_PRODUCTION_REQUIREMENTS_PATH),
+  const governancePlanPath = path.resolve(
+    options.governancePlan ||
+      snapshotPath("governancePlan", DEFAULT_GOVERNANCE_PLAN_PATH),
   );
-  const publishReadinessPath = path.resolve(
-    options.publishReadiness ||
-      snapshotPath("publishReadiness", DEFAULT_PUBLISH_READINESS_PATH),
-  );
-  const routePublicationRequestPath = path.resolve(
-    options.routePublicationRequest ||
+  const governanceRegistrationPath = path.resolve(
+    options.governanceRegistration ||
       snapshotPath(
-        "routePublicationRequest",
-        DEFAULT_ROUTE_PUBLICATION_REQUEST_PATH,
+        "governanceRegistration",
+        DEFAULT_GOVERNANCE_REGISTER_RESULT_PATH,
+      ),
+  );
+  const governanceActivationPath = path.resolve(
+    options.governanceActivation ||
+      snapshotPath(
+        "governanceActivation",
+        DEFAULT_GOVERNANCE_ACTIVATE_RESULT_PATH,
       ),
   );
   const smokeReadinessPath = path.resolve(
     options.smokeReadiness ||
       snapshotPath("smokeReadiness", DEFAULT_SMOKE_READINESS_PATH),
-  );
-  const handoffVerificationPath = path.resolve(
-    options.handoffVerification ||
-      snapshotPath("handoffVerification", DEFAULT_HANDOFF_VERIFICATION_PATH),
-  );
-  const proofMaterialBundlePath = path.resolve(
-    options.proofMaterialBundle ||
-      snapshotPath("proofMaterialBundle", DEFAULT_PROOF_MATERIAL_BUNDLE_PATH),
-  );
-  const activationPackagePath = path.resolve(
-    options.activationPackage ||
-      snapshotPath("activationPackage", DEFAULT_ACTIVATION_PACKAGE_PATH),
-  );
-  const deploymentVideoTranscriptPath = path.resolve(
-    options.deploymentVideoTranscript ||
-      snapshotPath(
-        "deploymentVideoTranscript",
-        DEFAULT_DEPLOYMENT_VIDEO_TRANSCRIPT_PATH,
-      ),
-  );
-  const operatorHandoffPath = path.resolve(
-    options.operatorHandoff ||
-      snapshotPath("operatorHandoff", DEFAULT_OPERATOR_HANDOFF_PATH),
   );
   let productionGatePath = path.resolve(
     options.productionGate ||
@@ -4360,57 +5700,58 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
     options.preflightReport.trim()
       ? path.resolve(options.preflightReport)
       : null;
+  blockedArtifactProtectedInputPaths.push(
+    governancePlanPath,
+    governanceRegistrationPath,
+    governanceActivationPath,
+    smokeReadinessPath,
+    productionGatePath,
+    suppliedPreflightReportPath,
+  );
   const readPrerequisite = (id, file) =>
     pinnedPreLiveInputSnapshot
       ? readPinnedPreLiveSnapshotJson(pinnedPreLiveInputSnapshot, id)
       : readJsonIfExists(file);
   let [
-    productionRequirementsReport,
-    publishReadinessReport,
-    routePublicationRequestReport,
+    governancePlanReport,
+    governanceRegistrationReport,
+    governanceActivationReport,
     smokeReadinessReport,
-    handoffVerificationReport,
-    proofMaterialBundleReport,
-    activationPackageReport,
-    deploymentVideoTranscriptReport,
-    operatorHandoffReport,
     productionGateReport,
   ] = await Promise.all([
-    readPrerequisite("requirements", productionRequirementsPath),
-    readPrerequisite("publishReadiness", publishReadinessPath),
-    readPrerequisite("routePublicationRequest", routePublicationRequestPath),
+    readPrerequisite("governancePlan", governancePlanPath),
+    readPrerequisite("governanceRegistration", governanceRegistrationPath),
+    readPrerequisite("governanceActivation", governanceActivationPath),
     readPrerequisite("smokeReadiness", smokeReadinessPath),
-    readPrerequisite("handoffVerification", handoffVerificationPath),
-    readPrerequisite("proofMaterialBundle", proofMaterialBundlePath),
-    readPrerequisite("activationPackage", activationPackagePath),
-    readPrerequisite(
-      "deploymentVideoTranscript",
-      deploymentVideoTranscriptPath,
-    ),
-    readPrerequisite("operatorHandoff", operatorHandoffPath),
     pinnedProductionGateSnapshot
       ? pinnedProductionGateSnapshot.report
       : readJsonIfExists(productionGatePath),
   ]);
+  const productionRequirementsReport = null;
+  const productionRequirementsPath = null;
+  const handoffVerificationReport = null;
+  const handoffVerificationPath = null;
+  const proofMaterialBundleReport = null;
+  const proofMaterialBundlePath = null;
+  const deploymentVideoTranscriptReport = null;
+  const deploymentVideoTranscriptPath = null;
   let diagnostics = buildSolanaLiveVideoBlockedDiagnostics({
     productionRequirementsReport,
     productionRequirementsPath,
-    publishReadinessReport,
-    publishReadinessPath,
-    routePublicationRequestReport,
-    routePublicationRequestPath,
+    governancePlanReport,
+    governancePlanPath,
+    governanceRegistrationReport,
+    governanceRegistrationPath,
+    governanceActivationReport,
+    governanceActivationPath,
     smokeReadinessReport,
     smokeReadinessPath,
     handoffVerificationReport,
     handoffVerificationPath,
     proofMaterialBundleReport,
     proofMaterialBundlePath,
-    activationPackageReport,
-    activationPackagePath,
     deploymentVideoTranscriptReport,
     deploymentVideoTranscriptPath,
-    operatorHandoffReport,
-    operatorHandoffPath,
     productionGateReport,
     productionGatePath,
   });
@@ -4489,6 +5830,7 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
     }
   }
   const { report: preflightReport, reportPath } = preflightResult;
+  blockedArtifactProtectedInputPaths.push(reportPath);
 
   let freshProductionGateCompleted = false;
   let freshProductionGateReport = null;
@@ -4501,7 +5843,11 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
       const freshGate = await runSccpSolanaProductionGate({
         ...productionGateOptionsFromPreLiveSnapshot({
           snapshot: pinnedPreLiveInputSnapshot,
+          productionGateReport: pinnedProductionGateSnapshot?.report,
           outputDir,
+          proverGovernanceApprovalSha256:
+            options.proverGovernanceApprovalSha256 ??
+            process.env[SOLANA_EXACT_PROVER_APPROVAL_SHA256_ENV],
         }),
         toriiUrl: options.toriiUrl,
         solanaRpcUrl: options.solanaRpcUrl || CANONICAL_SOLANA_TESTNET_RPC_URL,
@@ -4529,27 +5875,26 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
       freshProductionGateCompleted = true;
       freshProductionGateReport = freshGate.report;
       freshProductionGatePath = freshGate.reportPath;
+      blockedArtifactProtectedInputPaths.push(freshProductionGatePath);
       productionGateReport = freshGate.report;
       productionGatePath = freshGate.reportPath;
       diagnostics = buildSolanaLiveVideoBlockedDiagnostics({
         productionRequirementsReport,
         productionRequirementsPath,
-        publishReadinessReport,
-        publishReadinessPath,
-        routePublicationRequestReport,
-        routePublicationRequestPath,
+        governancePlanReport,
+        governancePlanPath,
+        governanceRegistrationReport,
+        governanceRegistrationPath,
+        governanceActivationReport,
+        governanceActivationPath,
         smokeReadinessReport,
         smokeReadinessPath,
         handoffVerificationReport,
         handoffVerificationPath,
         proofMaterialBundleReport,
         proofMaterialBundlePath,
-        activationPackageReport,
-        activationPackagePath,
         deploymentVideoTranscriptReport,
         deploymentVideoTranscriptPath,
-        operatorHandoffReport,
-        operatorHandoffPath,
         productionGateReport,
         productionGatePath,
       });
@@ -4576,7 +5921,7 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
     const reason = `Solana SCCP live video blocked: success evidence policy failed (${successEvidencePolicy.problems
       .map((problem) => problem.id)
       .join(", ")}).`;
-    const blocked = await writeBlockedArtifacts({
+    const blocked = await writeBlocked({
       outputDir,
       preflightReport,
       reason,
@@ -4594,7 +5939,7 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
   if (!preflightReport.ready) {
     const reason =
       "Solana SCCP live video blocked: public TAIRA Solana route preflight is not ready.";
-    const blocked = await writeBlockedArtifacts({
+    const blocked = await writeBlocked({
       outputDir,
       preflightReport,
       reason,
@@ -4614,7 +5959,7 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
     const reason = `Solana SCCP live video blocked: production prerequisites are not ready (${successPrerequisiteProblems
       .map((problem) => problem.id)
       .join(", ")}).`;
-    const blocked = await writeBlockedArtifacts({
+    const blocked = await writeBlocked({
       outputDir,
       preflightReport,
       reason,
@@ -4632,11 +5977,10 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
   let liveEvidence;
   try {
     liveEvidence = await loadLiveEvidence(options.liveEvidence);
-  } catch (error) {
-    const reason = `Solana SCCP live video blocked: ${
-      error instanceof Error ? error.message : String(error)
-    }`;
-    const blocked = await writeBlockedArtifacts({
+  } catch {
+    const reason =
+      "Solana SCCP live video blocked: live evidence artifact is missing or invalid.";
+    const blocked = await writeBlocked({
       outputDir,
       preflightReport,
       reason,
@@ -4658,12 +6002,68 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
     const reason = `Solana SCCP live video blocked: live evidence package hashes do not match (${packageHashProblems
       .map((problem) => problem.id)
       .join(", ")}).`;
-    const blocked = await writeBlockedArtifacts({
+    const blocked = await writeBlocked({
       outputDir,
       preflightReport,
       reason,
       diagnostics,
       successPrerequisiteProblems: packageHashProblems,
+    });
+    return {
+      ready: false,
+      reason,
+      successEvidencePolicy,
+      preflightReportPath: reportPath,
+      ...blocked,
+    };
+  }
+  let pinnedCaptureWitness;
+  let pinnedCaptureReviewAttestation;
+  let authenticatedCaptureReview;
+  try {
+    pinnedCaptureReviewTrust = await readPinnedCaptureReviewTrust({
+      snapshot: pinnedPreLiveInputSnapshot,
+      expectedProverGovernanceApprovalSha256:
+        options.proverGovernanceApprovalSha256 ??
+        process.env[SOLANA_EXACT_PROVER_APPROVAL_SHA256_ENV],
+    });
+    pinnedCaptureWitness = await readPinnedLiveCaptureWitness({
+      file: options.liveCaptureWitness,
+      expectedSha256: options.liveCaptureWitnessSha256,
+    });
+    pinnedCaptureReviewAttestation =
+      await readPinnedLiveCaptureReviewAttestation({
+        file: options.liveCaptureReviewAttestation,
+        expectedSha256: options.liveCaptureReviewAttestationSha256,
+      });
+    const normalizedWitness = normalizeSolanaLiveCaptureWitness(
+      pinnedCaptureWitness.witness,
+      {
+        liveEvidence,
+        preLiveInputSnapshotSha256:
+          freshProductionGateReport?.preLiveInputSnapshotSha256,
+        expectedCaptureSha256: options.liveCaptureVideoSha256,
+        reviewPolicySha256: pinnedCaptureReviewTrust.policySha256,
+      },
+    );
+    authenticatedCaptureReview = verifySolanaLiveCaptureReviewAttestation({
+      attestation: pinnedCaptureReviewAttestation.attestation,
+      witness: normalizedWitness,
+      witnessArtifactSha256: pinnedCaptureWitness.sha256,
+      reviewPolicy: pinnedCaptureReviewTrust.policy,
+    });
+  } catch (error) {
+    const reason = `Solana SCCP live video blocked: semantic capture witness validation failed: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
+    const blocked = await writeBlocked({
+      outputDir,
+      preflightReport,
+      reason,
+      diagnostics,
+      successPrerequisiteProblems: [
+        { id: "semantic-live-capture-witness", detail: reason },
+      ],
     });
     return {
       ready: false,
@@ -4685,7 +6085,7 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
     const reason = `Solana SCCP live video blocked: authoritative live readback failed: ${
       error instanceof Error ? error.message : String(error)
     }`;
-    const blocked = await writeBlockedArtifacts({
+    const blocked = await writeBlocked({
       outputDir,
       preflightReport,
       reason,
@@ -4702,16 +6102,56 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
       ...blocked,
     };
   }
-  const artifacts = await writeSuccessfulArtifacts({
-    outputDir,
-    preflightReport,
-    preflightReportPath: reportPath,
-    liveEvidence,
-    authoritativeReadback,
-    successEvidencePolicy,
-    freshProductionGateReport,
-    freshProductionGatePath,
-  });
+  let artifacts;
+  try {
+    artifacts = await writeSuccessfulArtifacts({
+      outputDir,
+      preflightReport,
+      preflightReportPath: reportPath,
+      liveEvidence,
+      authoritativeReadback,
+      successEvidencePolicy,
+      freshProductionGateReport,
+      freshProductionGatePath,
+      liveCaptureVideo: options.liveCaptureVideo,
+      liveCaptureVideoSha256: options.liveCaptureVideoSha256,
+      liveCaptureWitness: pinnedCaptureWitness.witness,
+      liveCaptureWitnessArtifact: pinnedCaptureWitness,
+      liveCaptureReviewAttestation: pinnedCaptureReviewAttestation.attestation,
+      liveCaptureReviewAttestationArtifact: pinnedCaptureReviewAttestation,
+      authenticatedCaptureReview,
+      captureReviewPolicy: pinnedCaptureReviewTrust.policy,
+      protectedInputPaths: [
+        options.productionGateSnapshot,
+        reportPath,
+        freshProductionGatePath,
+        pinnedCaptureReviewAttestation.path,
+        ...Object.values(pinnedPreLiveInputSnapshot?.inputs ?? {}).map(
+          (input) => input.path,
+        ),
+      ],
+    });
+  } catch (error) {
+    const reason = `Solana SCCP live video blocked: real live capture verification failed: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
+    const blocked = await writeBlocked({
+      outputDir,
+      preflightReport,
+      reason,
+      diagnostics,
+      successPrerequisiteProblems: [
+        { id: "verified-real-live-capture", detail: reason },
+      ],
+    });
+    return {
+      ready: false,
+      reason,
+      successEvidencePolicy,
+      preflightReportPath: reportPath,
+      ...blocked,
+    };
+  }
   return {
     ready: true,
     reason: "Solana SCCP live video generated from validated live evidence.",
@@ -4734,6 +6174,98 @@ const main = async () => {
     console.log(`Solana SCCP live evidence template: ${templatePath}`);
     return;
   }
+  if (args["write-live-capture-review-signing-package"]) {
+    const witnessArtifact = await readPinnedLiveCaptureWitness({
+      file: args["live-capture-witness"],
+      expectedSha256: args["live-capture-witness-sha256"],
+    });
+    const signingPackage = await writeSolanaLiveCaptureReviewSigningPackage({
+      outputPath: args["write-live-capture-review-signing-package"],
+      witnessArtifact,
+    });
+    console.log(
+      `Solana SCCP live capture review signing package: ${signingPackage.reportPath}`,
+    );
+    return;
+  }
+  if (
+    args["write-live-capture-witness-kit"] ||
+    args["write-live-capture-witness-review-request"]
+  ) {
+    const pinnedGate = await readPinnedProductionGateSnapshot({
+      file: args["production-gate-snapshot"],
+      expectedSha256: args["production-gate-snapshot-sha256"],
+    });
+    const { validateSolanaProductionGatePreLiveInputSnapshot } = await import(
+      "./sccp-solana-production-gate.mjs"
+    );
+    const snapshot = validateSolanaProductionGatePreLiveInputSnapshot(
+      pinnedGate.report?.preLiveInputSnapshot,
+    );
+    const captureReviewTrust = await readPinnedCaptureReviewTrust({
+      snapshot,
+      expectedProverGovernanceApprovalSha256:
+        args["prover-governance-approval-sha256"] ||
+        process.env[SOLANA_EXACT_PROVER_APPROVAL_SHA256_ENV],
+    });
+    const nonVideoFailures = readArray(
+      pinnedGate.report,
+      "failedCheckIds",
+    ).filter((id) => id !== "live-bidirectional-video");
+    if (
+      pinnedGate.report?.schema !==
+        "iroha-demo-sccp-solana-production-gate/v1" ||
+      pinnedGate.report?.routeId !== SCCP_SOLANA_XOR_ROUTE_ID ||
+      pinnedGate.report?.successExecutionPolicy?.ready !== true ||
+      nonVideoFailures.length > 0
+    ) {
+      throw new Error(
+        "Live capture witness tooling requires a pinned, success-eligible pre-live production gate.",
+      );
+    }
+    const liveEvidence = await loadLiveEvidence(args["live-evidence"]);
+    if (args["write-live-capture-witness-kit"]) {
+      const kit = await writeSolanaLiveCaptureWitnessKit({
+        outputDir: args["write-live-capture-witness-kit"],
+        liveEvidence,
+        preLiveInputSnapshotSha256: snapshot.preLiveInputSnapshotSha256,
+        protectedInputPaths: [
+          pinnedGate.path,
+          liveEvidence.evidencePath,
+          captureReviewTrust.policyPath,
+        ],
+      });
+      console.log(`Solana SCCP live capture witness kit: ${kit.manifestPath}`);
+      return;
+    }
+    if (
+      typeof args["live-capture-video"] !== "string" ||
+      typeof args["live-capture-video-sha256"] !== "string"
+    ) {
+      throw new Error(
+        "Capture witness review requests require --live-capture-video and --live-capture-video-sha256.",
+      );
+    }
+    const reviewRequest = await writeSolanaLiveCaptureWitnessReviewRequest({
+      outputPath: args["write-live-capture-witness-review-request"],
+      captureVideoPath: args["live-capture-video"],
+      expectedCaptureSha256: args["live-capture-video-sha256"],
+      markerTimesMilliseconds: args["live-capture-marker-times-ms"],
+      liveEvidence,
+      preLiveInputSnapshotSha256: snapshot.preLiveInputSnapshotSha256,
+      reviewPolicy: captureReviewTrust.policy,
+      reviewPolicySha256: captureReviewTrust.policySha256,
+      protectedInputPaths: [
+        pinnedGate.path,
+        liveEvidence.evidencePath,
+        captureReviewTrust.policyPath,
+      ],
+    });
+    console.log(
+      `Solana SCCP live capture witness review request: ${reviewRequest.reportPath}`,
+    );
+    return;
+  }
   const result = await runSccpSolanaLiveVideoGate({
     toriiUrl: args["torii-url"] || process.env.TAIRA_TORII_URL,
     solanaRpcUrl:
@@ -4743,17 +6275,26 @@ const main = async () => {
     liveEvidence: args["live-evidence"],
     preflightReport: args["preflight-report"],
     productionRequirements: args["production-requirements"],
-    publishReadiness: args["publish-readiness"],
-    routePublicationRequest: args["route-publication-request"],
+    governancePlan: args["governance-plan"],
+    governanceRegistration: args["governance-register-result"],
+    governanceActivation: args["governance-activate-result"],
     smokeReadiness: args["smoke-readiness"],
     handoffVerification: args["handoff-verification"],
     proofMaterialBundle: args["proof-material-bundle"],
-    activationPackage: args["activation-package"],
     deploymentVideoTranscript: args["deployment-video-transcript"],
-    operatorHandoff: args["operator-handoff"],
     productionGate: args["production-gate"],
     productionGateSnapshot: args["production-gate-snapshot"],
     productionGateSnapshotSha256: args["production-gate-snapshot-sha256"],
+    liveCaptureVideo: args["live-capture-video"],
+    liveCaptureVideoSha256: args["live-capture-video-sha256"],
+    liveCaptureWitness: args["live-capture-witness"],
+    liveCaptureWitnessSha256: args["live-capture-witness-sha256"],
+    liveCaptureReviewAttestation: args["live-capture-review-attestation"],
+    liveCaptureReviewAttestationSha256:
+      args["live-capture-review-attestation-sha256"],
+    proverGovernanceApprovalSha256:
+      args["prover-governance-approval-sha256"] ||
+      process.env[SOLANA_EXACT_PROVER_APPROVAL_SHA256_ENV],
     outputDir: args["output-dir"],
     skipSolanaRpc: args["skip-solana-rpc"],
   });

@@ -8,11 +8,9 @@ import {
   buildTairaXorBscToTairaTransferPayload,
   canonicalSccpPayloadEnvelopeBytes,
   SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
-  SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1,
   SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_PARITY_SCHEMA_V1,
   SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_SELF_TEST_SCHEMA_V1,
   SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
-  SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1,
   SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_PARITY_SCHEMA_V1,
   SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_SELF_TEST_SCHEMA_V1,
   sccpMerkleRootFromCommitment,
@@ -20,7 +18,11 @@ import {
   sccpTransferMessageId,
   validateBscMainnetNativeEvmProverBundle,
   validateBscTestnetNativeEvmProverBundle,
-} from "@iroha/iroha-js/sccp";
+} from "@/legacy/sccpLegacySdk";
+const SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1 =
+  "sccp-bsc-testnet-native-evm-cross-sdk-fixture-parity-v1";
+const SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1 =
+  "sccp-bsc-mainnet-native-evm-cross-sdk-fixture-parity-v1";
 import { AccountAddress } from "@iroha/iroha-js/address";
 import {
   BSC_MAINNET_CHAIN_ID_HEX,
@@ -55,7 +57,7 @@ const BSC_BRIDGE_ADDRESS = "0xa3cebb2c206939f7fc740ec73bbf59c87dbe21de";
 const BSC_VERIFIER_ADDRESS = "0x109197a81221db7bb79e5763e4a6319af9e4e6d6";
 const BSC_SOURCE_NONCE = "1";
 const TAIRA_RECIPIENT = AccountAddress.fromAccount({
-  publicKey: Uint8Array.from({ length: 32 }, () => 0x12),
+  publicKey: Uint8Array.from([0x58, ...Array(31).fill(0x66)]),
 }).toI105(BSC_TAIRA_NETWORK_PREFIX);
 const PROOF_BACKEND = "evm-groth16-bn254-v1";
 const PROOF_FAMILY = "stark-fri-v1";

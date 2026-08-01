@@ -9,7 +9,7 @@ export type ChainPreset = {
 
 export const SORA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 export const MINAMOTO_CHAIN_ID = "00000000-0000-0000-0000-000000000000";
-export const TAIRA_CHAIN_ID = "809574f5-fee7-5e69-bfcf-52451e42d50f";
+export const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 export const TAIRA_NETWORK_PREFIX = 369;
 
 export const TAIRA_CHAIN_PRESET: ChainPreset = {

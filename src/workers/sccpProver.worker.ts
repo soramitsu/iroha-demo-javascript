@@ -1,32 +1,31 @@
 import "@/polyfills";
 import {
   buildBscSccpProofPackage,
-  buildSolanaSccpProofPackage,
   buildTonSccpProofPackage,
   buildTronSccpProofPackage,
   generateBscSccpProofPackage,
   generateTonSccpProofPackage,
   generateTronSccpProofPackage,
   type BscSccpProofPackageInput,
-  type SolanaSccpProofPackageInput,
   type TonSccpProofPackageInput,
   type TronSccpProofPackageInput,
 } from "@/utils/sccpProofPackage";
 import {
+  validateSolanaDestinationProofResultV1,
+  type SolanaDestinationProofResultV1,
+  type SolanaDestinationProverInputV1,
+} from "@/utils/sccpSolanaDestination";
+import {
   buildBscSourceChainProofEnvelope,
   type BscSourceChainProofEnvelopeInput,
   type BscSourceChainProofEnvelopeResult,
-} from "@iroha/iroha-js/sccp";
+} from "@/legacy/sccpLegacySdk";
 import {
   bindBscToTairaSourceProofPackage,
   bindSolanaToTairaSourceProofPackage,
   bindTonToTairaSourceProofPackage,
   bindTronToTairaSourceProofPackage,
   readBscSourceProverMaterialBinding,
-  readSccpSolanaDestinationProverModuleHash,
-  readSccpSolanaDestinationProverModuleUrl,
-  readSccpSolanaSourceProverModuleHash,
-  readSccpSolanaSourceProverModuleUrl,
   SCCP_SOLANA_SOURCE_PROOF_BACKEND,
   SOLANA_TESTNET_GENESIS_HASH,
   SOLANA_TESTNET_NETWORK_ID,
@@ -71,7 +70,6 @@ type SccpProverWorkerRequestKind =
   | "prove-bsc-proof-package"
   | "build-ton-proof-package"
   | "prove-ton-proof-package"
-  | "build-solana-proof-package"
   | "prove-solana-proof-package"
   | "build-tron-proof-package"
   | "prove-tron-proof-package"
@@ -104,13 +102,8 @@ type SccpProverWorkerRequest =
     }
   | {
       id: string;
-      kind: "build-solana-proof-package";
-      input: SolanaSccpProofPackageInput;
-    }
-  | {
-      id: string;
       kind: "prove-solana-proof-package";
-      input: SolanaSccpProofPackageInput;
+      input: SolanaDestinationProofWorkerInput;
     }
   | {
       id: string;
@@ -162,19 +155,23 @@ type TonToTairaSourceProofWorkerInput = TonToTairaSourceProofPackageInput & {
 
 type SolanaToTairaSourceProofWorkerInput = SolanaToTairaSourceProofPackageInput;
 
+type SolanaDestinationProofWorkerInput = {
+  proverInput: SolanaDestinationProverInputV1;
+};
+
 type SccpProverWorkerResponse =
   | {
       id: string;
       ok: true;
       result:
         | ReturnType<typeof buildBscSccpProofPackage>
-        | ReturnType<typeof buildSolanaSccpProofPackage>
         | ReturnType<typeof buildTonSccpProofPackage>
         | ReturnType<typeof buildTronSccpProofPackage>
         | BscToTairaSourceProofPackage
         | SolanaToTairaSourceProofPackage
         | TonToTairaSourceProofPackage
         | TronToTairaSourceProofPackage
+        | SolanaDestinationProofResultV1
         | Record<string, unknown>;
     }
   | {
@@ -249,7 +246,7 @@ const SCCP_WORKER_SOLANA_DESTINATION_PROOF_MATERIAL_INPUT_ERROR =
 const SCCP_WORKER_SOLANA_SOURCE_PROOF_MATERIAL_INPUT_ERROR =
   "Solana source proof requests must not include caller-supplied proof material; proof packages must come from the configured Solana source prover module.";
 const SCCP_WORKER_SOLANA_PROVER_OVERRIDE_INPUT_ERROR =
-  "Solana proof requests must not override prover module URLs or hashes; the governed route manifest is authoritative.";
+  "Solana proof requests must not override prover module URLs or hashes; the explicit destination/source prover environment is authoritative.";
 const SCCP_WORKER_BSC_BUILD_PROOF_MATERIAL_KEYS = new Set([
   "proofBytes",
   "proof_bytes",
@@ -345,106 +342,26 @@ const resolveTonSourceProverModuleUrl = (moduleUrl?: unknown): string =>
   import.meta.env.VITE_SCCP_TON_SOURCE_PROVER_MODULE_URL ||
   "";
 
-const readWorkerManifest = (input: {
-  manifest?: unknown;
-}): Record<string, unknown> | undefined =>
-  isRecord(input.manifest) ? input.manifest : undefined;
+const resolveExplicitSolanaProverModuleUrl = (
+  value: unknown,
+  label: string,
+): string =>
+  normalizeSccpPackageOrRemoteModuleUrl(
+    readOptionalWorkerString(value),
+    label,
+  ) ?? "";
 
-const requireSolanaProverBuildUrlAgreement = ({
-  manifestUrl,
-  configuredUrls,
-  label,
-}: {
-  manifestUrl: string;
-  configuredUrls: Array<{ key: string; value: unknown }>;
-  label: string;
-}): string => {
-  const normalizedManifestUrl = normalizeSccpPackageOrRemoteModuleUrl(
-    manifestUrl,
-    `${label} route-manifest URL`,
+const resolveSolanaDestinationProverModuleUrl = (): string =>
+  resolveExplicitSolanaProverModuleUrl(
+    import.meta.env.VITE_SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL,
+    "Solana destination prover module URL",
   );
-  const normalizedConfiguredUrls = configuredUrls
-    .map(({ key, value }) => ({ key, value: readOptionalWorkerString(value) }))
-    .filter(({ value }) => Boolean(value))
-    .map(({ key, value }) => ({
-      key,
-      value:
-        normalizeSccpPackageOrRemoteModuleUrl(
-          value,
-          `${label} build URL ${key}`,
-        ) ?? "",
-    }));
-  const configuredValues = new Set(
-    normalizedConfiguredUrls.map(({ value }) => value),
+
+const resolveSolanaSourceProverModuleUrl = (): string =>
+  resolveExplicitSolanaProverModuleUrl(
+    import.meta.env.VITE_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL,
+    "Solana source prover module URL",
   );
-  if (configuredValues.size > 1) {
-    throw new Error(
-      `${label} build URL aliases must normalize and agree exactly: ${normalizedConfiguredUrls
-        .map(({ key, value }) => `${key}=${value}`)
-        .join(", ")}.`,
-    );
-  }
-  const normalizedConfiguredUrl = normalizedConfiguredUrls[0]?.value ?? "";
-  if (!normalizedConfiguredUrl) {
-    return normalizedManifestUrl ?? "";
-  }
-  if (
-    !normalizedManifestUrl ||
-    normalizedConfiguredUrl !== normalizedManifestUrl
-  ) {
-    throw new Error(
-      `${label} build URL must exactly match the governed route-manifest URL.`,
-    );
-  }
-  return normalizedManifestUrl;
-};
-
-const resolveSolanaDestinationProverModuleUrl = (
-  input: SolanaSccpProofPackageInput,
-): string =>
-  requireSolanaProverBuildUrlAgreement({
-    manifestUrl: readSccpSolanaDestinationProverModuleUrl(
-      readWorkerManifest(input),
-    ),
-    configuredUrls: [
-      {
-        key: "VITE_SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL",
-        value: import.meta.env.VITE_SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL,
-      },
-      {
-        key: "VITE_SCCP_SOLANA_PROVER_MODULE_URL",
-        value: import.meta.env.VITE_SCCP_SOLANA_PROVER_MODULE_URL,
-      },
-    ],
-    label: "Solana destination prover",
-  });
-
-const resolveSolanaDestinationProverModuleHash = (
-  input: SolanaSccpProofPackageInput,
-): string =>
-  readSccpSolanaDestinationProverModuleHash(readWorkerManifest(input));
-
-const resolveSolanaSourceProverModuleUrl = (
-  input: SolanaToTairaSourceProofWorkerInput,
-): string =>
-  requireSolanaProverBuildUrlAgreement({
-    manifestUrl: readSccpSolanaSourceProverModuleUrl(readWorkerManifest(input)),
-    configuredUrls: [
-      {
-        key: "VITE_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL",
-        value: import.meta.env.VITE_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL,
-      },
-      {
-        key: "VITE_SCCP_SOLANA_PROVER_MODULE_URL",
-        value: import.meta.env.VITE_SCCP_SOLANA_PROVER_MODULE_URL,
-      },
-    ],
-    label: "Solana source prover",
-  });
-
-const resolveSolanaSourceProverModuleHash = (
-  input: SolanaToTairaSourceProofWorkerInput,
-): string => readSccpSolanaSourceProverModuleHash(readWorkerManifest(input));
 
 const loadCachedTonSourceProveFn = (
   moduleUrl?: unknown,
@@ -473,7 +390,6 @@ const isSccpProverWorkerRequestKind = (
   value === "prove-bsc-proof-package" ||
   value === "build-ton-proof-package" ||
   value === "prove-ton-proof-package" ||
-  value === "build-solana-proof-package" ||
   value === "prove-solana-proof-package" ||
   value === "build-tron-proof-package" ||
   value === "prove-tron-proof-package" ||
@@ -1117,16 +1033,18 @@ export const normalizeSccpProverWorkerRequest = (
     };
   }
 
-  if (
-    snapshot.kind === "build-solana-proof-package" ||
-    snapshot.kind === "prove-solana-proof-package"
-  ) {
+  if (snapshot.kind === "prove-solana-proof-package") {
     assertNoCallerSuppliedSolanaProverOverrides(snapshot.input);
     assertNoCallerSuppliedSolanaDestinationProofMaterial(snapshot.input);
+    if (!isRecord(snapshot.input.proverInput)) {
+      throw new Error(
+        "Solana destination proof input requires an exact proverInput object.",
+      );
+    }
     return {
       id,
       kind: snapshot.kind,
-      input: snapshot.input as unknown as SolanaSccpProofPackageInput,
+      input: snapshot.input as unknown as SolanaDestinationProofWorkerInput,
     };
   }
 
@@ -1187,19 +1105,14 @@ self.onmessage = (event: MessageEvent<unknown>) => {
         postSccpProverWorkerSuccess(id, result);
         return;
       }
-      if (kind === "build-solana-proof-package") {
-        const result = buildSolanaSccpProofPackage(
-          input as unknown as SolanaSccpProofPackageInput,
-        );
-        postSccpProverWorkerSuccess(id, result);
-        return;
-      }
       if (kind === "prove-solana-proof-package") {
-        const solanaInput = input as unknown as SolanaSccpProofPackageInput;
+        const solanaInput =
+          input as unknown as SolanaDestinationProofWorkerInput;
         const prove = await loadSolanaSccpProveFn({
           globalScope: self as unknown as SolanaSccpProverGlobal,
-          moduleUrl: resolveSolanaDestinationProverModuleUrl(solanaInput),
-          moduleHash: resolveSolanaDestinationProverModuleHash(solanaInput),
+          moduleUrl: resolveSolanaDestinationProverModuleUrl(),
+          semanticProofProfile:
+            solanaInput.proverInput.proof_request.semantic_proof_profile,
           importer: importWorkerPublicModule<SolanaSccpProverModule>,
         });
         if (typeof prove !== "function") {
@@ -1208,18 +1121,13 @@ self.onmessage = (event: MessageEvent<unknown>) => {
           );
         }
         const proverInput = snapshotSccpDataValue(
-          solanaInput,
+          solanaInput.proverInput,
           "Solana destination proof input",
         );
-        const result = await prove(
-          proverInput.witness as unknown as Parameters<typeof prove>[0],
-          proverInput as unknown as Parameters<typeof prove>[1],
+        const result = validateSolanaDestinationProofResultV1(
+          await prove(proverInput),
+          proverInput,
         );
-        if (!isRecord(result) || !isRecord(result.submission)) {
-          throw new Error(
-            "Solana destination prover must return a browser-generated proof package with a submission.",
-          );
-        }
         postSccpProverWorkerSuccess(id, result);
         return;
       }
@@ -1294,8 +1202,7 @@ self.onmessage = (event: MessageEvent<unknown>) => {
             input as unknown as SolanaToTairaSourceProofWorkerInput;
           const proveSource = await loadSolanaSccpSourceProveFn({
             globalScope: self as unknown as SolanaSccpProverGlobal,
-            moduleUrl: resolveSolanaSourceProverModuleUrl(solanaInput),
-            moduleHash: resolveSolanaSourceProverModuleHash(solanaInput),
+            moduleUrl: resolveSolanaSourceProverModuleUrl(),
             importer: importWorkerPublicModule<SolanaSccpProverModule>,
           });
           if (typeof proveSource !== "function") {

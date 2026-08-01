@@ -72,13 +72,13 @@ import {
   buildSolanaActivationPackageReportBody,
   buildSolanaEvidenceRefreshSmokeReadinessOptions,
   buildSolanaProductionGateOptions,
+  buildSolanaFinalProductionGateOptions,
   buildSolanaLiveVideoGateOptions,
   buildSolanaEvidenceRefreshMediaVerification,
   buildSolanaEvidenceRefreshRootStatus,
   buildSolanaBlockerResolution,
   buildSolanaFinishProductionReportBody,
   buildSolanaFinishSubmissionState,
-  buildSolanaFinishProgramFinalizationCompletion,
   buildSolanaFinishFinalizationMutationDecision,
   buildSolanaFinishVerifierConfigurationDecision,
   buildSolanaRoutePublicationRequestReportBody,
@@ -118,6 +118,7 @@ import {
   buildTairaRouteManagerPermissionStatus,
   buildTairaMcpTransactionToolStatus,
   artifactPaths as solanaDeployArtifactPaths,
+  assertExactSolanaFinishProductionArguments,
   assertNoFileBackedSolanaSignerOptions,
   auditFileBackedSolanaKeyMaterial,
   collectInventoryFiles,
@@ -171,6 +172,34 @@ import {
   assertSolanaFinalizedReadbackMatchesSelection,
   validateSolanaFinalizedReadbackEvidence,
   SOLANA_FINALIZED_READBACK_EVIDENCE_SCHEMA,
+  SOLANA_EXACT_SCCP_MATERIAL_ACCOUNT_SPACE,
+  SOLANA_EXACT_SCCP_MATERIAL_CHUNK_BYTES,
+  SOLANA_EXACT_SCCP_ROLE_DESTINATION,
+  SOLANA_EXACT_SCCP_ROLE_SOURCE,
+  SOLANA_EXACT_SCCP_ROUTE_STATE_SPACE,
+  SOLANA_EXACT_SCCP_SPL_DECIMALS,
+  SOLANA_EXACT_SCCP_TAIRA_TO_SPL_MULTIPLIER,
+  SOLANA_EXACT_SCCP_VERIFYING_KEY_BYTES,
+  assertExactSolanaRouteStatePair,
+  buildExactSolanaClassicMintCreationPlan,
+  buildExactSolanaDestinationFinalizeInstruction,
+  buildExactSolanaNativeMaterialUploadPlan,
+  buildExactSolanaRouteStateAccountCreationInstruction,
+  buildExactSolanaRouteStateInitializeInstruction,
+  buildExactSolanaSourceBurnInstruction,
+  deriveExactSolanaBridgeVerifierAuthorityAddress,
+  deriveExactSolanaDestinationMintAuthorityAddress,
+  deriveExactSolanaDestinationReceiptAddress,
+  deriveExactSolanaNativeProofAddress,
+  deriveExactSolanaNativeVerifierConfig,
+  deriveExactSolanaRouteStateAddress,
+  deriveExactSolanaSourceReceiptAddress,
+  inspectExactSolanaClassicMintAccount,
+  inspectExactSolanaNativeMaterialAccount,
+  inspectExactSolanaRouteStateAccount,
+  parseExactSolanaClassicMintAccountData,
+  parseExactSolanaNativeMaterialAccountData,
+  parseExactSolanaRouteStateAccountData,
 } from "../scripts/sccp-solana-deploy.mjs";
 
 const hex32 = (byte) =>
@@ -414,7 +443,7 @@ describe("file-backed Solana key material production boundary", () => {
 });
 
 describe("Solana program deployment CLI contract", () => {
-  it("forbids new stable Program ids while exposing the reviewed existing-program upgrade", () => {
+  it("removes the retired shared/four-role mutation surface from the exact first-release workflow", () => {
     const result = spawnSync(
       process.execPath,
       ["scripts/sccp-solana-deploy.mjs", "--help"],
@@ -428,20 +457,24 @@ describe("Solana program deployment CLI contract", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain(
-      "Creating a new stable Program id remains disabled",
+      "Removed from the public command surface. These commands target the retired",
     );
-    expect(result.stdout).toMatch(
-      /every other deploy\s+invocation fails closed/u,
+    expect(result.stdout).toContain("exact SCCPRT01 state/mint/material ABI");
+    expect(result.stdout).toContain(
+      "Disabled: the retired SCCPSOL1 account initializer cannot configure",
     );
     expect(result.stdout).toContain(
-      "Program-byte deployment is disabled. The only supported form verifies",
+      "Disabled: the retired one-shot verifier-state linkage is not part of the",
     );
     expect(result.stdout).toContain(
-      "configure-native-verifier is the preferred command name",
+      "Disabled for the same reason; no sentinel or one-shot config is accepted",
     );
-    expect(result.stdout).toContain("upgrade-existing-program-readiness");
-    expect(result.stdout).toContain("upgrade-existing-program");
-    expect(result.stdout).toContain("recover-existing-program-upgrade-buffer");
+    expect(result.stdout).toContain(
+      "Exact destination, source, and\n    native-verifier finalization is external reviewed evidence",
+    );
+    expect(result.stdout).toContain(
+      "two-phase Parliament flow in scripts/taira-sccp-route-governance.mjs",
+    );
     expect(result.stdout).not.toContain(
       "Deploy the compiled Solana SCCP program",
     );
@@ -463,6 +496,618 @@ describe("Solana program deployment CLI contract", () => {
         `--${option}`,
       );
     }
+  });
+
+  it.each([
+    "accounts",
+    "deploy-native-verifier",
+    "configure-native-verifier",
+    "link-native-verifier",
+    "route-canary",
+    "destination-canary",
+  ])("fails the retired %s orchestration closed before mutation", (command) => {
+    const result = spawnSync(
+      process.execPath,
+      ["scripts/sccp-solana-deploy.mjs", command],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024,
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain(
+      "retired SCCPSOL1 sentinel/one-shot Solana orchestration is disabled",
+    );
+    expect(result.stderr).toContain("exact SCCPRT01 route-state");
+  });
+});
+
+describe("exact first-release Solana native operator ABI", () => {
+  const key = (byte) =>
+    Keypair.fromSeed(Uint8Array.from({ length: 32 }, () => byte)).publicKey;
+  const fixedAddresses = {
+    payer: key(0x21),
+    uploader: key(0x22),
+    destinationProgram: key(0x23),
+    sourceProgram: key(0x24),
+    nativeVerifierProgram: key(0x25),
+    mint: key(0x28),
+    destinationToken: key(0x29),
+    sourceToken: key(0x2a),
+  };
+  const addresses = Object.freeze({
+    ...fixedAddresses,
+    destinationState: new PublicKey(
+      deriveExactSolanaRouteStateAddress({
+        routeProgramId: fixedAddresses.destinationProgram,
+        role: SOLANA_EXACT_SCCP_ROLE_DESTINATION,
+        tokenMintAddress: fixedAddresses.mint,
+      }).address,
+    ),
+    sourceState: new PublicKey(
+      deriveExactSolanaRouteStateAddress({
+        routeProgramId: fixedAddresses.sourceProgram,
+        role: SOLANA_EXACT_SCCP_ROLE_SOURCE,
+        tokenMintAddress: fixedAddresses.mint,
+      }).address,
+    ),
+  });
+  const hashes = Object.freeze({
+    destinationBindingHash: materialHex32("exact-native-destination-binding"),
+    routeConfigurationHash: materialHex32("exact-native-route-config"),
+    soraAnchorHash: materialHex32("exact-native-sora-anchor"),
+    semanticProfileHash: materialHex32("exact-native-semantic-profile"),
+    circuitCommitmentHash: materialHex32("exact-native-circuit"),
+    witnessGeneratorCommitmentHash: materialHex32(
+      "exact-native-witness-generator",
+    ),
+  });
+  const verifyingKeyBytes = Buffer.from(
+    Array.from(
+      { length: SOLANA_EXACT_SCCP_VERIFYING_KEY_BYTES },
+      (_, index) => (index * 29 + 17) & 0xff,
+    ),
+  );
+
+  const materialPlan = () =>
+    buildExactSolanaNativeMaterialUploadPlan({
+      authorityAddress: addresses.uploader,
+      nativeVerifierProgramId: addresses.nativeVerifierProgram,
+      destinationProgramId: addresses.destinationProgram,
+      sourceProgramId: addresses.sourceProgram,
+      destinationStateAddress: addresses.destinationState,
+      tokenMintAddress: addresses.mint,
+      routeRevision: 1,
+      verifyingKeyBytes,
+      ...hashes,
+    });
+
+  const materialAccountBytes = (plan = materialPlan()) => {
+    const data = Buffer.alloc(SOLANA_EXACT_SCCP_MATERIAL_ACCOUNT_SPACE);
+    const hash = (value) => Buffer.from(value.slice(2), "hex");
+    const pubkey = (value) => new PublicKey(value).toBuffer();
+    data.write("SCCPMAT1", 0, "ascii");
+    data[8] = 1;
+    data[9] = 2;
+    data[10] = plan.nativeVerifierMaterialBump;
+    data.writeUInt16LE(SOLANA_EXACT_SCCP_VERIFYING_KEY_BYTES, 12);
+    data.writeUInt32LE(1, 16);
+    data[20] = 3;
+    hash(plan.verifierKeySha256).copy(data, 64);
+    hash(plan.verifierKeyHash).copy(data, 96);
+    hash(plan.nativeVerifierConfigHash).copy(data, 128);
+    pubkey(plan.destinationProgramId).copy(data, 160);
+    pubkey(plan.bridgeAuthorityAddress).copy(data, 192);
+    pubkey(plan.destinationStateAddress).copy(data, 224);
+    pubkey(plan.tokenMintAddress).copy(data, 256);
+    pubkey(plan.tokenProgramId).copy(data, 288);
+    hash(hashes.destinationBindingHash).copy(data, 320);
+    hash(hashes.routeConfigurationHash).copy(data, 352);
+    hash(hashes.soraAnchorHash).copy(data, 384);
+    hash(hashes.semanticProfileHash).copy(data, 416);
+    hash(hashes.circuitCommitmentHash).copy(data, 448);
+    hash(hashes.witnessGeneratorCommitmentHash).copy(data, 480);
+    hash(plan.publicSignalSchemaHash).copy(data, 512);
+    hash(plan.publicSignalSchemaHash).copy(data, 544);
+    hash(plan.sourceLaneHash).copy(data, 576);
+    hash(plan.destinationLaneHash).copy(data, 608);
+    data.write("xor", 640, "utf8");
+    data.write("taira_sol_xor", 704, "utf8");
+    pubkey(plan.sourceProgramId).copy(data, 736);
+    verifyingKeyBytes.copy(data, 768);
+    return data;
+  };
+
+  const routeStateBytes = ({ role, plan = materialPlan() }) => {
+    const data = Buffer.alloc(SOLANA_EXACT_SCCP_ROUTE_STATE_SPACE);
+    const isDestination = role === SOLANA_EXACT_SCCP_ROLE_DESTINATION;
+    const program = isDestination
+      ? addresses.destinationProgram
+      : addresses.sourceProgram;
+    const state = isDestination
+      ? addresses.destinationState
+      : addresses.sourceState;
+    const peer = isDestination
+      ? addresses.sourceProgram
+      : addresses.destinationProgram;
+    const verifyAuthority = PublicKey.findProgramAddressSync(
+      [Buffer.from("sccp-verify-authority-v1"), state.toBuffer()],
+      program,
+    );
+    const mintAuthority = deriveExactSolanaDestinationMintAuthorityAddress({
+      destinationProgramId: addresses.destinationProgram,
+      destinationStateAddress: addresses.destinationState,
+    });
+    data.write("SCCPRT01", 0, "ascii");
+    data[8] = 1;
+    data[9] = role;
+    data[10] = verifyAuthority[1];
+    data[11] = mintAuthority.bump;
+    data.writeUInt32LE(1, 12);
+    addresses.mint.toBuffer().copy(data, 16);
+    peer.toBuffer().copy(data, 48);
+    addresses.destinationState.toBuffer().copy(data, 80);
+    addresses.nativeVerifierProgram.toBuffer().copy(data, 112);
+    new PublicKey(plan.nativeVerifierMaterialAddress)
+      .toBuffer()
+      .copy(data, 144);
+    for (const [offset, value] of [
+      [176, hashes.destinationBindingHash],
+      [208, hashes.routeConfigurationHash],
+      [240, plan.verifierKeyHash],
+      [272, plan.nativeVerifierConfigHash],
+      [304, plan.sourceLaneHash],
+      [336, plan.destinationLaneHash],
+    ]) {
+      Buffer.from(value.slice(2), "hex").copy(data, offset);
+    }
+    return data;
+  };
+
+  it("uses the frozen 9-decimal, multiplier-one mint and signed state initialization ABI", () => {
+    expect(SOLANA_EXACT_SCCP_SPL_DECIMALS).toBe(9);
+    expect(SOLANA_EXACT_SCCP_TAIRA_TO_SPL_MULTIPLIER).toBe(1);
+    const mintPlan = buildExactSolanaClassicMintCreationPlan({
+      payerAddress: addresses.payer,
+      mintAddress: addresses.mint,
+      destinationProgramId: addresses.destinationProgram,
+      destinationStateAddress: addresses.destinationState,
+      rentLamports: "1461600",
+    });
+    expect(mintPlan.instructions).toHaveLength(2);
+    expect(mintPlan.instructions[0]).toMatchObject({
+      programId: SystemProgram.programId.toBase58(),
+      keys: [
+        {
+          pubkey: addresses.payer.toBase58(),
+          isSigner: true,
+          isWritable: true,
+        },
+        { pubkey: addresses.mint.toBase58(), isSigner: true, isWritable: true },
+      ],
+    });
+    const mintInit = Buffer.from(
+      mintPlan.instructions[1].dataHex.slice(2),
+      "hex",
+    );
+    expect([...mintInit.subarray(0, 2)]).toEqual([20, 9]);
+    expect(mintInit.length).toBe(35);
+    expect(mintInit[34]).toBe(0);
+
+    const plan = materialPlan();
+    const destination = buildExactSolanaRouteStateInitializeInstruction({
+      initializerAddress: addresses.payer,
+      routeProgramId: addresses.destinationProgram,
+      stateAddress: addresses.destinationState,
+      tokenMintAddress: addresses.mint,
+      peerRouteProgramId: addresses.sourceProgram,
+      nativeVerifierProgramId: addresses.nativeVerifierProgram,
+      nativeVerifierMaterialAddress: plan.nativeVerifierMaterialAddress,
+      role: SOLANA_EXACT_SCCP_ROLE_DESTINATION,
+      routeRevision: 1,
+      destinationStateAddress: addresses.destinationState,
+      destinationBindingHash: hashes.destinationBindingHash,
+      routeConfigurationHash: hashes.routeConfigurationHash,
+      verifierKeyHash: plan.verifierKeyHash,
+      nativeVerifierConfigHash: plan.nativeVerifierConfigHash,
+    });
+    expect(Buffer.from(destination.dataHex.slice(2), "hex")).toHaveLength(167);
+    expect(destination.keys[0]).toEqual({
+      pubkey: addresses.payer.toBase58(),
+      isSigner: true,
+      isWritable: true,
+    });
+    expect(destination.keys[1]).toEqual({
+      pubkey: addresses.destinationState.toBase58(),
+      isSigner: false,
+      isWritable: true,
+    });
+    expect(destination.keys.map((entry) => entry.pubkey)).toEqual([
+      addresses.payer.toBase58(),
+      addresses.destinationState.toBase58(),
+      addresses.mint.toBase58(),
+      addresses.sourceProgram.toBase58(),
+      addresses.nativeVerifierProgram.toBase58(),
+      plan.nativeVerifierMaterialAddress,
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      SystemProgram.programId.toBase58(),
+    ]);
+  });
+
+  it("derives a one-way config and uploads 1216 VK bytes in exact chunks with bridge-state anti-squatting", () => {
+    const plan = materialPlan();
+    const changedDestinationBinding = deriveExactSolanaNativeVerifierConfig({
+      nativeVerifierProgramId: addresses.nativeVerifierProgram,
+      destinationProgramId: addresses.destinationProgram,
+      sourceProgramId: addresses.sourceProgram,
+      destinationStateAddress: addresses.destinationState,
+      tokenMintAddress: addresses.mint,
+      routeRevision: 1,
+      verifierKeyHash: plan.verifierKeyHash,
+      ...hashes,
+      destinationBindingHash: materialHex32("excluded-binding"),
+      routeConfigurationHash: materialHex32("excluded-route"),
+    });
+    expect(changedDestinationBinding.nativeVerifierConfigHash).toBe(
+      plan.nativeVerifierConfigHash,
+    );
+    expect(changedDestinationBinding.nativeVerifierMaterialAddress).toBe(
+      plan.nativeVerifierMaterialAddress,
+    );
+    expect(plan.verifyingKeyLength).toBe(1_216);
+    expect(plan.instructions.append).toHaveLength(3);
+    expect(
+      plan.instructions.append.map((instruction) => {
+        const bytes = Buffer.from(instruction.dataHex.slice(2), "hex");
+        return {
+          opcode: [...bytes.subarray(0, 2)],
+          offset: bytes.readUInt16LE(2),
+          length: bytes.readUInt16LE(4),
+        };
+      }),
+    ).toEqual([
+      { opcode: [1, 1], offset: 0, length: 512 },
+      { opcode: [1, 1], offset: 512, length: 512 },
+      { opcode: [1, 1], offset: 1024, length: 192 },
+    ]);
+    expect(SOLANA_EXACT_SCCP_MATERIAL_CHUNK_BYTES).toBe(512);
+    expect(plan.instructions.initialize.keys[0]).toMatchObject({
+      pubkey: addresses.uploader.toBase58(),
+      isSigner: true,
+      isWritable: true,
+    });
+    expect(plan.instructions.initialize.keys).toHaveLength(13);
+    expect(plan.instructions.initialize.keys[10]).toMatchObject({
+      pubkey: addresses.mint.toBase58(),
+      isSigner: true,
+      isWritable: false,
+    });
+    const init = Buffer.from(
+      plan.instructions.initialize.dataHex.slice(2),
+      "hex",
+    );
+    expect([...init.subarray(0, 2)]).toEqual([1, 0]);
+    expect(init.subarray(103, 106).toString("utf8")).toBe("xor");
+    expect(init.length).toBe(330);
+    expect(plan.instructions.seal.dataHex).toBe("0x0102");
+  });
+
+  it("rederives sealed material, route-state peers, and the classic mint from account bytes", () => {
+    const plan = materialPlan();
+    const materialBytes = materialAccountBytes(plan);
+    const material = inspectExactSolanaNativeMaterialAccount({
+      account: {
+        owner: addresses.nativeVerifierProgram,
+        executable: false,
+        data: materialBytes,
+      },
+      materialAddress: plan.nativeVerifierMaterialAddress,
+      nativeVerifierProgramId: addresses.nativeVerifierProgram,
+      expected: {
+        destinationBindingHash: hashes.destinationBindingHash,
+        routeConfigurationHash: hashes.routeConfigurationHash,
+      },
+    });
+    expect(material).toMatchObject({
+      status: "sealed",
+      assetKey: "xor",
+      written: 1_216,
+      nativeVerifierConfigHash: plan.nativeVerifierConfigHash,
+      verifierKeyHash: plan.verifierKeyHash,
+    });
+    expect(
+      parseExactSolanaNativeMaterialAccountData(materialBytes),
+    ).toMatchObject({
+      status: "sealed",
+      sourceLaneHash: plan.sourceLaneHash,
+      destinationLaneHash: plan.destinationLaneHash,
+    });
+
+    const destination = inspectExactSolanaRouteStateAccount({
+      account: {
+        owner: addresses.destinationProgram,
+        executable: false,
+        data: routeStateBytes({
+          role: SOLANA_EXACT_SCCP_ROLE_DESTINATION,
+          plan,
+        }),
+      },
+      routeProgramId: addresses.destinationProgram,
+      stateAddress: addresses.destinationState,
+      expected: { role: SOLANA_EXACT_SCCP_ROLE_DESTINATION },
+    });
+    const source = inspectExactSolanaRouteStateAccount({
+      account: {
+        owner: addresses.sourceProgram,
+        executable: false,
+        data: routeStateBytes({ role: SOLANA_EXACT_SCCP_ROLE_SOURCE, plan }),
+      },
+      routeProgramId: addresses.sourceProgram,
+      stateAddress: addresses.sourceState,
+      expected: { role: SOLANA_EXACT_SCCP_ROLE_SOURCE },
+    });
+    expect(assertExactSolanaRouteStatePair({ destination, source })).toEqual({
+      destination,
+      source,
+    });
+
+    const mintAuthority = deriveExactSolanaDestinationMintAuthorityAddress({
+      destinationProgramId: addresses.destinationProgram,
+      destinationStateAddress: addresses.destinationState,
+    });
+    const mintBytes = Buffer.alloc(82);
+    mintBytes.writeUInt32LE(1, 0);
+    new PublicKey(mintAuthority.address).toBuffer().copy(mintBytes, 4);
+    mintBytes.writeBigUInt64LE(0xffff_ffff_ffff_ffffn, 36);
+    mintBytes[44] = 9;
+    mintBytes[45] = 1;
+    expect(parseExactSolanaClassicMintAccountData(mintBytes)).toMatchObject({
+      supply: "18446744073709551615",
+      decimals: 9,
+      freezeAuthority: null,
+    });
+    expect(
+      inspectExactSolanaClassicMintAccount({
+        account: {
+          owner: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+          data: mintBytes,
+        },
+        mintAddress: addresses.mint,
+        destinationProgramId: addresses.destinationProgram,
+        destinationStateAddress: addresses.destinationState,
+      }),
+    ).toMatchObject({ mintAuthority: mintAuthority.address, decimals: 9 });
+  });
+
+  it("builds the exact 12-account destination finalize and 8-account source burn with message PDAs", () => {
+    const plan = materialPlan();
+    const messageId = materialHex32("exact-destination-message");
+    const finalize = buildExactSolanaDestinationFinalizeInstruction({
+      payerAddress: addresses.payer,
+      destinationProgramId: addresses.destinationProgram,
+      destinationStateAddress: addresses.destinationState,
+      tokenMintAddress: addresses.mint,
+      destinationTokenAddress: addresses.destinationToken,
+      nativeVerifierProgramId: addresses.nativeVerifierProgram,
+      verifierKeyHash: plan.verifierKeyHash,
+      nativeVerifierConfigHash: plan.nativeVerifierConfigHash,
+      messageId,
+      amountBaseUnits: "18446744073709551615",
+    });
+    expect(finalize.instruction.keys).toHaveLength(12);
+    expect(
+      finalize.instruction.keys.map((meta) => [meta.isSigner, meta.isWritable]),
+    ).toEqual([
+      [true, true],
+      [false, true],
+      [false, true],
+      [false, true],
+      [false, false],
+      [false, false],
+      [false, false],
+      [false, false],
+      [false, false],
+      [false, true],
+      [false, false],
+      [false, false],
+    ]);
+    const finalizeData = Buffer.from(
+      finalize.instruction.dataHex.slice(2),
+      "hex",
+    );
+    expect([...finalizeData.subarray(0, 2)]).toEqual([1, 2]);
+    expect(finalizeData.readBigUInt64LE(34)).toBe(0xffff_ffff_ffff_ffffn);
+    expect(
+      deriveExactSolanaDestinationReceiptAddress({
+        destinationProgramId: addresses.destinationProgram,
+        destinationStateAddress: addresses.destinationState,
+        messageId,
+      }).address,
+    ).toBe(finalize.receipt.address);
+    expect(
+      deriveExactSolanaNativeProofAddress({
+        nativeVerifierProgramId: addresses.nativeVerifierProgram,
+        materialAddress: plan.nativeVerifierMaterialAddress,
+        messageId,
+        payerAddress: addresses.payer,
+      }).address,
+    ).toBe(finalize.proof.address);
+    expect(
+      deriveExactSolanaBridgeVerifierAuthorityAddress({
+        destinationProgramId: addresses.destinationProgram,
+        destinationStateAddress: addresses.destinationState,
+      }).address,
+    ).toBe(finalize.verifyAuthority.address);
+
+    const burn = buildExactSolanaSourceBurnInstruction({
+      payerAddress: addresses.payer,
+      sourceProgramId: addresses.sourceProgram,
+      sourceStateAddress: addresses.sourceState,
+      destinationStateAddress: addresses.destinationState,
+      tokenMintAddress: addresses.mint,
+      sourceTokenAddress: addresses.sourceToken,
+      amountBaseUnits: "18446744073709551615",
+      nonce: "0",
+      tairaRecipient: TAIRA_RECIPIENT,
+    });
+    expect(burn.instruction.keys).toHaveLength(8);
+    const burnData = Buffer.from(burn.instruction.dataHex.slice(2), "hex");
+    expect([...burnData.subarray(0, 2)]).toEqual([1, 3]);
+    expect(burnData.readBigUInt64LE(2)).toBe(0xffff_ffff_ffff_ffffn);
+    expect(burnData.readBigUInt64LE(10)).toBe(0n);
+    const recipientLength = burnData.readUInt16LE(18);
+    expect(burnData.subarray(20, 20 + recipientLength).toString("utf8")).toBe(
+      TAIRA_RECIPIENT,
+    );
+    expect(
+      deriveExactSolanaSourceReceiptAddress({
+        sourceProgramId: addresses.sourceProgram,
+        sourceStateAddress: addresses.sourceState,
+        messageId: burn.messageId,
+      }).address,
+    ).toBe(burn.receipt.address);
+  });
+
+  it("rejects legacy layouts, hash/PDA aliasing, freeze authority, and integer truncation", () => {
+    const plan = materialPlan();
+    expect(() =>
+      parseExactSolanaRouteStateAccountData(Buffer.alloc(272)),
+    ).toThrow(/exactly 400 bytes/u);
+    expect(() =>
+      parseExactSolanaNativeMaterialAccountData(Buffer.alloc(1_984)),
+    ).toThrow(/magic/u);
+    for (const unsupportedRevision of [0, 2, 0xffff_ffff]) {
+      expect(() =>
+        buildExactSolanaNativeMaterialUploadPlan({
+          authorityAddress: addresses.uploader,
+          nativeVerifierProgramId: addresses.nativeVerifierProgram,
+          destinationProgramId: addresses.destinationProgram,
+          sourceProgramId: addresses.sourceProgram,
+          destinationStateAddress: addresses.destinationState,
+          tokenMintAddress: addresses.mint,
+          routeRevision: unsupportedRevision,
+          verifyingKeyBytes,
+          ...hashes,
+        }),
+      ).toThrow(/revision/u);
+    }
+    const revisionTwoMaterial = materialAccountBytes();
+    revisionTwoMaterial.writeUInt32LE(2, 16);
+    expect(() =>
+      parseExactSolanaNativeMaterialAccountData(revisionTwoMaterial),
+    ).toThrow(/header/u);
+    const revisionTwoState = routeStateBytes({
+      role: SOLANA_EXACT_SCCP_ROLE_DESTINATION,
+    });
+    revisionTwoState.writeUInt32LE(2, 12);
+    expect(() =>
+      parseExactSolanaRouteStateAccountData(revisionTwoState),
+    ).toThrow(/header/u);
+    const frozen = Buffer.alloc(82);
+    frozen.writeUInt32LE(1, 0);
+    addresses.payer.toBuffer().copy(frozen, 4);
+    frozen[44] = 9;
+    frozen[45] = 1;
+    frozen.writeUInt32LE(1, 46);
+    addresses.payer.toBuffer().copy(frozen, 50);
+    expect(() => parseExactSolanaClassicMintAccountData(frozen)).toThrow(
+      /no freeze authority/u,
+    );
+    expect(() =>
+      buildExactSolanaRouteStateInitializeInstruction({
+        initializerAddress: addresses.payer,
+        routeProgramId: addresses.destinationProgram,
+        stateAddress: addresses.destinationState,
+        tokenMintAddress: addresses.mint,
+        peerRouteProgramId: addresses.sourceProgram,
+        nativeVerifierProgramId: addresses.nativeVerifierProgram,
+        nativeVerifierMaterialAddress: plan.nativeVerifierMaterialAddress,
+        role: SOLANA_EXACT_SCCP_ROLE_DESTINATION,
+        routeRevision: 1,
+        destinationStateAddress: addresses.destinationState,
+        destinationBindingHash: hashes.destinationBindingHash,
+        routeConfigurationHash: hashes.destinationBindingHash,
+        verifierKeyHash: plan.verifierKeyHash,
+        nativeVerifierConfigHash: plan.nativeVerifierConfigHash,
+      }),
+    ).toThrow(/colliding role/u);
+    expect(() =>
+      buildExactSolanaRouteStateInitializeInstruction({
+        initializerAddress: addresses.payer,
+        routeProgramId: addresses.destinationProgram,
+        stateAddress: addresses.destinationState,
+        tokenMintAddress: addresses.mint,
+        peerRouteProgramId: addresses.sourceProgram,
+        nativeVerifierProgramId: addresses.nativeVerifierProgram,
+        nativeVerifierMaterialAddress: addresses.payer,
+        role: SOLANA_EXACT_SCCP_ROLE_DESTINATION,
+        routeRevision: 1,
+        destinationStateAddress: addresses.destinationState,
+        destinationBindingHash: hashes.destinationBindingHash,
+        routeConfigurationHash: hashes.routeConfigurationHash,
+        verifierKeyHash: plan.verifierKeyHash,
+        nativeVerifierConfigHash: plan.nativeVerifierConfigHash,
+      }),
+    ).toThrow(/exact key\/config PDA/u);
+    for (const amount of ["0", "18446744073709551616", "01", "-1"]) {
+      expect(() =>
+        buildExactSolanaDestinationFinalizeInstruction({
+          payerAddress: addresses.payer,
+          destinationProgramId: addresses.destinationProgram,
+          destinationStateAddress: addresses.destinationState,
+          tokenMintAddress: addresses.mint,
+          destinationTokenAddress: addresses.destinationToken,
+          nativeVerifierProgramId: addresses.nativeVerifierProgram,
+          verifierKeyHash: plan.verifierKeyHash,
+          nativeVerifierConfigHash: plan.nativeVerifierConfigHash,
+          messageId: materialHex32("bad-amount-message"),
+          amountBaseUnits: amount,
+        }),
+      ).toThrow(/amount/u);
+    }
+    expect(() =>
+      buildExactSolanaSourceBurnInstruction({
+        payerAddress: addresses.payer,
+        sourceProgramId: addresses.sourceProgram,
+        sourceStateAddress: addresses.sourceState,
+        destinationStateAddress: addresses.destinationState,
+        tokenMintAddress: addresses.mint,
+        sourceTokenAddress: addresses.sourceToken,
+        amountBaseUnits: "1",
+        nonce: "18446744073709551616",
+        tairaRecipient: TAIRA_RECIPIENT,
+      }),
+    ).toThrow(/u64/u);
+    expect(() =>
+      deriveExactSolanaNativeVerifierConfig({
+        nativeVerifierProgramId: addresses.nativeVerifierProgram,
+        destinationProgramId: addresses.destinationProgram,
+        sourceProgramId: addresses.sourceProgram,
+        destinationStateAddress: addresses.destinationState,
+        tokenMintAddress: addresses.mint,
+        routeRevision: 1,
+        verifierKeyHash: plan.verifierKeyHash,
+        ...hashes,
+        publicSignalSchemaHash: materialHex32("wrong-public-schema"),
+      }),
+    ).toThrow(/schema hash is unsupported/u);
+  });
+
+  it("derives route-state PDAs and rejects retired keypair account creation", () => {
+    expect(
+      deriveExactSolanaRouteStateAddress({
+        routeProgramId: addresses.destinationProgram,
+        role: SOLANA_EXACT_SCCP_ROLE_DESTINATION,
+        tokenMintAddress: addresses.mint,
+      }).address,
+    ).toBe(addresses.destinationState.toBase58());
+    expect(() =>
+      buildExactSolanaRouteStateAccountCreationInstruction(),
+    ).toThrow(/deterministic PDAs/u);
+    expect(SOLANA_EXACT_SCCP_MATERIAL_ACCOUNT_SPACE).toBe(1_984);
   });
 });
 
@@ -549,12 +1194,100 @@ describe("Solana runtime-only signer boundary", () => {
 
   it("blocks CLI-backed deployment before any signer-file operation", () => {
     const blocker = runtimeOnlySolanaDeploymentBlocker();
-    expect(blocker.message).toMatch(/new stable Solana Program id/u);
-    expect(blocker.message).toMatch(/upgrade-existing-program-readiness/u);
+    expect(blocker.message).toMatch(/Creating or mutating a Solana Program/u);
+    expect(blocker.message).toMatch(/exact revision-1/u);
     const source = readFileSync("scripts/sccp-solana-deploy.mjs", "utf8");
     expect(source).not.toContain("const readKeypair");
     expect(source).not.toContain("const createKeypairFile");
     expect(source).not.toContain('"--keypair",');
+  });
+
+  it("rejects every retired public Solana mutation alias before dispatch", () => {
+    for (const command of [
+      "deploy",
+      "upgrade-existing-program-readiness",
+      "upgrade-existing-program",
+      "recover-existing-program-upgrade-buffer",
+      "finalize-programs",
+      "final-deploy",
+      "finalize-solana-programs",
+    ]) {
+      const result = spawnSync(
+        process.execPath,
+        ["scripts/sccp-solana-deploy.mjs", command],
+        { cwd: process.cwd(), encoding: "utf8" },
+      );
+      expect(result.status, command).not.toBe(0);
+      expect(result.stderr, command).toMatch(
+        /retired Solana deploy, upgrade, recovery, and finalization command surface is disabled/u,
+      );
+    }
+
+    const source = readFileSync("scripts/sccp-solana-deploy.mjs", "utf8");
+    const commandMapStart = source.lastIndexOf("const commands = {");
+    const commandMapEnd = source.indexOf(
+      "const fn = commands[command]",
+      commandMapStart,
+    );
+    const commandMap = source.slice(commandMapStart, commandMapEnd);
+    expect(commandMap).not.toMatch(
+      /:\s*(?:deploy|upgradeExistingProgram|finalizePrograms),/u,
+    );
+    expect(commandMap).toContain(
+      '"finalize-programs": rejectRetiredSolanaProgramMutationLifecycle',
+    );
+    expect(
+      JSON.parse(readFileSync("package.json", "utf8")).scripts,
+    ).not.toHaveProperty("sccp:solana:finalize-programs");
+  });
+
+  it("binds public source-burn dispatch to an explicit wallet and exact registry", () => {
+    const source = readFileSync("scripts/sccp-solana-deploy.mjs", "utf8");
+    const ownerStart = source.indexOf("const readSourceBurnOwner = async");
+    const inputStart = source.indexOf(
+      "const loadSourceBurnReadinessInputs = async",
+      ownerStart,
+    );
+    const linkageStart = source.indexOf(
+      "const readSolanaUpgradeableProgramLinkageLiveReadback",
+      inputStart,
+    );
+    const burnStart = source.indexOf("const sourceBurn = async");
+    const proofRequestStart = source.indexOf(
+      "const sourceBurnProofRequest = async",
+      burnStart,
+    );
+    const postDeployManifestStart = source.indexOf(
+      "const resolveOfflineFullTomlSha256",
+      proofRequestStart,
+    );
+    const ownerBody = source.slice(ownerStart, inputStart);
+    const inputBody = source.slice(inputStart, linkageStart);
+    const burnBody = source.slice(burnStart, proofRequestStart);
+    const proofRequestBody = source.slice(
+      proofRequestStart,
+      postDeployManifestStart,
+    );
+
+    expect(ownerBody).toContain('"--owner is required');
+    expect(ownerBody).not.toContain("readSolanaPublicConfig");
+    expect(ownerBody).not.toContain("deployerAddress");
+    expect(inputBody).toContain("loadExactSolanaSourceBurnRoute");
+    expect(inputBody).toContain("parseExactSccpSolanaRouteStateData");
+    expect(inputBody).not.toContain("solanaPostDeployDeploymentAddresses");
+    expect(burnBody).toContain("expectedAddress: reviewedOwnerAddress");
+    expect(burnBody).toContain(
+      "readiness.exactRouteSummary.routeConfigurationHash",
+    );
+    expect(burnBody).toContain(
+      "readiness.report.deployment.destinationStateAddress",
+    );
+    expect(burnBody).not.toContain("readSolanaPublicConfig");
+    expect(burnBody).not.toContain("publicConfig.deployerAddress");
+    expect(proofRequestBody).toContain("loadExactSolanaSourceBurnRoute");
+    expect(proofRequestBody).toContain("exactRoute.summary.sourceIdentityHash");
+    expect(proofRequestBody).not.toContain("readSolanaPublicConfig");
+    expect(proofRequestBody).not.toContain("deployerAddress");
   });
 
   it("does not create output or echo a supplied signer path when mutation is attempted", () => {
@@ -835,7 +1568,7 @@ describe("Solana route publication mutation boundary", () => {
     ).toThrowError(expect.not.stringContaining("secret-token-readiness"));
   });
 
-  it("fails mutating publication before reading artifacts when a public preflight override is supplied", () => {
+  it("does not expose the retired publish-route-manifest command", () => {
     const outputDir = mkdtempSync(
       path.join(tmpdir(), "sccp-solana-preflight-override-"),
     );
@@ -857,7 +1590,7 @@ describe("Solana route publication mutation boundary", () => {
     try {
       expect(result.status).not.toBe(0);
       expect(`${result.stdout}${result.stderr}`).toMatch(
-        /must recompute readiness and public preflight/u,
+        /Unknown command: publish-route-manifest/u,
       );
       expect(`${result.stdout}${result.stderr}`).not.toContain(
         "secret-token-preflight",
@@ -869,7 +1602,7 @@ describe("Solana route publication mutation boundary", () => {
     }
   });
 
-  it("fails mutating publication before reading artifacts when Solana RPC is disabled", () => {
+  it("does not expose a submit-route-manifest mutation alias", () => {
     const outputDir = mkdtempSync(
       path.join(tmpdir(), "sccp-solana-skip-rpc-publish-"),
     );
@@ -878,7 +1611,7 @@ describe("Solana route publication mutation boundary", () => {
       process.execPath,
       [
         "scripts/sccp-solana-deploy.mjs",
-        "publish-route-manifest",
+        "submit-route-manifest",
         "--submit",
         "true",
         "--output-dir",
@@ -891,7 +1624,7 @@ describe("Solana route publication mutation boundary", () => {
     try {
       expect(result.status).not.toBe(0);
       expect(`${result.stdout}${result.stderr}`).toMatch(
-        /requires fresh finalized Solana RPC readback/u,
+        /Unknown command: submit-route-manifest/u,
       );
       expect(existsSync(paths.routeManifestIsi)).toBe(false);
       expect(existsSync(paths.routeManifestPublishBlocked)).toBe(false);
@@ -900,7 +1633,7 @@ describe("Solana route publication mutation boundary", () => {
     }
   });
 
-  it("writes a fail-closed publication report when direct ISI generation has no independent manifest pin", () => {
+  it("does not expose the retired direct route-manifest ISI command", () => {
     const outputDir = mkdtempSync(
       path.join(tmpdir(), "sccp-solana-missing-route-manifest-"),
     );
@@ -918,25 +1651,16 @@ describe("Solana route publication mutation boundary", () => {
     try {
       expect(result.status).not.toBe(0);
       expect(`${result.stdout}${result.stderr}`).toMatch(
-        /requires --expected-manifest-sha256/u,
+        /Unknown command: route-manifest-isi/u,
       );
       expect(existsSync(paths.routeManifestIsi)).toBe(false);
-      expect(existsSync(paths.routeManifestPublishBlocked)).toBe(true);
-      expect(
-        JSON.parse(readFileSync(paths.routeManifestPublishBlocked, "utf8")),
-      ).toMatchObject({
-        schema: "iroha-demo-sccp-solana-route-publish-blocked/v1",
-        ready: false,
-        stage: "route-manifest-isi",
-        routeManifestIsiPath: null,
-        error: expect.stringMatching(/requires --expected-manifest-sha256/u),
-      });
+      expect(existsSync(paths.routeManifestPublishBlocked)).toBe(false);
     } finally {
       rmSync(outputDir, { recursive: true, force: true });
     }
   });
 
-  it("keeps a blocked ISI report consistent with the latest publish-readiness snapshot", () => {
+  it("does not revive the retired direct ISI command from stale readiness state", () => {
     const outputDir = mkdtempSync(
       path.join(tmpdir(), "sccp-solana-blocked-isi-consistency-"),
     );
@@ -966,21 +1690,16 @@ describe("Solana route publication mutation boundary", () => {
     );
     try {
       expect(result.status).not.toBe(0);
-      expect(
-        JSON.parse(readFileSync(paths.routeManifestPublishBlocked, "utf8")),
-      ).toMatchObject({
-        ready: false,
-        stage: "route-manifest-isi",
-        error:
-          "Route-manifest ISI generation is intentionally withheld until Solana production requirements pass.",
-        blockerIds: ["production-requirements"],
-      });
+      expect(`${result.stdout}${result.stderr}`).toMatch(
+        /Unknown command: route-manifest-isi/u,
+      );
+      expect(existsSync(paths.routeManifestPublishBlocked)).toBe(false);
     } finally {
       rmSync(outputDir, { recursive: true, force: true });
     }
   });
 
-  it("recomputes readiness at the finish-production submission boundary", () => {
+  it("keeps route publication outside the finish-production mutation boundary", () => {
     const source = readFileSync("scripts/sccp-solana-deploy.mjs", "utf8");
     const finishStart = source.indexOf("const finishProduction = async");
     const refreshStart = source.indexOf("const refreshEvidence = async");
@@ -991,7 +1710,11 @@ describe("Solana route publication mutation boundary", () => {
     expect(finishBody).not.toContain(
       'publishRouteManifest({ ...sharedRouteArgs, submit: "true" })',
     );
-    expect(finishBody).toContain('"skip-solana-rpc": "false"');
+    expect(finishBody).not.toContain("publishRouteManifest(");
+    expect(finishBody).not.toContain('"publish-route-manifest"');
+    expect(finishBody).toContain(
+      '"typed-registry-governance-enactment-required"',
+    );
   });
 
   it("defaults every route-publication preflight to live Solana RPC", () => {
@@ -1002,19 +1725,13 @@ describe("Solana route publication mutation boundary", () => {
     expect(solanaRoutePublishSkipRpc({ "skip-solana-rpc": "true" })).toBe(true);
   });
 
-  it("pins the exact in-memory route ISI across the signing subprocess boundary", () => {
+  it("retains no route signing subprocess in the finish-production flow", () => {
     const source = readFileSync("scripts/sccp-solana-deploy.mjs", "utf8");
-    const publishStart = source.indexOf("const publishRouteManifest = async");
-    const nextCommandStart = source.indexOf(
-      "const evidenceRefreshReportPath",
-      publishStart,
-    );
-    const publishBody = source.slice(publishStart, nextCommandStart);
-    expect(publishBody).toContain('"--expected-isi-sha256"');
-    expect(publishBody).toContain("sha256JsonHex(isiResult.artifact)");
-    expect(publishBody.indexOf('"--expected-isi-sha256"')).toBeLessThan(
-      publishBody.indexOf('"--private-key-env"'),
-    );
+    const finishStart = source.indexOf("const finishProduction = async");
+    const refreshStart = source.indexOf("const refreshEvidence = async");
+    const finishBody = source.slice(finishStart, refreshStart);
+    expect(finishBody).not.toContain("submitUpsertScript");
+    expect(finishBody).not.toContain("publishRouteManifest(");
   });
 
   it("verifies exact public publication from independently pinned manifest bytes", async () => {
@@ -1121,47 +1838,25 @@ describe("Solana route publication mutation boundary", () => {
     }
   });
 
-  it("returns an exact-public no-op before ISI, readiness, or signer inspection", async () => {
+  it("rejects programmatic legacy publication before inspection or artifact access", async () => {
     const outputDir = mkdtempSync(
       path.join(tmpdir(), "sccp-solana-publication-no-op-"),
     );
     const paths = solanaDeployArtifactPaths({ "output-dir": outputDir });
-    const manifestArtifactSha256 = materialHex32("already-public-manifest");
     try {
-      const result = await publishRouteManifest(
-        {
-          submit: "true",
-          "output-dir": outputDir,
-          "authority-env": "invalid env name that must not be inspected",
-          "private-key-env": "invalid env name that must not be inspected",
-        },
-        {
-          inspectPublication: async (args) => {
-            expect(args["skip-solana-rpc"]).toBe("false");
-            return {
-              status: { published: true, exactManifestMatches: true },
-              preflight: { reportPath: "/live/exact-public-preflight.json" },
-              selection: {
-                manifestArtifact: {
-                  path: "/reviewed/taira-solana-xor-route.json",
-                  sha256: manifestArtifactSha256,
-                },
-                manifestCanonicalSha256: materialHex32(
-                  "already-public-canonical-manifest",
-                ),
-              },
-            };
+      const inspectPublication = vi.fn();
+      await expect(
+        publishRouteManifest(
+          {
+            submit: "true",
+            "output-dir": outputDir,
+            "authority-env": "invalid env name that must not be inspected",
+            "private-key-env": "invalid env name that must not be inspected",
           },
-        },
-      );
-
-      expect(result).toMatchObject({
-        submitted: false,
-        alreadyPublished: true,
-        publicationSatisfied: true,
-        exactManifestVerified: true,
-        manifestArtifactSha256,
-      });
+          { inspectPublication },
+        ),
+      ).rejects.toThrow(/UpsertSccpRouteManifest submission is retired/u);
+      expect(inspectPublication).not.toHaveBeenCalled();
       for (const artifactPath of [
         paths.routeManifestIsi,
         paths.routeManifestPublishReadiness,
@@ -1175,7 +1870,7 @@ describe("Solana route publication mutation boundary", () => {
     }
   });
 
-  it("rejects non-waiting route publication before ISI generation or signing", async () => {
+  it("rejects retired publication independently of legacy wait options", async () => {
     await expect(
       publishRouteManifest(
         { submit: "true", "wait-for-commit": "false" },
@@ -1185,7 +1880,7 @@ describe("Solana route publication mutation boundary", () => {
           }),
         },
       ),
-    ).rejects.toThrow(/requires --wait-for-commit true/u);
+    ).rejects.toThrow(/UpsertSccpRouteManifest submission is retired/u);
   });
 
   it("validates an Applied route receipt against every reviewed boundary", () => {
@@ -1569,65 +2264,8 @@ const SOLANA_GOVERNED_PRODUCTION_INPUT_IDS = [
 const SOLANA_SOURCE_ADAPTER_VERIFIER_VK_HASH =
   "0xe7bc29d06bf56184183c3fc59a0e934cd1d8e16751f1eda2efaaf88aa350b9d6";
 
-const renderSiblingSolanaSourceEvidenceFixture = () => {
-  const helperPath = path.resolve(
-    process.cwd(),
-    "../iroha/scripts/sccp_solana_source_state_evidence.py",
-  );
-  const componentHash = (role) =>
-    materialHex32(`real-sibling-source-evidence:${role}`);
-  const baseArgs = [
-    helperPath,
-    "--solana-network",
-    "testnet",
-    "--source-trust-anchor-hash",
-    componentHash("source-trust-anchor"),
-    "--consensus-verifier-hash",
-    componentHash("consensus-verifier"),
-    "--message-inclusion-verifier-hash",
-    componentHash("message-inclusion-verifier"),
-    "--finality-policy-hash",
-    componentHash("finality-policy"),
-    "--source-state-verifier-hash",
-    componentHash("source-state-verifier"),
-    "--adapter-verifier-vk-hash",
-    SOLANA_SOURCE_ADAPTER_VERIFIER_VK_HASH,
-    "--deployment-receipt-hash",
-    componentHash("deployment-receipt"),
-    "--tower-replay-verifier-hash",
-    componentHash("tower-replay-verifier"),
-    "--full-accountsdb-lattice-verifier-hash",
-    componentHash("full-accountsdb-lattice-verifier"),
-    "--bank-fork-choice-verifier-hash",
-    componentHash("bank-fork-choice-verifier"),
-  ];
-  const runHelper = (args) => {
-    const result = spawnSync("python3", args, {
-      cwd: process.cwd(),
-      encoding: "utf8",
-    });
-    if (result.status !== 0) {
-      throw new Error(
-        `Sibling Solana source evidence helper failed: ${result.stderr || result.stdout}`,
-      );
-    }
-    return result.stdout;
-  };
-  const unpinnedSummary = JSON.parse(runHelper(baseArgs));
-  const governedArgs = [
-    ...baseArgs,
-    "--expected-source-verifier-material-hash",
-    unpinnedSummary.source_verifier_material_hash,
-    "--expected-source-adapter-engine-deployment-hash",
-    unpinnedSummary.source_adapter_engine_deployment_hash,
-    "--expected-full-light-client-gate-hash",
-    unpinnedSummary.full_light_client_gate_hash,
-  ];
-  return {
-    summary: JSON.parse(runHelper(governedArgs)),
-    toml: runHelper([...governedArgs, "--toml"]),
-  };
-};
+// Historical inventory parsing remains unit-tested with inert, synthetic bytes.
+// The removed sibling generator is not a production dependency of the exact route.
 
 const reviewedOfflineTomlFixture = ({
   root = "/tmp",
@@ -1727,13 +2365,25 @@ const SOLANA_TOKEN_MINT_ADDRESS =
   "8291HWJXDb4wHWULcA78A43Zk72pHvfa6xKhM9GLGnS4";
 const SOLANA_DESTINATION_BINDING_HASH =
   "0x078578f0aa27daa2972d6c19d1d26dbb6bf6ba1e8df84e283d7ef101fc46abf6";
+const SOLANA_ROUTE_CONFIGURATION_HASH = materialHex32(
+  "exact-taira-sol-xor-route-revision-1",
+);
+const SOLANA_SOURCE_IDENTITY_HASH = materialHex32(
+  "exact-solana-source-deployment-identity",
+);
 const SOLANA_NATIVE_VERIFIER_PROGRAM_ID =
   "ComputeBudget111111111111111111111111111111";
 const SOLANA_NATIVE_PROGRAMDATA_ADDRESS =
   "H81ZEb7C5TXLJeKoqytidAMVeNuvBAA6cB6QQ1WjQLRA";
 const SOLANA_NATIVE_PROGRAMDATA_SLOT = "420442736";
+const sbpfV3Header = () => {
+  const bytes = Buffer.alloc(64);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0]).copy(bytes);
+  bytes.writeUInt32LE(3, 48);
+  return bytes;
+};
 const SOLANA_NATIVE_PROGRAM_BYTES = Buffer.concat([
-  Buffer.from([0x7f, 0x45, 0x4c, 0x46]),
+  sbpfV3Header(),
   Buffer.from("governed-native-recursive-verifier", "utf8"),
   Buffer.from(SOLANA_NATIVE_VERIFIER_CPI_MARKER, "utf8"),
 ]);
@@ -1750,7 +2400,7 @@ const BASE_GOVERNED_NATIVE_VERIFIER_MATERIAL = {
   routeId: "taira_sol_xor",
   assetKey: "xor",
   solanaNetwork: "solana-testnet",
-  proofSystem: "stark-fri-v1",
+  proofSystem: "groth16-bn254-v1",
   proofBackend: SOLANA_SOURCE_PROOF_BACKEND,
   productionReady: true,
   productionProofMaterial: true,
@@ -1785,16 +2435,27 @@ const SOLANA_NATIVE_VERIFIER_CONFIG_HASH = `0x${createHash("sha256")
   .update(JSON.stringify(BASE_GOVERNED_NATIVE_VERIFIER_CONFIG))
   .digest("hex")}`;
 
-const tairaRouteManagerAuthorityFromByte = (byte) =>
+const accountAddressFromPublicKeyHex = (publicKeyHex, networkPrefix) =>
   AccountAddress.fromAccount({
-    publicKey: Uint8Array.from({ length: 32 }, () => byte),
-  }).toI105(TAIRA_NETWORK_PREFIX);
+    publicKey: Uint8Array.from(Buffer.from(publicKeyHex, "hex")),
+  }).toI105(networkPrefix);
 
-const ROUTE_MANAGER_AUTHORITY = tairaRouteManagerAuthorityFromByte(0x47);
-const TAIRA_RECIPIENT = tairaRouteManagerAuthorityFromByte(0x51);
-const MINAMOTO_RECIPIENT = AccountAddress.fromAccount({
-  publicKey: Uint8Array.from({ length: 32 }, () => 0x51),
-}).toI105(753);
+const ROUTE_MANAGER_PUBLIC_KEY_HEX =
+  "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+const RECIPIENT_PUBLIC_KEY_HEX =
+  "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c";
+const ROUTE_MANAGER_AUTHORITY = accountAddressFromPublicKeyHex(
+  ROUTE_MANAGER_PUBLIC_KEY_HEX,
+  TAIRA_NETWORK_PREFIX,
+);
+const TAIRA_RECIPIENT = accountAddressFromPublicKeyHex(
+  RECIPIENT_PUBLIC_KEY_HEX,
+  TAIRA_NETWORK_PREFIX,
+);
+const MINAMOTO_RECIPIENT = accountAddressFromPublicKeyHex(
+  RECIPIENT_PUBLIC_KEY_HEX,
+  753,
+);
 const EXPLICIT_TAIRA_PUBLIC_NODE_URL = "https://taira-validator-1.sora.org";
 const EXPLICIT_TAIRA_PUBLIC_NODE_MCP_URL = `${EXPLICIT_TAIRA_PUBLIC_NODE_URL}/v1/mcp`;
 const explicitTairaPublicNodeArgs = () => ({
@@ -2035,7 +2696,7 @@ const buildProgramdataData = ({
   const executable = programBytes
     ? Buffer.from(programBytes)
     : Buffer.concat([
-        Buffer.from([0x7f, 0x45, 0x4c, 0x46]),
+        sbpfV3Header(),
         Buffer.from("sccp-solana-test-verifier", "utf8"),
         includeSentinel
           ? Buffer.from(SOLANA_VERIFIER_FAIL_CLOSED_SENTINEL, "utf8")
@@ -2052,7 +2713,7 @@ const buildSbfProgramBytes = ({
   includeCpiMarker = !includeSentinel,
 } = {}) =>
   Buffer.concat([
-    Buffer.from([0x7f, 0x45, 0x4c, 0x46]),
+    sbpfV3Header(),
     Buffer.from("sccp-solana-test-verifier", "utf8"),
     includeSentinel
       ? Buffer.from(SOLANA_VERIFIER_FAIL_CLOSED_SENTINEL, "utf8")
@@ -2841,79 +3502,6 @@ describe("atomic finalized Solana readback evidence", () => {
     );
   });
 
-  it("keeps canonical finalized-readback evidence out of route-manifest output", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "sccp-solana-route-output-"));
-    const templatePath = path.join(root, "template.json");
-    const evidencePath = path.join(root, "finalized-readback.json");
-    const outputPath = path.join(root, "route.manifest.json");
-    try {
-      const { report } = await captureAtomicReadbackFixture();
-      const roles = report.snapshot.roles;
-      const destinationBindingHash =
-        report.snapshot.sourceBridgeConfig.observed.destinationBindingHash;
-      const browserProver = (seed) => ({
-        module_url: `https://provers.sora.org/${seed}.mjs`,
-        module_hash: materialHex32(`${seed}:module`),
-        manifest_hash: materialHex32(`${seed}:manifest`),
-        bound_route_hash: destinationBindingHash,
-        bound_proof_hash: materialHex32(`${seed}:proof`),
-        expected_exports: ["verifySccpProof"],
-      });
-      writeJsonFixture(templatePath, {
-        production_ready: true,
-        taira_xor_token_address:
-          report.snapshot.reviewedAddresses.tokenMintAddress,
-        taira_xor_bridge_address: roles.destinationBridge.program.address,
-        sccp_solana_source_bridge_address: roles.sourceBridge.program.address,
-        solana_verifier_program_id: roles.outerVerifier.program.address,
-        destination_binding_key: "sccp:solana-testnet:taira_sol_xor",
-        taira_burn_record_settlement_asset_definition_id: "xor#sora",
-        taira_burn_record_contract_artifact_b64: "AQIDBA==",
-        taira_burn_record_vk_backend: "groth16",
-        taira_burn_record_vk_name: "taira_sol_xor_burn_record_v1",
-        verifier_code_hash: roles.outerVerifier.loaderV3.executableBlake2b256,
-        verifier_key_hash: materialHex32("route-output-verifier-key"),
-        destination_binding_hash: destinationBindingHash,
-        taira_burn_record_artifact_sha256: materialHex32(
-          "route-output-burn-artifact",
-        ),
-        taira_burn_record_code_hash: materialHex32("route-output-burn-code"),
-        destination_browser_prover: browserProver("destination"),
-        source_browser_prover: browserProver("source"),
-      });
-      writeJsonFixture(evidencePath, report);
-
-      const result = spawnSync(
-        process.execPath,
-        [
-          path.resolve("../iroha/scripts/sccp_solana_taira_xor_deploy.mjs"),
-          "route-manifest",
-          "--template",
-          templatePath,
-          "--evidence",
-          evidencePath,
-          "--output",
-          outputPath,
-        ],
-        { encoding: "utf8" },
-      );
-      expect(result.status, result.stderr).toBe(0);
-      const output = JSON.parse(readFileSync(outputPath, "utf8"));
-      expect(output).not.toHaveProperty("canonicalFinalizedReadback");
-      expect(output).not.toHaveProperty("canonical_finalized_readback");
-      expect(output).not.toHaveProperty("canonicalSnapshotSha256");
-      expect(output).not.toHaveProperty("canonical_snapshot_sha256");
-      expect(JSON.stringify(output)).not.toContain(
-        report.canonicalSnapshotSha256,
-      );
-      expect(JSON.stringify(output)).not.toContain(
-        JSON.stringify(report.snapshot),
-      );
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("binds the stable native-verifier report to the native role", async () => {
     const fixture = buildAtomicReadbackFixture();
     await expect(
@@ -3142,8 +3730,8 @@ const baseProductionManifest = () => ({
   counterparty_domain: 3,
   chain: "solana-testnet",
   chain_id_hex: "0x736f6c616e612d746573746e6574",
-  counterparty_account_codec: 3,
-  counterparty_account_codec_key: "solana_base58",
+  counterparty_account_codec: 6,
+  counterparty_account_codec_key: "solana_pubkey32",
   verifier_target: "SolanaProgram",
   destination_verifier_plan: SOLANA_DESTINATION_VERIFIER_PLAN,
   solana_genesis_hash: SOLANA_TESTNET_GENESIS_HASH,
@@ -3244,7 +3832,7 @@ const baseProductionManifest = () => ({
   },
   destination_proof_admission: {
     admission_mode: "governed-zk-verifier-v1",
-    proof_system: "stark-fri-v1",
+    proof_system: "groth16-bn254-v1",
     entrypoint: "submit_sccp_message_proof",
     native_verifier_program_id: SOLANA_NATIVE_VERIFIER_PROGRAM_ID,
     native_verifier_programdata_address: SOLANA_NATIVE_PROGRAMDATA_ADDRESS,
@@ -3348,8 +3936,8 @@ const finalizationReadyFixture = ({
     destinationProofAdmission: {
       admissionMode: "governed-zk-verifier-v1",
       admission_mode: "governed-zk-verifier-v1",
-      proofSystem: "stark-fri-v1",
-      proof_system: "stark-fri-v1",
+      proofSystem: "groth16-bn254-v1",
+      proof_system: "groth16-bn254-v1",
       verifierCodeHash,
       verifier_code_hash: verifierCodeHash,
       destinationBindingHash: SOLANA_DESTINATION_BINDING_HASH,
@@ -3881,21 +4469,28 @@ describe("Solana SCCP route manifest publication guard", () => {
       },
       { pubkey: "$destinationToken", isSigner: false, isWritable: true },
       {
-        pubkey: "8PMfHs8gKTZLxGLHXDNiYWnXUGtF2Kd6FpysLk4niyiJ",
+        pubkey: "$nativeVerifierMaterial",
         isSigner: false,
         isWritable: false,
       },
-      {
-        pubkey: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-        isSigner: false,
-        isWritable: false,
-      },
+      { pubkey: "$nativeProof", isSigner: false, isWritable: false },
       {
         pubkey: SOLANA_NATIVE_VERIFIER_PROGRAM_ID,
         isSigner: false,
         isWritable: false,
       },
-      { pubkey: "$messageReceipt", isSigner: false, isWritable: true },
+      { pubkey: "$verifierAuthority", isSigner: false, isWritable: false },
+      {
+        pubkey: "8PMfHs8gKTZLxGLHXDNiYWnXUGtF2Kd6FpysLk4niyiJ",
+        isSigner: false,
+        isWritable: false,
+      },
+      { pubkey: "$destinationReceipt", isSigner: false, isWritable: true },
+      {
+        pubkey: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        isSigner: false,
+        isWritable: false,
+      },
       { pubkey: "$systemProgram", isSigner: false, isWritable: false },
     ]);
     expect(templates.solanaSourceBurnInstructionAccounts).toEqual([
@@ -3905,18 +4500,23 @@ describe("Solana SCCP route manifest publication guard", () => {
         isSigner: false,
         isWritable: true,
       },
-      { pubkey: "$sourceToken", isSigner: false, isWritable: true },
+      {
+        pubkey: SOLANA_VERIFIER_STATE_ADDRESS,
+        isSigner: false,
+        isWritable: false,
+      },
       {
         pubkey: SOLANA_TOKEN_MINT_ADDRESS,
         isSigner: false,
         isWritable: true,
       },
+      { pubkey: "$sourceToken", isSigner: false, isWritable: true },
+      { pubkey: "$sourceReceipt", isSigner: false, isWritable: true },
       {
         pubkey: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
         isSigner: false,
         isWritable: false,
       },
-      { pubkey: "$sourceBurnReceipt", isSigner: false, isWritable: true },
       { pubkey: "$systemProgram", isSigner: false, isWritable: false },
     ]);
   });
@@ -5767,35 +6367,11 @@ describe("Solana SCCP route manifest publication guard", () => {
     );
   });
 
-  it("rejects mixed destination and source Solana proof profiles", () => {
-    const destinationUsingSource = baseProductionManifest();
-    destinationUsingSource.destination_browser_prover = {
-      ...destinationUsingSource.destination_browser_prover,
-      proof_backend: SOLANA_SOURCE_PROOF_BACKEND,
-      required_proof_backend: SOLANA_SOURCE_PROOF_BACKEND,
-    };
-    expect(() =>
-      assertProductionSolanaManifest(destinationUsingSource),
-    ).toThrow(
-      `Solana destination browser prover.proofBackend must be ${SOLANA_DESTINATION_PROOF_BACKEND} for the destination direction.`,
-    );
-
-    const sourceUsingDestination = baseProductionManifest();
-    sourceUsingDestination.source_browser_prover = {
-      ...sourceUsingDestination.source_browser_prover,
-      proof_backend: SOLANA_DESTINATION_PROOF_BACKEND,
-      required_proof_backend: SOLANA_DESTINATION_PROOF_BACKEND,
-    };
-    expect(() =>
-      assertProductionSolanaManifest(sourceUsingDestination),
-    ).toThrow(
-      `Solana source browser prover.proofBackend must be ${SOLANA_SOURCE_PROOF_BACKEND} for the source direction.`,
-    );
-
+  it("rejects inconsistent Solana proof-profile aliases", () => {
     const hiddenDestinationAlias = baseProductionManifest();
     hiddenDestinationAlias.destination_browser_prover = {
       ...hiddenDestinationAlias.destination_browser_prover,
-      proofBackend: SOLANA_SOURCE_PROOF_BACKEND,
+      proofBackend: "substituted-proof-backend",
     };
     expect(() =>
       assertProductionSolanaManifest(hiddenDestinationAlias),
@@ -7807,14 +8383,13 @@ describe("Solana SCCP route manifest publication guard", () => {
       expect.arrayContaining(["token-mint-supply", "source-token-account"]),
     );
     expect(report.nextActions).toEqual([
-      "link-solana-native-recursive-verifier",
-      "rerun-solana-destination-canary",
+      "complete-taira-to-solana-live-transfer",
       "rerun-source-burn-readiness",
     ]);
     expect(report.nextActionDetails).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "link-solana-native-recursive-verifier",
+          id: "complete-taira-to-solana-live-transfer",
           blockedBy: ["token-mint-supply"],
         }),
       ]),
@@ -7881,8 +8456,7 @@ describe("Solana SCCP route manifest publication guard", () => {
       },
     });
     expect(report.nextActions).toEqual([
-      "link-solana-native-recursive-verifier",
-      "rerun-solana-destination-canary",
+      "complete-taira-to-solana-live-transfer",
       "rerun-source-burn-readiness",
     ]);
   });
@@ -7945,20 +8519,34 @@ describe("Solana SCCP route manifest publication guard", () => {
       ],
       checkedAt: "2026-07-04T00:00:00.000Z",
     });
+    const destinationStateAddress =
+      "HWaaX4WBs6iYiNQQbKUgRNR2pWBf1Ms81Q6aP58FzXQS";
+    const exactBurn = buildExactSolanaSourceBurnInstruction({
+      payerAddress: "EFopJQRwoAgQcSL124wixwbTvgTvidHy1GQbEyJPQKTf",
+      sourceProgramId: "CmGQYvNgCS9yycdp5tsKmGoDhJrwmEPg6oQrNwj64WQe",
+      sourceStateAddress: "433bWoeHHuaK2fLJWDJyk1EBxVhrQtp8Eie6YKkCiD6r",
+      destinationStateAddress,
+      sourceTokenAddress: "GkSa6kPaHffre7H4WmhvMNL6FvDGPNutYseUk3aHb86Y",
+      tokenMintAddress: "7x76GchSm2spUY8koAFMaFwx5x7FjoMUDJa2vSfTDmre",
+      amountBaseUnits: "25",
+      tairaRecipient: TAIRA_RECIPIENT,
+      nonce: "7",
+    });
     const dataHex = buildSolanaSourceBurnInstructionDataHex({
       amountBaseUnits: "25",
       tairaRecipient: TAIRA_RECIPIENT,
       nonce: "7",
     });
+    expect(dataHex).toBe(exactBurn.instruction.dataHex);
     const sourceBurnReceipt = deriveSolanaSourceBurnReceiptAddress({
       sourceBridgeProgramId: "CmGQYvNgCS9yycdp5tsKmGoDhJrwmEPg6oQrNwj64WQe",
       sourceStateAddress: "433bWoeHHuaK2fLJWDJyk1EBxVhrQtp8Eie6YKkCiD6r",
-      ownerAddress: "EFopJQRwoAgQcSL124wixwbTvgTvidHy1GQbEyJPQKTf",
-      nonce: "7",
+      messageId: exactBurn.messageId,
     });
     const accountMetas = buildSolanaSourceBurnAccountMetas({
       ownerAddress: "EFopJQRwoAgQcSL124wixwbTvgTvidHy1GQbEyJPQKTf",
       sourceStateAddress: "433bWoeHHuaK2fLJWDJyk1EBxVhrQtp8Eie6YKkCiD6r",
+      destinationStateAddress,
       sourceTokenAddress: "GkSa6kPaHffre7H4WmhvMNL6FvDGPNutYseUk3aHb86Y",
       tokenMintAddress: "7x76GchSm2spUY8koAFMaFwx5x7FjoMUDJa2vSfTDmre",
       sourceBurnReceiptAddress: sourceBurnReceipt.address,
@@ -7972,13 +8560,14 @@ describe("Solana SCCP route manifest publication guard", () => {
     expect(report.selectedSourceToken?.address).toBe(
       "GkSa6kPaHffre7H4WmhvMNL6FvDGPNutYseUk3aHb86Y",
     );
-    expect(dataHex).toContain("0d0000006275726e5f746f5f7461697261");
-    expect(dataHex).toContain("080000001900000000000000");
-    expect(dataHex).toMatch(/080000000700000000000000$/u);
+    const data = Buffer.from(dataHex.slice(2), "hex");
+    expect([...data.subarray(0, 2)]).toEqual([1, 3]);
+    expect(data.readBigUInt64LE(2)).toBe(25n);
+    expect(data.readBigUInt64LE(10)).toBe(7n);
+    expect(data.subarray(20).toString("utf8")).toBe(TAIRA_RECIPIENT);
     expect(sourceBurnReceipt).toMatchObject({
-      address: "6aF7sQDS28GPBqzZsmJyXdr5FpkZnw6Y1WehUcsru5wG",
-      bump: 255,
-      seed: "sccp-source-burn-receipt",
+      address: exactBurn.receipt.address,
+      seed: "sccp-source-receipt-v1",
     });
     expect(
       accountMetas.map((account) => ({
@@ -7998,9 +8587,9 @@ describe("Solana SCCP route manifest publication guard", () => {
         isWritable: true,
       },
       {
-        pubkey: "GkSa6kPaHffre7H4WmhvMNL6FvDGPNutYseUk3aHb86Y",
+        pubkey: destinationStateAddress,
         isSigner: false,
-        isWritable: true,
+        isWritable: false,
       },
       {
         pubkey: "7x76GchSm2spUY8koAFMaFwx5x7FjoMUDJa2vSfTDmre",
@@ -8008,14 +8597,19 @@ describe("Solana SCCP route manifest publication guard", () => {
         isWritable: true,
       },
       {
-        pubkey: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        pubkey: "GkSa6kPaHffre7H4WmhvMNL6FvDGPNutYseUk3aHb86Y",
         isSigner: false,
-        isWritable: false,
+        isWritable: true,
       },
       {
         pubkey: sourceBurnReceipt.address,
         isSigner: false,
         isWritable: true,
+      },
+      {
+        pubkey: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        isSigner: false,
+        isWritable: false,
       },
       {
         pubkey: SystemProgram.programId.toBase58(),
@@ -8198,6 +8792,8 @@ describe("Solana SCCP route manifest publication guard", () => {
       tairaRecipient: TAIRA_RECIPIENT,
       nonce: "7",
       sourceBurnHash: hex32("12"),
+      routeConfigurationHash: SOLANA_ROUTE_CONFIGURATION_HASH,
+      sourceIdentityHash: SOLANA_SOURCE_IDENTITY_HASH,
       checkedAt: "2026-07-04T00:02:00.000Z",
     });
     const submission = buildSolanaSourceBurnSubmissionReportBody({
@@ -8305,6 +8901,8 @@ describe("Solana SCCP route manifest publication guard", () => {
       tairaRecipient: TAIRA_RECIPIENT,
       nonce: "7",
       sourceBurnHash: hex32("12"),
+      routeConfigurationHash: SOLANA_ROUTE_CONFIGURATION_HASH,
+      sourceIdentityHash: SOLANA_SOURCE_IDENTITY_HASH,
       checkedAt: "2026-07-04T00:00:00.000Z",
     });
 
@@ -8315,14 +8913,19 @@ describe("Solana SCCP route manifest publication guard", () => {
       source_domain: 3,
       dest_domain: 0,
       nonce: "7",
+      route_revision: 1,
       amount: "25",
-      sender: "EFopJQRwoAgQcSL124wixwbTvgTvidHy1GQbEyJPQKTf",
-      recipient: TAIRA_RECIPIENT,
-      route_id: "taira_sol_xor",
+      sender_codec: 6,
+      sender: `0x${Buffer.from(
+        new PublicKey("EFopJQRwoAgQcSL124wixwbTvgTvidHy1GQbEyJPQKTf").toBytes(),
+      ).toString("hex")}`,
+      recipient_codec: 1,
+      recipient: `0x${Buffer.from(TAIRA_RECIPIENT, "utf8").toString("hex")}`,
+      route_id: "0x74616972615f736f6c5f786f72",
     });
-    expect(scaffold.canonical?.messageBundle).toMatchObject({
-      payload: {
-        kind: "Transfer",
+    expect(scaffold.canonical?.payload).toMatchObject({
+      Transfer: {
+        route_revision: 1,
       },
     });
     expect(scaffold.canonical?.settlement).toEqual({
@@ -8331,10 +8934,49 @@ describe("Solana SCCP route manifest publication guard", () => {
       asset: "xor",
     });
     expect(scaffold.canonical?.messageId).toMatch(/^0x[0-9a-f]{64}$/u);
-    expect(scaffold.canonical?.commitmentRoot).toMatch(/^0x[0-9a-f]{64}$/u);
+    expect(scaffold.canonical?.laneHash).toMatch(/^0x[0-9a-f]{64}$/u);
+    expect(scaffold.canonical?.sourceEventDigest).toMatch(/^0x[0-9a-f]{64}$/u);
+    expect(scaffold.canonical?.nativeSourceProof).toMatchObject({
+      version: 1,
+      backend: "SolanaAgave",
+      network: {
+        profile: "solana-testnet",
+        genesisHash: "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY",
+      },
+      target: {
+        profile: "sora-taira",
+        chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
+        networkPrefix: 369,
+      },
+      sourceIdentityHash: SOLANA_SOURCE_IDENTITY_HASH,
+      routeConfigurationHash: SOLANA_ROUTE_CONFIGURATION_HASH,
+      statement: {
+        matching_route_instruction_count: 1,
+        matching_source_event_count: 1,
+        route_revision: 1,
+        lane_hash: scaffold.canonical?.laneHash,
+        message_id: scaffold.canonical?.messageId,
+        payload_hash: scaffold.canonical?.payloadHash,
+        source_event_digest: scaffold.canonical?.sourceEventDigest,
+        burn_receipt_hash: null,
+      },
+      trustAnchor: null,
+      proofBytes: null,
+    });
+    expect(
+      scaffold.canonical?.nativeSourceProof.requiredProverOutputs,
+    ).toContain("hash of the canonical program-owned burn receipt state");
+    expect(JSON.stringify(scaffold.canonical)).not.toMatch(
+      /commitmentRoot|commitment_root|merkleProof|merkle_proof/u,
+    );
+    const receipt = deriveExactSolanaSourceReceiptAddress({
+      sourceProgramId: scaffold.sourceBurn.sourceBridgeProgramId,
+      sourceStateAddress: scaffold.sourceBurn.sourceStateAddress,
+      messageId: scaffold.canonical.messageId,
+    });
     expect(scaffold.sourceBurn).toMatchObject({
-      sourceBurnReceiptAddress: "6aF7sQDS28GPBqzZsmJyXdr5FpkZnw6Y1WehUcsru5wG",
-      sourceBurnReceiptBump: 255,
+      sourceBurnReceiptAddress: receipt.address,
+      sourceBurnReceiptBump: receipt.bump,
     });
     expect(scaffold.blockers).toEqual([]);
   });
@@ -8351,6 +8993,9 @@ describe("Solana SCCP route manifest publication guard", () => {
       amountBaseUnits: "25",
       tairaRecipient: TAIRA_RECIPIENT,
       nonce: "7",
+      sourceBurnHash: hex32("12"),
+      routeConfigurationHash: SOLANA_ROUTE_CONFIGURATION_HASH,
+      sourceIdentityHash: SOLANA_SOURCE_IDENTITY_HASH,
     };
     const substituted = buildSolanaSourceBurnProofRequestScaffold({
       ...base,
@@ -8375,6 +9020,46 @@ describe("Solana SCCP route manifest publication guard", () => {
     );
   });
 
+  it("fails native Solana source-proof scaffolds closed on missing, malformed, or colliding proof roles", () => {
+    const base = {
+      signature:
+        "5Hfd2BBsUdDoVVKEUdcqMWMyE6aZ4ctNSA6AprqC8tkqhzMikMXRGLajHStsc9SgFs4j2QJU7VtYsezCqG6KYmgm",
+      ownerAddress: "EFopJQRwoAgQcSL124wixwbTvgTvidHy1GQbEyJPQKTf",
+      sourceTokenAddress: "BKb6pv4BrkQr4jv2SguPD9UtuKz5kcyzpa4QRvnua1ad",
+      tokenMintAddress: "7x76GchSm2spUY8koAFMaFwx5x7FjoMUDJa2vSfTDmre",
+      sourceBridgeProgramId: "CmGQYvNgCS9yycdp5tsKmGoDhJrwmEPg6oQrNwj64WQe",
+      sourceStateAddress: "433bWoeHHuaK2fLJWDJyk1EBxVhrQtp8Eie6YKkCiD6r",
+      amountBaseUnits: "25",
+      tairaRecipient: TAIRA_RECIPIENT,
+      nonce: "7",
+      sourceBurnHash: hex32("12"),
+      routeConfigurationHash: SOLANA_ROUTE_CONFIGURATION_HASH,
+      sourceIdentityHash: SOLANA_SOURCE_IDENTITY_HASH,
+    };
+    for (const [override, blockerId] of [
+      [{ routeConfigurationHash: null }, "source-route-configuration-hash"],
+      [{ sourceIdentityHash: null }, "source-identity-hash"],
+      [{ sourceIdentityHash: `0x${"00".repeat(32)}` }, "source-identity-hash"],
+      [{ signature: "not-a-solana-signature" }, "source-burn-signature"],
+      [
+        { sourceIdentityHash: SOLANA_ROUTE_CONFIGURATION_HASH },
+        "source-proof-hash-role-collision",
+      ],
+    ]) {
+      const scaffold = buildSolanaSourceBurnProofRequestScaffold({
+        ...base,
+        ...override,
+      });
+      expect(scaffold.readyForSourceProof).toBe(false);
+      expect(scaffold.blockers).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: blockerId })]),
+      );
+      expect(JSON.stringify(scaffold)).not.toMatch(
+        /commitmentRoot|commitment_root|merkleProof|merkle_proof/u,
+      );
+    }
+  });
+
   it("builds source-burn proof requests from the selected manifest instead of stale public config", () => {
     const stalePublicConfig = {
       sourceBridgeProgramId: "CmGQYvNgCS9yycdp5tsKmGoDhJrwmEPg6oQrNwj64WQe",
@@ -8387,6 +9072,8 @@ describe("Solana SCCP route manifest publication guard", () => {
       solanaTokenMint: "B6zYanuGL2HLASZAUyj7WDUZLMVib16gAfheV6KHEPhv",
       sccpSolanaSourceStateAddress:
         "5YiGP9N9v5vRuYs7ZvZuaMzCeZzsdpZG5ycfSKD7NPcn",
+      routeConfigurationHash: SOLANA_ROUTE_CONFIGURATION_HASH,
+      sourceIdentityHash: SOLANA_SOURCE_IDENTITY_HASH,
     };
     const sourceBurnSubmission = {
       schema: "iroha-demo-sccp-solana-source-burn-submission/v1",
@@ -8417,7 +9104,7 @@ describe("Solana SCCP route manifest publication guard", () => {
       tokenMintAddress: currentManifest.solanaTokenMint,
       sourceBridgeProgramId: currentManifest.sccpSolanaSourceBridgeAddress,
       sourceStateAddress: currentManifest.sccpSolanaSourceStateAddress,
-      sourceBurnHash: hex32("12"),
+      observedProgramBurnHash: hex32("12"),
     });
     expect(JSON.stringify(scaffold)).not.toContain(
       stalePublicConfig.tokenMintAddress,
@@ -8425,6 +9112,21 @@ describe("Solana SCCP route manifest publication guard", () => {
     expect(JSON.stringify(scaffold)).not.toContain(
       stalePublicConfig.sourceStateAddress,
     );
+    expect(() =>
+      buildSolanaSourceBurnProofRequestFromSubmission({
+        sourceBurnSubmission,
+        publicConfig: stalePublicConfig,
+        manifest: currentManifest,
+        args: {
+          "route-configuration-hash": materialHex32(
+            "substituted-route-configuration",
+          ),
+        },
+        postDeployEvidence: {
+          observedSourceState: { lastBurnHash: hex32("12") },
+        },
+      }),
+    ).toThrow(/conflicts across reviewed inputs/u);
   });
 
   it("keeps legacy text-nonce Solana source burns out of canonical proof requests", () => {
@@ -8439,6 +9141,9 @@ describe("Solana SCCP route manifest publication guard", () => {
       amountBaseUnits: "1",
       tairaRecipient: TAIRA_RECIPIENT,
       nonce: "burn-1",
+      sourceBurnHash: hex32("12"),
+      routeConfigurationHash: SOLANA_ROUTE_CONFIGURATION_HASH,
+      sourceIdentityHash: SOLANA_SOURCE_IDENTITY_HASH,
       checkedAt: "2026-07-04T00:00:00.000Z",
     });
 
@@ -8447,7 +9152,6 @@ describe("Solana SCCP route manifest publication guard", () => {
     expect(scaffold.canonical).toBeNull();
     expect(scaffold.canonicalError).toMatch(/canonical positive u64/u);
     expect(scaffold.blockers.map((blocker) => blocker.id)).toEqual([
-      "source-burn-receipt",
       "canonical-transfer-payload",
     ]);
   });
@@ -8461,6 +9165,8 @@ describe("Solana SCCP route manifest publication guard", () => {
       verifierProgramId: "6Q3jF6UmEH5sYBYF3iU43rfFroJjZVXiejvVG88fUZ7K",
       verifierStateAddress: "HWaaX4WBs6iYiNQQbKUgRNR2pWBf1Ms81Q6aP58FzXQS",
       nonce: "1",
+      destinationBindingHash: SOLANA_DESTINATION_BINDING_HASH,
+      routeConfigurationHash: SOLANA_ROUTE_CONFIGURATION_HASH,
     };
     const envelope = buildSolanaRouteCanaryEnvelope(input);
     const dataHex = buildSolanaRouteCanaryInstructionDataHex(input);
@@ -8472,6 +9178,30 @@ describe("Solana SCCP route manifest publication guard", () => {
 
     expect(envelope.diagnosticOnly).toBe(true);
     expect(envelope.productionProof).toBe(false);
+    expect(envelope.routeRevision).toBe(1);
+    expect(envelope.routeConfigurationHash).toBe(
+      SOLANA_ROUTE_CONFIGURATION_HASH,
+    );
+    expect(envelope.destinationBindingHash).toBe(
+      SOLANA_DESTINATION_BINDING_HASH,
+    );
+    expect(envelope.lane).toEqual({
+      source: { network: "sora_taira", profile: null },
+      target: { network: "solana_testnet", profile: null },
+    });
+    expect(envelope.transferPayload).toMatchObject({
+      route_revision: 1,
+      asset_id_codec: 1,
+      asset_id: "0x786f72",
+      sender_codec: 1,
+      sender: "0x646961676e6f737469632d63616e617279",
+      recipient_codec: 6,
+      recipient: `0x${Buffer.from(
+        new PublicKey(input.ownerAddress).toBytes(),
+      ).toString("hex")}`,
+      route_id_codec: 1,
+      route_id: "0x74616972615f736f6c5f786f72",
+    });
     expect(envelope.dataHex).toContain(
       Buffer.from("submit_sccp_message_proof", "utf8").toString("hex"),
     );
@@ -8491,6 +9221,36 @@ describe("Solana SCCP route manifest publication guard", () => {
     expect(dataHex).toContain(
       Buffer.from("submit_sccp_message_proof", "utf8").toString("hex"),
     );
+  });
+
+  it("rejects unpinned, zero, and role-colliding destination canary contexts", () => {
+    const base = {
+      amountBaseUnits: "7",
+      ownerAddress: "EFopJQRwoAgQcSL124wixwbTvgTvidHy1GQbEyJPQKTf",
+      destinationTokenAddress: "GkSa6kPaHffre7H4WmhvMNL6FvDGPNutYseUk3aHb86Y",
+      tokenMintAddress: "7x76GchSm2spUY8koAFMaFwx5x7FjoMUDJa2vSfTDmre",
+      verifierProgramId: "6Q3jF6UmEH5sYBYF3iU43rfFroJjZVXiejvVG88fUZ7K",
+      verifierStateAddress: "HWaaX4WBs6iYiNQQbKUgRNR2pWBf1Ms81Q6aP58FzXQS",
+      nonce: "1",
+      destinationBindingHash: SOLANA_DESTINATION_BINDING_HASH,
+      routeConfigurationHash: SOLANA_ROUTE_CONFIGURATION_HASH,
+    };
+
+    for (const override of [
+      { destinationBindingHash: null },
+      { routeConfigurationHash: null },
+      { destinationBindingHash: `0x${"00".repeat(32)}` },
+    ]) {
+      expect(() =>
+        buildSolanaRouteCanaryEnvelope({ ...base, ...override }),
+      ).toThrow(/32-byte|non-zero/u);
+    }
+    expect(() =>
+      buildSolanaRouteCanaryEnvelope({
+        ...base,
+        routeConfigurationHash: SOLANA_DESTINATION_BINDING_HASH,
+      }),
+    ).toThrow(/colliding hash roles/u);
   });
 
   it("binds the Solana settlement context to the canonical message and writable payout accounts", () => {
@@ -8571,6 +9331,8 @@ describe("Solana SCCP route manifest publication guard", () => {
       verifierProgramId: "6Q3jF6UmEH5sYBYF3iU43rfFroJjZVXiejvVG88fUZ7K",
       verifierStateAddress: "HWaaX4WBs6iYiNQQbKUgRNR2pWBf1Ms81Q6aP58FzXQS",
       nonce: "3",
+      destinationBindingHash: SOLANA_DESTINATION_BINDING_HASH,
+      routeConfigurationHash: SOLANA_ROUTE_CONFIGURATION_HASH,
     });
 
     expect(() =>
@@ -8582,7 +9344,19 @@ describe("Solana SCCP route manifest publication guard", () => {
           proofContextHash: materialHex32("tampered-canary-context"),
         },
       }),
-    ).toThrow(/settlement proof context hash/u);
+    ).toThrow(/canonical reconstruction|settlement proof context hash/u);
+    expect(() =>
+      buildRejectedSolanaRouteCanarySubmissionReportBody({
+        ownerAddress: envelope.ownerAddress,
+        amountBaseUnits: envelope.amountBaseUnits,
+        envelope: {
+          ...envelope,
+          routeConfigurationHash: materialHex32(
+            "tampered-canary-route-configuration",
+          ),
+        },
+      }),
+    ).toThrow(/canonical reconstruction/u);
   });
 
   it("keeps failed on-chain Solana route canaries as diagnostic-only evidence", () => {
@@ -8594,6 +9368,8 @@ describe("Solana SCCP route manifest publication guard", () => {
       verifierProgramId: "6Q3jF6UmEH5sYBYF3iU43rfFroJjZVXiejvVG88fUZ7K",
       verifierStateAddress: "HWaaX4WBs6iYiNQQbKUgRNR2pWBf1Ms81Q6aP58FzXQS",
       nonce: "2",
+      destinationBindingHash: SOLANA_DESTINATION_BINDING_HASH,
+      routeConfigurationHash: SOLANA_ROUTE_CONFIGURATION_HASH,
     });
     const signature =
       "5Hfd2BBsUdDoVVKEUdcqMWMyE6aZ4ctNSA6AprqC8tkqhzMikMXRGLajHStsc9SgFs4j2QJU7VtYsezCqG6KYmgm";
@@ -9164,7 +9940,7 @@ describe("Solana SCCP route manifest publication guard", () => {
             publicSolanaCapability: {
               domain: 3,
               chain: "sol",
-              counterparty_account_codec_key: "solana_base58",
+              counterparty_account_codec_key: "solana_pubkey32",
               production_ready: false,
               disabled_reason:
                 "disabled until the immutable Solana recursive SCCP verifier and cryptographic trust anchors are live for this lane",
@@ -9280,7 +10056,7 @@ describe("Solana SCCP route manifest publication guard", () => {
       const publicLaneRecord = (ready) => ({
         domain: 3,
         chain: "sol",
-        counterparty_account_codec_key: "solana_base58",
+        counterparty_account_codec_key: "solana_pubkey32",
         production_ready: ready,
         productionReadiness: null,
         sourceAdapterEngine: null,
@@ -9377,7 +10153,7 @@ describe("Solana SCCP route manifest publication guard", () => {
             publicSolanaLaneManifest: {
               domain: 3,
               chain: "sol",
-              counterparty_account_codec_key: "solana_base58",
+              counterparty_account_codec_key: "solana_pubkey32",
               production_ready: true,
               productionReadiness: null,
               production_readiness: { production_ready: true },
@@ -9586,7 +10362,7 @@ describe("Solana SCCP route manifest publication guard", () => {
         solana_native_verifier_programdata_slot: SOLANA_NATIVE_PROGRAMDATA_SLOT,
         destination_proof_admission: {
           admission_mode: "governed-zk-verifier-v1",
-          proof_system: "stark-fri-v1",
+          proof_system: "groth16-bn254-v1",
           proof_verification_mode: "native-recursive-verifier-v1",
           verifier_enforcement_evidence_hash: hex32("ee"),
           shape_only: false,
@@ -10540,6 +11316,7 @@ describe("Solana SCCP route manifest publication guard", () => {
       upgradeAuthorityOption: 1,
       upgradeAuthorityAddress: "EFopJQRwoAgQcSL124wixwbTvgTvidHy1GQbEyJPQKTf",
       executableElf: true,
+      sbpfVersion: "V3",
       failClosedSentinelPresent: true,
       nativeVerifierCpiMarkerPresent: false,
     });
@@ -10549,6 +11326,17 @@ describe("Solana SCCP route manifest publication guard", () => {
       SOLANA_VERIFIER_FAIL_CLOSED_SENTINEL.length,
     );
   });
+
+  it.each([0, 1, 2])(
+    "rejects Loader-v3 ProgramData carrying SBPF V%i",
+    (version) => {
+      const bytes = buildProgramdataData({ upgradeAuthority: null });
+      bytes.writeUInt32LE(version, 45 + 48);
+      expect(() => parseSolanaProgramdataAccountDataForLinkage(bytes)).toThrow(
+        /exact SBPF V3/u,
+      );
+    },
+  );
 
   it("blocks Solana verifier linkage while live ProgramData is mutable and fail-closed", () => {
     const parsedProgramdata = parseSolanaProgramdataAccountDataForLinkage(
@@ -11162,22 +11950,22 @@ describe("Solana SCCP route manifest publication guard", () => {
     expect(body).not.toContain("readOptionalJson(paths.accountsReport)");
   });
 
-  it("uses explicit public deployment inputs for fresh-directory source-burn readiness", () => {
+  it("binds fresh-directory source-burn readiness to an explicit owner and exact public registry", () => {
     const source = readFileSync("scripts/sccp-solana-deploy.mjs", "utf8");
     const ownerStart = source.indexOf("const readSourceBurnOwner = async");
-    const inputsStart = source.indexOf(
-      "const loadSourceBurnReadinessInputs = async",
+    const exactRouteStart = source.indexOf(
+      "const exactSolanaSourceBurnDeployment =",
       ownerStart,
     );
-    const reportStart = source.indexOf(
-      "const buildSourceBurnReadiness = async",
-      inputsStart,
+    const exactLoadStart = source.indexOf(
+      "const loadExactSolanaSourceBurnRoute = async",
+      exactRouteStart,
     );
-    const ownerBody = source.slice(ownerStart, inputsStart);
-    const inputsBody = source.slice(inputsStart, reportStart);
+    const ownerBody = source.slice(ownerStart, exactRouteStart);
+    const exactRouteBody = source.slice(exactRouteStart, exactLoadStart);
     const commandStart = source.indexOf(
       "const sourceBurnReadiness = async",
-      reportStart,
+      exactLoadStart,
     );
     const commandEnd = source.indexOf(
       "const writeBlockedSourceBurnSubmissionFromReadiness = async",
@@ -11185,17 +11973,13 @@ describe("Solana SCCP route manifest publication guard", () => {
     );
     const commandBody = source.slice(commandStart, commandEnd);
 
-    expect(ownerBody).toContain('args["public-config"] || paths.publicConfig');
-    expect(inputsBody).toContain('args["public-config"] || paths.publicConfig');
-    expect(inputsBody).toContain("args.accounts || paths.accountsReport");
-    expect(inputsBody).not.toContain(
-      "readSolanaPublicConfig(paths.publicConfig)",
+    expect(ownerBody).toContain(
+      '"--owner is required for source-burn readiness',
     );
-    expect(inputsBody).not.toContain("readOptionalJson(paths.accountsReport)");
-    expect(commandBody).toContain(
-      'args["public-config"] || paths.publicConfig',
-    );
-    expect(commandBody).toContain("args.accounts || paths.accountsReport");
+    expect(exactRouteBody).toContain('summary?.activation !== "bidirectional"');
+    expect(commandBody).toContain("loadExactSolanaSourceBurnRoute");
+    expect(commandBody).not.toContain("paths.publicConfig");
+    expect(commandBody).not.toContain("paths.accountsReport");
   });
 
   it("uses selected explicit public deployment inputs for deployment video rendering", () => {
@@ -12225,234 +13009,6 @@ deployment_receipt_hash = "${materialHex32("deployment-receipt")}"
     ).toContain("repeated-byte placeholder hash");
   });
 
-  it("accepts governed Solana source material rendered by the sibling TOML helper", () => {
-    const { summary, toml } = renderSiblingSolanaSourceEvidenceFixture();
-    const offline = reviewedOfflineTomlFixture({ root: "/tmp" });
-    expect(summary).toMatchObject({
-      expected_source_verifier_material_hash_matches: true,
-      expected_source_adapter_engine_deployment_hash_matches: true,
-      expected_full_light_client_gate_hash_matches: true,
-      source_verifier_material_ready: true,
-      source_adapter_engine_deployment_ready: true,
-      full_light_client_evidence_ready: true,
-      source_adapter_gate_ready_with_full_light_client_evidence: true,
-      full_toml_ready: true,
-      toml_ready: true,
-      source_adapter_gate_blockers: [],
-      missing_full_light_client_verifier_ids: [],
-    });
-    expect(toml).toContain("solana_tower_replay_verifier_hash");
-    expect(toml).toContain("solana_full_accountsdb_lattice_verifier_hash");
-    expect(toml).toContain("solana_bank_fork_choice_verifier_hash");
-    const manifest = baseProductionManifest();
-    const report = buildSolanaProductionMaterialInventoryReportBody({
-      records: [
-        {
-          kind: "json",
-          path: "/tmp/solana-source-state-evidence.summary.json",
-          pointer: "/",
-          schema: "",
-          record: summary,
-        },
-        {
-          kind: "toml",
-          path: "/tmp/solana-source-state-evidence.toml",
-          pointer: "/",
-          schema: "",
-          text: toml,
-        },
-        ...offline.records,
-      ],
-      roots: ["/tmp"],
-      governedRoots: ["/tmp"],
-      manifest,
-      proverReadiness: readySolanaProverReadiness(),
-      governanceApprovalValidation: readyInventoryGovernanceApproval({
-        sourceVerifierMaterialHash: summary.source_verifier_material_hash,
-        sourceAdapterEngineDeploymentHash:
-          summary.source_adapter_engine_deployment_hash,
-        offlineFullTomlSha256: offline.offlineFullTomlSha256,
-        manifest,
-      }),
-      checkedAt: "2026-07-05T00:00:00.000Z",
-    });
-
-    expect(report.ready).toBe(true);
-    expect(report.blockers).toEqual([]);
-    expect(report.readyMaterial.sourceVerifierMaterial).toMatchObject({
-      path: "/tmp/solana-source-state-evidence.toml",
-      pointer: "/zk.sccp_source_verifier_materials/0",
-      recordHash: summary.source_verifier_material_hash,
-    });
-    expect(report.readyMaterial.sourceAdapterEngineDeployment).toMatchObject({
-      path: "/tmp/solana-source-state-evidence.toml",
-      pointer: "/zk.sccp_source_adapter_engine_deployments/0",
-      recordHash: summary.source_adapter_engine_deployment_hash,
-    });
-    expect(report.readyMaterial.offlineFullToml).toMatchObject({
-      path: offline.tomlPath,
-      offlineFullTomlSha256: offline.offlineFullTomlSha256,
-    });
-    const adapterCandidate =
-      report.candidates.sourceAdapterEngineDeployment.find(
-        (candidate) =>
-          candidate.path === "/tmp/solana-source-state-evidence.toml",
-      );
-    expect(adapterCandidate).toMatchObject({
-      ready: true,
-      recordHash: summary.source_adapter_engine_deployment_hash,
-      record: {
-        solana_tower_replay_verifier_hash:
-          summary.full_light_client_verifier_hashes.tower_replay_verifier_hash,
-        solana_full_accountsdb_lattice_verifier_hash:
-          summary.full_light_client_verifier_hashes
-            .full_accountsdb_lattice_verifier_hash,
-        solana_bank_fork_choice_verifier_hash:
-          summary.full_light_client_verifier_hashes
-            .bank_fork_choice_verifier_hash,
-        solana_full_light_client_gate_hash: summary.full_light_client_gate_hash,
-      },
-    });
-    expect(
-      adapterCandidate.statuses.filter((status) =>
-        [
-          "expectedSourceVerifierMaterialHash",
-          "expectedSourceAdapterEngineDeploymentHash",
-          "expectedFullLightClientGateHash",
-        ].includes(status.key),
-      ),
-    ).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: "expectedSourceVerifierMaterialHash",
-          status: "present",
-          value: summary.source_verifier_material_hash,
-        }),
-        expect.objectContaining({
-          key: "expectedSourceAdapterEngineDeploymentHash",
-          status: "present",
-          value: summary.source_adapter_engine_deployment_hash,
-        }),
-        expect.objectContaining({
-          key: "expectedFullLightClientGateHash",
-          status: "present",
-          value: summary.full_light_client_gate_hash,
-        }),
-      ]),
-    );
-  });
-
-  it("rejects forged helper-comment TOML without its matching JSON attestation", () => {
-    const { toml } = renderSiblingSolanaSourceEvidenceFixture();
-    const report = buildSolanaProductionMaterialInventoryReportBody({
-      records: [
-        {
-          kind: "toml",
-          path: "/tmp/comment-only-solana-source-state-evidence.toml",
-          pointer: "/",
-          schema: "",
-          text: toml,
-        },
-        {
-          kind: "json",
-          path: "/tmp/solana-post-deploy-full-toml.json",
-          pointer: "/",
-          schema: "iroha-sccp-solana-post-deploy-full-toml/v1",
-          record: {
-            schema: "iroha-sccp-solana-post-deploy-full-toml/v1",
-            routeId: "taira_sol_xor",
-            sourceDomain: 3,
-            targetDomain: 0,
-            sourceChain: "sol",
-            fullTomlReady: true,
-            offlineFullTomlSha256: hex32("9c"),
-          },
-        },
-      ],
-      manifest: baseProductionManifest(),
-      proverReadiness: readySolanaProverReadiness(),
-      checkedAt: "2026-07-09T00:00:00.000Z",
-    });
-
-    expect(report.ready).toBe(false);
-    expect(report.blockers.map((blocker) => blocker.id)).toEqual(
-      expect.arrayContaining([
-        "source-verifier-material",
-        "source-adapter-engine-deployment",
-      ]),
-    );
-    for (const candidate of [
-      report.candidates.sourceVerifierMaterial[0],
-      report.candidates.sourceAdapterEngineDeployment[0],
-    ]) {
-      expect(
-        candidate.statuses.filter((status) =>
-          [
-            "expectedSourceVerifierMaterialHash",
-            "expectedSourceAdapterEngineDeploymentHash",
-            "expectedFullLightClientGateHash",
-          ].includes(status.key),
-        ),
-      ).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            key: "expectedSourceVerifierMaterialHash",
-            status: "invalid",
-          }),
-          expect.objectContaining({
-            key: "expectedSourceAdapterEngineDeploymentHash",
-            status: "invalid",
-          }),
-          expect.objectContaining({
-            key: "expectedFullLightClientGateHash",
-            status: "invalid",
-          }),
-        ]),
-      );
-    }
-  });
-
-  it("does not pair Solana source TOML with a helper summary from another governed root", () => {
-    const { summary, toml } = renderSiblingSolanaSourceEvidenceFixture();
-    const report = buildSolanaProductionMaterialInventoryReportBody({
-      governedRoots: ["/tmp/governed", "/tmp/other"],
-      records: [
-        {
-          kind: "json",
-          path: "/tmp/other/solana-source-state-evidence.summary.json",
-          pointer: "/",
-          schema: "",
-          record: summary,
-        },
-        {
-          kind: "toml",
-          path: "/tmp/governed/solana-source-state-evidence.toml",
-          pointer: "/",
-          schema: "",
-          text: toml,
-        },
-      ],
-      checkedAt: "2026-07-09T00:00:00.000Z",
-    });
-
-    expect(report.readyMaterial.sourceVerifierMaterial).toBeNull();
-    expect(report.readyMaterial.sourceAdapterEngineDeployment).toBeNull();
-    for (const candidate of [
-      report.candidates.sourceVerifierMaterial.find((entry) =>
-        entry.path.startsWith("/tmp/governed/"),
-      ),
-      report.candidates.sourceAdapterEngineDeployment.find((entry) =>
-        entry.path.startsWith("/tmp/governed/"),
-      ),
-    ]) {
-      expect(
-        candidate.statuses.find(
-          (status) => status.key === "helperJsonAttestation",
-        ),
-      ).toMatchObject({ status: "missing" });
-    }
-  });
-
   it("rejects non-Solana full TOML evidence in Solana production material inventory", () => {
     const toml = `
 [[zk.sccp_source_verifier_materials]]
@@ -12573,207 +13129,6 @@ offline_full_toml_sha256 = "${hex32("9c")}"
     });
   });
 
-  it("builds Solana production manifest patch inputs from ready inventory material", () => {
-    const { summary, toml } = renderSiblingSolanaSourceEvidenceFixture();
-    const offline = reviewedOfflineTomlFixture({ root: "/tmp" });
-    const inventoryManifest = baseProductionManifest();
-    const inventoryRecords = [
-      {
-        kind: "json",
-        path: "/tmp/solana-source-state-evidence.summary.json",
-        pointer: "/",
-        schema: "",
-        record: summary,
-      },
-      {
-        kind: "toml",
-        path: "/tmp/solana-source-state-evidence.toml",
-        pointer: "/",
-        schema: "",
-        text: toml,
-      },
-      ...offline.records,
-    ];
-    const buildInventory = (
-      destinationProofAdmissionHash = null,
-      selectedManifest = inventoryManifest,
-    ) =>
-      buildSolanaProductionMaterialInventoryReportBody({
-        roots: ["/tmp"],
-        governedRoots: ["/tmp"],
-        records: inventoryRecords,
-        manifest: selectedManifest,
-        proverReadiness: readySolanaProverReadiness(),
-        governanceApprovalValidation: readyInventoryGovernanceApproval({
-          sourceVerifierMaterialHash: summary.source_verifier_material_hash,
-          sourceAdapterEngineDeploymentHash:
-            summary.source_adapter_engine_deployment_hash,
-          offlineFullTomlSha256: offline.offlineFullTomlSha256,
-          manifest: selectedManifest,
-          destinationProofAdmissionHash,
-        }),
-        checkedAt: "2026-07-05T00:00:00.000Z",
-      });
-    const preliminaryInventory = buildInventory();
-    const preliminaryInputs =
-      buildSolanaProductionManifestPatchInputsFromInventoryReport({
-        inventory: preliminaryInventory,
-        checkedAt: "2026-07-05T00:00:01.000Z",
-      });
-    const draftManifest = {
-      ...baseProductionManifest(),
-      productionReady: false,
-      production_ready: false,
-      disabledReason: "proof material is still under review",
-      disabled_reason: "proof material is still under review",
-      destinationProofAdmission: {
-        admissionMode: "envelope-recorder-v1",
-        proofSystem: "none",
-        entrypoint: "submit_sccp_message_proof",
-        verifierCodeHash: hex32("1"),
-        verifierKeyHash: hex32("2"),
-        destinationBindingHash: hex32("3"),
-        shapeOnly: true,
-        acceptsUnverifiedProofs: true,
-      },
-      postDeployLiveEvidence: {
-        schema: "iroha-sccp-solana-post-deploy-live-evidence/v1",
-        fullTomlReady: true,
-        sourceBridgeConfigHash: hex32("4"),
-        routeCanaryEvidenceHash: hex32("5"),
-        offlineFullTomlSha256: offline.offlineFullTomlSha256,
-        sourceEventTransactionSignature:
-          "2d1KBhY5pyRuCBiXxoLUKmGEE9oEHRduBJKmjnFqSpEF85r8651FayJRC977ajGdjEvLvmTvTATwu53CSSTZZscR",
-        routeCanaryTransactionSignature:
-          "2sqsLAxG7ufxpq1nbLT7XV8qYQtjLfpPuHogdVrwkSMwBCNQ83z4NEbXY2wFA2YhyscyjmtnzczDFzpSjv2yuGLS",
-      },
-    };
-    const buildPatch = (selectedInputs) =>
-      buildSolanaProductionManifestPatchReportBody({
-        manifest: draftManifest,
-        sourceVerifierMaterial: selectedInputs.sourceVerifierMaterial,
-        sourceAdapterEngineDeployment:
-          selectedInputs.sourceAdapterEngineDeployment,
-        sourceVerifierMaterialHash: selectedInputs.sourceVerifierMaterialHash,
-        sourceAdapterEngineDeploymentHash:
-          selectedInputs.sourceAdapterEngineDeploymentHash,
-        postDeployLiveEvidence: {
-          ...draftManifest.postDeployLiveEvidence,
-          full_toml_ready: true,
-          source_bridge_config_hash: hex32("4"),
-          route_canary_evidence_hash: hex32("5"),
-          offline_full_toml_sha256: selectedInputs.offlineFullTomlSha256,
-          source_event_transaction_signature:
-            draftManifest.postDeployLiveEvidence
-              .sourceEventTransactionSignature,
-          route_canary_transaction_signature:
-            draftManifest.postDeployLiveEvidence
-              .routeCanaryTransactionSignature,
-        },
-        routeAllowlistHash: hex32("8b"),
-        destinationProverModuleHash: selectedInputs.destinationProverModuleHash,
-        destinationProverSidecarHash:
-          selectedInputs.destinationProverSidecarHash,
-        sourceProverModuleHash: selectedInputs.sourceProverModuleHash,
-        sourceProverSidecarHash: selectedInputs.sourceProverSidecarHash,
-        governanceProgramRolePins: selectedInputs.governanceProgramRolePins,
-        checkedAt: "2026-07-05T00:00:02.000Z",
-      });
-    const preliminaryPatch = buildPatch(preliminaryInputs);
-    const generatedDestinationProofAdmissionHash = jsonSha256(
-      preliminaryPatch.manifestPatch.destination_proof_admission,
-    );
-    expect(generatedDestinationProofAdmissionHash).not.toBe(
-      preliminaryInputs.governanceApproval.pins.destinationProofAdmissionHash,
-    );
-    const inventory = buildInventory(generatedDestinationProofAdmissionHash);
-    const inputs = buildSolanaProductionManifestPatchInputsFromInventoryReport({
-      inventory,
-      checkedAt: "2026-07-05T00:00:03.000Z",
-    });
-    const patch = buildPatch(inputs);
-    const appliedManifest = structuredClone(draftManifest);
-    for (const key of [
-      "disabledReason",
-      "disabled_reason",
-      "destinationProofAdmission",
-      "destination_proof_admission",
-      "verifierEnforcement",
-      "verifier_enforcement",
-      "destinationRollout",
-      "destination_rollout",
-      "productionReadiness",
-      "production_readiness",
-      "postDeployLiveEvidence",
-      "post_deploy_live_evidence",
-    ]) {
-      delete appliedManifest[key];
-    }
-    Object.assign(appliedManifest, patch.manifestPatch);
-    const postApplyInventory = buildInventory(
-      generatedDestinationProofAdmissionHash,
-      appliedManifest,
-    );
-
-    expect(inventory.ready).toBe(true);
-    expect(postApplyInventory.ready).toBe(true);
-    expect(postApplyInventory.readyMaterial.destinationProofAdmission).toBe(
-      true,
-    );
-    expect(inputs.ready).toBe(true);
-    expect(inputs.blockers).toEqual([]);
-    expect(inputs.offlineFullTomlSha256).toBe(offline.offlineFullTomlSha256);
-    expect(inputs.sourceVerifierMaterialHash).toMatch(/^0x[0-9a-f]{64}$/u);
-    expect(inputs.sourceAdapterEngineDeploymentHash).toMatch(
-      /^0x[0-9a-f]{64}$/u,
-    );
-    expect(inputs.destinationProverModuleHash).toBe(
-      materialHex32("destination-module"),
-    );
-    expect(inputs.destinationProverSidecarHash).toBe(
-      materialHex32("destination-sidecar"),
-    );
-    expect(inputs.sourceProverModuleHash).toBe(materialHex32("source-module"));
-    expect(inputs.sourceProverSidecarHash).toBe(
-      materialHex32("source-sidecar"),
-    );
-    expect(inventory.readyMaterial.browserProverModules).toEqual([
-      expect.objectContaining({
-        direction: "destination",
-        productionProofsReady: true,
-        moduleHash: materialHex32("destination-module"),
-        sidecarHash: materialHex32("destination-sidecar"),
-      }),
-      expect.objectContaining({
-        direction: "source",
-        productionProofsReady: true,
-        moduleHash: materialHex32("source-module"),
-        sidecarHash: materialHex32("source-sidecar"),
-      }),
-    ]);
-    expect(patch.readyForProductionManifestPatch).toBe(true);
-    expect(patch.derived.sourceVerifierMaterialHash).toBe(
-      inputs.sourceVerifierMaterialHash,
-    );
-    expect(jsonSha256(patch.manifestPatch.destination_proof_admission)).toBe(
-      inputs.governanceApproval.pins.destinationProofAdmissionHash,
-    );
-    const deploySource = readFileSync("scripts/sccp-solana-deploy.mjs", "utf8");
-    const patchCommandStart = deploySource.indexOf(
-      "const productionManifestPatch = async",
-    );
-    const patchCommandEnd = deploySource.indexOf(
-      "const postDeployFullToml = async",
-      patchCommandStart,
-    );
-    const patchCommand = deploySource.slice(patchCommandStart, patchCommandEnd);
-    expect(patchCommand).toContain("generatedDestinationProofAdmissionHash");
-    expect(patchCommand).toContain("approvedDestinationProofAdmissionHash");
-    expect(patchCommand).toContain(
-      "Generated Solana destination proof admission does not match the independently approved hash.",
-    );
-  });
-
   it("keeps Solana production manifest patch inputs blocked without ready inventory material", () => {
     const inputs = buildSolanaProductionManifestPatchInputsFromInventoryReport({
       inventory: {
@@ -12795,55 +13150,6 @@ offline_full_toml_sha256 = "${hex32("9c")}"
         "offline-full-toml",
         "destination-browser-prover",
         "source-browser-prover",
-      ]),
-    );
-  });
-
-  it("rejects a production prover sidecar whose KAT vector hash is not governance-approved", () => {
-    const { summary, toml } = renderSiblingSolanaSourceEvidenceFixture();
-    const offline = reviewedOfflineTomlFixture({ root: "/tmp" });
-    const manifest = baseProductionManifest();
-    const proverReadiness = readySolanaProverReadiness();
-    proverReadiness.entries[0].sidecar.knownAnswerVectorHash = materialHex32(
-      "attacker-selected-known-answer-vector",
-    );
-    const report = buildSolanaProductionMaterialInventoryReportBody({
-      roots: ["/tmp"],
-      governedRoots: ["/tmp"],
-      records: [
-        {
-          kind: "json",
-          path: "/tmp/solana-source-state-evidence.summary.json",
-          pointer: "/",
-          schema: "",
-          record: summary,
-        },
-        {
-          kind: "toml",
-          path: "/tmp/solana-source-state-evidence.toml",
-          pointer: "/",
-          schema: "",
-          text: toml,
-        },
-        ...offline.records,
-      ],
-      manifest,
-      proverReadiness,
-      governanceApprovalValidation: readyInventoryGovernanceApproval({
-        sourceVerifierMaterialHash: summary.source_verifier_material_hash,
-        sourceAdapterEngineDeploymentHash:
-          summary.source_adapter_engine_deployment_hash,
-        offlineFullTomlSha256: offline.offlineFullTomlSha256,
-        manifest,
-      }),
-      checkedAt: "2026-07-10T00:00:00.000Z",
-    });
-
-    expect(report.ready).toBe(false);
-    expect(report.readyMaterial.browserProvers).toBe(false);
-    expect(report.blockers).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "browser-prover-readiness" }),
       ]),
     );
   });
@@ -12906,6 +13212,8 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       tairaRecipient: TAIRA_RECIPIENT,
       nonce: "7",
       sourceBurnHash: hex32("12"),
+      routeConfigurationHash: SOLANA_ROUTE_CONFIGURATION_HASH,
+      sourceIdentityHash: SOLANA_SOURCE_IDENTITY_HASH,
       checkedAt: "2026-07-04T00:00:00.000Z",
     });
     const report = buildSolanaSourceMaterialHandoffReportBody({
@@ -12991,7 +13299,9 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       sourceBurnProofRequestReady: true,
       sourceBurnCanonicalTransferReady: true,
       sourceBurnMessageId: sourceProofRequest.canonical?.messageId,
-      sourceBurnCommitmentRoot: sourceProofRequest.canonical?.commitmentRoot,
+      sourceBurnLaneHash: sourceProofRequest.canonical?.laneHash,
+      sourceBurnSourceEventDigest:
+        sourceProofRequest.canonical?.sourceEventDigest,
       sourceBurnPayloadHash: sourceProofRequest.canonical?.payloadHash,
     });
   });
@@ -13755,7 +14065,7 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       },
       destinationProofAdmission: {
         admissionMode: "governed-zk-verifier-v1",
-        proofSystem: "stark-fri-v1",
+        proofSystem: "groth16-bn254-v1",
         shapeOnly: false,
         acceptsUnverifiedProofs: false,
       },
@@ -14376,17 +14686,21 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       proofPackageIncluded: true,
       canonical: {
         messageId: materialHex32("production-source-message"),
-        commitmentRoot: materialHex32("production-source-commitment"),
+        laneHash: materialHex32("production-source-lane"),
+        sourceEventDigest: materialHex32("production-source-event"),
         payloadHash: materialHex32("production-source-payload"),
-        publicInputs: {
-          txId: "5Hfd2BBsUdDoVVKEUdcqMWMyE6aZ4ctNSA6AprqC8tkqhzMikMXRGLajHStsc9SgFs4j2QJU7VtYsezCqG6KYmgm",
+        bindingInput: {
+          transactionSignature:
+            "5Hfd2BBsUdDoVVKEUdcqMWMyE6aZ4ctNSA6AprqC8tkqhzMikMXRGLajHStsc9SgFs4j2QJU7VtYsezCqG6KYmgm",
           solanaSender: "EFopJQRwoAgQcSL124wixwbTvgTvidHy1GQbEyJPQKTf",
           tairaRecipient: TAIRA_RECIPIENT,
           amountBaseUnits: "1",
         },
       },
       sourceBurn: {
-        sourceBurnHash: materialHex32("production-source-burn"),
+        observedProgramBurnHash: materialHex32("production-source-burn"),
+        routeConfigurationHash: SOLANA_ROUTE_CONFIGURATION_HASH,
+        sourceIdentityHash: SOLANA_SOURCE_IDENTITY_HASH,
         tairaRecipient: TAIRA_RECIPIENT,
         amountBaseUnits: "1",
       },
@@ -14410,7 +14724,8 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       },
       sourceBurnSubmission: {
         submitted: true,
-        signature: sourceProofRequest.canonical.publicInputs.txId,
+        signature:
+          sourceProofRequest.canonical.bindingInput.transactionSignature,
         sourceProofRequestReady: true,
         sourceProofRequest,
         blockers: [],
@@ -14496,6 +14811,8 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       tairaRecipient: TAIRA_RECIPIENT,
       nonce: "7",
       sourceBurnHash: hex32("12"),
+      routeConfigurationHash: SOLANA_ROUTE_CONFIGURATION_HASH,
+      sourceIdentityHash: SOLANA_SOURCE_IDENTITY_HASH,
       checkedAt: "2026-07-05T00:00:00.000Z",
     });
     const report = buildSolanaProofMaterialCeremonyPackageReportBody({
@@ -14509,8 +14826,9 @@ offline_full_toml_sha256 = "${hex32("9c")}"
           sourceBurnProofRequestReady: true,
           sourceBurnCanonicalTransferReady: true,
           sourceBurnMessageId: sourceProofRequest.canonical?.messageId,
-          sourceBurnCommitmentRoot:
-            sourceProofRequest.canonical?.commitmentRoot,
+          sourceBurnLaneHash: sourceProofRequest.canonical?.laneHash,
+          sourceBurnSourceEventDigest:
+            sourceProofRequest.canonical?.sourceEventDigest,
           sourceBurnPayloadHash: sourceProofRequest.canonical?.payloadHash,
         },
         blockers: [],
@@ -14678,7 +14996,8 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       readyForSourceProof: true,
       canonicalTransferReady: true,
       messageId: sourceProofRequest.canonical?.messageId,
-      commitmentRoot: sourceProofRequest.canonical?.commitmentRoot,
+      laneHash: sourceProofRequest.canonical?.laneHash,
+      sourceEventDigest: sourceProofRequest.canonical?.sourceEventDigest,
       payloadHash: sourceProofRequest.canonical?.payloadHash,
     });
     expect(report.artifacts.proofMaterialBundle).toMatchObject({
@@ -14740,6 +15059,8 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       tairaRecipient: TAIRA_RECIPIENT,
       nonce: "7",
       sourceBurnHash: hex32("12"),
+      routeConfigurationHash: SOLANA_ROUTE_CONFIGURATION_HASH,
+      sourceIdentityHash: SOLANA_SOURCE_IDENTITY_HASH,
       checkedAt: "2026-07-05T00:00:00.000Z",
     });
     const report = buildSolanaProofMaterialCeremonyPackageReportBody({
@@ -14750,8 +15071,9 @@ offline_full_toml_sha256 = "${hex32("9c")}"
           sourceBurnProofRequestReady: true,
           sourceBurnCanonicalTransferReady: true,
           sourceBurnMessageId: staleSourceProofRequest.canonical?.messageId,
-          sourceBurnCommitmentRoot:
-            staleSourceProofRequest.canonical?.commitmentRoot,
+          sourceBurnLaneHash: staleSourceProofRequest.canonical?.laneHash,
+          sourceBurnSourceEventDigest:
+            staleSourceProofRequest.canonical?.sourceEventDigest,
           sourceBurnPayloadHash: staleSourceProofRequest.canonical?.payloadHash,
         },
         blockers: [],
@@ -16389,6 +16711,11 @@ offline_full_toml_sha256 = "${hex32("9c")}"
           "/sccp-solana/taira-solana-xor-destination-prover.js",
         "source-prover-module-url":
           "/sccp-solana/taira-solana-xor-source-prover.js",
+        "prover-governance-approval-file":
+          "/tmp/exact-prover-governance-approval.json",
+        "prover-governance-approval-sha256": materialHex32(
+          "exact-prover-governance-approval",
+        ),
         "private-key-env": "SCCP_TEST_ROUTE_MANAGER_PRIVATE_KEY",
       },
       paths: {
@@ -16409,6 +16736,11 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       destinationProverModuleUrl:
         "/sccp-solana/taira-solana-xor-destination-prover.js",
       sourceProverModuleUrl: "/sccp-solana/taira-solana-xor-source-prover.js",
+      proverGovernanceApprovalFile:
+        "/tmp/exact-prover-governance-approval.json",
+      proverGovernanceApprovalSha256: materialHex32(
+        "exact-prover-governance-approval",
+      ),
     });
     expect(JSON.stringify(options)).not.toContain(
       "SCCP_TEST_ROUTE_MANAGER_PRIVATE_KEY",
@@ -16426,6 +16758,8 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       toriiUrl: "https://taira.sora.org",
       solanaRpcUrl: "https://api.testnet.solana.com",
       skipSolanaRpc: true,
+      routePreflight: null,
+      routePreflightPath: null,
     });
 
     expect(options).toEqual({
@@ -16437,6 +16771,10 @@ offline_full_toml_sha256 = "${hex32("9c")}"
     expect(options).not.toHaveProperty("walletConnectProjectId");
     expect(options).not.toHaveProperty("destinationProverModuleUrl");
     expect(options).not.toHaveProperty("sourceProverModuleUrl");
+    expect(options).not.toHaveProperty("proverGovernanceApprovalFile");
+    expect(options).not.toHaveProperty("proverGovernanceApprovalSha256");
+    expect(options).not.toHaveProperty("routePreflight");
+    expect(options).not.toHaveProperty("routePreflightPath");
     expect(JSON.stringify(options)).not.toContain(
       "SCCP_TEST_ROUTE_MANAGER_PRIVATE_KEY",
     );
@@ -16557,6 +16895,16 @@ offline_full_toml_sha256 = "${hex32("9c")}"
         "/tmp/sccp-solana-mintpath-deploy/taira-solana-xor-production-material-inventory.json",
       routeManifest:
         "/tmp/sccp-solana-mintpath-deploy/taira-solana-xor-route.manifest.json",
+      governancePlan:
+        "/tmp/sccp-solana-mintpath-deploy/taira-solana-xor-governance-plan.json",
+      governanceRegistration:
+        "/tmp/sccp-solana-mintpath-deploy/taira-solana-xor-governance-registration.json",
+      governanceActivation:
+        "/tmp/sccp-solana-mintpath-deploy/taira-solana-xor-governance-activation.json",
+      orderedInitializationEvidence:
+        "/tmp/sccp-solana-mintpath-deploy/taira-solana-xor-ordered-initialization.json",
+      freshDeployReport:
+        "/tmp/sccp-solana-mintpath-deploy/taira-solana-xor-fresh-deploy-report.json",
       routeManifestPublishReadiness:
         "/tmp/sccp-solana-mintpath-deploy/taira-solana-xor-route.publish-readiness.json",
       routeManifestPublishBlocked:
@@ -16611,17 +16959,37 @@ offline_full_toml_sha256 = "${hex32("9c")}"
     const args = {
       "fetch-timeout-ms": "1000",
       "fetch-attempts": "1",
-      manifest: "/tmp/reviewed-solana-route.manifest.json",
-      "expected-route-publication-request-sha256":
-        materialHex32("gate-publication"),
-      "expected-route-manager-access-request-sha256":
-        materialHex32("gate-access"),
-      "expected-lane-activation-request-sha256":
-        materialHex32("gate-lane-request"),
-      "expected-lane-activation-proposal-sha256":
-        materialHex32("gate-lane-proposal"),
-      "expected-operator-handoff-sha256": materialHex32("gate-operator"),
-      "expected-activation-package-sha256": materialHex32("gate-activation"),
+      "fresh-deploy-report": paths.freshDeployReport,
+      "fresh-deploy-report-sha256": materialHex32("fresh-deploy-report"),
+      "expected-pre-live-input-snapshot-sha256": materialHex32(
+        "pre-live-input-snapshot",
+      ),
+      "expected-governance-plan-sha256": materialHex32("governance-plan"),
+      "expected-governance-register-result-sha256": materialHex32(
+        "governance-registration",
+      ),
+      "expected-governance-activate-result-sha256": materialHex32(
+        "governance-activation",
+      ),
+      "expected-ordered-initialization-evidence-sha256": materialHex32(
+        "ordered-initialization",
+      ),
+      "prover-governance-approval-sha256": materialHex32(
+        "exact-prover-governance-approval",
+      ),
+      "prover-governance-approval-file":
+        "/tmp/exact-prover-governance-approval.json",
+      "capture-review-policy": "/tmp/capture-review-policy.json",
+      "capture-review-policy-sha256": materialHex32("capture-review-policy"),
+      "live-capture-video": "/tmp/real-bidirectional-capture.mp4",
+      "live-capture-video-sha256": materialHex32("real-bidirectional-capture"),
+      "live-capture-witness": "/tmp/reviewed-capture-witness.json",
+      "live-capture-witness-sha256": materialHex32("reviewed-capture-witness"),
+      "live-capture-review-attestation":
+        "/tmp/detached-capture-review-attestation.json",
+      "live-capture-review-attestation-sha256": materialHex32(
+        "detached-capture-review-attestation",
+      ),
     };
 
     const productionGateOptions = buildSolanaProductionGateOptions({
@@ -16640,50 +17008,110 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       productionGatePath:
         "/tmp/sccp-solana-mintpath-deploy/production-gate/sccp-solana-production-gate.json",
     });
+    const finalProductionGateOptions = buildSolanaFinalProductionGateOptions({
+      productionGateOptions,
+      preLiveGate: {
+        report: {
+          preLiveInputSnapshotSha256:
+            args["expected-pre-live-input-snapshot-sha256"],
+          preLiveInputSnapshot: {
+            preLiveInputSnapshotSha256:
+              args["expected-pre-live-input-snapshot-sha256"],
+          },
+        },
+      },
+    });
 
     expect(productionGateOptions).toMatchObject({
       outputDir: "/tmp/sccp-solana-mintpath-deploy/production-gate",
       deployDir: "/tmp/sccp-solana-mintpath-deploy",
       fetchTimeoutMs: "1000",
       fetchAttempts: "1",
-      requirements: paths.productionRequirements,
-      routeManifest: "/tmp/reviewed-solana-route.manifest.json",
-      publishReadiness: paths.routeManifestPublishReadiness,
-      routePublishBlocked: paths.routeManifestPublishBlocked,
-      routePublicationRequest: paths.routePublicationRequest,
-      routePublicationRequestSha256:
-        args["expected-route-publication-request-sha256"],
-      routeManagerAccess: paths.routeManagerAccessRequest,
-      routeManagerAccessSha256:
-        args["expected-route-manager-access-request-sha256"],
-      laneActivationRequestSha256:
-        args["expected-lane-activation-request-sha256"],
-      laneActivationProposalSha256:
-        args["expected-lane-activation-proposal-sha256"],
-      operatorHandoffSha256: args["expected-operator-handoff-sha256"],
-      activationPackage: paths.activationPackage,
-      activationPackageSha256: args["expected-activation-package-sha256"],
+      freshDeployReport: paths.freshDeployReport,
+      freshDeployReportSha256: args["fresh-deploy-report-sha256"],
+      expectedPreLiveInputSnapshotSha256:
+        args["expected-pre-live-input-snapshot-sha256"],
+      governancePlan: paths.governancePlan,
+      governancePlanSha256: args["expected-governance-plan-sha256"],
+      governanceRegistration: paths.governanceRegistration,
+      governanceRegistrationSha256:
+        args["expected-governance-register-result-sha256"],
+      governanceActivation: paths.governanceActivation,
+      governanceActivationSha256:
+        args["expected-governance-activate-result-sha256"],
+      orderedInitializationEvidence: paths.orderedInitializationEvidence,
+      orderedInitializationEvidenceSha256:
+        args["expected-ordered-initialization-evidence-sha256"],
       smokeReadiness: paths.smokeReadiness,
-      deploymentVideoMp4: paths.deploymentVideoMp4,
       liveVideoTranscript: paths.liveVideoTranscript,
       liveVideoMp4: paths.liveVideoMp4,
       liveVideoVtt: paths.liveVideoSubtitles,
       blockedLiveVideoTranscript: paths.blockedLiveVideoTranscript,
       blockedLiveVideoMp4: paths.blockedLiveVideoMp4,
       blockedLiveVideoVtt: paths.blockedLiveVideoSubtitles,
+      proverGovernanceApproval: args["prover-governance-approval-file"],
+      proverGovernanceApprovalSha256: args["prover-governance-approval-sha256"],
+      captureReviewPolicy: args["capture-review-policy"],
+      captureReviewPolicySha256: args["capture-review-policy-sha256"],
+      liveCaptureVideo: args["live-capture-video"],
+      liveCaptureVideoSha256: args["live-capture-video-sha256"],
+      liveCaptureWitness: args["live-capture-witness"],
+      liveCaptureWitnessSha256: args["live-capture-witness-sha256"],
+      liveCaptureReviewAttestation: args["live-capture-review-attestation"],
+      liveCaptureReviewAttestationSha256:
+        args["live-capture-review-attestation-sha256"],
     });
+    expect(finalProductionGateOptions).toEqual(productionGateOptions);
+    expect(() =>
+      buildSolanaFinalProductionGateOptions({
+        productionGateOptions,
+        preLiveGate: {
+          report: {
+            preLiveInputSnapshotSha256: materialHex32(
+              "drifted-pre-live-input-snapshot",
+            ),
+          },
+        },
+      }),
+    ).toThrow(/differs from the independently reviewed pin/u);
+    expect(() =>
+      buildSolanaFinalProductionGateOptions({
+        productionGateOptions: {},
+        preLiveGate: {
+          report: {
+            preLiveInputSnapshotSha256: materialHex32("root-snapshot"),
+            preLiveInputSnapshot: {
+              preLiveInputSnapshotSha256: materialHex32("nested-snapshot"),
+            },
+          },
+        },
+      }),
+    ).toThrow(/snapshot hash aliases disagree/u);
+    expect(() =>
+      buildSolanaFinalProductionGateOptions({
+        productionGateOptions: {},
+        preLiveGate: { report: {} },
+      }),
+    ).toThrow(/Pre-live production-gate input snapshot SHA-256/u);
     expect(liveVideoOptions).toMatchObject({
       outputDir: "/tmp/sccp-solana-mintpath-deploy/live-video",
       fetchTimeoutMs: "1000",
       fetchAttempts: "1",
-      productionRequirements: paths.productionRequirements,
-      publishReadiness: paths.routeManifestPublishReadiness,
-      routePublicationRequest: paths.routePublicationRequest,
+      governancePlan: paths.governancePlan,
+      governanceRegistration: paths.governanceRegistration,
+      governanceActivation: paths.governanceActivation,
+      orderedInitializationEvidence: paths.orderedInitializationEvidence,
       smokeReadiness: paths.smokeReadiness,
-      activationPackage: paths.activationPackage,
-      operatorHandoff: paths.operatorHandoff,
       productionGate:
         "/tmp/sccp-solana-mintpath-deploy/production-gate/sccp-solana-production-gate.json",
+      proverGovernanceApprovalSha256: args["prover-governance-approval-sha256"],
+      liveCaptureVideo: args["live-capture-video"],
+      liveCaptureVideoSha256: args["live-capture-video-sha256"],
+      liveCaptureWitness: args["live-capture-witness"],
+      liveCaptureWitnessSha256: args["live-capture-witness-sha256"],
+      liveCaptureReviewAttestation: args["live-capture-review-attestation"],
+      liveCaptureReviewAttestationSha256:
+        args["live-capture-review-attestation-sha256"],
     });
     expect(JSON.stringify(productionGateOptions)).not.toContain(
       "output/sccp-solana-deploy",
@@ -16715,6 +17143,14 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       productionGateSnapshotSha256: materialHex32("pre-live-gate"),
       liveEvidence: "/tmp/live-bidirectional-evidence.json",
       skipSolanaRpc: false,
+      proverGovernanceApprovalSha256: args["prover-governance-approval-sha256"],
+      liveCaptureVideo: args["live-capture-video"],
+      liveCaptureVideoSha256: args["live-capture-video-sha256"],
+      liveCaptureWitness: args["live-capture-witness"],
+      liveCaptureWitnessSha256: args["live-capture-witness-sha256"],
+      liveCaptureReviewAttestation: args["live-capture-review-attestation"],
+      liveCaptureReviewAttestationSha256:
+        args["live-capture-review-attestation-sha256"],
     });
     expect(successLiveVideoOptions).not.toHaveProperty("preflightReport");
     expect(successLiveVideoOptions).not.toHaveProperty("productionGate");
@@ -16738,8 +17174,9 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       liveEvidence: "/tmp/untrusted-diagnostic-evidence.json",
       preflightReport: "/tmp/diagnostic-preflight.json",
       productionGate: "/tmp/diagnostic-production-gate.json",
+      proverGovernanceApprovalSha256: args["prover-governance-approval-sha256"],
     });
-    expect(diagnosticWithEvidence).toHaveProperty("productionRequirements");
+    expect(diagnosticWithEvidence).not.toHaveProperty("productionRequirements");
     expect(() =>
       buildSolanaLiveVideoGateOptions({
         args: {
@@ -16753,6 +17190,25 @@ offline_full_toml_sha256 = "${hex32("9c")}"
         successMode: true,
       }),
     ).toThrow(/canonical TAIRA validator root/u);
+  });
+
+  it("never derives the independent prover approval hash from a sidecar", () => {
+    const paths = {
+      outputDir: "/tmp/sccp-solana-independent-prover-approval",
+      smokeReadiness:
+        "/tmp/sccp-solana-independent-prover-approval/smoke/latest.json",
+    };
+    const options = buildSolanaEvidenceRefreshSmokeReadinessOptions({
+      args: {
+        "destination-prover-sidecar-hash": materialHex32("sidecar-only"),
+        "source-prover-sidecar-hash": materialHex32("source-sidecar-only"),
+      },
+      paths,
+      toriiUrl: "https://taira.sora.org",
+      solanaRpcUrl: "https://api.testnet.solana.com",
+    });
+    expect(options).not.toHaveProperty("proverGovernanceApprovalSha256");
+    expect(options).not.toHaveProperty("proverGovernanceApprovalFile");
   });
 
   it("summarizes Solana evidence refresh root blockers from production gate and steps", () => {
@@ -17320,15 +17776,35 @@ offline_full_toml_sha256 = "${hex32("9c")}"
     expect(packageJson().scripts["sccp:solana:finish-production"]).toBe(
       "node scripts/sccp-solana-deploy.mjs finish-production",
     );
+    const help = spawnSync(
+      process.execPath,
+      ["scripts/sccp-solana-deploy.mjs", "finish-production", "--help"],
+      { cwd: process.cwd(), encoding: "utf8" },
+    );
+    expect(help.status).toBe(0);
+    expect(help.stdout).toContain("--fresh-deploy-report PATH");
+    expect(help.stdout).toContain("--fresh-deploy-report-sha256 HASH");
+    expect(help.stdout).toContain(
+      "--expected-pre-live-input-snapshot-sha256 HASH",
+    );
   });
 
   it("requires an exact explicit finish-production submission mode", () => {
     expect(() => resolveSolanaFinishSubmissionMode({})).toThrow(
-      /explicit --submit true or --submit false/u,
+      /exact explicit --submit false/u,
     );
-    for (const submit of ["TRUE", "False", "1", "yes", "", null]) {
+    for (const submit of [
+      "true",
+      true,
+      "TRUE",
+      "False",
+      "1",
+      "yes",
+      "",
+      null,
+    ]) {
       expect(() => resolveSolanaFinishSubmissionMode({ submit })).toThrow(
-        /must be exactly true or false/u,
+        /read-only and accepts only --submit false/u,
       );
     }
     expect(resolveSolanaFinishSubmissionMode({ submit: "false" })).toEqual({
@@ -17336,11 +17812,62 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       explicitlySelected: true,
       mutationAuthorized: false,
     });
-    expect(resolveSolanaFinishSubmissionMode({ submit: "true" })).toEqual({
-      mode: "submit",
-      explicitlySelected: true,
-      mutationAuthorized: true,
-    });
+    expect(
+      assertExactSolanaFinishProductionArguments({ submit: "false" }),
+    ).toEqual(dryRunFinishSubmissionMode);
+    const pinnedFreshDeploy = {
+      submit: "false",
+      "fresh-deploy-report": "/tmp/reviewed-fresh-deploy.json",
+      "fresh-deploy-report-sha256": materialHex32("reviewed-fresh-deploy"),
+      "expected-pre-live-input-snapshot-sha256": materialHex32(
+        "reviewed-pre-live-input-snapshot",
+      ),
+    };
+    expect(
+      assertExactSolanaFinishProductionArguments(pinnedFreshDeploy),
+    ).toEqual(dryRunFinishSubmissionMode);
+    for (const incomplete of [
+      {
+        submit: "false",
+        "fresh-deploy-report": "/tmp/reviewed-fresh-deploy.json",
+      },
+      {
+        submit: "false",
+        "fresh-deploy-report-sha256": materialHex32("reviewed-fresh-deploy"),
+      },
+    ]) {
+      expect(() =>
+        assertExactSolanaFinishProductionArguments(incomplete),
+      ).toThrow(
+        /--fresh-deploy-report and --fresh-deploy-report-sha256 together/u,
+      );
+    }
+    for (const malformed of [
+      "not-a-hash",
+      `0x${"00".repeat(32)}`,
+      `0x${"11".repeat(32)}`,
+    ]) {
+      expect(() =>
+        assertExactSolanaFinishProductionArguments({
+          submit: "false",
+          "fresh-deploy-report": "/tmp/reviewed-fresh-deploy.json",
+          "fresh-deploy-report-sha256": malformed,
+        }),
+      ).toThrow(/Fresh Loader-v3 deployment report SHA-256/u);
+      expect(() =>
+        assertExactSolanaFinishProductionArguments({
+          submit: "false",
+          "expected-pre-live-input-snapshot-sha256": malformed,
+        }),
+      ).toThrow(/Expected production-gate pre-live input snapshot SHA-256/u);
+    }
+    expect(() =>
+      assertExactSolanaFinishProductionArguments({
+        submit: "false",
+        manifest: "/tmp/retired-local-manifest.json",
+        authority: "testu-retired-route-manager",
+      }),
+    ).toThrow(/--manifest, --authority/u);
 
     expect(() => buildSolanaFinishSubmissionState()).toThrow(
       /requires an exact explicitly selected/u,
@@ -17369,6 +17896,7 @@ offline_full_toml_sha256 = "${hex32("9c")}"
     try {
       for (const submitArgs of [
         [],
+        ["--submit", "true"],
         ["--submit", "TRUE"],
         ["--submit", "yes"],
         ["--submit", "1"],
@@ -17405,7 +17933,7 @@ offline_full_toml_sha256 = "${hex32("9c")}"
         const output = `${result.stdout}${result.stderr}`;
         expect(result.status).not.toBe(0);
         expect(output).toMatch(
-          /explicit --submit true or --submit false|must be exactly true or false|requires an explicit following value/u,
+          /exact explicit --submit false|read-only and accepts only --submit false|requires an explicit following value/u,
         );
         expect(output).not.toContain(dependencyPath);
         expect(output).not.toContain("not-json-and-secret-marker");
@@ -17419,172 +17947,154 @@ offline_full_toml_sha256 = "${hex32("9c")}"
     }
   });
 
-  it("never authorizes finish-production finalization in dry-run or before fresh readiness", () => {
-    expect(
-      buildSolanaFinishFinalizationMutationDecision({
-        submitEnabled: true,
-        readiness: { ready: true, blockerIds: [] },
-      }),
-    ).toMatchObject({
-      submitEnabled: true,
-      readinessReady: true,
-      shouldSubmit: true,
-      blockerIds: [],
-    });
-    expect(
-      buildSolanaFinishFinalizationMutationDecision({
-        submitEnabled: false,
-        readiness: { ready: true, blockerIds: [] },
-      }),
-    ).toMatchObject({
-      shouldSubmit: false,
-      mutationAuthorized: false,
-      mutationRequired: true,
-      blockerIds: ["program-finalization-required"],
-      executionBlockerIds: ["finish-production-submit-disabled"],
-    });
-    expect(
-      buildSolanaFinishFinalizationMutationDecision({
-        submitEnabled: true,
-        readiness: {
-          ready: false,
-          blockers: [{ id: "program-finalization-native-verifier-linkage" }],
-          blockerIds: ["program-finalization-code-hash"],
-        },
-      }),
-    ).toMatchObject({
-      shouldSubmit: false,
-      blockerIds: [
-        "program-finalization-native-verifier-linkage",
-        "program-finalization-code-hash",
-      ],
-    });
-    expect(
-      buildSolanaFinishFinalizationMutationDecision({
-        submitEnabled: true,
-        readiness: { ready: "true", blockerIds: [] },
-      }),
-    ).toMatchObject({
-      shouldSubmit: false,
-      blockerIds: ["program-finalization-readiness"],
-    });
+  it("rejects retired finish-production inputs before dependency or signer access", () => {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "sccp-solana-finish-retired-"),
+    );
+    const dependencyPath = path.join(root, "must-not-be-read.json");
+    writeFileSync(dependencyPath, "retired-input-secret-marker");
+    try {
+      for (const [option, value] of [
+        ["manifest", dependencyPath],
+        ["manifest-file", dependencyPath],
+        ["public-preflight-report", dependencyPath],
+        ["authority", "testu-retired-route-manager"],
+        ["private-key-env", "SCCP_RETIRED_PRIVATE_KEY"],
+      ]) {
+        const outputDir = path.join(root, option);
+        const result = spawnSync(
+          process.execPath,
+          [
+            "scripts/sccp-solana-deploy.mjs",
+            "finish-production",
+            "--submit",
+            "false",
+            `--${option}`,
+            value,
+            "--output-dir",
+            outputDir,
+            "--torii-url",
+            "http://127.0.0.1:1",
+          ],
+          {
+            cwd: process.cwd(),
+            encoding: "utf8",
+            env: {
+              PATH: process.env.PATH,
+              HOME: process.env.HOME,
+              SCCP_RETIRED_PRIVATE_KEY: "must-not-be-read-or-echoed",
+            },
+          },
+        );
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.status).not.toBe(0);
+        expect(output).toContain(`--${option}`);
+        expect(output).not.toContain("retired-input-secret-marker");
+        expect(output).not.toContain("must-not-be-read-or-echoed");
+        expect(existsSync(outputDir)).toBe(false);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 
-    const completion = buildSolanaFinishProgramFinalizationCompletion({
-      report: {
-        ready: true,
-        productionReady: true,
-        mode: "atomic-set-authority-none",
+  it("rejects unpaired, malformed, duplicate, and alias finish pins before dependency access", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "sccp-solana-finish-pins-"));
+    const dependencyPath = path.join(root, "must-not-be-read.json");
+    writeFileSync(dependencyPath, "fresh-deploy-secret-marker");
+    const validHash = materialHex32("reviewed-fresh-deploy");
+    const cases = [
+      {
+        name: "missing-hash",
+        args: ["--fresh-deploy-report", dependencyPath],
+        error:
+          /--fresh-deploy-report and --fresh-deploy-report-sha256 together/u,
       },
-      validation: { ready: true },
-    });
-    expect(
-      buildSolanaFinishFinalizationMutationDecision({
-        submitEnabled: false,
-        readiness: { ready: false, blockerIds: ["operator-confirmation"] },
-        completion,
-      }),
-    ).toMatchObject({
-      alreadyFinalized: true,
-      mutationRequired: false,
-      satisfied: true,
-      shouldSubmit: false,
-      blockerIds: [],
-      executionBlockerIds: [],
-    });
+      {
+        name: "missing-path",
+        args: ["--fresh-deploy-report-sha256", validHash],
+        error:
+          /--fresh-deploy-report and --fresh-deploy-report-sha256 together/u,
+      },
+      {
+        name: "malformed-hash",
+        args: [
+          "--fresh-deploy-report",
+          dependencyPath,
+          "--fresh-deploy-report-sha256",
+          "not-a-hash",
+        ],
+        error: /Fresh Loader-v3 deployment report SHA-256/u,
+      },
+      {
+        name: "malformed-snapshot",
+        args: ["--expected-pre-live-input-snapshot-sha256", "not-a-hash"],
+        error: /Expected production-gate pre-live input snapshot SHA-256/u,
+      },
+      {
+        name: "duplicate-path",
+        args: [
+          "--fresh-deploy-report",
+          dependencyPath,
+          "--fresh-deploy-report-sha256",
+          validHash,
+          "--fresh-deploy-report",
+          dependencyPath,
+        ],
+        error: /--fresh-deploy-report may be provided exactly once/u,
+      },
+      {
+        name: "retired-alias",
+        args: ["--expected-fresh-deploy-report-sha256", validHash],
+        error: /Unknown option: --expected-fresh-deploy-report-sha256/u,
+      },
+    ];
+    try {
+      for (const testCase of cases) {
+        const outputDir = path.join(root, testCase.name);
+        const result = spawnSync(
+          process.execPath,
+          [
+            "scripts/sccp-solana-deploy.mjs",
+            "finish-production",
+            "--submit",
+            "false",
+            ...testCase.args,
+            "--output-dir",
+            outputDir,
+            "--torii-url",
+            "http://127.0.0.1:1",
+          ],
+          {
+            cwd: process.cwd(),
+            encoding: "utf8",
+            env: {
+              PATH: process.env.PATH,
+              HOME: process.env.HOME,
+              SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY:
+                "runtime-secret-must-not-be-read-or-echoed",
+            },
+          },
+        );
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.status).not.toBe(0);
+        expect(output).toMatch(testCase.error);
+        expect(output).not.toContain("fresh-deploy-secret-marker");
+        expect(output).not.toContain(
+          "runtime-secret-must-not-be-read-or-echoed",
+        );
+        expect(existsSync(outputDir)).toBe(false);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
-  it("configures the governed verifier only after finalization and treats exact existing linkage as idempotent", () => {
-    expect(
-      buildSolanaFinishVerifierConfigurationDecision({
-        submitEnabled: true,
-        programFinalization: { ready: true },
-        verifierLinkage: { ready: false },
-        governedPackagePresent: true,
-        governedConfirmationPresent: true,
-      }),
-    ).toMatchObject({
-      alreadyConfigured: false,
-      finalizationReady: true,
-      shouldSubmit: true,
-      blockerIds: [],
-    });
-    expect(
-      buildSolanaFinishVerifierConfigurationDecision({
-        submitEnabled: false,
-        programFinalization: { ready: true },
-        verifierLinkage: { ready: false },
-        governedPackagePresent: true,
-        governedConfirmationPresent: true,
-      }),
-    ).toMatchObject({
-      shouldSubmit: false,
-      mutationRequired: true,
-      blockerIds: ["native-verifier-configuration-required"],
-      executionBlockerIds: ["finish-production-submit-disabled"],
-    });
-    expect(
-      buildSolanaFinishVerifierConfigurationDecision({
-        submitEnabled: true,
-        programFinalization: { ready: false },
-        verifierLinkage: { ready: false },
-        governedPackagePresent: false,
-        governedConfirmationPresent: false,
-      }),
-    ).toMatchObject({
-      shouldSubmit: false,
-      blockerIds: [
-        "program-finalization",
-        "governed-native-verifier-package",
-        "confirm-governed-native-verifier",
-      ],
-    });
-    expect(
-      buildSolanaFinishVerifierConfigurationDecision({
-        submitEnabled: false,
-        programFinalization: { ready: false },
-        verifierLinkage: { ready: true },
-        governedPackagePresent: false,
-        governedConfirmationPresent: false,
-      }),
-    ).toMatchObject({
-      alreadyConfigured: true,
-      satisfied: true,
-      shouldSubmit: false,
-      blockerIds: [],
-    });
+  it("does not expose retired finish-time Solana finalization or verifier-configuration decisions", () => {
+    expect(buildSolanaFinishFinalizationMutationDecision).toBeUndefined();
+    expect(buildSolanaFinishVerifierConfigurationDecision).toBeUndefined();
   });
-
-  it("orders finish-production as readiness, finalization, immutable configuration, then linkage", () => {
-    const source = readFileSync("scripts/sccp-solana-deploy.mjs", "utf8");
-    const finishStart = source.indexOf("const finishProduction = async");
-    const refreshStart = source.indexOf("const refreshEvidence = async");
-    const body = source.slice(finishStart, refreshStart);
-    const readinessPreflight = body.indexOf(
-      '"program-finalization-readiness-preflight"',
-    );
-    const finalization = body.indexOf('record("program-finalization"');
-    const linkagePreconfiguration = body.indexOf(
-      '"verifier-linkage-readiness-preconfiguration"',
-    );
-    const configuration = body.indexOf('record("configure-native-verifier"');
-    const finalLinkage = body.indexOf('record("verifier-linkage-readiness",');
-    const finalReadiness = body.indexOf(
-      'record("program-finalization-readiness",',
-    );
-
-    expect(readinessPreflight).toBeGreaterThanOrEqual(0);
-    expect(finalization).toBeGreaterThan(readinessPreflight);
-    expect(linkagePreconfiguration).toBeGreaterThan(finalization);
-    expect(configuration).toBeGreaterThan(linkagePreconfiguration);
-    expect(finalLinkage).toBeGreaterThan(configuration);
-    expect(finalReadiness).toBeGreaterThan(finalLinkage);
-    expect(body).toContain("submitEnabled: finishSubmit");
-    expect(body).toContain(
-      'deployNativeVerifier({ ...args, "configure-only": "true" })',
-    );
-  });
-
-  it("refreshes Solana finalization readiness before finish-production rebuilds requirements", () => {
+  it("keeps finish-production submit mode outside every retired Solana mutation path", () => {
     const source = readFileSync("scripts/sccp-solana-deploy.mjs", "utf8");
     const finishStart = source.indexOf("const finishProduction = async");
     const refreshStart = source.indexOf("const refreshEvidence = async");
@@ -17592,12 +18102,42 @@ offline_full_toml_sha256 = "${hex32("9c")}"
 
     expect(finishStart).toBeGreaterThanOrEqual(0);
     expect(refreshStart).toBeGreaterThan(finishStart);
-    expect(body.indexOf('record("verifier-linkage-readiness"')).toBeLessThan(
-      body.indexOf('record("program-finalization-readiness"'),
+    expect(body).not.toContain("finalizePrograms(");
+    expect(body).not.toContain("deployNativeVerifier(");
+    expect(body).not.toContain("SOLANA_FINALIZATION_RECONSTRUCTION_ONLY");
+    expect(body).not.toContain("SOLANA_NATIVE_CONFIG_RECONSTRUCTION_ONLY");
+    expect(body).not.toContain('"exact-sccpmat1-initializer-not-available"');
+    expect(body).not.toContain(
+      '"exact-ordered-initialization-evidence-required"',
     );
-    expect(
-      body.indexOf('record("program-finalization-readiness"'),
-    ).toBeLessThan(body.indexOf('record(\n    "production-requirements"'));
+    expect(body).toContain("finish-production is read-only");
+    expect(body).toContain("runSccpSolanaProductionGate");
+    expect(body).not.toContain("routePublicationRequest");
+    expect(body).not.toContain("renderDeploymentVideo");
+  });
+
+  it("runs fresh exact public readback before the pre-live production gate", () => {
+    const source = readFileSync("scripts/sccp-solana-deploy.mjs", "utf8");
+    const finishStart = source.indexOf("const finishProduction = async");
+    const refreshStart = source.indexOf("const refreshEvidence = async");
+    const body = source.slice(finishStart, refreshStart);
+
+    expect(finishStart).toBeGreaterThanOrEqual(0);
+    expect(refreshStart).toBeGreaterThan(finishStart);
+    const publicReadback = body.indexOf('runStep("public-route-preflight"');
+    const preLiveGate = body.indexOf('"production-gate-pre-live"');
+    const liveVideoGate = body.indexOf('runStep("live-video"');
+    const finalGate = body.indexOf('runStep("production-gate-final"');
+    const finalSnapshotBinding = body.indexOf(
+      "buildSolanaFinalProductionGateOptions",
+    );
+    expect(publicReadback).toBeGreaterThanOrEqual(0);
+    expect(preLiveGate).toBeGreaterThan(publicReadback);
+    expect(liveVideoGate).toBeGreaterThan(preLiveGate);
+    expect(finalGate).toBeGreaterThan(liveVideoGate);
+    expect(finalSnapshotBinding).toBeGreaterThan(finalGate);
+    expect(body).not.toContain("productionRequirements(");
+    expect(body).not.toContain("draftManifest(");
   });
 
   it("refreshes the Solana draft manifest before prover readiness", () => {
@@ -17621,23 +18161,17 @@ offline_full_toml_sha256 = "${hex32("9c")}"
     expect(body).toContain("finishProduction: paths.finishProduction");
   });
 
-  it("uses explicit public preflight reports during finish-production", () => {
+  it("does not accept a caller-supplied preflight as completion truth", () => {
     const source = readFileSync("scripts/sccp-solana-deploy.mjs", "utf8");
     const finishStart = source.indexOf("const finishProduction = async");
     const refreshStart = source.indexOf("const refreshEvidence = async");
     const body = source.slice(finishStart, refreshStart);
-    const overrideIndex = body.indexOf(
-      "loadPublicPreflightReportOverride(args)",
-    );
-    const livePreflightIndex = body.indexOf(
-      "runSccpSolanaRoutePreflight",
-      overrideIndex,
-    );
+    const livePreflightIndex = body.indexOf("runSccpSolanaRoutePreflight");
 
     expect(finishStart).toBeGreaterThanOrEqual(0);
     expect(refreshStart).toBeGreaterThan(finishStart);
-    expect(overrideIndex).toBeGreaterThanOrEqual(0);
-    expect(livePreflightIndex).toBeGreaterThan(overrideIndex);
+    expect(livePreflightIndex).toBeGreaterThanOrEqual(0);
+    expect(body).not.toContain("loadPublicPreflightReportOverride(args)");
   });
 
   it("validates Solana finish-production material against inventory roots by default", () => {
@@ -17712,42 +18246,28 @@ offline_full_toml_sha256 = "${hex32("9c")}"
     ]);
   });
 
-  it("refreshes Solana route-publication handoffs after proof bundles during finish-production", () => {
+  it("runs exact smoke, pre-live gate, authoritative media, and final gate in order", () => {
     const source = readFileSync("scripts/sccp-solana-deploy.mjs", "utf8");
     const finishStart = source.indexOf("const finishProduction = async");
     const refreshStart = source.indexOf("const refreshEvidence = async");
     const body = source.slice(finishStart, refreshStart);
 
-    const proofBundleIndex = body.indexOf('record("proof-material-bundle"');
-    const routePublicationIndex = body.indexOf(
-      'record("route-publication-request-final"',
+    const smokeReadinessIndex = body.indexOf('runStep("smoke-readiness"');
+    const productionGateIndex = body.indexOf('"production-gate-pre-live"');
+    const liveVideoIndex = body.indexOf('runStep("live-video"');
+    const finalProductionGateIndex = body.indexOf(
+      'runStep("production-gate-final"',
     );
-    const routeManagerIndex = body.indexOf(
-      'record(\n    "route-manager-access-request-final"',
-    );
-    const laneActivationIndex = body.indexOf(
-      'record("lane-activation-proposal-final"',
-    );
-    const operatorIndex = body.indexOf('record("operator-handoff-final"');
-    const activationIndex = body.indexOf('record("activation-package"');
-    const deploymentVideoIndex = body.indexOf('record("deployment-video"');
-    const productionGateIndex = body.indexOf('record("production-gate"');
 
-    expect(proofBundleIndex).toBeGreaterThanOrEqual(0);
-    expect(routePublicationIndex).toBeGreaterThan(proofBundleIndex);
-    expect(routeManagerIndex).toBeGreaterThan(routePublicationIndex);
-    expect(laneActivationIndex).toBeGreaterThan(routeManagerIndex);
-    expect(operatorIndex).toBeGreaterThan(laneActivationIndex);
-    expect(activationIndex).toBeGreaterThan(operatorIndex);
-    expect(deploymentVideoIndex).toBeGreaterThan(activationIndex);
-    expect(productionGateIndex).toBeGreaterThan(deploymentVideoIndex);
-    expect(body).toMatch(
-      /withoutReportOverrideArgs\(\s*finalSharedRouteArgs,\s*\[/u,
-    );
-    expect(body).toContain('"route-publication-request-report"');
+    expect(smokeReadinessIndex).toBeGreaterThanOrEqual(0);
+    expect(productionGateIndex).toBeGreaterThan(smokeReadinessIndex);
+    expect(liveVideoIndex).toBeGreaterThan(productionGateIndex);
+    expect(finalProductionGateIndex).toBeGreaterThan(liveVideoIndex);
+    expect(body).not.toContain("renderDeploymentVideo");
+    expect(body).not.toContain("proofMaterialBundle(");
   });
 
-  it("pins the reviewed manifest in definition and fallback finish commands", () => {
+  it("routes legacy and fallback finish actions through typed governance", () => {
     const manifestArtifactPath =
       "/reviewed/taira-solana-xor-route.manifest.json";
     const manifestArtifactSha256 = materialHex32(
@@ -17765,629 +18285,146 @@ offline_full_toml_sha256 = "${hex32("9c")}"
             manifestArtifactPath,
             manifestArtifactSha256,
           },
+          nextActionDetails: [
+            {
+              id: "publish-taira-solana-route-manifest",
+              command: [
+                "publish-route-manifest",
+                "--submit",
+                "true",
+                "SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY=<secret>",
+              ],
+            },
+          ],
           nextActions,
           blockers: [{ id: "runtime-signing-key" }],
         },
       });
       const action = report.nextActionDetails.find(
-        (entry) => entry.id === "publish-taira-solana-route-manifest",
+        (entry) => entry.id === "enact-solana-route-governance",
       );
       expect(action).toBeDefined();
-      expect(action.command).toContain("sccp:solana:finish-production");
-      expectExactManifestPin(
-        action.command,
-        manifestArtifactPath,
-        manifestArtifactSha256,
+      expect(action.command).toEqual([
+        "npm",
+        "run",
+        "sccp:solana:governance",
+        "--",
+        "--plan",
+        "<reviewed-solana-route-governance-plan.json>",
+        "--phase",
+        "<register-or-activate>",
+      ]);
+      expect(JSON.stringify(action)).not.toContain("publish-route-manifest");
+      expect(JSON.stringify(action)).not.toContain(
+        "SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY",
       );
     }
   });
 
-  it("builds a fail-closed Solana production finish report without persisting runtime secrets", () => {
+  it("builds an exact fail-closed finish report without persisting runtime secrets", () => {
     const report = buildSolanaFinishProductionReportBody({
       submissionMode: dryRunFinishSubmissionMode,
-      checkedAt: "2026-07-06T00:00:00.000Z",
-      steps: [
-        {
-          name: "production-material-validation",
-          ok: true,
-          ready: false,
-          schema: "iroha-demo-sccp-solana-production-material-validation/v1",
-          failedCheckIds: [],
-          blockerIds: ["production-material-inventory"],
-          paths: {
-            productionMaterialValidationPath:
-              "output/sccp-solana-deploy/taira-solana-xor-production-material.validation.json",
-          },
-        },
-        {
-          name: "publish-route-manifest",
-          ok: null,
-          skipped: true,
-          ready: false,
-          schema: null,
-          failedCheckIds: [],
-          blockerIds: [
-            "taira-public-endpoint",
-            "taira-mcp-transaction-tools",
-            "runtime-signing-key",
-          ],
-          paths: {},
-        },
-      ],
-      routePublishReadiness: {
-        readyToSubmitWithCurrentRuntime: false,
-        publicEndpoint: {
-          endpointReady: true,
-          preflightReady: false,
-          preflightPath:
-            "output/sccp-solana-deploy/route-publish-preflight/sccp-solana-route-preflight.json",
-          mcpTransactionTools: {
-            ready: true,
-            presentTools: [
-              "iroha.transactions.submit",
-              "iroha.transactions.submit_and_wait",
-            ],
-          },
-          routeAlreadyPublic: false,
-          publicationChecks: [
-            { id: "public-route-publication", status: "pass" },
-            {
-              id: "solana-lane-publication",
-              status: "fail",
-              detail: "Solana lane is disabled.",
-            },
-            {
-              id: "solana-route-instance-publication",
-              status: "fail",
-              detail: "No taira_sol_xor Solana route instance is published.",
-            },
-          ],
-          publicSolanaLane: {
-            present: true,
-            ready: false,
-            blockerIds: [
-              "immutable Solana verifier program is not deployed for this SCCP lane",
-              "cryptographic trust anchor is not active for this SCCP lane",
-            ],
-          },
-        },
-        blockers: [{ id: "runtime-signing-key" }],
-        nextActionDetails: [
-          {
-            id: "set-runtime-route-manager-private-key",
-            requiredInputs: ["SCCP_TEST_ROUTE_MANAGER_PRIVATE_KEY"],
-          },
-        ],
+      publicPreflight: {
+        schema: "iroha-demo-sccp-solana-route-preflight/v2",
+        protocolSource: "typed-sccp-registry-v1",
+        manifestSource: "public-registry",
+        registryState: { routePresent: false, activation: null },
+        blockers: [{ id: "typed-route-not-published" }],
       },
       smokeReadiness: {
         ready: false,
-        checks: [{ id: "walletconnect-project-id", status: "fail" }],
         blockerIds: ["walletconnect-project-id"],
-        nextActions: ["configure-solana-walletconnect"],
       },
       productionRequirements: {
-        readyToBuildIsi: false,
-        blockers: [{ id: "source-verifier-material" }],
+        blockerIds: ["file-backed-solana-key-material"],
         nextActionDetails: [
           {
-            id: "publish-governed-solana-source-material",
-            blockedBy: [{ id: "source-verifier-material" }],
-            command: [
-              "python3",
-              "../iroha/scripts/sccp_solana_source_state_evidence.py",
-              "--toml",
-            ],
-            requiredInputs: ["sourceTrustAnchorHash"],
-          },
-        ],
-      },
-      productionMaterialInventory: {
-        ready: false,
-        roots: ["/tmp/sccp-solana-deploy", "/tmp/iroha/artifacts/sccp-solana"],
-        scanned: {
-          fileCount: 3,
-          skipped: [
-            { path: "/tmp/iroha/artifacts/sccp-solana", reason: "missing" },
-          ],
-        },
-        materialRoots: {
-          defaultRootAuditEnabled: true,
-          expectedGroups: [
-            {
-              id: "sibling-solana-governed-material",
-              required: true,
-              description:
-                "Governed Solana material should be published under sibling roots.",
-              ready: false,
-              paths: [
-                {
-                  path: "/tmp/iroha/artifacts/sccp-solana",
-                  exists: false,
-                  fileCount: 0,
-                  candidateCount: 0,
-                  readyCandidateCount: 0,
-                  status: "missing",
-                  skippedReason: "missing",
-                  roleReadiness: {
-                    sourceVerifierMaterial: {
-                      candidateCount: 0,
-                      readyCount: 0,
-                      ready: false,
-                    },
-                    sourceAdapterEngineDeployment: {
-                      candidateCount: 0,
-                      readyCount: 0,
-                      ready: false,
-                    },
-                  },
-                },
-              ],
-            },
-          ],
-        },
-        candidates: {
-          sourceVerifierMaterial: [{ ready: false }],
-          sourceAdapterEngineDeployment: [],
-          offlineFullToml: [],
-        },
-        readyMaterial: {
-          sourceVerifierMaterial: null,
-          sourceAdapterEngineDeployment: null,
-          offlineFullToml: null,
-          browserProvers: false,
-          browserProverModules: [
-            {
-              direction: "destination",
-              moduleUrl: "/sccp-solana/taira-solana-xor-destination-prover.js",
-              sidecarUrl:
-                "/sccp-solana/taira-solana-xor-destination-prover.sidecar.json",
-              moduleHash: hex32("d1"),
-              sidecarHash: hex32("d2"),
-              productionProofsReady: false,
-              ready: false,
-            },
-          ],
-          destinationProofAdmission: false,
-        },
-        missingProductionArtifactIds: [
-          "sibling-solana-governed-material-root",
-          "governed-solana-source-verifier-material",
-          "solana-destination-production-prover-package",
-        ],
-        blockers: [
-          {
-            id: "public-solana-lane-material",
-            blockerIds: [
-              "public-solana-source-material-placeholder",
-              "public-solana-source-state-verifier",
-            ],
-          },
-        ],
-        publicLaneDiagnostics: [
-          {
-            path: "output/sccp-solana-deploy/route-publish-preflight/sccp-solana-route-preflight.json",
-            pointer: "/",
-            ready: false,
-            publicationReady: false,
-            blockerIds: [
-              "public-solana-lane-not-production-ready",
-              "public-solana-source-material-placeholder",
-              "public-solana-source-state-verifier",
-            ],
-            sourceVerifierMaterial: {
-              ready: false,
-              statusIds: ["placeholderMaterial", "sourceStateVerifierHash"],
-              recordHash: hex32("91"),
-            },
+            id: "rotate-revoke-remove-file-backed-solana-key-material",
+            command: [],
           },
         ],
       },
       productionGate: {
         ready: false,
-        failedCheckIds: ["public-preflight-ready"],
-        blockerIds: ["production-requirements-ready"],
-      },
-      deploymentVideo: {
-        mediaVerification: {
-          ready: true,
-          mp4SubtitleTrackReady: true,
-        },
+        governanceEvidence: { ready: false },
+        rootCauseBlockerIds: ["solana-destination-production-prover-package"],
       },
       liveVideo: {
         schema: "iroha-demo-sccp-solana-live-video-blocked/v1",
         ready: false,
         diagnosticVideoOnly: true,
-        notLiveTransferEvidence: true,
-        blockerIds: ["live-bidirectional-video"],
         mediaVerification: {
           ready: true,
-          diagnosticVideoOnly: true,
+          streams: {
+            video: { present: true, codec: "h264" },
+            audio: { present: true, codec: "aac" },
+            subtitle: { present: true, codec: "mov_text" },
+          },
         },
       },
-      activationPackage: {
-        productionActivationReady: false,
-        blockers: [{ id: "public-route-publication" }],
-      },
-      operatorHandoff: {
-        readyToPublish: false,
-        blockers: [{ id: "governed-proof-material" }],
-      },
       artifacts: {
-        finishProduction:
-          "output/sccp-solana-deploy/taira-solana-xor-finish-production.json",
-        deploymentVideoMp4:
-          "output/sccp-solana-deploy/sccp-solana-deployment-video.mp4",
-        deploymentVideoSubtitles:
-          "output/sccp-solana-deploy/sccp-solana-deployment-video.vtt",
-        deploymentVideoTranscript:
-          "output/sccp-solana-deploy/sccp-solana-deployment-video.json",
-        sourceBurnReadiness:
-          "output/sccp-solana-deploy/taira-solana-xor-source-burn-readiness.json",
-        sourceBurnSubmission:
-          "output/sccp-solana-deploy/taira-solana-xor-source-burn.submission.json",
-        proverReadiness:
-          "output/sccp-solana-deploy/taira-solana-xor-prover-readiness.json",
-        liveVideoTranscript:
-          "output/sccp-solana-live-video/sccp-solana-live-video-blocked.json",
-        liveVideoSubtitles:
-          "output/sccp-solana-live-video/sccp-solana-live-video-blocked.vtt",
-        liveVideoMp4:
-          "output/sccp-solana-live-video/sccp-solana-live-video-blocked.mp4",
+        liveVideoTranscript: "/tmp/blocked.json",
+        liveVideoSubtitles: "/tmp/blocked.vtt",
+        liveVideoMp4: "/tmp/blocked.mp4",
+        blockedLiveVideoMp4: "/tmp/diagnostic.mp4",
       },
       runtimeInputs: {
-        routeManagerAuthorityConfigured: true,
-        routeManagerAuthorityEnv: "SCCP_TEST_ROUTE_MANAGER_AUTHORITY",
-        routeManagerPrivateKeyEnv: "SCCP_TEST_ROUTE_MANAGER_PRIVATE_KEY",
-        routeManagerPrivateKeyEnvPresent: true,
-        walletConnectProjectIdConfigured: true,
-        destinationProverModuleUrlConfigured: false,
-        sourceProverModuleUrlConfigured: false,
+        walletConnectProjectIdConfigured: false,
+        walletConnectProjectIdSource: "runtime-secret-must-not-be-persisted",
       },
     });
 
-    expect(report.schema).toBe("iroha-demo-sccp-solana-finish-production/v1");
     expect(report).toMatchObject({
+      ready: false,
       submissionMode: "dry-run",
-      mutationAuthorized: false,
-      submission: {
-        mode: "dry-run",
-        explicitlySelected: true,
-        mutationAuthorized: false,
-        mutationAttempted: false,
-        mutationSubmitted: false,
+      exactTypedRegistry: { ready: false },
+      smokeReadinessReady: false,
+      productionGateReady: false,
+      liveVideoReady: false,
+      artifacts: {
+        liveVideoTranscript: null,
+        liveVideoSubtitles: null,
+        liveVideoMp4: null,
+        blockedLiveVideoMp4: "/tmp/diagnostic.mp4",
+      },
+      mediaVerification: {
+        liveVideo: {
+          ready: false,
+          encodingReady: true,
+          productionReady: false,
+          diagnosticOnly: true,
+          notLiveTransferEvidence: true,
+        },
       },
     });
-    expect(report.ready).toBe(false);
-    expect(report.routePublishedOrSubmitted).toBe(false);
     expect(report.blockerIds).toEqual(
       expect.arrayContaining([
-        "production-material-inventory",
-        "source-verifier-material",
-        "runtime-signing-key",
-        "walletconnect-project-id",
-        "public-preflight-ready",
-        "production-requirements-ready",
-        "live-bidirectional-video",
-        "solana-lane-publication",
-        "solana-route-instance-publication",
-        "immutable Solana verifier program is not deployed for this SCCP lane",
-        "cryptographic trust anchor is not active for this SCCP lane",
-        "governed-proof-material",
-        "public-solana-lane-material",
-        "public-solana-lane-not-production-ready",
-        "public-solana-source-material-placeholder",
-        "public-solana-source-state-verifier",
+        "typed-registry-governance-enactment-required",
+        "governance-evidence",
+        "solana-smoke-readiness",
+        "solana-live-bidirectional-video",
+        "file-backed-solana-key-material",
       ]),
     );
-    expect(report.blockerIds).not.toContain("taira-public-endpoint");
-    expect(report.blockerIds).not.toContain("taira-mcp-transaction-tools");
-    expect(report.blockerIds).not.toContain("public-route-publication");
     expect(report.rootCauseBlockerIds).toEqual(
       expect.arrayContaining([
-        "solana-public-route-report",
-        "walletconnect-project-id",
+        "typed-registry-governance-enactment-required",
+        "governance-evidence",
         "solana-destination-production-prover-package",
-        "solana-source-production-prover-package",
-        "governed-solana-source-verifier-material",
+        "file-backed-solana-key-material",
       ]),
     );
-    expect(report.routePublishReadiness).toMatchObject({
-      readyToSubmitWithCurrentRuntime: false,
-      readyForRuntimeSigner: false,
-      blockerIds: ["runtime-signing-key"],
-      publicEndpointReady: true,
-      mcpTransactionToolsReady: true,
-      authorityReady: false,
-      privateKeyEnvPresent: false,
-      privateKeyStoredInReport: false,
-    });
-    expect(report.blockerResolution).toMatchObject({
-      schema: "iroha-demo-sccp-solana-blocker-resolution/v1",
-      currentRuntimeCanSubmitRoute: false,
-      repoOnlyCompletionPossible: false,
-      categoryCounts: expect.objectContaining({
-        "runtime-input": expect.any(Number),
-        "taira-governance": expect.any(Number),
-        "governed-proof-material": expect.any(Number),
-        "live-evidence": expect.any(Number),
-      }),
-      runtimeInputBlockerIds: expect.arrayContaining([
-        "runtime-signing-key",
-        "walletconnect-project-id",
-      ]),
-      tairaGovernanceBlockerIds: expect.arrayContaining([
-        "solana-lane-publication",
-        "solana-route-instance-publication",
-      ]),
-      governedProofMaterialBlockerIds: expect.arrayContaining([
-        "production-material-inventory",
-        "source-verifier-material",
-        "governed-solana-source-verifier-material",
-        "solana-destination-production-prover-package",
-      ]),
-      liveEvidenceBlockerIds: expect.arrayContaining([
-        "live-bidirectional-video",
-      ]),
-      operatorActionableBlockerIds: expect.arrayContaining([
-        "runtime-signing-key",
-        "solana-lane-publication",
-        "source-verifier-material",
-        "live-bidirectional-video",
-      ]),
-    });
-    expect(report.publicTaira).toMatchObject({
-      routeAlreadyPublic: false,
-      routePublicationSubmitted: false,
-      routePublishedOrSubmitted: false,
-      endpointReady: true,
-      preflightReady: false,
-      mcpTransactionTools: {
-        ready: true,
-        presentTools: [
-          "iroha.transactions.submit",
-          "iroha.transactions.submit_and_wait",
-        ],
-      },
-      publicationChecks: [
-        { id: "public-route-publication", status: "pass" },
-        { id: "solana-lane-publication", status: "fail" },
-        { id: "solana-route-instance-publication", status: "fail" },
-      ],
-      publicSolanaLane: {
-        present: true,
-        ready: false,
-      },
-      blockerIds: [
-        "solana-lane-publication",
-        "solana-route-instance-publication",
-        "immutable Solana verifier program is not deployed for this SCCP lane",
-        "cryptographic trust anchor is not active for this SCCP lane",
-      ],
-    });
-    expect(report.publicationSurface).toMatchObject({
-      endpointReady: true,
-      mcpTransactionToolsReady: true,
-      publicationMode: "signed-transaction-body-base64",
-      requiredTools: [
-        "iroha.transactions.submit",
-        "iroha.transactions.submit_and_wait",
-      ],
-      presentTools: [
-        "iroha.transactions.submit",
-        "iroha.transactions.submit_and_wait",
-      ],
-      missingTools: [],
-      bodyBase64SubmissionReady: true,
-    });
-    expect(report.publicTaira.publicationSurface).toEqual(
-      report.publicationSurface,
-    );
-    expect(report.productionMaterialInventory).toMatchObject({
-      ready: false,
-      blockerIds: ["public-solana-lane-material"],
-      missingProductionArtifactIds: [
-        "sibling-solana-governed-material-root",
-        "governed-solana-source-verifier-material",
-        "solana-destination-production-prover-package",
-      ],
-      materialLocator: {
-        schema: "iroha-demo-sccp-solana-production-material-locator/v1",
-        ready: false,
-        roots: ["/tmp/sccp-solana-deploy", "/tmp/iroha/artifacts/sccp-solana"],
-        defaultRootAuditEnabled: true,
-        scanned: {
-          fileCount: 3,
-          skipped: {
-            count: 1,
-            byReason: { missing: 1 },
-            sample: [
-              {
-                path: "/tmp/iroha/artifacts/sccp-solana",
-                reason: "missing",
-                size: null,
-              },
-            ],
-          },
-          candidateCounts: {
-            sourceVerifierMaterial: 1,
-            sourceAdapterEngineDeployment: 0,
-            offlineFullToml: 0,
-          },
-          readyCandidateCounts: {
-            sourceVerifierMaterial: 0,
-            sourceAdapterEngineDeployment: 0,
-            offlineFullToml: 0,
-          },
-        },
-        expectedRootGroups: [
-          {
-            id: "sibling-solana-governed-material",
-            required: true,
-            ready: false,
-            paths: [
-              {
-                path: "/tmp/iroha/artifacts/sccp-solana",
-                exists: false,
-                status: "missing",
-                skippedReason: "missing",
-                fileCount: 0,
-                candidateCount: 0,
-                readyCandidateCount: 0,
-                roleReadiness: {
-                  sourceVerifierMaterial: {
-                    candidateCount: 0,
-                    readyCount: 0,
-                    ready: false,
-                  },
-                  sourceAdapterEngineDeployment: {
-                    candidateCount: 0,
-                    readyCount: 0,
-                    ready: false,
-                  },
-                },
-              },
-            ],
-          },
-        ],
-        missingProductionArtifactIds: [
-          "sibling-solana-governed-material-root",
-          "governed-solana-source-verifier-material",
-          "solana-destination-production-prover-package",
-        ],
-        readyMaterial: {
-          sourceVerifierMaterial: null,
-          sourceAdapterEngineDeployment: null,
-          offlineFullToml: null,
-          browserProvers: false,
-          browserProverModules: [
-            {
-              direction: "destination",
-              moduleUrl: "/sccp-solana/taira-solana-xor-destination-prover.js",
-              sidecarUrl:
-                "/sccp-solana/taira-solana-xor-destination-prover.sidecar.json",
-              moduleHash: hex32("d1"),
-              sidecarHash: hex32("d2"),
-              productionProofsReady: false,
-              ready: false,
-            },
-          ],
-          destinationProofAdmission: false,
-        },
-      },
-      publicLaneDiagnostics: [
-        {
-          ready: false,
-          publicationReady: false,
-          blockerIds: expect.arrayContaining([
-            "public-solana-source-material-placeholder",
-            "public-solana-source-state-verifier",
-          ]),
-          sourceVerifierMaterial: {
-            ready: false,
-            statusIds: ["placeholderMaterial", "sourceStateVerifierHash"],
-            recordHash: hex32("91"),
-          },
-        },
-      ],
-    });
-    expect(report.materialLocator).toEqual(
-      report.productionMaterialInventory.materialLocator,
-    );
-    expect(report.missingProductionInputIds).toEqual(
-      SOLANA_GOVERNED_PRODUCTION_INPUT_IDS,
-    );
-    expect(report.requiredProductionInputs.map((input) => input.id)).toEqual(
-      SOLANA_GOVERNED_PRODUCTION_INPUT_IDS,
-    );
-    expect(report.artifacts).toMatchObject({
-      deploymentVideoMp4:
-        "output/sccp-solana-deploy/sccp-solana-deployment-video.mp4",
-      deploymentVideoSubtitles:
-        "output/sccp-solana-deploy/sccp-solana-deployment-video.vtt",
-      deploymentVideoTranscript:
-        "output/sccp-solana-deploy/sccp-solana-deployment-video.json",
-      sourceBurnReadiness:
-        "output/sccp-solana-deploy/taira-solana-xor-source-burn-readiness.json",
-      sourceBurnSubmission:
-        "output/sccp-solana-deploy/taira-solana-xor-source-burn.submission.json",
-      proverReadiness:
-        "output/sccp-solana-deploy/taira-solana-xor-prover-readiness.json",
-      liveVideoTranscript: null,
-      liveVideoSubtitles: null,
-      liveVideoMp4: null,
-      blockedLiveVideoTranscript:
-        "output/sccp-solana-live-video/sccp-solana-live-video-blocked.json",
-      blockedLiveVideoSubtitles:
-        "output/sccp-solana-live-video/sccp-solana-live-video-blocked.vtt",
-      blockedLiveVideoMp4:
-        "output/sccp-solana-live-video/sccp-solana-live-video-blocked.mp4",
-    });
-    expect(report.liveVideoArtifactPolicy).toEqual({
-      liveVideoMp4RequiresReadyBidirectionalEvidence: true,
-      diagnosticVideoOnly: true,
-      blockedDiagnosticAvailable: true,
-    });
-    expect(report.mediaVerification).toEqual({
-      deploymentVideo: {
-        ready: true,
-        mp4SubtitleTrackReady: true,
-      },
-      liveVideo: {
-        ready: true,
-        diagnosticVideoOnly: true,
-      },
-    });
     expect(report.nextActions).toEqual(
       expect.arrayContaining([
-        "set-runtime-route-manager-private-key",
-        "configure-solana-walletconnect",
-        "publish-governed-solana-source-material",
-        "publish-taira-solana-route-manifest",
+        "enact-solana-route-governance",
         "complete-solana-smoke-readiness",
         "record-solana-live-bidirectional-video",
+        "rotate-revoke-remove-file-backed-solana-key-material",
       ]),
     );
-    expect(report.nextActionDetails).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "publish-governed-solana-source-material",
-          source: "production-requirements",
-          blockedBy: [{ id: "source-verifier-material" }],
-          command: [
-            "python3",
-            "../iroha/scripts/sccp_solana_source_state_evidence.py",
-            "--toml",
-          ],
-          requiredInputs: ["sourceTrustAnchorHash"],
-        }),
-        expect.objectContaining({
-          id: "complete-solana-smoke-readiness",
-          title: "Complete Solana smoke readiness",
-          command: ["npm", "run", "e2e:sccp:solana-smoke-readiness"],
-        }),
-        expect.objectContaining({
-          id: "record-solana-live-bidirectional-video",
-          title: "Record Solana live bidirectional video",
-          command: ["npm", "run", "e2e:sccp:solana-video"],
-        }),
-      ]),
+    expect(JSON.stringify(report)).not.toContain(
+      "runtime-secret-must-not-be-persisted",
     );
-    expect(report.runtimeInputs).toEqual({
-      routeManagerAuthorityConfigured: true,
-      routeManagerAuthorityEnv: "SCCP_TEST_ROUTE_MANAGER_AUTHORITY",
-      routeManagerPrivateKeyEnv: "SCCP_TEST_ROUTE_MANAGER_PRIVATE_KEY",
-      routeManagerPrivateKeyEnvPresent: true,
-      routeManagerPrivateKeyStoredInReport: false,
-      walletConnectProjectIdConfigured: true,
-      walletConnectProjectIdSource: null,
-      walletConnectProjectIdStoredInReport: false,
-      destinationProverModuleUrlConfigured: false,
-      destinationProverModuleUrlSource: null,
-      sourceProverModuleUrlConfigured: false,
-      sourceProverModuleUrlSource: null,
-    });
-    expect(JSON.stringify(report)).not.toContain("runtime-only-private-key");
-    expect(JSON.stringify(report)).not.toContain("walletconnect-project-123");
   });
 
   it("classifies prefixed Solana finish blockers by resolution path", () => {
@@ -18427,486 +18464,103 @@ offline_full_toml_sha256 = "${hex32("9c")}"
     ]);
   });
 
-  it("promotes hard Solana finish blockers into root causes", () => {
+  it("classifies every exact-three production-gate and capture blocker", () => {
+    const resolution = buildSolanaBlockerResolution([
+      "typed-registry-governance-enactment-required",
+      "governance-register-evidence",
+      "production-gate:governance-activate-evidence",
+      "governance-enactment-readback",
+      "governance-ordered-initialization-evidence",
+      "governance-phases-distinct",
+      "governance-plan-reviewed",
+      "route-registry-shape",
+      "preflight:sccp-registry-stability",
+      "sccp-registry-load",
+      "sccp-submit-capabilities",
+      "preflight:taira-chain-metadata",
+      "success-prerequisite:canonical-taira-validator-root",
+      "solana-exact-prover-governance-approval",
+      "public-exact-programdata-immutable",
+      "production-gate:public-exact-runtime-state",
+      "solana-live-exact-programdata-evidence",
+      "solana-live-exact-runtime-state",
+      "pre-live-input-reports-loaded",
+      "pre-live-input-snapshot-valid",
+      "solana-smoke-readiness",
+      "solana-live-bidirectional-video",
+      "success-prerequisite:fresh-production-gate-completed",
+      "success-prerequisite:fresh-production-prerequisites",
+      "success-prerequisite:fresh-public-preflight-completed",
+      "success-prerequisite:governance-pinned-taira-validator-root",
+      "success-prerequisite:pinned-production-gate-snapshot",
+      "success-prerequisite:pinned-real-live-capture",
+    ]);
+
+    expect(resolution.unknownBlockerIds).toEqual([]);
+    expect(resolution.governedProofMaterialBlockerIds).toContain(
+      "solana-exact-prover-governance-approval",
+    );
+    expect(resolution.unsafeToAutoFixBlockerIds).toEqual(
+      expect.arrayContaining([
+        "solana-exact-prover-governance-approval",
+        "solana-live-bidirectional-video",
+        "success-prerequisite:pinned-real-live-capture",
+      ]),
+    );
+  });
+
+  it("keeps exact finish root causes concise and filters retired publication actions", () => {
     const report = buildSolanaFinishProductionReportBody({
       submissionMode: dryRunFinishSubmissionMode,
-      checkedAt: "2026-07-06T00:00:00.000Z",
-      routePublishReadiness: {
-        readyToSubmitWithCurrentRuntime: false,
-        publicEndpoint: { routeAlreadyPublic: false },
-        blockerIds: ["route-manager-authority", "runtime-signing-key"],
+      publicPreflight: {
+        schema: "iroha-demo-sccp-solana-route-preflight/v2",
+        protocolSource: "typed-sccp-registry-v1",
+        manifestSource: "public-registry",
+        registryState: {
+          routePresent: true,
+          activation: "bidirectional",
+        },
       },
       smokeReadiness: {
         ready: false,
         blockerIds: ["destination-prover-module-url"],
         rootCauseBlockerIds: ["solana-destination-production-prover-package"],
+        missingProductionInputIds: ["walletconnect-project-id"],
       },
       productionRequirements: {
-        readyToBuildIsi: false,
-        blockerIds: [
-          "source-verifier-material",
-          "destination-proof-admission",
-          "production-gate:browser-proof-modules",
+        blockerIds: ["browser-prover-readiness"],
+        nextActionDetails: [
+          { id: "route-manager-access-request", command: ["retired"] },
+          {
+            id: "publish-governed-solana-source-material",
+            command: ["review-source-material"],
+          },
         ],
       },
       productionGate: {
         ready: false,
-        blockerIds: [
-          "production-gate:solana-verifier-fail-closed-canary",
-          "production-gate:program-finalization-fail-closed-sentinel",
-          "production-gate:token-mint-supply",
-        ],
+        governanceEvidence: { ready: true },
       },
-      liveVideo: {
-        ready: false,
-        blockerIds: ["source-token-balance", "live-bidirectional-video"],
-      },
+      liveVideo: { ready: false, diagnosticVideoOnly: true },
     });
 
     expect(report.rootCauseBlockerIds).toEqual(
       expect.arrayContaining([
-        "solana-public-route-report",
-        "route-manager-authority",
-        "runtime-signing-key",
         "solana-destination-production-prover-package",
-        "source-verifier-material",
-        "destination-proof-admission",
-        "browser-proof-modules",
-        "solana-verifier-fail-closed-canary",
-        "program-finalization-fail-closed-sentinel",
-        "token-mint-supply",
-        "source-token-balance",
-        "live-bidirectional-video",
+        "walletconnect-project-id",
       ]),
     );
     expect(report.rootCauseBlockerIds).not.toContain(
-      "production-gate:program-finalization-fail-closed-sentinel",
-    );
-    expect(report.blockerResolution.solanaVerifierBlockerIds).toEqual(
-      expect.arrayContaining([
-        "production-gate:solana-verifier-fail-closed-canary",
-        "production-gate:program-finalization-fail-closed-sentinel",
-      ]),
-    );
-  });
-
-  it("keeps Solana finish root causes concise when missing production inputs are explicit", () => {
-    const missingProductionInputIds = [
-      "governed-solana-source-verifier-material",
-      "governed-solana-source-adapter-engine-deployment",
-      "reviewed-final-solana-offline-toml",
-      "governed-solana-destination-proof-admission",
-      "solana-destination-production-prover-package",
-      "solana-source-production-prover-package",
-      "solana-public-route-report",
-      "walletconnect-project-id",
-    ];
-    const report = buildSolanaFinishProductionReportBody({
-      submissionMode: dryRunFinishSubmissionMode,
-      checkedAt: "2026-07-06T00:00:00.000Z",
-      smokeReadiness: {
-        ready: false,
-        blockerIds: [
-          "walletconnect-project-id",
-          "destination-prover-module-url",
-          "source-prover-module-url",
-        ],
-        rootCauseBlockerIds: [
-          "solana-destination-production-prover-package",
-          "solana-source-production-prover-package",
-        ],
-        missingProductionInputIds: [
-          "walletconnect-project-id",
-          "solana-destination-production-prover-package",
-          "solana-source-production-prover-package",
-        ],
-      },
-      productionRequirements: {
-        readyToBuildIsi: false,
-        blockerIds: [
-          "production-ready-flag",
-          "browser-proof-modules",
-          "source-verifier-material",
-          "source-adapter-engine-deployment",
-          "destination-proof-admission",
-          "solana-verifier-programdata-mutable",
-          "program-finalization-enforcement-mode",
-          "post-deploy-full-toml",
-        ],
-      },
-      productionGate: {
-        ready: false,
-        blockerIds: [
-          "production-gate:token-mint-supply",
-          "production-gate:source-token-balance",
-          "production-gate:live-bidirectional-video",
-        ],
-      },
-      operatorHandoff: {
-        readyToPublish: false,
-        missingProductionInputIds,
-        blockers: [{ id: "governed-proof-material" }],
-      },
-    });
-
-    expect(report.blockerIds).toEqual(
-      expect.arrayContaining([
-        "production-ready-flag",
-        "browser-proof-modules",
-        "source-verifier-material",
-        "program-finalization-enforcement-mode",
-        "production-gate:token-mint-supply",
-        "production-gate:live-bidirectional-video",
-      ]),
-    );
-    expect(report.rootCauseBlockerIds).toEqual(
-      expect.arrayContaining(missingProductionInputIds),
-    );
-    expect(report.rootCauseBlockerIds).not.toEqual(
-      expect.arrayContaining([
-        "production-ready-flag",
-        "browser-proof-modules",
-        "source-verifier-material",
-        "source-adapter-engine-deployment",
-        "destination-proof-admission",
-        "solana-verifier-programdata-mutable",
-        "program-finalization-enforcement-mode",
-        "post-deploy-full-toml",
-        "token-mint-supply",
-        "source-token-balance",
-        "live-bidirectional-video",
-      ]),
-    );
-  });
-
-  it("uses Solana smoke root-cause blockers instead of superseded prover URL blockers in finish reports", () => {
-    const report = buildSolanaFinishProductionReportBody({
-      submissionMode: dryRunFinishSubmissionMode,
-      checkedAt: "2026-07-06T00:00:00.000Z",
-      routePublishReadiness: {
-        readyToSubmitWithCurrentRuntime: false,
-        publicEndpoint: { routeAlreadyPublic: false },
-      },
-      smokeReadiness: {
-        ready: false,
-        checks: [
-          { id: "destination-prover-module-url", status: "fail" },
-          { id: "source-prover-module-url", status: "fail" },
-        ],
-        blockerIds: [
-          "destination-prover-module-url",
-          "source-prover-module-url",
-        ],
-        rootCauseBlockerIds: [
-          "solana-destination-production-prover-package",
-          "solana-source-production-prover-package",
-        ],
-      },
-      productionGate: { ready: false },
-      liveVideo: { ready: false },
-    });
-
-    expect(report.failedCheckIds).toEqual([]);
-    expect(report.blockerIds).toEqual(
-      expect.arrayContaining([
-        "solana-destination-production-prover-package",
-        "solana-source-production-prover-package",
-      ]),
-    );
-    expect(report.failedCheckIds).not.toContain(
       "destination-prover-module-url",
     );
-    expect(report.failedCheckIds).not.toContain("source-prover-module-url");
-    expect(report.blockerIds).not.toContain("destination-prover-module-url");
-    expect(report.blockerIds).not.toContain("source-prover-module-url");
-    expect(report.blockerResolution).toMatchObject({
-      runtimeInputBlockerIds: [],
-      governedProofMaterialBlockerIds: expect.arrayContaining([
-        "solana-destination-production-prover-package",
-        "solana-source-production-prover-package",
-      ]),
-    });
+    expect(report.nextActions).toContain(
+      "publish-governed-solana-source-material",
+    );
+    expect(report.nextActions).not.toContain("route-manager-access-request");
+    expect(JSON.stringify(report.nextActionDetails)).not.toContain("retired");
   });
 
-  it("preserves delegated public-node repair actions in Solana finish reports", () => {
-    const report = buildSolanaFinishProductionReportBody({
-      submissionMode: dryRunFinishSubmissionMode,
-      checkedAt: "2026-07-06T00:00:00.000Z",
-      routePublishReadiness: {
-        readyToSubmitWithCurrentRuntime: false,
-        publicEndpoint: {
-          endpointReady: false,
-          mcpTransactionTools: { ready: false },
-          routeAlreadyPublic: false,
-          publicationChecks: [],
-        },
-        blockers: [{ id: "taira-explicit-public-node-target" }],
-        nextActionDetails: [
-          {
-            id: "provide-explicit-taira-public-node-target",
-            title: "Provide explicit TAIRA public node",
-            detail:
-              "Repair and use the exact TAIRA public-node root and matching /v1/mcp endpoint.",
-            blockedBy: [
-              {
-                id: "taira-explicit-public-node-target",
-                detail: "Direct validator endpoint is not ready.",
-              },
-            ],
-            command: [
-              "npm",
-              "run",
-              "sccp:solana:deploy",
-              "--",
-              "publish-readiness",
-            ],
-            validationCommands: [
-              ["dig", "+short", "taira-validator-1.sora.org"],
-            ],
-            delegatedActions: [
-              {
-                id: "publish-direct-validator-dns-records",
-                title: "Publish direct validator DNS records",
-                command: ["dig", "+short", "taira-validator-1.sora.org"],
-                requiredInputs: ["taira-edge-dns-zone-access"],
-              },
-            ],
-            requiredInputs: [
-              {
-                id: "taira-public-node-root-url",
-                kind: "url",
-                argument: "--torii-url",
-              },
-            ],
-          },
-        ],
-      },
-      smokeReadiness: { ready: true },
-      productionGate: { ready: false },
-      liveVideo: { ready: false },
-    });
-
-    expect(report.nextActionDetails).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "provide-explicit-taira-public-node-target",
-          validationCommands: [["dig", "+short", "taira-validator-1.sora.org"]],
-          delegatedActions: [
-            expect.objectContaining({
-              id: "publish-direct-validator-dns-records",
-              command: ["dig", "+short", "taira-validator-1.sora.org"],
-              requiredInputIds: ["taira-edge-dns-zone-access"],
-            }),
-          ],
-          requiredInputIds: ["taira-public-node-root-url"],
-        }),
-      ]),
-    );
-  });
-
-  it("normalizes Solana finish proof-material blocker actions into executable governed-material steps", () => {
-    const report = buildSolanaFinishProductionReportBody({
-      submissionMode: dryRunFinishSubmissionMode,
-      checkedAt: "2026-07-06T00:00:00.000Z",
-      routePublishReadiness: {
-        readyToSubmitWithCurrentRuntime: false,
-        publicEndpoint: {
-          endpointReady: true,
-          mcpTransactionTools: readyMcpTransactionTools(),
-          routeAlreadyPublic: false,
-          publicationChecks: [],
-        },
-        blockers: [{ id: "proof-material-bundle" }],
-      },
-      smokeReadiness: { ready: true },
-      productionRequirements: {
-        readyToBuildIsi: false,
-        blockers: [{ id: "proof-material-bundle" }],
-      },
-      productionGate: { ready: false },
-      liveVideo: {
-        ready: false,
-        diagnosticVideoOnly: true,
-        nextActionDetails: [
-          {
-            id: "operator:proof-material-bundle",
-            title: "proof-material-bundle",
-            blockedBy: [{ id: "proof-material-bundle" }],
-          },
-        ],
-      },
-      activationPackage: {
-        productionActivationReady: false,
-      },
-      operatorHandoff: {
-        readyToPublish: false,
-        blockers: [{ id: "proof-material-bundle" }],
-        nextActions: ["proof-material-bundle"],
-      },
-    });
-
-    expect(report.nextActions).not.toEqual(
-      expect.arrayContaining([
-        "proof-material-bundle",
-        "operator:proof-material-bundle",
-      ]),
-    );
-    expect(report.nextActionDetails).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "operator:complete-governed-proof-material-and-production-manifest",
-          title: "Complete governed proof material",
-          command: [
-            "npm",
-            "run",
-            "sccp:solana:deploy",
-            "--",
-            "proof-material-ceremony-package",
-          ],
-        }),
-        expect.objectContaining({
-          id: "complete-governed-proof-material-and-production-manifest",
-          title: "Complete governed proof material",
-          command: [
-            "npm",
-            "run",
-            "sccp:solana:deploy",
-            "--",
-            "proof-material-ceremony-package",
-          ],
-        }),
-      ]),
-    );
-    expect(
-      report.nextActionDetails
-        .filter((action) =>
-          action.id.includes("complete-governed-proof-material"),
-        )
-        .every((action) => action.command.length > 0),
-    ).toBe(true);
-  });
-
-  it("carries post-deploy full TOML hash actions into Solana finish reports", () => {
-    const report = buildSolanaFinishProductionReportBody({
-      submissionMode: dryRunFinishSubmissionMode,
-      checkedAt: "2026-07-06T00:00:00.000Z",
-      routePublishReadiness: {
-        readyToSubmitWithCurrentRuntime: false,
-        publicEndpoint: {
-          endpointReady: true,
-          mcpTransactionTools: readyMcpTransactionTools(),
-          routeAlreadyPublic: false,
-          publicationChecks: [],
-        },
-      },
-      smokeReadiness: { ready: true },
-      productionRequirements: { readyToBuildIsi: false },
-      postDeployFullToml: {
-        ready: false,
-        blockerIds: [
-          "sourceVerifierMaterialHash",
-          "sourceAdapterEngineDeploymentHash",
-          "routeAllowlistHash",
-        ],
-        nextActionDetails: [
-          {
-            id: "provide-sourceVerifierMaterialHash",
-            blockedBy: [{ id: "sourceVerifierMaterialHash" }],
-            command: [
-              "python3",
-              "../iroha/scripts/sccp_solana_source_state_evidence.py",
-              "--toml",
-            ],
-            requiredInputs: ["sourceTrustAnchorHash"],
-          },
-          {
-            id: "provide-sourceAdapterEngineDeploymentHash",
-            blockedBy: [{ id: "sourceAdapterEngineDeploymentHash" }],
-            command: [
-              "python3",
-              "../iroha/scripts/sccp_solana_source_state_evidence.py",
-              "--toml",
-            ],
-            requiredInputs: ["deploymentReceiptHash"],
-          },
-          {
-            id: "provide-routeAllowlistHash",
-            blockedBy: [{ id: "routeAllowlistHash" }],
-            command: [
-              "npm",
-              "run",
-              "sccp:solana:deploy",
-              "--",
-              "route-allowlist-hash",
-            ],
-            requiredInputs: ["sourceVerifierMaterialHash"],
-          },
-        ],
-      },
-      productionGate: { ready: false },
-      liveVideo: { ready: false },
-      activationPackage: { productionActivationReady: false },
-      operatorHandoff: { readyToPublish: false },
-    });
-
-    expect(report.blockerIds).toEqual(
-      expect.arrayContaining([
-        "source-verifier-material-hash",
-        "source-adapter-engine-deployment-hash",
-        "route-allowlist-hash",
-      ]),
-    );
-    expect(report.nextActions).toEqual(
-      expect.arrayContaining([
-        "provide-source-verifier-material-hash",
-        "provide-source-adapter-engine-deployment-hash",
-        "provide-route-allowlist-hash",
-      ]),
-    );
-    expect(report.nextActionDetails).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "provide-source-verifier-material-hash",
-          source: "post-deploy-full-toml",
-          blockedBy: [{ id: "source-verifier-material-hash" }],
-          command: [
-            "python3",
-            "../iroha/scripts/sccp_solana_source_state_evidence.py",
-            "--toml",
-          ],
-          requiredInputs: expect.arrayContaining(["sourceTrustAnchorHash"]),
-        }),
-        expect.objectContaining({
-          id: "provide-source-adapter-engine-deployment-hash",
-          source: "post-deploy-full-toml",
-          blockedBy: [{ id: "source-adapter-engine-deployment-hash" }],
-          command: [
-            "python3",
-            "../iroha/scripts/sccp_solana_source_state_evidence.py",
-            "--toml",
-          ],
-          requiredInputs: expect.arrayContaining(["deploymentReceiptHash"]),
-        }),
-        expect.objectContaining({
-          id: "provide-route-allowlist-hash",
-          source: "post-deploy-full-toml",
-          blockedBy: [{ id: "route-allowlist-hash" }],
-          command: [
-            "npm",
-            "run",
-            "sccp:solana:deploy",
-            "--",
-            "route-allowlist-hash",
-          ],
-          requiredInputs: expect.arrayContaining([
-            "source-verifier-material-hash",
-          ]),
-        }),
-      ]),
-    );
-  });
-
-  it("normalizes legacy blocked Solana live-video paths away from live evidence artifacts", () => {
+  it("removes blocked diagnostics from live-evidence slots without synthesizing artifacts", () => {
     const report = buildSolanaFinishProductionReportBody({
       submissionMode: dryRunFinishSubmissionMode,
       checkedAt: "2026-07-06T00:00:00.000Z",
@@ -18932,17 +18586,12 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       liveVideoTranscript: null,
       liveVideoSubtitles: null,
       liveVideoMp4: null,
-      blockedLiveVideoTranscript:
-        "output/sccp-solana-live-video/sccp-solana-live-video-blocked.json",
-      blockedLiveVideoSubtitles:
-        "output/sccp-solana-live-video/sccp-solana-live-video-blocked.vtt",
-      blockedLiveVideoMp4:
-        "output/sccp-solana-live-video/sccp-solana-live-video-blocked.mp4",
     });
+    expect(report.artifacts).not.toHaveProperty("blockedLiveVideoMp4");
     expect(report.liveVideoArtifactPolicy).toEqual({
       liveVideoMp4RequiresReadyBidirectionalEvidence: true,
       diagnosticVideoOnly: true,
-      blockedDiagnosticAvailable: true,
+      blockedDiagnosticAvailable: false,
     });
 
     const preclassified = buildSolanaFinishProductionReportBody({
@@ -18982,7 +18631,7 @@ offline_full_toml_sha256 = "${hex32("9c")}"
     });
   });
 
-  it("marks Solana production finish ready only after route publication, smoke, production, and live video gates pass", () => {
+  it("marks Solana production finish ready only after exact registry, governance, smoke, gate, and live video pass", () => {
     const report = buildSolanaFinishProductionReportBody({
       submissionMode: {
         mode: "submit",
@@ -18994,30 +18643,34 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       checkedAt: "2026-07-06T00:00:00.000Z",
       steps: [
         {
-          name: "publish-route-manifest",
+          name: "exact-registry-readback",
           ok: true,
           ready: true,
           schema: null,
           failedCheckIds: [],
           blockerIds: [],
           paths: {
-            submissionPath:
-              "output/sccp-solana-deploy/taira-solana-xor-route.submission.json",
+            preflightPath:
+              "output/sccp-solana-deploy/sccp-solana-route-preflight.json",
           },
         },
       ],
-      routePublishReadiness: {
-        readyToSubmitWithCurrentRuntime: true,
-        publicEndpoint: { routeAlreadyPublic: false },
-        blockers: [],
-      },
-      publishResult: {
-        submitted: true,
-        submissionPath:
-          "output/sccp-solana-deploy/taira-solana-xor-route.submission.json",
+      publicPreflight: {
+        schema: "iroha-demo-sccp-solana-route-preflight/v2",
+        protocolSource: "typed-sccp-registry-v1",
+        manifestSource: "public-registry",
+        registryState: {
+          routePresent: true,
+          activation: "bidirectional",
+        },
       },
       smokeReadiness: { ready: true, checks: [], blockerIds: [] },
-      productionGate: { ready: true, failedCheckIds: [], blockerIds: [] },
+      productionGate: {
+        ready: true,
+        failedCheckIds: [],
+        blockerIds: [],
+        governanceEvidence: { ready: true },
+      },
       liveVideo: { ready: true },
       activationPackage: { productionActivationReady: true, blockers: [] },
       operatorHandoff: { readyToPublish: true, blockers: [] },
@@ -19056,8 +18709,10 @@ offline_full_toml_sha256 = "${hex32("9c")}"
         mutationSubmitted: true,
       },
     });
-    expect(report.routePublishedOrSubmitted).toBe(true);
-    expect(report.routePublicationSubmitted).toBe(true);
+    expect(report.exactTypedRegistry).toMatchObject({
+      ready: true,
+      activation: "bidirectional",
+    });
     expect(report.smokeReadinessReady).toBe(true);
     expect(report.productionGateReady).toBe(true);
     expect(report.liveVideoReady).toBe(true);
@@ -19083,13 +18738,22 @@ offline_full_toml_sha256 = "${hex32("9c")}"
     const report = buildSolanaFinishProductionReportBody({
       submissionMode: dryRunFinishSubmissionMode,
       requiredMutationIds: [],
-      routePublishReadiness: {
-        readyToSubmitWithCurrentRuntime: true,
-        publicEndpoint: { routeAlreadyPublic: true },
-        blockers: [],
+      publicPreflight: {
+        schema: "iroha-demo-sccp-solana-route-preflight/v2",
+        protocolSource: "typed-sccp-registry-v1",
+        manifestSource: "public-registry",
+        registryState: {
+          routePresent: true,
+          activation: "bidirectional",
+        },
       },
       smokeReadiness: { ready: true, checks: [], blockerIds: [] },
-      productionGate: { ready: true, failedCheckIds: [], blockerIds: [] },
+      productionGate: {
+        ready: true,
+        failedCheckIds: [],
+        blockerIds: [],
+        governanceEvidence: { ready: true },
+      },
       liveVideo: { ready: true },
       activationPackage: { productionActivationReady: true, blockers: [] },
       operatorHandoff: { readyToPublish: true, blockers: [] },
@@ -19165,20 +18829,29 @@ offline_full_toml_sha256 = "${hex32("9c")}"
       checkedAt: "2026-07-10T00:00:00.000Z",
       steps: [
         {
-          name: "program-finalization",
+          name: "ordered-initialization-evidence",
           ok: false,
           ready: false,
           failedCheckIds: [],
           blockerIds: [],
         },
       ],
-      routePublishReadiness: {
-        readyToSubmitWithCurrentRuntime: true,
-        publicEndpoint: { routeAlreadyPublic: true },
-        blockers: [],
+      publicPreflight: {
+        schema: "iroha-demo-sccp-solana-route-preflight/v2",
+        protocolSource: "typed-sccp-registry-v1",
+        manifestSource: "public-registry",
+        registryState: {
+          routePresent: true,
+          activation: "bidirectional",
+        },
       },
       smokeReadiness: { ready: true, checks: [], blockerIds: [] },
-      productionGate: { ready: true, failedCheckIds: [], blockerIds: [] },
+      productionGate: {
+        ready: true,
+        failedCheckIds: [],
+        blockerIds: [],
+        governanceEvidence: { ready: true },
+      },
       liveVideo: { ready: true },
       activationPackage: { productionActivationReady: true, blockers: [] },
       operatorHandoff: { readyToPublish: true, blockers: [] },
@@ -19190,13 +18863,13 @@ offline_full_toml_sha256 = "${hex32("9c")}"
 
     expect(report).toMatchObject({
       ready: false,
-      routePublishedOrSubmitted: true,
+      exactTypedRegistry: { ready: true },
       smokeReadinessReady: true,
       productionGateReady: true,
       liveVideoReady: true,
-      failedStepIds: ["program-finalization"],
+      failedStepIds: ["ordered-initialization-evidence"],
     });
-    expect(report.blockerIds).toContain("program-finalization");
+    expect(report.blockerIds).toContain("ordered-initialization-evidence");
   });
 
   it("never reports a successful production finish with unresolved checks or blockers", () => {

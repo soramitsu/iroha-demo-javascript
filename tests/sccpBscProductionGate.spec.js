@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { deflateSync } from "node:zlib";
-import { SCCP_ETH_NATIVE_EVM_PROVER_REQUIRED_IMPLEMENTATIONS_V1 } from "@iroha/iroha-js/sccp";
+import { SCCP_ETH_NATIVE_EVM_PROVER_REQUIRED_IMPLEMENTATIONS_V1 } from "@/legacy/sccpLegacySdk";
 import { describe, expect, it } from "vitest";
 import {
   BSC_TAIRA_CHAIN_ID,

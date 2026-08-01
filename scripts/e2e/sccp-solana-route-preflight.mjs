@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /* global BigInt */
 import { blake2b } from "@noble/hashes/blake2b";
+import { keccak_256 } from "@noble/hashes/sha3";
 import { PublicKey } from "@solana/web3.js";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -10,17 +11,37 @@ import {
   readStableJsonFile,
   writeAtomicJsonFile,
 } from "./sccp-solana-report-io.mjs";
+import {
+  SOLANA_SCCP_REGISTRY_PATH,
+  canonicalSccpRegistrySha256,
+  inspectExactSolanaRegistryState,
+  selectExactSolanaRegistryRoute,
+  summarizeExactSolanaRegistryRoute,
+  validateExactSolanaSccpCapabilities,
+} from "./sccp-solana-exact-registry.mjs";
 
 export const DEFAULT_TAIRA_TORII_URL = "https://taira.sora.org";
 export const DEFAULT_SOLANA_TESTNET_RPC_URL = "https://api.testnet.solana.com";
 export const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
-export const TAIRA_CHAIN_ID = "809574f5-fee7-5e69-bfcf-52451e42d50f";
+export const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 export const TAIRA_NETWORK_PREFIX = 369;
 export const SCCP_SOLANA_XOR_ROUTE_ID = "taira_sol_xor";
 export const SCCP_XOR_ASSET_KEY = "xor";
+const TAIRA_CHAIN_METADATA_PATHS = Object.freeze([
+  "/v1/chain/metadata",
+  "/chain/metadata",
+  "/v1/network/metadata",
+  "/network/metadata",
+  "/v1/network",
+  "/network",
+  "/v1/explorer/network",
+  "/explorer/network",
+  "/v1/explorer/chain",
+  "/explorer/chain",
+]);
 export const SCCP_SORA_DOMAIN = 0;
 export const SCCP_SOLANA_DOMAIN = 3;
-export const SCCP_CODEC_SOLANA_BASE58 = 3;
+export const SCCP_CODEC_SOLANA_PUBKEY32 = 6;
 export const SOLANA_TESTNET_NETWORK_ID = "solana-testnet";
 export const SOLANA_TESTNET_CAIP_REFERENCE = "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3z";
 export const SOLANA_TESTNET_CAIP_CHAIN_ID = `solana:${SOLANA_TESTNET_CAIP_REFERENCE}`;
@@ -30,16 +51,16 @@ export const SOLANA_TESTNET_GENESIS_HASH =
 export const SOLANA_PRODUCTION_ADMISSION_MODE = "governed-zk-verifier-v1";
 export const SOLANA_PRODUCTION_VERIFIER_ENFORCEMENT_MODE =
   "native-recursive-verifier-v1";
-export const SOLANA_DESTINATION_PROOF_SYSTEM = "stark-fri-v1";
+export const SOLANA_DESTINATION_PROOF_SYSTEM = "groth16-bn254-v1";
 export const SOLANA_SUBMIT_ENTRYPOINT = "submit_sccp_message_proof";
-export const SOLANA_DESTINATION_PROOF_BACKEND = "solana-program-v1";
-export const SOLANA_SOURCE_PROOF_BACKEND = "sccp-solana-recursive-testnet-v1";
+export const SOLANA_DESTINATION_PROOF_BACKEND = "solana-groth16-bn254-v1";
+export const SOLANA_SOURCE_PROOF_BACKEND = "solana-groth16-bn254-v1";
 export const SOLANA_DESTINATION_VERIFIER_PLAN = "SolanaProgramNativeRecursive";
 export const SOLANA_VERIFIER_TARGET = "SolanaProgram";
 export const SOLANA_SOURCE_PROOF_PLAN = "SolanaFinalizedTransactionProof";
 export const SOLANA_SOURCE_FINALITY_MODEL = "SolanaFinalizedSlot";
 export const SOLANA_SOURCE_ADAPTER_CIRCUIT_ID = "sccp-source-adapter-v1";
-export const SOLANA_SOURCE_ADAPTER_PROOF_FAMILY = "stark-fri-v1";
+export const SOLANA_SOURCE_ADAPTER_PROOF_FAMILY = "groth16-bn254-v1";
 export const SOLANA_TESTNET_SOURCE_PROFILE = Object.freeze({
   sourceTrustAnchorId: "sccp:sol:source-trust-anchor:solana-testnet-genesis:v1",
   consensusVerifierId:
@@ -55,12 +76,42 @@ export const SOLANA_UPGRADEABLE_LOADER_ID =
 export const SOLANA_UPGRADEABLE_PROGRAM_TAG = 2;
 export const SOLANA_UPGRADEABLE_PROGRAMDATA_TAG = 3;
 export const SOLANA_PROGRAMDATA_METADATA_LEN = 45;
+export const SOLANA_SBPF_E_FLAGS_OFFSET = 48;
+export const SOLANA_SBPF_V3_E_FLAGS = 3;
+export const SOLANA_SBPF_V3 = "V3";
 export const SOLANA_SPL_TOKEN_PROGRAM_ID =
   "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 export const SCCP_SOLANA_STATE_MAGIC = "SCCPSOL1";
 export const SCCP_SOLANA_STATE_LEN = 272;
 export const SCCP_SOLANA_MINT_AUTHORITY_SEED = "sccp-taira-xor-mint-authority";
 export const SCCP_SOLANA_TOKEN_DECIMALS = 9;
+
+// Exact first-release runtime ABI. Keep these constants aligned with
+// solana/sccp-taira-xor and solana/sccp-native-recursive-verifier. The older
+// SCCPSOL1 parser below remains only for local-manifest migration diagnostics.
+export const SCCP_SOLANA_EXACT_ROUTE_STATE_MAGIC = "SCCPRT01";
+export const SCCP_SOLANA_EXACT_ROUTE_STATE_LEN = 400;
+export const SCCP_SOLANA_EXACT_MATERIAL_MAGIC = "SCCPMAT1";
+export const SCCP_SOLANA_EXACT_MATERIAL_HEADER_LEN = 768;
+export const SCCP_SOLANA_EXACT_VERIFYING_KEY_LEN = 38 * 32;
+export const SCCP_SOLANA_EXACT_MATERIAL_LEN =
+  SCCP_SOLANA_EXACT_MATERIAL_HEADER_LEN + SCCP_SOLANA_EXACT_VERIFYING_KEY_LEN;
+export const SCCP_SOLANA_EXACT_VERIFY_AUTHORITY_SEED =
+  "sccp-verify-authority-v1";
+export const SCCP_SOLANA_EXACT_MINT_AUTHORITY_SEED = "sccp-mint-authority-v1";
+export const SCCP_SOLANA_EXACT_MATERIAL_SEED = "sccp-vk-v1";
+export const SCCP_SOLANA_EXACT_PUBLIC_SIGNAL_SCHEMA_HASH =
+  "0x7567439f41173d6745a3d51923cb70371acc7d66f23cefb4100d6d5d7a432cbb";
+
+const SCCP_SOLANA_EXACT_TAIRA_CHAIN_BYTES = Uint8Array.from(
+  Buffer.from("fc56984b2be7431d840e21514d1883f0", "hex"),
+);
+const SCCP_SOLANA_EXACT_GENESIS_BYTES = Uint8Array.from(
+  Buffer.from(
+    "3a132ece10305ec1830725502fa2b7e7eb8157e9123d4c1f654a71787161dc21",
+    "hex",
+  ),
+);
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -541,6 +592,8 @@ export const fetchJson = async (url, options = {}) => {
             date: response.headers.get("date"),
             etag: response.headers.get("etag"),
             irohaBlockHeight: response.headers.get("x-iroha-block-height"),
+            irohaChainId: response.headers.get("x-iroha-chain-id"),
+            irohaNetworkPrefix: response.headers.get("x-iroha-network-prefix"),
             ledgerHeight: response.headers.get("x-ledger-height"),
             irohaStateHash: response.headers.get("x-iroha-state-hash"),
             via: response.headers.get("via"),
@@ -591,6 +644,136 @@ const preflightFetchOptions = (options = {}) => {
 
 const fetchToriiJson = async (toriiUrl, pathName, options = {}) =>
   fetchJson(`${toriiUrl}${pathName}`, { attempts: 3, ...options });
+
+const collectExactMetadataValues = (value, keys, depth = 0) => {
+  if (depth > 8 || value === null || typeof value !== "object") {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) =>
+      collectExactMetadataValues(entry, keys, depth + 1),
+    );
+  }
+  const values = [];
+  for (const [key, child] of Object.entries(value)) {
+    if (
+      keys.has(key) &&
+      (typeof child === "string" || typeof child === "number")
+    ) {
+      values.push(child);
+    }
+    values.push(...collectExactMetadataValues(child, keys, depth + 1));
+  }
+  return values;
+};
+
+const normalizeObservedNetworkPrefix = (value) => {
+  const normalized = typeof value === "string" ? value.trim() : value;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= 0x3fff
+    ? parsed
+    : null;
+};
+
+export const readExactTairaChainMetadata = async (
+  toriiUrl,
+  fetchOptions = {},
+) => {
+  const cacheBypassHeaders = {
+    "cache-control": "no-cache, no-store, max-age=0",
+    pragma: "no-cache",
+  };
+  const responses = await Promise.allSettled(
+    TAIRA_CHAIN_METADATA_PATHS.map(async (pathName) => ({
+      pathName,
+      response: await fetchToriiJson(toriiUrl, pathName, {
+        ...fetchOptions,
+        headers: cacheBypassHeaders,
+        includeResponseMetadata: true,
+      }),
+    })),
+  );
+  const chainIds = [];
+  const networkPrefixes = [];
+  const sources = [];
+  const readErrors = [];
+  for (const result of responses) {
+    if (result.status === "rejected") {
+      const status = Number(result.reason?.status);
+      if (![404, 405].includes(status)) {
+        readErrors.push(
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason),
+        );
+      }
+      continue;
+    }
+    const { pathName, response } = result.value;
+    const bodyChainIds = collectExactMetadataValues(
+      response.body,
+      new Set(["chainId", "chain_id", "chain_id_hex"]),
+    );
+    const bodyNetworkPrefixes = collectExactMetadataValues(
+      response.body,
+      new Set([
+        "networkPrefix",
+        "network_prefix",
+        "addressPrefix",
+        "address_prefix",
+        "chainDiscriminant",
+        "chain_discriminant",
+      ]),
+    );
+    const headerChainId = response.responseMetadata.irohaChainId;
+    const headerNetworkPrefix = response.responseMetadata.irohaNetworkPrefix;
+    chainIds.push(...bodyChainIds, ...(headerChainId ? [headerChainId] : []));
+    networkPrefixes.push(
+      ...bodyNetworkPrefixes,
+      ...(headerNetworkPrefix ? [headerNetworkPrefix] : []),
+    );
+    if (
+      bodyChainIds.length > 0 ||
+      bodyNetworkPrefixes.length > 0 ||
+      headerChainId ||
+      headerNetworkPrefix
+    ) {
+      sources.push({
+        path: pathName,
+        responseMetadata: response.responseMetadata,
+      });
+    }
+  }
+  const normalizedChainIds = new Set(
+    chainIds.map((value) => String(value).trim()).filter(Boolean),
+  );
+  const invalidNetworkPrefixes = networkPrefixes.filter(
+    (value) => normalizeObservedNetworkPrefix(value) === null,
+  );
+  const normalizedNetworkPrefixes = new Set(
+    networkPrefixes
+      .map(normalizeObservedNetworkPrefix)
+      .filter((value) => value !== null),
+  );
+  if (
+    normalizedChainIds.size !== 1 ||
+    normalizedNetworkPrefixes.size !== 1 ||
+    invalidNetworkPrefixes.length > 0
+  ) {
+    const suffix = readErrors.length > 0 ? ` (${readErrors[0]})` : "";
+    throw new Error(
+      `TAIRA endpoint must expose one unambiguous chain id and network prefix${suffix}.`,
+    );
+  }
+  const chainId = [...normalizedChainIds][0];
+  const networkPrefix = [...normalizedNetworkPrefixes][0];
+  if (chainId !== TAIRA_CHAIN_ID || networkPrefix !== TAIRA_NETWORK_PREFIX) {
+    throw new Error(
+      `TAIRA endpoint chain metadata is ${chainId} / ${networkPrefix}, expected ${TAIRA_CHAIN_ID} / ${TAIRA_NETWORK_PREFIX}.`,
+    );
+  }
+  return Object.freeze({ chainId, networkPrefix, sources });
+};
 
 const tairaFinalizedHeight = (status) => {
   for (const value of [
@@ -807,7 +990,7 @@ export const parseUpgradeableProgramDataAccountData = (bytes) => {
   }
   const executableBytes = data.subarray(SOLANA_PROGRAMDATA_METADATA_LEN);
   if (
-    executableBytes.length < 4 ||
+    executableBytes.length < SOLANA_SBPF_E_FLAGS_OFFSET + 4 ||
     executableBytes[0] !== 0x7f ||
     executableBytes[1] !== 0x45 ||
     executableBytes[2] !== 0x4c ||
@@ -815,13 +998,21 @@ export const parseUpgradeableProgramDataAccountData = (bytes) => {
   ) {
     throw new Error("Solana ProgramData executable must be a BPF ELF.");
   }
+  const sbpfEFlags = readLeU32(executableBytes, SOLANA_SBPF_E_FLAGS_OFFSET);
+  if (sbpfEFlags !== SOLANA_SBPF_V3_E_FLAGS) {
+    throw new Error("Solana ProgramData executable must be exact SBPF V3.");
+  }
   return {
     slot,
     metadataHash: solanaExecutableBlake2b256(
       data.subarray(0, SOLANA_PROGRAMDATA_METADATA_LEN),
     ),
     executableHash: solanaExecutableBlake2b256(executableBytes),
+    artifactSha256: `0x${createHash("sha256")
+      .update(executableBytes)
+      .digest("hex")}`,
     executableLength: executableBytes.length,
+    sbpfVersion: SOLANA_SBPF_V3,
   };
 };
 
@@ -889,6 +1080,485 @@ export const parseSccpSolanaVerifierStateData = (bytes) => {
       ? null
       : bytesToHex32(lastBurnHashBytes, "last burn hash"),
   };
+};
+
+const readLeU16 = (bytes, offset) =>
+  Number(BigInt(bytes[offset] ?? 0) | (BigInt(bytes[offset + 1] ?? 0) << 8n));
+
+const exactAscii = (bytes, start, end, label) => {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(
+      bytes.subarray(start, end),
+    );
+  } catch {
+    throw new Error(`${label} is not canonical UTF-8.`);
+  }
+};
+
+const requireZeroBytes = (bytes, start, end, label) => {
+  if (bytes.subarray(start, end).some((byte) => byte !== 0)) {
+    throw new Error(`${label} must be zero-filled.`);
+  }
+};
+
+const exactPubkeyAt = (bytes, offset, label) => {
+  const value = bytes.subarray(offset, offset + 32);
+  if (value.length !== 32 || value.every((byte) => byte === 0)) {
+    throw new Error(`${label} must be a non-zero 32-byte public key.`);
+  }
+  return base58Encode(value);
+};
+
+const exactHashAt = (bytes, offset, label) =>
+  bytesToHex32(bytes.subarray(offset, offset + 32), label);
+
+const distinctExactValues = (values, label) => {
+  if (new Set(values).size !== values.length) {
+    throw new Error(`${label} must be role-separated.`);
+  }
+};
+
+/** Parse the exact SCCPRT01 destination/source state account ABI. */
+export const parseExactSccpSolanaRouteStateData = (bytes) => {
+  const data = Uint8Array.from(bytes);
+  if (data.length !== SCCP_SOLANA_EXACT_ROUTE_STATE_LEN) {
+    throw new Error(
+      `Exact SCCP Solana route state must be ${SCCP_SOLANA_EXACT_ROUTE_STATE_LEN} bytes.`,
+    );
+  }
+  if (
+    Buffer.from(data.subarray(0, 8)).toString("ascii") !==
+    SCCP_SOLANA_EXACT_ROUTE_STATE_MAGIC
+  ) {
+    throw new Error("Exact SCCP Solana route state magic is invalid.");
+  }
+  if (data[8] !== 1) {
+    throw new Error("Exact SCCP Solana route state version is unsupported.");
+  }
+  if (data[9] !== 1 && data[9] !== 2) {
+    throw new Error(
+      "Exact SCCP Solana route state role must be destination or source.",
+    );
+  }
+  const routeRevision = readLeU32(data, 12);
+  if (routeRevision !== 1) {
+    throw new Error("Exact SCCP Solana route state revision must be 1.");
+  }
+  const hashes = {
+    destinationBindingHash: exactHashAt(
+      data,
+      176,
+      "route-state destination binding hash",
+    ),
+    routeConfigurationHash: exactHashAt(
+      data,
+      208,
+      "route-state configuration hash",
+    ),
+    verifierKeyHash: exactHashAt(data, 240, "route-state verifier key hash"),
+    verifierConfigHash: exactHashAt(
+      data,
+      272,
+      "route-state verifier config hash",
+    ),
+    sourceLaneHash: exactHashAt(data, 304, "route-state source lane hash"),
+    destinationLaneHash: exactHashAt(
+      data,
+      336,
+      "route-state destination lane hash",
+    ),
+  };
+  distinctExactValues(Object.values(hashes), "Exact route-state hash roles");
+  const expectedLaneHashes = deriveExactSccpSolanaRuntimeLaneHashes();
+  if (
+    hashes.sourceLaneHash !== expectedLaneHashes.sourceLaneHash ||
+    hashes.destinationLaneHash !== expectedLaneHashes.destinationLaneHash
+  ) {
+    throw new Error("Exact SCCP Solana route-state lane hashes are invalid.");
+  }
+  return Object.freeze({
+    magic: SCCP_SOLANA_EXACT_ROUTE_STATE_MAGIC,
+    version: 1,
+    role: data[9],
+    verifyBump: data[10],
+    mintBump: data[11],
+    routeRevision,
+    mint: exactPubkeyAt(data, 16, "route-state mint"),
+    peerProgram: exactPubkeyAt(data, 48, "route-state peer program"),
+    destinationState: exactPubkeyAt(data, 80, "route-state destination state"),
+    verifierProgram: exactPubkeyAt(data, 112, "route-state verifier program"),
+    material: exactPubkeyAt(data, 144, "route-state verifier material"),
+    ...hashes,
+    totalMinted: readLeU64String(data, 368),
+    totalBurned: readLeU64String(data, 376),
+    lastSlot: readLeU64String(data, 384),
+    operationCount: readLeU64String(data, 392),
+  });
+};
+
+/** Parse the exact classic SPL Token mint ABI required by SCCPRT01. */
+export const parseExactSccpSolanaMintData = (bytes) => {
+  const data = Uint8Array.from(bytes);
+  if (data.length !== 82) {
+    throw new Error("Exact SCCP Solana SPL mint must be exactly 82 bytes.");
+  }
+  if (readLeU32(data, 0) !== 1) {
+    throw new Error("Exact SCCP Solana SPL mint must retain a mint authority.");
+  }
+  if (data[44] !== SCCP_SOLANA_TOKEN_DECIMALS) {
+    throw new Error(
+      `Exact SCCP Solana SPL mint decimals must be ${SCCP_SOLANA_TOKEN_DECIMALS}.`,
+    );
+  }
+  if (data[45] !== 1) {
+    throw new Error("Exact SCCP Solana SPL mint must be initialized.");
+  }
+  if (readLeU32(data, 46) !== 0) {
+    throw new Error(
+      "Exact SCCP Solana SPL mint must not have a freeze authority.",
+    );
+  }
+  requireZeroBytes(
+    data,
+    50,
+    82,
+    "Exact SCCP Solana SPL mint absent freeze-authority payload",
+  );
+  return Object.freeze({
+    mintAuthority: exactPubkeyAt(data, 4, "SPL mint authority"),
+    supply: readLeU64String(data, 36),
+    decimals: data[44],
+    initialized: true,
+    freezeAuthority: null,
+  });
+};
+
+/** Parse the sealed SCCPMAT1 native verifier material ABI. */
+export const parseExactSccpSolanaVerifierMaterialData = (bytes) => {
+  const data = Uint8Array.from(bytes);
+  if (data.length !== SCCP_SOLANA_EXACT_MATERIAL_LEN) {
+    throw new Error(
+      `Exact SCCP Solana verifier material must be ${SCCP_SOLANA_EXACT_MATERIAL_LEN} bytes.`,
+    );
+  }
+  if (
+    Buffer.from(data.subarray(0, 8)).toString("ascii") !==
+    SCCP_SOLANA_EXACT_MATERIAL_MAGIC
+  ) {
+    throw new Error("Exact SCCP Solana verifier material magic is invalid.");
+  }
+  if (data[8] !== 1 || data[9] !== 2) {
+    throw new Error(
+      "Exact SCCP Solana verifier material must be version 1 and sealed.",
+    );
+  }
+  if (data[11] !== 0) {
+    throw new Error(
+      "Exact SCCP Solana verifier material reserved byte is non-zero.",
+    );
+  }
+  requireZeroBytes(data, 14, 16, "Verifier material reserved u16");
+  requireZeroBytes(data, 21, 32, "Verifier material reserved header bytes");
+  requireZeroBytes(data, 32, 64, "Sealed verifier material upload authority");
+  if (readLeU16(data, 12) !== SCCP_SOLANA_EXACT_VERIFYING_KEY_LEN) {
+    throw new Error(
+      "Exact SCCP Solana verifier material VK upload is incomplete.",
+    );
+  }
+  const routeRevision = readLeU32(data, 16);
+  if (routeRevision !== 1) {
+    throw new Error("Exact SCCP Solana verifier material revision must be 1.");
+  }
+  const assetLength = data[20];
+  if (assetLength < 1 || assetLength > 64) {
+    throw new Error(
+      "Exact SCCP Solana verifier material asset key length is invalid.",
+    );
+  }
+  const asset = exactAscii(
+    data,
+    640,
+    640 + assetLength,
+    "Verifier material asset key",
+  );
+  if (asset !== SCCP_XOR_ASSET_KEY) {
+    throw new Error(
+      "Exact SCCP Solana verifier material asset key must be xor.",
+    );
+  }
+  requireZeroBytes(
+    data,
+    640 + assetLength,
+    704,
+    "Verifier material asset padding",
+  );
+  const routeId = exactAscii(data, 704, 717, "Verifier material route id");
+  if (routeId !== SCCP_SOLANA_XOR_ROUTE_ID) {
+    throw new Error("Exact SCCP Solana verifier material route id is invalid.");
+  }
+  requireZeroBytes(data, 717, 736, "Verifier material route-id padding");
+  const sourceProgram = exactPubkeyAt(data, 736, "material source program");
+  if (data.subarray(736, 768).every((byte) => byte === 0)) {
+    throw new Error("Verifier material source program must be non-zero.");
+  }
+  const vk = data.subarray(
+    SCCP_SOLANA_EXACT_MATERIAL_HEADER_LEN,
+    SCCP_SOLANA_EXACT_MATERIAL_LEN,
+  );
+  const vkSha256 = `0x${createHash("sha256").update(vk).digest("hex")}`;
+  const vkKeccak = `0x${Buffer.from(keccak_256(vk)).toString("hex")}`;
+  const storedVkSha256 = exactHashAt(data, 64, "material VK SHA-256");
+  const storedVkKeccak = exactHashAt(data, 96, "material VK Keccak-256");
+  if (storedVkSha256 !== vkSha256) {
+    throw new Error("Verifier material VK bytes do not match stored SHA-256.");
+  }
+  if (storedVkKeccak !== vkKeccak) {
+    throw new Error(
+      "Verifier material VK bytes do not match stored Keccak-256.",
+    );
+  }
+  const hashes = {
+    destinationBindingHash: exactHashAt(
+      data,
+      320,
+      "material destination binding hash",
+    ),
+    routeConfigurationHash: exactHashAt(
+      data,
+      352,
+      "material route configuration hash",
+    ),
+    soraFinalityAnchorHash: exactHashAt(
+      data,
+      384,
+      "material SORA finality anchor hash",
+    ),
+    semanticProfileHash: exactHashAt(
+      data,
+      416,
+      "material semantic profile hash",
+    ),
+    circuitHash: exactHashAt(data, 448, "material circuit hash"),
+    witnessGeneratorCommitment: exactHashAt(
+      data,
+      480,
+      "material witness-generator commitment",
+    ),
+    schemaCommitment: exactHashAt(data, 512, "material schema commitment"),
+  };
+  const storedConfigHash = exactHashAt(data, 128, "material config SHA-256");
+  distinctExactValues(
+    [
+      storedVkSha256,
+      storedVkKeccak,
+      storedConfigHash,
+      ...Object.values(hashes),
+    ],
+    "Exact verifier material hash roles",
+  );
+  const publicSignalSchemaHash = exactHashAt(
+    data,
+    544,
+    "material public signal schema hash",
+  );
+  if (hashes.schemaCommitment !== publicSignalSchemaHash) {
+    throw new Error(
+      "Verifier material schema commitment does not match its canonical schema hash.",
+    );
+  }
+  if (publicSignalSchemaHash !== SCCP_SOLANA_EXACT_PUBLIC_SIGNAL_SCHEMA_HASH) {
+    throw new Error(
+      "Verifier material public-signal schema hash is not exact.",
+    );
+  }
+  const laneHashes = {
+    sourceLaneHash: exactHashAt(data, 576, "material source lane hash"),
+    destinationLaneHash: exactHashAt(
+      data,
+      608,
+      "material destination lane hash",
+    ),
+  };
+  const expectedLaneHashes = deriveExactSccpSolanaRuntimeLaneHashes();
+  if (
+    laneHashes.sourceLaneHash !== expectedLaneHashes.sourceLaneHash ||
+    laneHashes.destinationLaneHash !== expectedLaneHashes.destinationLaneHash
+  ) {
+    throw new Error("Verifier material canonical lane hashes are invalid.");
+  }
+  return Object.freeze({
+    magic: SCCP_SOLANA_EXACT_MATERIAL_MAGIC,
+    version: 1,
+    status: "sealed",
+    bump: data[10],
+    written: SCCP_SOLANA_EXACT_VERIFYING_KEY_LEN,
+    routeRevision,
+    asset,
+    vkSha256: storedVkSha256,
+    vkKeccak: storedVkKeccak,
+    configHash: storedConfigHash,
+    bridgeProgram: exactPubkeyAt(data, 160, "material bridge program"),
+    sourceProgram,
+    bridgeAuthority: exactPubkeyAt(data, 192, "material bridge authority"),
+    bridgeState: exactPubkeyAt(data, 224, "material bridge state"),
+    mint: exactPubkeyAt(data, 256, "material mint"),
+    tokenProgram: exactPubkeyAt(data, 288, "material token program"),
+    ...hashes,
+    publicSignalSchemaHash,
+    ...laneHashes,
+    routeId,
+    verifyingKeyLength: vk.length,
+  });
+};
+
+const concatExactBytes = (...parts) => {
+  const output = new Uint8Array(
+    parts.reduce((total, part) => total + part.length, 0),
+  );
+  let offset = 0;
+  for (const part of parts) {
+    output.set(part, offset);
+    offset += part.length;
+  }
+  return output;
+};
+
+const exactLeBytes = (value, width) => {
+  let remaining = BigInt(value);
+  const output = new Uint8Array(width);
+  for (let index = 0; index < width; index += 1) {
+    output[index] = Number(remaining & 0xffn);
+    remaining >>= 8n;
+  }
+  if (remaining !== 0n) {
+    throw new Error("Exact SCCP integer exceeds its canonical width.");
+  }
+  return output;
+};
+
+const exactSoraNetworkBytes = () =>
+  concatExactBytes(
+    Uint8Array.of(1, 1),
+    exactLeBytes(0, 4),
+    SCCP_SOLANA_EXACT_TAIRA_CHAIN_BYTES,
+  );
+
+const exactSolanaNetworkBytes = () =>
+  concatExactBytes(
+    Uint8Array.of(1, 13),
+    exactLeBytes(3, 4),
+    SCCP_SOLANA_EXACT_GENESIS_BYTES,
+  );
+
+const exactLaneBytes = (source, target) =>
+  concatExactBytes(
+    Uint8Array.of(1),
+    exactLeBytes(source.length, 4),
+    source,
+    exactLeBytes(target.length, 4),
+    target,
+  );
+
+const exactBlake2bHex = (...parts) =>
+  `0x${Buffer.from(blake2b(concatExactBytes(...parts), { dkLen: 32 })).toString(
+    "hex",
+  )}`;
+
+const exactSha256Hex = (...parts) => {
+  const hash = createHash("sha256");
+  for (const part of parts) hash.update(part);
+  return `0x${hash.digest("hex")}`;
+};
+
+export const deriveExactSccpSolanaRuntimeLaneHashes = () => {
+  const sora = exactSoraNetworkBytes();
+  const solana = exactSolanaNetworkBytes();
+  const prefix = new TextEncoder().encode("sccp:lane-id:v1");
+  return Object.freeze({
+    sourceLaneHash: exactBlake2bHex(prefix, exactLaneBytes(solana, sora)),
+    destinationLaneHash: exactBlake2bHex(prefix, exactLaneBytes(sora, solana)),
+  });
+};
+
+/** Recompute the one-way native verifier config commitment from SCCPMAT1. */
+export const deriveExactSccpSolanaMaterialConfigHash = ({
+  verifierProgram,
+  material,
+}) => {
+  if (!isRecord(material)) {
+    throw new Error("Exact SCCP Solana verifier material is missing.");
+  }
+  const laneHashes = deriveExactSccpSolanaRuntimeLaneHashes();
+  return exactSha256Hex(
+    new TextEncoder().encode("sccp:solana:verifier-config:v1"),
+    Uint8Array.of(1),
+    exactSoraNetworkBytes(),
+    exactSolanaNetworkBytes(),
+    new TextEncoder().encode(SCCP_SOLANA_XOR_ROUTE_ID),
+    exactLeBytes(material.routeRevision, 4),
+    Uint8Array.of(new TextEncoder().encode(material.asset).length),
+    new TextEncoder().encode(material.asset),
+    exactLeBytes(1, 16),
+    hashSeed(material.vkKeccak, "material VK Keccak-256"),
+    publicKeySeed(verifierProgram, "native verifier program"),
+    publicKeySeed(material.bridgeProgram, "material bridge program"),
+    publicKeySeed(material.sourceProgram, "material source program"),
+    publicKeySeed(material.bridgeState, "material bridge state"),
+    publicKeySeed(material.mint, "material mint"),
+    publicKeySeed(material.tokenProgram, "material token program"),
+    hashSeed(laneHashes.sourceLaneHash, "source lane hash"),
+    hashSeed(laneHashes.destinationLaneHash, "destination lane hash"),
+    hashSeed(material.soraFinalityAnchorHash, "SORA finality anchor hash"),
+    hashSeed(material.semanticProfileHash, "semantic profile hash"),
+    hashSeed(material.circuitHash, "circuit commitment"),
+    hashSeed(
+      material.witnessGeneratorCommitment,
+      "witness-generator commitment",
+    ),
+    hashSeed(material.schemaCommitment, "schema commitment"),
+  );
+};
+
+const exactPda = (programAddress, seedParts, label) => {
+  let program;
+  try {
+    program = new PublicKey(programAddress);
+  } catch {
+    throw new Error(`${label} program address is invalid.`);
+  }
+  const [address, bump] = PublicKey.findProgramAddressSync(
+    seedParts.map((part) => Buffer.from(part)),
+    program,
+  );
+  return Object.freeze({ address: address.toBase58(), bump });
+};
+
+const publicKeySeed = (value, label) => {
+  try {
+    return new PublicKey(value).toBytes();
+  } catch {
+    throw new Error(`${label} is not a Solana public key.`);
+  }
+};
+
+const hashSeed = (value, label) => {
+  const normalized = normalizeHex32(value, label);
+  return Uint8Array.from(Buffer.from(normalized.slice(2), "hex"));
+};
+
+const assertExactRuntimeField = (actual, expected, label) => {
+  if (actual !== expected) {
+    throw new Error(`${label} differs from the exact typed registry route.`);
+  }
+};
+
+const requireFreshSolanaAccount = (account, label) => {
+  if (!Number.isSafeInteger(account?.contextSlot) || account.contextSlot <= 0) {
+    throw new Error(`${label} finalized RPC context slot is missing.`);
+  }
+  if (account.executable !== false) {
+    throw new Error(`${label} must be a non-executable data account.`);
+  }
 };
 
 const manifestRecords = (manifestSet) => {
@@ -1070,7 +1740,7 @@ const recordClaimsSolana = (record) => {
     chain === SOLANA_TESTNET_NETWORK_ID ||
     network === SOLANA_TESTNET_NETWORK_ID ||
     target === SOLANA_VERIFIER_TARGET ||
-    codec === "solana_base58"
+    codec === "solana_pubkey32"
   );
 };
 
@@ -1114,13 +1784,13 @@ const assertCanonicalSolanaLaneIdentity = (record, label) => {
     record,
     ["counterpartyAccountCodecKey", "counterparty_account_codec_key"],
     `${label} account codec key`,
-    "solana_base58",
+    "solana_pubkey32",
   );
   requireExactNumber(
     record,
     ["counterpartyAccountCodec", "counterparty_account_codec"],
     `${label} account codec id`,
-    SCCP_CODEC_SOLANA_BASE58,
+    SCCP_CODEC_SOLANA_PUBKEY32,
   );
   const target = readOptionalConsistentString(
     record,
@@ -1175,13 +1845,13 @@ const assertCanonicalSolanaRouteSelectionIdentity = (record) => {
     record,
     ["counterpartyAccountCodecKey", "counterparty_account_codec_key"],
     "taira_sol_xor account codec key",
-    "solana_base58",
+    "solana_pubkey32",
   );
   requireExactNumber(
     record,
     ["counterpartyAccountCodec", "counterparty_account_codec"],
     "taira_sol_xor account codec id",
-    SCCP_CODEC_SOLANA_BASE58,
+    SCCP_CODEC_SOLANA_PUBKEY32,
   );
   requireExactString(
     record,
@@ -2082,7 +2752,7 @@ export const checkManifestShape = (manifest) => {
     manifest,
     ["counterpartyAccountCodec", "counterparty_account_codec"],
     "Solana account codec id",
-    SCCP_CODEC_SOLANA_BASE58,
+    SCCP_CODEC_SOLANA_PUBKEY32,
   );
   const domain = requireExactNumber(
     manifest,
@@ -2131,8 +2801,8 @@ export const checkManifestShape = (manifest) => {
   if (domain !== SCCP_SOLANA_DOMAIN) {
     throw new Error("Solana manifest counterparty domain must be 3.");
   }
-  if (codecKey !== "solana_base58") {
-    throw new Error("Solana manifest must use solana_base58 codec key.");
+  if (codecKey !== "solana_pubkey32") {
+    throw new Error("Solana manifest must use solana_pubkey32 codec key.");
   }
   if (verifierTarget !== SOLANA_VERIFIER_TARGET) {
     throw new Error(`Solana verifierTarget must be ${SOLANA_VERIFIER_TARGET}.`);
@@ -2458,6 +3128,7 @@ const checkLiveSolanaDeployment = async (
     verifierCodeHash: parsedProgramdata.executableHash,
     programdataMetadataHash: parsedProgramdata.metadataHash,
     executableLength: parsedProgramdata.executableLength,
+    sbpfVersion: parsedProgramdata.sbpfVersion,
     programContextSlot: programAccount.contextSlot,
     programdataContextSlot: programdataAccount.contextSlot,
   };
@@ -2566,6 +3237,7 @@ const checkLiveSolanaDeployment = async (
       programCodeHash: parsedProgramdata.executableHash,
       programdataMetadataHash: parsedProgramdata.metadataHash,
       executableLength: parsedProgramdata.executableLength,
+      sbpfVersion: parsedProgramdata.sbpfVersion,
       programContextSlot: programAccount.contextSlot,
       programdataContextSlot: programdataAccount.contextSlot,
     },
@@ -2717,9 +3389,406 @@ export async function readImmutableUpgradeableProgramEvidence(
     programCodeHash: parsedProgramdata.executableHash,
     programdataMetadataHash: parsedProgramdata.metadataHash,
     executableLength: parsedProgramdata.executableLength,
+    sbpfVersion: parsedProgramdata.sbpfVersion,
     programContextSlot: programAccount.contextSlot,
     programdataContextSlot: programdataAccount.contextSlot,
   };
+}
+
+/**
+ * Freshly bind every exact typed-registry Solana role to immutable loader
+ * state. The first release has exactly three independently addressed roles:
+ * destination bridge, source bridge, and native verifier.
+ */
+export async function checkExactRegistrySolanaPrograms(
+  routeSummary,
+  rpcUrl,
+  fetchOptions = {},
+) {
+  if (!isRecord(routeSummary)) {
+    throw new Error("Exact Solana registry route summary is missing.");
+  }
+  const roles = [
+    {
+      id: "destination",
+      label: "Solana destination bridge",
+      programAddress: routeSummary.programs?.destination,
+      programdataAddress: routeSummary.accounts?.destinationProgramData,
+      programdataSlot: routeSummary.programDataSlots?.destination,
+      codeHash: routeSummary.codeHashes?.destination,
+    },
+    {
+      id: "source",
+      label: "Solana source bridge",
+      programAddress: routeSummary.programs?.source,
+      programdataAddress: routeSummary.accounts?.sourceProgramData,
+      programdataSlot: routeSummary.programDataSlots?.source,
+      codeHash: routeSummary.codeHashes?.source,
+    },
+    {
+      id: "nativeVerifier",
+      label: "Solana native verifier",
+      programAddress: routeSummary.programs?.nativeVerifier,
+      programdataAddress: routeSummary.accounts?.nativeVerifierProgramData,
+      programdataSlot: routeSummary.programDataSlots?.nativeVerifier,
+      codeHash: routeSummary.codeHashes?.nativeVerifier,
+    },
+  ];
+  const allAddresses = roles.flatMap((role) => [
+    role.programAddress,
+    role.programdataAddress,
+  ]);
+  if (
+    allAddresses.some((value) => typeof value !== "string" || !value) ||
+    new Set(allAddresses).size !== allAddresses.length
+  ) {
+    throw new Error(
+      "Typed registry must bind six distinct Solana program and ProgramData addresses.",
+    );
+  }
+  const evidence = {};
+  for (const role of roles) {
+    const live = await readImmutableUpgradeableProgramEvidence(
+      rpcUrl,
+      role.programAddress,
+      role.label,
+      fetchOptions,
+    );
+    if (live.programdataAddress !== role.programdataAddress) {
+      throw new Error(
+        `${role.label} ProgramData address differs from the typed registry.`,
+      );
+    }
+    if (live.programdataSlot !== String(role.programdataSlot)) {
+      throw new Error(
+        `${role.label} ProgramData slot differs from the typed registry.`,
+      );
+    }
+    if (live.programCodeHash !== role.codeHash) {
+      throw new Error(
+        `${role.label} executable hash differs from the typed registry.`,
+      );
+    }
+    evidence[role.id] = { role: role.id, ...live };
+  }
+  return Object.freeze(evidence);
+}
+
+/**
+ * Freshly bind the exact typed-registry route to its live SCCPRT01 state,
+ * classic SPL mint, and sealed SCCPMAT1 verifier material accounts.
+ */
+export async function checkExactRegistrySolanaRuntimeState(
+  routeSummary,
+  rpcUrl,
+  fetchOptions = {},
+) {
+  if (!isRecord(routeSummary)) {
+    throw new Error("Exact Solana registry route summary is missing.");
+  }
+  if (
+    routeSummary.routeId !== SCCP_SOLANA_XOR_ROUTE_ID ||
+    routeSummary.assetKey !== SCCP_XOR_ASSET_KEY ||
+    routeSummary.revision !== 1 ||
+    routeSummary.activation !== "bidirectional"
+  ) {
+    throw new Error(
+      "Exact Solana runtime state requires the bidirectional taira_sol_xor revision-1 route.",
+    );
+  }
+  const destinationProgram = normalizeSolanaAddress(
+    routeSummary.programs?.destination,
+    "typed destination program",
+  );
+  const sourceProgram = normalizeSolanaAddress(
+    routeSummary.programs?.source,
+    "typed source program",
+  );
+  const verifierProgram = normalizeSolanaAddress(
+    routeSummary.programs?.nativeVerifier,
+    "typed native verifier program",
+  );
+  const destinationStateAddress = normalizeSolanaAddress(
+    routeSummary.accounts?.destinationState,
+    "typed destination state",
+  );
+  const sourceStateAddress = normalizeSolanaAddress(
+    routeSummary.accounts?.sourceState,
+    "typed source state",
+  );
+  const mintAddress = normalizeSolanaAddress(
+    routeSummary.accounts?.tokenMint,
+    "typed token mint",
+  );
+  const materialAddress = normalizeSolanaAddress(
+    routeSummary.accounts?.nativeVerifierMaterial,
+    "typed native verifier material",
+  );
+  distinctExactValues(
+    [
+      destinationProgram,
+      sourceProgram,
+      verifierProgram,
+      destinationStateAddress,
+      sourceStateAddress,
+      mintAddress,
+      materialAddress,
+    ],
+    "Exact Solana runtime account roles",
+  );
+  const destinationVerifyAuthority = exactPda(
+    destinationProgram,
+    [
+      new TextEncoder().encode(SCCP_SOLANA_EXACT_VERIFY_AUTHORITY_SEED),
+      publicKeySeed(destinationStateAddress, "destination state"),
+    ],
+    "destination verify authority",
+  );
+  const sourceVerifyAuthority = exactPda(
+    sourceProgram,
+    [
+      new TextEncoder().encode(SCCP_SOLANA_EXACT_VERIFY_AUTHORITY_SEED),
+      publicKeySeed(sourceStateAddress, "source state"),
+    ],
+    "source verify authority",
+  );
+  const mintAuthority = exactPda(
+    destinationProgram,
+    [
+      new TextEncoder().encode(SCCP_SOLANA_EXACT_MINT_AUTHORITY_SEED),
+      publicKeySeed(destinationStateAddress, "destination state"),
+    ],
+    "destination mint authority",
+  );
+  const materialPda = exactPda(
+    verifierProgram,
+    [
+      new TextEncoder().encode(SCCP_SOLANA_EXACT_MATERIAL_SEED),
+      hashSeed(routeSummary.verifierKeyHash, "typed verifier key hash"),
+      hashSeed(
+        routeSummary.nativeVerifierConfigHash,
+        "typed native verifier config hash",
+      ),
+    ],
+    "native verifier material",
+  );
+  assertExactRuntimeField(
+    materialAddress,
+    materialPda.address,
+    "Native verifier material PDA",
+  );
+  const [destinationAccount, sourceAccount, mintAccount, materialAccount] =
+    await Promise.all([
+      fetchSolanaBase64Account(
+        rpcUrl,
+        destinationStateAddress,
+        "exact Solana destination route state",
+        fetchOptions,
+      ),
+      fetchSolanaBase64Account(
+        rpcUrl,
+        sourceStateAddress,
+        "exact Solana source route state",
+        fetchOptions,
+      ),
+      fetchSolanaBase64Account(
+        rpcUrl,
+        mintAddress,
+        "exact Solana XOR mint",
+        fetchOptions,
+      ),
+      fetchSolanaBase64Account(
+        rpcUrl,
+        materialAddress,
+        "exact Solana native verifier material",
+        fetchOptions,
+      ),
+    ]);
+  for (const [account, label] of [
+    [destinationAccount, "Destination route state"],
+    [sourceAccount, "Source route state"],
+    [mintAccount, "SPL XOR mint"],
+    [materialAccount, "Native verifier material"],
+  ]) {
+    requireFreshSolanaAccount(account, label);
+  }
+  assertExactRuntimeField(
+    destinationAccount.owner,
+    destinationProgram,
+    "Destination route-state owner",
+  );
+  assertExactRuntimeField(
+    sourceAccount.owner,
+    sourceProgram,
+    "Source route-state owner",
+  );
+  assertExactRuntimeField(
+    mintAccount.owner,
+    SOLANA_SPL_TOKEN_PROGRAM_ID,
+    "SPL XOR mint owner",
+  );
+  assertExactRuntimeField(
+    materialAccount.owner,
+    verifierProgram,
+    "Native verifier material owner",
+  );
+  const destination = parseExactSccpSolanaRouteStateData(
+    destinationAccount.data,
+  );
+  const source = parseExactSccpSolanaRouteStateData(sourceAccount.data);
+  const mint = parseExactSccpSolanaMintData(mintAccount.data);
+  const material = parseExactSccpSolanaVerifierMaterialData(
+    materialAccount.data,
+  );
+  const laneHashes = deriveExactSccpSolanaRuntimeLaneHashes();
+  const commonStateExpectations = {
+    routeRevision: routeSummary.revision,
+    mint: mintAddress,
+    destinationState: destinationStateAddress,
+    verifierProgram,
+    material: materialAddress,
+    destinationBindingHash: normalizeHex32(
+      routeSummary.destinationBindingHash,
+      "typed destination binding hash",
+    ),
+    routeConfigurationHash: normalizeHex32(
+      routeSummary.routeConfigurationHash,
+      "typed route configuration hash",
+    ),
+    verifierKeyHash: normalizeHex32(
+      routeSummary.verifierKeyHash,
+      "typed verifier key hash",
+    ),
+    verifierConfigHash: normalizeHex32(
+      routeSummary.nativeVerifierConfigHash,
+      "typed verifier config hash",
+    ),
+    ...laneHashes,
+  };
+  for (const [state, role, peerProgram, verifyAuthority] of [
+    [destination, 1, sourceProgram, destinationVerifyAuthority],
+    [source, 2, destinationProgram, sourceVerifyAuthority],
+  ]) {
+    assertExactRuntimeField(state.role, role, `Route-state role ${role}`);
+    assertExactRuntimeField(
+      state.peerProgram,
+      peerProgram,
+      `Route-state role ${role} peer program`,
+    );
+    assertExactRuntimeField(
+      state.verifyBump,
+      verifyAuthority.bump,
+      `Route-state role ${role} verify-authority bump`,
+    );
+    assertExactRuntimeField(
+      state.mintBump,
+      mintAuthority.bump,
+      `Route-state role ${role} mint-authority bump`,
+    );
+    for (const [field, expected] of Object.entries(commonStateExpectations)) {
+      assertExactRuntimeField(
+        state[field],
+        expected,
+        `Route-state role ${role} ${field}`,
+      );
+    }
+  }
+  assertExactRuntimeField(
+    mint.mintAuthority,
+    mintAuthority.address,
+    "SPL XOR mint authority",
+  );
+  const proofPolicy = routeSummary.proofPolicy;
+  if (!isRecord(proofPolicy)) {
+    throw new Error(
+      "Typed registry summary omits the exact proof-policy roles.",
+    );
+  }
+  const materialExpectations = {
+    routeRevision: routeSummary.revision,
+    asset: routeSummary.assetKey,
+    vkKeccak: commonStateExpectations.verifierKeyHash,
+    configHash: commonStateExpectations.verifierConfigHash,
+    bridgeProgram: destinationProgram,
+    bridgeAuthority: destinationVerifyAuthority.address,
+    bridgeState: destinationStateAddress,
+    mint: mintAddress,
+    tokenProgram: SOLANA_SPL_TOKEN_PROGRAM_ID,
+    destinationBindingHash: commonStateExpectations.destinationBindingHash,
+    routeConfigurationHash: commonStateExpectations.routeConfigurationHash,
+    soraFinalityAnchorHash: normalizeHex32(
+      proofPolicy.soraFinalityAnchorHash,
+      "typed SORA finality anchor hash",
+    ),
+    semanticProfileHash: normalizeHex32(
+      proofPolicy.semanticProfileHash,
+      "typed semantic profile hash",
+    ),
+    circuitHash: normalizeHex32(
+      proofPolicy.circuitCommitment,
+      "typed circuit commitment",
+    ),
+    witnessGeneratorCommitment: normalizeHex32(
+      proofPolicy.witnessGeneratorCommitment,
+      "typed witness-generator commitment",
+    ),
+    schemaCommitment: normalizeHex32(
+      proofPolicy.publicSignalSchemaHash,
+      "typed schema commitment",
+    ),
+    publicSignalSchemaHash: SCCP_SOLANA_EXACT_PUBLIC_SIGNAL_SCHEMA_HASH,
+    sourceLaneHash: laneHashes.sourceLaneHash,
+    destinationLaneHash: laneHashes.destinationLaneHash,
+    routeId: routeSummary.routeId,
+  };
+  for (const [field, expected] of Object.entries(materialExpectations)) {
+    assertExactRuntimeField(
+      material[field],
+      expected,
+      `Native verifier material ${field}`,
+    );
+  }
+  assertExactRuntimeField(
+    material.bump,
+    materialPda.bump,
+    "Native verifier material PDA bump",
+  );
+  assertExactRuntimeField(
+    deriveExactSccpSolanaMaterialConfigHash({ verifierProgram, material }),
+    material.configHash,
+    "Native verifier material recomputed config hash",
+  );
+  return Object.freeze({
+    destinationState: Object.freeze({
+      ...destination,
+      address: destinationStateAddress,
+      owner: destinationAccount.owner,
+      contextSlot: destinationAccount.contextSlot,
+      verifyAuthority: destinationVerifyAuthority.address,
+    }),
+    sourceState: Object.freeze({
+      ...source,
+      address: sourceStateAddress,
+      owner: sourceAccount.owner,
+      contextSlot: sourceAccount.contextSlot,
+      verifyAuthority: sourceVerifyAuthority.address,
+    }),
+    mint: Object.freeze({
+      ...mint,
+      address: mintAddress,
+      owner: mintAccount.owner,
+      contextSlot: mintAccount.contextSlot,
+    }),
+    material: Object.freeze({
+      ...material,
+      address: materialAddress,
+      owner: materialAccount.owner,
+      contextSlot: materialAccount.contextSlot,
+      recomputedConfigHash: material.configHash,
+    }),
+    mintAuthority: mintAuthority.address,
+    settlementAssetDefinitionId: routeSummary.settlementAssetDefinitionId,
+  });
 }
 
 const solanaBridgeProgramManifestPins = (manifest, role) => {
@@ -2823,6 +3892,9 @@ export const checkLiveSolanaBridgeProgramPins = (manifest, role, evidence) => {
   if (!isRecord(evidence) || evidence.immutable !== true) {
     throw new Error(`${pins.label} must have fresh immutable live evidence.`);
   }
+  if (evidence.sbpfVersion !== SOLANA_SBPF_V3) {
+    throw new Error(`${pins.label} must have exact SBPF V3 live evidence.`);
+  }
   for (const [field, value, expected] of [
     ["program address", evidence.programAddress, pins.programAddress],
     [
@@ -2853,6 +3925,7 @@ export const checkLiveSolanaBridgeProgramPins = (manifest, role, evidence) => {
     programdataAddress: pins.programdataAddress,
     programdataSlot: pins.programdataSlot,
     programCodeHash: pins.codeHash,
+    sbpfVersion: SOLANA_SBPF_V3,
     immutable: true,
   };
 };
@@ -3591,6 +4664,362 @@ Options:
 `);
 };
 
+const runExactPublicRegistryPreflight = async (options = {}) => {
+  const toriiUrl = normalizeToriiEndpoint(options.toriiUrl);
+  const solanaRpcUrl = normalizeSolanaRpcEndpoint(options.solanaRpcUrl);
+  const outputDir = path.resolve(options.outputDir || DEFAULT_OUTPUT_DIR);
+  const fetchOptions = preflightFetchOptions(options);
+  const checks = [];
+  let capabilities = null;
+  let registry = null;
+  let registryState = null;
+  let selection = null;
+  let routeSummary = null;
+  let initialRegistrySha256 = null;
+  let tairaIdentity = null;
+
+  pushCheck(checks, "taira-endpoint", () => ({ toriiUrl }));
+  try {
+    capabilities = validateExactSolanaSccpCapabilities(
+      await fetchToriiJson(toriiUrl, "/v1/sccp/capabilities", fetchOptions),
+    );
+    checks.push(
+      makeCheck("sccp-capabilities-load", true, "ok", {
+        registryPath: capabilities.registry_path,
+        proofSubmitPath: capabilities.proof_submit_path,
+        nativeMessageSubmitPath: capabilities.native_message_submit_path,
+      }),
+    );
+    checks.push(
+      makeCheck("sccp-submit-capabilities", true, "ok", {
+        registryRevision: capabilities.registry_revision,
+      }),
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    checks.push(makeCheck("sccp-capabilities-load", false, detail));
+    checks.push(makeCheck("sccp-submit-capabilities", false, detail));
+  }
+
+  try {
+    const cacheBypassHeaders = {
+      "cache-control": "no-cache, no-store, max-age=0",
+      pragma: "no-cache",
+    };
+    const response = await fetchToriiJson(toriiUrl, SOLANA_SCCP_REGISTRY_PATH, {
+      ...fetchOptions,
+      headers: cacheBypassHeaders,
+      includeResponseMetadata: true,
+    });
+    registryState = inspectExactSolanaRegistryState(response.body);
+    registry = registryState.registry;
+    initialRegistrySha256 = canonicalSccpRegistrySha256(registry);
+    checks.push(
+      makeCheck("sccp-registry-load", true, "ok", {
+        source: "public",
+        responseMetadata: response.responseMetadata,
+        registrySha256: initialRegistrySha256,
+      }),
+    );
+    const currentAnchor = registryState.lane?.native_trust_anchors?.at(-1);
+    const laneReady = Boolean(
+      registryState.lanePresent &&
+        currentAnchor &&
+        registryState.currentNativeTrustAnchorHash ===
+          currentAnchor.anchor_hash &&
+        currentAnchor.backend?.backend === "solana_agave_v1",
+    );
+    checks.push(
+      makeCheck(
+        "solana-lane-publication",
+        laneReady,
+        laneReady
+          ? "ok"
+          : "The exact Solana lane or its current solana_agave_v1 trust anchor is absent.",
+        {
+          sourceNetwork: SOLANA_TESTNET_NETWORK_ID,
+          lanePresent: registryState.lanePresent,
+          currentNativeTrustAnchorHash:
+            registryState.currentNativeTrustAnchorHash,
+        },
+      ),
+    );
+    if (registryState.routePresent) {
+      try {
+        selection = selectExactSolanaRegistryRoute(registry);
+        routeSummary = summarizeExactSolanaRegistryRoute(registry);
+        checks.push(
+          makeCheck("solana-route-instance-publication", true, "ok", {
+            routeId: routeSummary.routeId,
+            assetKey: routeSummary.assetKey,
+            revision: routeSummary.revision,
+            activation: routeSummary.activation,
+          }),
+        );
+        checks.push(
+          makeCheck("route-registry-shape", true, "ok", {
+            destinationBindingHash: routeSummary.destinationBindingHash,
+            deploymentConfigHash: routeSummary.deploymentConfigHash,
+            routeConfigurationHash: routeSummary.routeConfigurationHash,
+            sourceIdentityHash: routeSummary.sourceIdentityHash,
+          }),
+        );
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        checks.push(
+          makeCheck("solana-route-instance-publication", false, detail),
+        );
+        checks.push(makeCheck("route-registry-shape", false, detail));
+      }
+    } else {
+      checks.push(
+        makeCheck(
+          "solana-route-instance-publication",
+          false,
+          "The exact taira_sol_xor revision-1 route is absent from the typed registry.",
+          {
+            routeAbsent: true,
+            expectedRouteId: SCCP_SOLANA_XOR_ROUTE_ID,
+            expectedAssetKey: SCCP_XOR_ASSET_KEY,
+            expectedRevision: 1,
+          },
+        ),
+      );
+      checks.push(
+        makeCheck(
+          "route-registry-shape",
+          false,
+          "Cannot validate exact route material before staged registration is enacted.",
+        ),
+      );
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    checks.push(makeCheck("sccp-registry-load", false, detail));
+    checks.push(makeCheck("solana-lane-publication", false, detail));
+    checks.push(
+      makeCheck("solana-route-instance-publication", false, detail, {
+        expectedRouteId: SCCP_SOLANA_XOR_ROUTE_ID,
+        expectedAssetKey: SCCP_XOR_ASSET_KEY,
+        expectedRevision: 1,
+      }),
+    );
+    checks.push(makeCheck("route-registry-shape", false, detail));
+  }
+
+  pushCheck(checks, "production-ready-flag", () => {
+    if (!registry) {
+      throw new Error(
+        "Cannot prove production activation without the exact public registry.",
+      );
+    }
+    const readySelection = selectExactSolanaRegistryRoute(registry, {
+      requireBidirectional: true,
+      requireCurrentTrustAnchor: true,
+    });
+    return {
+      activation: readySelection.route.activation.activation,
+      nativeTrustAnchorHash:
+        readySelection.lane.current_native_trust_anchor_hash,
+    };
+  });
+
+  if (!options.skipSolanaRpc) {
+    try {
+      checks.push(
+        makeCheck(
+          "solana-testnet-rpc-health",
+          true,
+          "ok",
+          await checkSolanaRpc(solanaRpcUrl, fetchOptions),
+        ),
+      );
+    } catch (error) {
+      checks.push(
+        makeCheck(
+          "solana-testnet-rpc-health",
+          false,
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
+    }
+    try {
+      checks.push(
+        makeCheck(
+          "solana-live-exact-programdata-evidence",
+          true,
+          "ok",
+          await checkExactRegistrySolanaPrograms(
+            routeSummary,
+            solanaRpcUrl,
+            fetchOptions,
+          ),
+        ),
+      );
+    } catch (error) {
+      checks.push(
+        makeCheck(
+          "solana-live-exact-programdata-evidence",
+          false,
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
+    }
+    try {
+      checks.push(
+        makeCheck(
+          "solana-live-exact-runtime-state",
+          true,
+          "ok",
+          await checkExactRegistrySolanaRuntimeState(
+            routeSummary,
+            solanaRpcUrl,
+            fetchOptions,
+          ),
+        ),
+      );
+    } catch (error) {
+      checks.push(
+        makeCheck(
+          "solana-live-exact-runtime-state",
+          false,
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
+    }
+  }
+
+  try {
+    tairaIdentity = await readExactTairaChainMetadata(toriiUrl, fetchOptions);
+    checks.push(makeCheck("taira-chain-metadata", true, "ok", tairaIdentity));
+  } catch (error) {
+    checks.push(
+      makeCheck(
+        "taira-chain-metadata",
+        false,
+        error instanceof Error ? error.message : String(error),
+      ),
+    );
+  }
+
+  try {
+    if (!registry || !initialRegistrySha256) {
+      throw new Error(
+        "Cannot prove typed-registry stability without the initial public registry read.",
+      );
+    }
+    const response = await fetchToriiJson(toriiUrl, SOLANA_SCCP_REGISTRY_PATH, {
+      ...fetchOptions,
+      headers: {
+        "cache-control": "no-cache, no-store, max-age=0",
+        pragma: "no-cache",
+      },
+      includeResponseMetadata: true,
+    });
+    const finalState = inspectExactSolanaRegistryState(response.body);
+    const finalSelection = selectExactSolanaRegistryRoute(finalState.registry, {
+      requireBidirectional: true,
+      requireCurrentTrustAnchor: true,
+    });
+    const finalSummary = summarizeExactSolanaRegistryRoute(
+      finalState.registry,
+      {
+        requireBidirectional: true,
+        requireCurrentTrustAnchor: true,
+      },
+    );
+    const finalRegistrySha256 = canonicalSccpRegistrySha256(
+      finalState.registry,
+    );
+    if (
+      finalRegistrySha256 !== initialRegistrySha256 ||
+      finalSummary.registrySha256 !== routeSummary?.registrySha256
+    ) {
+      throw new Error(
+        "Public TAIRA typed registry changed during Solana live-state verification.",
+      );
+    }
+    checks.push(
+      makeCheck("sccp-registry-stability", true, "ok", {
+        initialRegistrySha256,
+        finalRegistrySha256,
+        routeId: finalSummary.routeId,
+        assetKey: finalSummary.assetKey,
+        revision: finalSummary.revision,
+        activation: finalSummary.activation,
+        currentNativeTrustAnchorHash:
+          finalSelection.lane.current_native_trust_anchor_hash,
+        responseMetadata: response.responseMetadata,
+      }),
+    );
+  } catch (error) {
+    checks.push(
+      makeCheck(
+        "sccp-registry-stability",
+        false,
+        error instanceof Error ? error.message : String(error),
+      ),
+    );
+  }
+
+  const failedCheckIds = checks
+    .filter((check) => check.status !== "pass")
+    .map((check) => check.id);
+  const report = {
+    schema: "iroha-demo-sccp-solana-route-preflight/v2",
+    protocolSource: "typed-sccp-registry-v1",
+    ready: failedCheckIds.length === 0,
+    failedCheckIds: [...new Set(failedCheckIds)],
+    blockerIds: [...new Set(failedCheckIds)],
+    routeId: SCCP_SOLANA_XOR_ROUTE_ID,
+    assetKey: SCCP_XOR_ASSET_KEY,
+    routeRevision: 1,
+    taira: {
+      toriiUrl,
+      chainId: tairaIdentity?.chainId ?? null,
+      networkPrefix: tairaIdentity?.networkPrefix ?? null,
+      registryPath: SOLANA_SCCP_REGISTRY_PATH,
+      registryRevision: capabilities?.registry_revision ?? null,
+    },
+    solana: {
+      network: SOLANA_TESTNET_NETWORK_ID,
+      caipChainId: SOLANA_TESTNET_CAIP_CHAIN_ID,
+      genesisHash: SOLANA_TESTNET_GENESIS_HASH,
+      rpcUrl: solanaRpcUrl,
+    },
+    manifestSource: "public-registry",
+    registryState: {
+      lanePresent: registryState?.lanePresent === true,
+      routePresent: registryState?.routePresent === true,
+      activation: registryState?.activation ?? null,
+      currentNativeTrustAnchorHash:
+        registryState?.currentNativeTrustAnchorHash ?? null,
+    },
+    registrySummary: routeSummary,
+    deployment: routeSummary
+      ? {
+          bridgeProgramAddress: routeSummary.programs.destination,
+          sourceBridgeProgramAddress: routeSummary.programs.source,
+          nativeVerifierProgramAddress: routeSummary.programs.nativeVerifier,
+          tokenMintAddress: routeSummary.accounts.tokenMint,
+          verifierStateAddress: routeSummary.accounts.destinationState,
+          nativeVerifierMaterialAddress:
+            routeSummary.accounts.nativeVerifierMaterial,
+          destinationBindingHash: routeSummary.destinationBindingHash,
+          routeConfigurationHash: routeSummary.routeConfigurationHash,
+          verifierKeyHash: routeSummary.verifierKeyHash,
+          verifierCodeHash: routeSummary.codeHashes.nativeVerifier,
+          programdataAddress: routeSummary.accounts.nativeVerifierProgramData,
+        }
+      : null,
+    checkedAt: new Date().toISOString(),
+    checks,
+  };
+  const reportPath = path.join(outputDir, "sccp-solana-route-preflight.json");
+  await writeAtomicJsonFile(reportPath, report);
+  return { report, reportPath, registry, selection };
+};
+
 export const runSccpSolanaRoutePreflight = async (options = {}) => {
   const toriiUrl = normalizeToriiEndpoint(options.toriiUrl);
   const solanaRpcUrl = normalizeSolanaRpcEndpoint(options.solanaRpcUrl);
@@ -3598,6 +5027,10 @@ export const runSccpSolanaRoutePreflight = async (options = {}) => {
   const outputDir = path.resolve(options.outputDir || DEFAULT_OUTPUT_DIR);
   const fetchOptions = preflightFetchOptions(options);
   const checks = [];
+
+  if (!manifestFile) {
+    return runExactPublicRegistryPreflight(options);
+  }
 
   let capabilities = null;
   let manifestSet = null;

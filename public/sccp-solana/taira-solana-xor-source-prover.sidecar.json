@@ -1,6 +1,6 @@
 {
   "schema": "iroha-demo-sccp-solana-browser-prover-sidecar/v1",
-  "checkedAt": "2026-07-10T13:24:38.525Z",
+  "checkedAt": "2026-07-18T22:39:07.596Z",
   "routeId": "taira_sol_xor",
   "route_id": "taira_sol_xor",
   "assetKey": "xor",
@@ -17,36 +17,43 @@
   "target_domain": 0,
   "moduleUrl": "/sccp-solana/taira-solana-xor-source-prover.js",
   "module_url": "/sccp-solana/taira-solana-xor-source-prover.js",
-  "moduleHash": "0x5aa9464d2f89ab9e7c0b7de118d87b1dbe50d5ef0f1e65acf385e2319eeecfeb",
-  "module_hash": "0x5aa9464d2f89ab9e7c0b7de118d87b1dbe50d5ef0f1e65acf385e2319eeecfeb",
+  "moduleHash": "0x3d6be274201c4aeddb3d838a26b5ef3285eba835ef1318129ae308922c38dde0",
+  "module_hash": "0x3d6be274201c4aeddb3d838a26b5ef3285eba835ef1318129ae308922c38dde0",
   "proveExport": "proveSolanaSccpSource",
   "prove_export": "proveSolanaSccpSource",
   "selfTestExport": "solanaSccpSourceProverSelfTest",
   "self_test_export": "solanaSccpSourceProverSelfTest",
-  "proofBackend": "sccp-solana-recursive-testnet-v1",
-  "proof_backend": "sccp-solana-recursive-testnet-v1",
-  "requiredProofBackend": "sccp-solana-recursive-testnet-v1",
-  "required_proof_backend": "sccp-solana-recursive-testnet-v1",
+  "proofBackend": "solana-groth16-bn254-v1",
+  "proof_backend": "solana-groth16-bn254-v1",
+  "requiredProofBackend": "solana-groth16-bn254-v1",
+  "required_proof_backend": "solana-groth16-bn254-v1",
   "productionProofsReady": false,
   "production_proofs_ready": false,
   "selfTest": {
     "ready": false,
-    "reason": "Solana SCCP source prover package is intentionally fail-closed until governed proof artifacts are published.",
+    "linked": false,
+    "productionProofsReady": false,
+    "production_proofs_ready": false,
     "routeId": "taira_sol_xor",
     "assetKey": "xor",
     "solanaNetwork": "solana-testnet",
     "genesisHash": "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY",
     "direction": "source",
-    "proofBackend": "sccp-solana-recursive-testnet-v1",
-    "requiredProofBackend": "sccp-solana-recursive-testnet-v1",
-    "linked": false,
-    "productionProofsReady": false,
+    "sourceDomain": 3,
+    "targetDomain": 0,
+    "proofBackend": "solana-groth16-bn254-v1",
+    "requiredProofBackend": "solana-groth16-bn254-v1",
+    "missingArtifactIds": [
+      "governed-solana-source-proof-material",
+      "solana-source-adapter-engine-deployment",
+      "taira-finalize-inbound-binding-material",
+      "browser-source-prover-package"
+    ],
     "requiredArtifacts": [
       {
         "id": "governed-solana-source-proof-material",
         "required": true,
         "status": "missing",
-        "detail": "Publish reviewed Solana source verifier material with non-zero trust-anchor, consensus, message-inclusion, finality-policy, source-state, adapter-VK, and deployment-receipt hashes.",
         "upstreamArtifactIds": [
           "governed-solana-source-adapter-engine-deployment",
           "governed-solana-source-verifier-material"
@@ -56,7 +63,6 @@
         "id": "solana-source-adapter-engine-deployment",
         "required": true,
         "status": "missing",
-        "detail": "Deploy and publish the governed Solana source adapter engine that converts finalized burn events into TAIRA-bound SCCP source proof requests.",
         "upstreamArtifactIds": [
           "governed-solana-source-adapter-engine-deployment"
         ]
@@ -65,7 +71,6 @@
         "id": "taira-finalize-inbound-binding-material",
         "required": true,
         "status": "missing",
-        "detail": "Publish the TAIRA-targeted finalize_inbound bundle binding the Solana sender, TAIRA recipient, amount, XOR asset key, route id, and Solana transaction id.",
         "upstreamArtifactIds": [
           "finalized-solana-source-burn-transaction",
           "governed-solana-source-proof-material",
@@ -76,7 +81,6 @@
         "id": "browser-source-prover-package",
         "required": true,
         "status": "missing",
-        "detail": "Replace this placeholder module with a governed browser-safe source prover package whose sidecar has productionProofsReady=true and a passing self-test.",
         "upstreamArtifactIds": [
           "governed-solana-source-proof-material",
           "solana-source-adapter-engine-deployment",
@@ -84,31 +88,33 @@
         ]
       }
     ],
-    "missingArtifactIds": [
-      "governed-solana-source-proof-material",
-      "solana-source-adapter-engine-deployment",
-      "taira-finalize-inbound-binding-material",
-      "browser-source-prover-package"
-    ]
+    "reason": "Solana source prover readiness is not production-ready: ready must be true. linked must be true. productionProofsReady is missing alias(es): production_proofs_ready. productionProofsReady must be true. sourceDomain is missing. targetDomain is missing. missing material ids must be empty arrays. required artifacts marked missing conflict with production readiness. Independently supplied Solana known-answer vector is missing. Known-answer governance binding.approvalHash must be a non-zero SHA-256 hash. Known-answer governance binding.expectedApprovalHash must be a non-zero SHA-256 hash. Known-answer governance binding.vectorHashPin must be a non-zero SHA-256 hash. Known-answer artifact evidence.verifierKeyHash must be a non-zero SHA-256 hash. Known-answer artifact evidence.verifierArtifactHash must be a non-zero SHA-256 hash. Known-answer artifact evidence.verificationReceiptHash must be a non-zero SHA-256 hash. Known-answer summary ready must be true. Known-answer summary invoked must be true. Known-answer summary packageHash must be undefined. Known-answer summary proofMaterialHash must be undefined. Known-answer summary errors must be an empty array. Exact prover governance approval validation is not ready. Exact prover governance binding approvalSha256 is missing. Exact prover governance binding expectedApprovalSha256 is missing. Exact prover governance binding governancePlanCanonicalSha256 is missing. Exact prover governance binding orderedInitializationEvidenceSha256 is missing. Exact prover governance binding approvedModuleHash is missing. Exact prover governance binding approvedVectorHash is missing. Known-answer summary is not bound to the approved vector. Prover module bytes are not bound to the exact approval."
   },
   "self_test": {
     "ready": false,
-    "reason": "Solana SCCP source prover package is intentionally fail-closed until governed proof artifacts are published.",
+    "linked": false,
+    "productionProofsReady": false,
+    "production_proofs_ready": false,
     "routeId": "taira_sol_xor",
     "assetKey": "xor",
     "solanaNetwork": "solana-testnet",
     "genesisHash": "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY",
     "direction": "source",
-    "proofBackend": "sccp-solana-recursive-testnet-v1",
-    "requiredProofBackend": "sccp-solana-recursive-testnet-v1",
-    "linked": false,
-    "productionProofsReady": false,
+    "sourceDomain": 3,
+    "targetDomain": 0,
+    "proofBackend": "solana-groth16-bn254-v1",
+    "requiredProofBackend": "solana-groth16-bn254-v1",
+    "missingArtifactIds": [
+      "governed-solana-source-proof-material",
+      "solana-source-adapter-engine-deployment",
+      "taira-finalize-inbound-binding-material",
+      "browser-source-prover-package"
+    ],
     "requiredArtifacts": [
       {
         "id": "governed-solana-source-proof-material",
         "required": true,
         "status": "missing",
-        "detail": "Publish reviewed Solana source verifier material with non-zero trust-anchor, consensus, message-inclusion, finality-policy, source-state, adapter-VK, and deployment-receipt hashes.",
         "upstreamArtifactIds": [
           "governed-solana-source-adapter-engine-deployment",
           "governed-solana-source-verifier-material"
@@ -118,7 +124,6 @@
         "id": "solana-source-adapter-engine-deployment",
         "required": true,
         "status": "missing",
-        "detail": "Deploy and publish the governed Solana source adapter engine that converts finalized burn events into TAIRA-bound SCCP source proof requests.",
         "upstreamArtifactIds": [
           "governed-solana-source-adapter-engine-deployment"
         ]
@@ -127,7 +132,6 @@
         "id": "taira-finalize-inbound-binding-material",
         "required": true,
         "status": "missing",
-        "detail": "Publish the TAIRA-targeted finalize_inbound bundle binding the Solana sender, TAIRA recipient, amount, XOR asset key, route id, and Solana transaction id.",
         "upstreamArtifactIds": [
           "finalized-solana-source-burn-transaction",
           "governed-solana-source-proof-material",
@@ -138,7 +142,6 @@
         "id": "browser-source-prover-package",
         "required": true,
         "status": "missing",
-        "detail": "Replace this placeholder module with a governed browser-safe source prover package whose sidecar has productionProofsReady=true and a passing self-test.",
         "upstreamArtifactIds": [
           "governed-solana-source-proof-material",
           "solana-source-adapter-engine-deployment",
@@ -146,19 +149,13 @@
         ]
       }
     ],
-    "missingArtifactIds": [
-      "governed-solana-source-proof-material",
-      "solana-source-adapter-engine-deployment",
-      "taira-finalize-inbound-binding-material",
-      "browser-source-prover-package"
-    ]
+    "reason": "Solana source prover readiness is not production-ready: ready must be true. linked must be true. productionProofsReady is missing alias(es): production_proofs_ready. productionProofsReady must be true. sourceDomain is missing. targetDomain is missing. missing material ids must be empty arrays. required artifacts marked missing conflict with production readiness. Independently supplied Solana known-answer vector is missing. Known-answer governance binding.approvalHash must be a non-zero SHA-256 hash. Known-answer governance binding.expectedApprovalHash must be a non-zero SHA-256 hash. Known-answer governance binding.vectorHashPin must be a non-zero SHA-256 hash. Known-answer artifact evidence.verifierKeyHash must be a non-zero SHA-256 hash. Known-answer artifact evidence.verifierArtifactHash must be a non-zero SHA-256 hash. Known-answer artifact evidence.verificationReceiptHash must be a non-zero SHA-256 hash. Known-answer summary ready must be true. Known-answer summary invoked must be true. Known-answer summary packageHash must be undefined. Known-answer summary proofMaterialHash must be undefined. Known-answer summary errors must be an empty array. Exact prover governance approval validation is not ready. Exact prover governance binding approvalSha256 is missing. Exact prover governance binding expectedApprovalSha256 is missing. Exact prover governance binding governancePlanCanonicalSha256 is missing. Exact prover governance binding orderedInitializationEvidenceSha256 is missing. Exact prover governance binding approvedModuleHash is missing. Exact prover governance binding approvedVectorHash is missing. Known-answer summary is not bound to the approved vector. Prover module bytes are not bound to the exact approval."
   },
   "requiredArtifacts": [
     {
       "id": "governed-solana-source-proof-material",
       "required": true,
       "status": "missing",
-      "detail": "Publish reviewed Solana source verifier material with non-zero trust-anchor, consensus, message-inclusion, finality-policy, source-state, adapter-VK, and deployment-receipt hashes.",
       "upstreamArtifactIds": [
         "governed-solana-source-adapter-engine-deployment",
         "governed-solana-source-verifier-material"
@@ -168,7 +165,6 @@
       "id": "solana-source-adapter-engine-deployment",
       "required": true,
       "status": "missing",
-      "detail": "Deploy and publish the governed Solana source adapter engine that converts finalized burn events into TAIRA-bound SCCP source proof requests.",
       "upstreamArtifactIds": [
         "governed-solana-source-adapter-engine-deployment"
       ]
@@ -177,7 +173,6 @@
       "id": "taira-finalize-inbound-binding-material",
       "required": true,
       "status": "missing",
-      "detail": "Publish the TAIRA-targeted finalize_inbound bundle binding the Solana sender, TAIRA recipient, amount, XOR asset key, route id, and Solana transaction id.",
       "upstreamArtifactIds": [
         "finalized-solana-source-burn-transaction",
         "governed-solana-source-proof-material",
@@ -188,7 +183,6 @@
       "id": "browser-source-prover-package",
       "required": true,
       "status": "missing",
-      "detail": "Replace this placeholder module with a governed browser-safe source prover package whose sidecar has productionProofsReady=true and a passing self-test.",
       "upstreamArtifactIds": [
         "governed-solana-source-proof-material",
         "solana-source-adapter-engine-deployment",
@@ -201,7 +195,6 @@
       "id": "governed-solana-source-proof-material",
       "required": true,
       "status": "missing",
-      "detail": "Publish reviewed Solana source verifier material with non-zero trust-anchor, consensus, message-inclusion, finality-policy, source-state, adapter-VK, and deployment-receipt hashes.",
       "upstreamArtifactIds": [
         "governed-solana-source-adapter-engine-deployment",
         "governed-solana-source-verifier-material"
@@ -211,7 +204,6 @@
       "id": "solana-source-adapter-engine-deployment",
       "required": true,
       "status": "missing",
-      "detail": "Deploy and publish the governed Solana source adapter engine that converts finalized burn events into TAIRA-bound SCCP source proof requests.",
       "upstreamArtifactIds": [
         "governed-solana-source-adapter-engine-deployment"
       ]
@@ -220,7 +212,6 @@
       "id": "taira-finalize-inbound-binding-material",
       "required": true,
       "status": "missing",
-      "detail": "Publish the TAIRA-targeted finalize_inbound bundle binding the Solana sender, TAIRA recipient, amount, XOR asset key, route id, and Solana transaction id.",
       "upstreamArtifactIds": [
         "finalized-solana-source-burn-transaction",
         "governed-solana-source-proof-material",
@@ -231,7 +222,6 @@
       "id": "browser-source-prover-package",
       "required": true,
       "status": "missing",
-      "detail": "Replace this placeholder module with a governed browser-safe source prover package whose sidecar has productionProofsReady=true and a passing self-test.",
       "upstreamArtifactIds": [
         "governed-solana-source-proof-material",
         "solana-source-adapter-engine-deployment",
@@ -251,8 +241,8 @@
     "taira-finalize-inbound-binding-material",
     "browser-source-prover-package"
   ],
-  "disabledReason": "Solana SCCP source prover package is intentionally fail-closed until governed proof artifacts are published.",
-  "disabled_reason": "Solana SCCP source prover package is intentionally fail-closed until governed proof artifacts are published.",
+  "disabledReason": "Solana source prover readiness is not production-ready: ready must be true. linked must be true. productionProofsReady is missing alias(es): production_proofs_ready. productionProofsReady must be true. sourceDomain is missing. targetDomain is missing. missing material ids must be empty arrays. required artifacts marked missing conflict with production readiness. Independently supplied Solana known-answer vector is missing. Known-answer governance binding.approvalHash must be a non-zero SHA-256 hash. Known-answer governance binding.expectedApprovalHash must be a non-zero SHA-256 hash. Known-answer governance binding.vectorHashPin must be a non-zero SHA-256 hash. Known-answer artifact evidence.verifierKeyHash must be a non-zero SHA-256 hash. Known-answer artifact evidence.verifierArtifactHash must be a non-zero SHA-256 hash. Known-answer artifact evidence.verificationReceiptHash must be a non-zero SHA-256 hash. Known-answer summary ready must be true. Known-answer summary invoked must be true. Known-answer summary packageHash must be undefined. Known-answer summary proofMaterialHash must be undefined. Known-answer summary errors must be an empty array. Exact prover governance approval validation is not ready. Exact prover governance binding approvalSha256 is missing. Exact prover governance binding expectedApprovalSha256 is missing. Exact prover governance binding governancePlanCanonicalSha256 is missing. Exact prover governance binding orderedInitializationEvidenceSha256 is missing. Exact prover governance binding approvedModuleHash is missing. Exact prover governance binding approvedVectorHash is missing. Known-answer summary is not bound to the approved vector. Prover module bytes are not bound to the exact approval.",
+  "disabled_reason": "Solana source prover readiness is not production-ready: ready must be true. linked must be true. productionProofsReady is missing alias(es): production_proofs_ready. productionProofsReady must be true. sourceDomain is missing. targetDomain is missing. missing material ids must be empty arrays. required artifacts marked missing conflict with production readiness. Independently supplied Solana known-answer vector is missing. Known-answer governance binding.approvalHash must be a non-zero SHA-256 hash. Known-answer governance binding.expectedApprovalHash must be a non-zero SHA-256 hash. Known-answer governance binding.vectorHashPin must be a non-zero SHA-256 hash. Known-answer artifact evidence.verifierKeyHash must be a non-zero SHA-256 hash. Known-answer artifact evidence.verifierArtifactHash must be a non-zero SHA-256 hash. Known-answer artifact evidence.verificationReceiptHash must be a non-zero SHA-256 hash. Known-answer summary ready must be true. Known-answer summary invoked must be true. Known-answer summary packageHash must be undefined. Known-answer summary proofMaterialHash must be undefined. Known-answer summary errors must be an empty array. Exact prover governance approval validation is not ready. Exact prover governance binding approvalSha256 is missing. Exact prover governance binding expectedApprovalSha256 is missing. Exact prover governance binding governancePlanCanonicalSha256 is missing. Exact prover governance binding orderedInitializationEvidenceSha256 is missing. Exact prover governance binding approvedModuleHash is missing. Exact prover governance binding approvedVectorHash is missing. Known-answer summary is not bound to the approved vector. Prover module bytes are not bound to the exact approval.",
   "knownAnswer": {
     "schema": "iroha-demo-sccp-solana-prover-known-answer-validation/v1",
     "ready": false,
@@ -263,10 +253,10 @@
     "direction": "source",
     "network": "solana-testnet",
     "genesisHash": "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY",
-    "proofBackend": "sccp-solana-recursive-testnet-v1",
+    "proofBackend": "solana-groth16-bn254-v1",
     "sourceDomain": 3,
     "targetDomain": 0,
-    "inputHash": "0xfe60e2ff9b5ff8a0d540480b3f6a596beec26cccfbd82b02e4450a03ad288246",
+    "inputHash": "0x75a08218fd21565e0896b8d1ba71cd73e42cfc05683c65d48d425c63f302a560",
     "packageHash": null,
     "proofMaterialHash": null,
     "vectorHash": null,
@@ -294,51 +284,51 @@
       "Solana known-answer verifier artifact file is not configured.",
       "Solana known-answer independent verification receipt file is not configured.",
       "Solana known-answer governance approval file is not configured.",
-      "Solana known-answer governance approval descriptor is missing.",
-      "Solana known-answer governance approval fields is missing.",
-      "Solana known-answer governance approval pinFields is missing.",
-      "Solana known-answer governance approval schema is missing.",
-      "Solana known-answer governance approval routeId is missing.",
-      "Solana known-answer governance approval assetKey is missing.",
-      "Solana known-answer governance approval solanaNetwork is missing.",
-      "Solana known-answer governance approval solanaGenesisHash is missing.",
-      "Solana known-answer governance approval approved is missing.",
-      "Solana governance approval observedSha256 must be a non-zero 32-byte hex value.",
-      "Solana governance approval expectedSha256 must be a non-zero 32-byte hex value.",
+      "Solana exact prover approval descriptor is missing.",
+      "approval must be an object with exact fields.",
+      "pin must be an object with exact fields.",
+      "schema must equal \"iroha-sccp-solana-production-prover-approval/v2\".",
+      "routeId must equal \"taira_sol_xor\".",
+      "assetKey must equal \"xor\".",
+      "solanaNetwork must equal \"solana-testnet\".",
+      "solanaGenesisHash must equal \"4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY\".",
+      "approved must equal true.",
+      "approvalId must be a stable 1-128 character public identifier.",
+      "Solana known-answer governance approval publicOnly is invalid.",
+      "Solana exact prover approval observedSha256 must be a nonzero lowercase 0x-prefixed 32-byte hash.",
+      "Solana exact prover approval expectedSha256 must be a nonzero lowercase 0x-prefixed 32-byte hash.",
       "Solana known-answer governance approval sha256Binding is missing.",
-      "Solana governance approval pins.sourceVerifierMaterialHash must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.sourceAdapterEngineDeploymentHash must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.offlineFullTomlSha256 must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.destinationProverModuleHash must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.destinationProverSidecarHash must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.destinationProverKnownAnswerVectorHash must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.sourceProverModuleHash must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.sourceProverSidecarHash must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.sourceProverKnownAnswerVectorHash must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.destinationProofAdmissionHash must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.outerVerifierArtifactSha256 must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.outerVerifierCodeHash must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.destinationBridgeArtifactSha256 must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.destinationBridgeCodeHash must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.sourceBridgeArtifactSha256 must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.sourceBridgeCodeHash must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.nativeVerifierArtifactSha256 must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.nativeVerifierCodeHash must be a non-zero 32-byte hex value.",
-      "Solana governance approval pins.nativeVerifierKeyHash must be a non-zero 32-byte hex value.",
-      "Solana known-answer governance approval pins.outerVerifierProgramId is missing.",
-      "Solana known-answer governance approval pins.outerVerifierProgramdataAddress is missing.",
-      "Solana known-answer governance approval pins.destinationBridgeProgramId is missing.",
-      "Solana known-answer governance approval pins.destinationBridgeProgramdataAddress is missing.",
-      "Solana known-answer governance approval pins.sourceBridgeProgramId is missing.",
-      "Solana known-answer governance approval pins.sourceBridgeProgramdataAddress is missing.",
-      "Solana known-answer governance approval pins.nativeVerifierProgramId is missing.",
-      "Solana known-answer governance approval pins.nativeVerifierProgramdataAddress is missing.",
-      "Solana known-answer governance approval pins.outerVerifierProgramdataSlot is missing.",
-      "Solana known-answer governance approval pins.destinationBridgeProgramdataSlot is missing.",
-      "Solana known-answer governance approval pins.sourceBridgeProgramdataSlot is missing.",
-      "Solana known-answer governance approval pins.nativeVerifierProgramdataSlot is missing.",
-      "Solana known-answer governance approval pins.distinctProgramIds is missing.",
-      "Solana known-answer governance approval pins.distinctProgramdataAddresses is missing."
+      "pins.captureReviewPolicySha256 must be a nonzero lowercase 0x-prefixed 32-byte hash.",
+      "pins.governancePlanCanonicalSha256 must be a nonzero lowercase 0x-prefixed 32-byte hash.",
+      "pins.orderedInitializationEvidenceSha256 must be a nonzero lowercase 0x-prefixed 32-byte hash.",
+      "pins.destinationProverModuleHash must be a nonzero lowercase 0x-prefixed 32-byte hash.",
+      "pins.destinationProverKnownAnswerVectorHash must be a nonzero lowercase 0x-prefixed 32-byte hash.",
+      "pins.sourceProverModuleHash must be a nonzero lowercase 0x-prefixed 32-byte hash.",
+      "pins.sourceProverKnownAnswerVectorHash must be a nonzero lowercase 0x-prefixed 32-byte hash.",
+      "Solana known-answer governance approval pins.distinctProverModules is invalid.",
+      "Solana known-answer governance approval pins.distinctKnownAnswerVectors is invalid.",
+      "Solana source prover module bytes do not match the exact governance approval pin."
+    ]
+  },
+  "governanceApprovalBinding": {
+    "schema": "iroha-sccp-solana-prover-sidecar-governance-binding/v1",
+    "ready": false,
+    "direction": "source",
+    "approvalId": null,
+    "approvalSha256": null,
+    "expectedApprovalSha256": null,
+    "moduleHash": "0x3d6be274201c4aeddb3d838a26b5ef3285eba835ef1318129ae308922c38dde0",
+    "vectorHash": null,
+    "errors": [
+      "Exact prover governance approval validation is not ready.",
+      "Exact prover governance binding approvalSha256 is missing.",
+      "Exact prover governance binding expectedApprovalSha256 is missing.",
+      "Exact prover governance binding governancePlanCanonicalSha256 is missing.",
+      "Exact prover governance binding orderedInitializationEvidenceSha256 is missing.",
+      "Exact prover governance binding approvedModuleHash is missing.",
+      "Exact prover governance binding approvedVectorHash is missing.",
+      "Known-answer summary is not bound to the approved vector.",
+      "Prover module bytes are not bound to the exact approval."
     ]
   }
 }

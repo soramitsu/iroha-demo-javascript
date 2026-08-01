@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, it } from "vitest";
-import { tairaXorBurnToTairaAccountCallData } from "@iroha/iroha-js/sccp";
+import { tairaXorBurnToTairaAccountCallData } from "@/legacy/sccpLegacySdk";
 import type {
   TronConstantContractInput,
   TronTriggerSmartContractInput,

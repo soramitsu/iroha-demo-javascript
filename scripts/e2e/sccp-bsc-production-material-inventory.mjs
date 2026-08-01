@@ -21,7 +21,7 @@ import {
   validateBscTestnetNativeEvmProverBundle,
   verifyBscMainnetNativeEvmProverArtifactsFromBundle,
   verifyBscTestnetNativeEvmProverArtifactsFromBundle,
-} from "@iroha/iroha-js/sccp";
+} from "../../src/legacy/sccpLegacySdk.js";
 import { validateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import {

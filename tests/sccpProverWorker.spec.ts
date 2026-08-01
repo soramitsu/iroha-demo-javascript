@@ -6,9 +6,9 @@ import type {
 } from "@/utils/sccp";
 import type {
   BscSccpProofPackageInput,
-  SolanaSccpProofPackageInput,
   TronSccpProofPackageInput,
 } from "@/utils/sccpProofPackage";
+import type { SolanaDestinationProverInputV1 } from "@/utils/sccpSolanaDestination";
 
 const mocks = vi.hoisted(() => ({
   bindBscSource: vi.fn(),
@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   generateBscProofPackage: vi.fn(),
   generateProofPackage: vi.fn(),
   generateSolanaProofPackage: vi.fn(),
+  validateSolanaDestinationResult: vi.fn(),
   loadBscDestinationProver: vi.fn(),
   loadBscSourceProver: vi.fn(),
   loadDestinationProver: vi.fn(),
@@ -28,10 +29,6 @@ const mocks = vi.hoisted(() => ({
   loadSolanaSourceProver: vi.fn(),
   loadSourceProver: vi.fn(),
   readBscSourceMaterial: vi.fn(),
-  readSolanaDestinationProverModuleHash: vi.fn(),
-  readSolanaDestinationProverModuleUrl: vi.fn(),
-  readSolanaSourceProverModuleHash: vi.fn(),
-  readSolanaSourceProverModuleUrl: vi.fn(),
 }));
 
 vi.mock("@/utils/sccp", () => ({
@@ -42,12 +39,6 @@ vi.mock("@/utils/sccp", () => ({
   bindSolanaToTairaSourceProofPackage: mocks.bindSolanaSource,
   bindTronToTairaSourceProofPackage: mocks.bindSource,
   readBscSourceProverMaterialBinding: mocks.readBscSourceMaterial,
-  readSccpSolanaDestinationProverModuleHash:
-    mocks.readSolanaDestinationProverModuleHash,
-  readSccpSolanaDestinationProverModuleUrl:
-    mocks.readSolanaDestinationProverModuleUrl,
-  readSccpSolanaSourceProverModuleHash: mocks.readSolanaSourceProverModuleHash,
-  readSccpSolanaSourceProverModuleUrl: mocks.readSolanaSourceProverModuleUrl,
 }));
 
 vi.mock("@/utils/sccpProofPackage", () => ({
@@ -59,6 +50,10 @@ vi.mock("@/utils/sccpProofPackage", () => ({
   generateTronSccpProofPackage: mocks.generateProofPackage,
 }));
 
+vi.mock("@/utils/sccpSolanaDestination", () => ({
+  validateSolanaDestinationProofResultV1: mocks.validateSolanaDestinationResult,
+}));
+
 vi.mock("@/utils/sccpProverLink", () => ({
   loadBscSccpProveFn: mocks.loadBscDestinationProver,
   loadBscSccpSourceProveFn: mocks.loadBscSourceProver,
@@ -68,7 +63,7 @@ vi.mock("@/utils/sccpProverLink", () => ({
   loadTronSccpSourceProveFn: mocks.loadSourceProver,
 }));
 
-vi.mock("@iroha/iroha-js/sccp", () => ({
+vi.mock("@/legacy/sccpLegacySdk", () => ({
   buildBscSourceChainProofEnvelope: mocks.buildBscSourceProof,
 }));
 
@@ -119,28 +114,23 @@ const bscDestinationInput = {
   amountDecimal: "1",
 } as unknown as BscSccpProofPackageInput;
 
+const solanaDestinationProverInput = {
+  version: 1,
+  route_id: "taira_sol_xor",
+  revision: 1,
+  message_id_hex: `0x${"11".repeat(32)}`,
+  payload_amount_u64: "1",
+  amount_u64_base_units: "1",
+  destination_token: "So11111111111111111111111111111111111111112",
+  public_inputs_b64: "AQ==",
+  statement_hash_hex: `0x${"22".repeat(32)}`,
+  payload_b64: "Ag==",
+  proof_request: {},
+} as unknown as SolanaDestinationProverInputV1;
+
 const solanaDestinationInput = {
-  witness: {
-    messageId: `0x${"11".repeat(32)}`,
-    payloadHash: `0x${"22".repeat(32)}`,
-  },
-  publicInputs: {
-    messageId: `0x${"11".repeat(32)}`,
-    payloadHash: `0x${"22".repeat(32)}`,
-    targetDomain: 3,
-    commitmentRoot: `0x${"33".repeat(32)}`,
-    finalityHeight: "42",
-    finalityBlockHash: `0x${"44".repeat(32)}`,
-  },
-  bundleBytes: `0x${"55".repeat(32)}`,
-  manifest: {
-    route_id: "taira_sol_xor",
-    destinationBrowserProver: {
-      moduleUrl: "/sccp-solana/taira-solana-xor-destination-prover.js",
-      moduleHash: `0x${"45".repeat(32)}`,
-    },
-  },
-} as unknown as SolanaSccpProofPackageInput;
+  proverInput: solanaDestinationProverInput,
+};
 
 const sourceInput = {
   manifest: {
@@ -248,7 +238,7 @@ const WORKER_SOLANA_DESTINATION_PROOF_MATERIAL_ERROR =
 const WORKER_SOLANA_SOURCE_PROOF_MATERIAL_ERROR =
   "Solana source proof requests must not include caller-supplied proof material; proof packages must come from the configured Solana source prover module.";
 const WORKER_SOLANA_PROVER_OVERRIDE_ERROR =
-  "Solana proof requests must not override prover module URLs or hashes; the governed route manifest is authoritative.";
+  "Solana proof requests must not override prover module URLs or hashes; the explicit destination/source prover environment is authoritative.";
 const BSC_BINARY_SOURCE_PROOF_HEX = `0x${"ab".repeat(96)}`;
 const BSC_SOURCE_FINALITY_HEIGHT = "1";
 const BSC_SOURCE_FINALITY_BLOCK_HASH = `0x${"78".repeat(32)}`;
@@ -311,6 +301,7 @@ describe("SCCP prover worker", () => {
     mocks.generateBscProofPackage.mockReset();
     mocks.generateProofPackage.mockReset();
     mocks.generateSolanaProofPackage.mockReset();
+    mocks.validateSolanaDestinationResult.mockReset();
     mocks.loadBscDestinationProver.mockReset();
     mocks.loadBscSourceProver.mockReset();
     mocks.loadDestinationProver.mockReset();
@@ -318,22 +309,9 @@ describe("SCCP prover worker", () => {
     mocks.loadSolanaSourceProver.mockReset();
     mocks.loadSourceProver.mockReset();
     mocks.readBscSourceMaterial.mockReset();
-    mocks.readSolanaDestinationProverModuleHash.mockReset();
-    mocks.readSolanaDestinationProverModuleUrl.mockReset();
-    mocks.readSolanaSourceProverModuleHash.mockReset();
-    mocks.readSolanaSourceProverModuleUrl.mockReset();
     mocks.readBscSourceMaterial.mockReturnValue(bscSourceMaterialBinding);
-    mocks.readSolanaDestinationProverModuleHash.mockReturnValue(
-      `0x${"45".repeat(32)}`,
-    );
-    mocks.readSolanaDestinationProverModuleUrl.mockReturnValue(
-      "/sccp-solana/taira-solana-xor-destination-prover.js",
-    );
-    mocks.readSolanaSourceProverModuleHash.mockReturnValue(
-      `0x${"44".repeat(32)}`,
-    );
-    mocks.readSolanaSourceProverModuleUrl.mockReturnValue(
-      "/sccp-solana/taira-solana-xor-source-prover.js",
+    mocks.validateSolanaDestinationResult.mockImplementation(
+      (value: unknown) => value,
     );
     mocks.buildBscSourceProof.mockReturnValue({
       sourceProofHex: BSC_BINARY_SOURCE_PROOF_HEX,
@@ -1044,12 +1022,7 @@ describe("SCCP prover worker", () => {
     expect(mocks.generateBscProofPackage).not.toHaveBeenCalled();
   });
 
-  it("builds a Solana destination proof package without loading a prover", async () => {
-    const builtPackage = {
-      request: { routeId: "taira_sol_xor" },
-      submission: null,
-    };
-    mocks.buildSolanaProofPackage.mockReturnValue(builtPackage);
+  it("rejects the retired build-only Solana destination path", async () => {
     const worker = await createWorkerHarness();
 
     await expect(
@@ -1060,12 +1033,10 @@ describe("SCCP prover worker", () => {
       }),
     ).resolves.toEqual({
       id: "build-solana-1",
-      ok: true,
-      result: builtPackage,
+      ok: false,
+      error: "Unsupported SCCP worker request: build-solana-proof-package",
     });
-    expect(mocks.buildSolanaProofPackage).toHaveBeenCalledWith(
-      solanaDestinationInput,
-    );
+    expect(mocks.buildSolanaProofPackage).not.toHaveBeenCalled();
     expect(mocks.loadSolanaDestinationProver).not.toHaveBeenCalled();
     expect(mocks.generateSolanaProofPackage).not.toHaveBeenCalled();
   });
@@ -1172,7 +1143,7 @@ describe("SCCP prover worker", () => {
     expect(mocks.generateBscProofPackage).not.toHaveBeenCalled();
   });
 
-  it("rejects caller-supplied Solana proof material in build-only worker requests", async () => {
+  it("rejects all retired build-only Solana destination requests", async () => {
     const worker = await createWorkerHarness();
 
     await expect(
@@ -1187,7 +1158,7 @@ describe("SCCP prover worker", () => {
     ).resolves.toEqual({
       id: "build-solana-proof-bytes",
       ok: false,
-      error: WORKER_SOLANA_DESTINATION_PROOF_MATERIAL_ERROR,
+      error: "Unsupported SCCP worker request: build-solana-proof-package",
     });
     await expect(
       worker.post({
@@ -1201,7 +1172,7 @@ describe("SCCP prover worker", () => {
     ).resolves.toEqual({
       id: "build-solana-proof-result",
       ok: false,
-      error: WORKER_SOLANA_DESTINATION_PROOF_MATERIAL_ERROR,
+      error: "Unsupported SCCP worker request: build-solana-proof-package",
     });
     await expect(
       worker.post({
@@ -1216,7 +1187,7 @@ describe("SCCP prover worker", () => {
     ).resolves.toEqual({
       id: "build-solana-proof-snake-aliases",
       ok: false,
-      error: WORKER_SOLANA_DESTINATION_PROOF_MATERIAL_ERROR,
+      error: "Unsupported SCCP worker request: build-solana-proof-package",
     });
     expect(mocks.buildSolanaProofPackage).not.toHaveBeenCalled();
     expect(mocks.loadSolanaDestinationProver).not.toHaveBeenCalled();
@@ -1371,10 +1342,6 @@ describe("SCCP prover worker", () => {
       "VITE_SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL",
       "/sccp-solana/taira-solana-xor-destination-prover.js",
     );
-    vi.stubEnv(
-      "VITE_SCCP_SOLANA_PROVER_MODULE_URL",
-      "/sccp-solana/taira-solana-xor-destination-prover.js",
-    );
     const generatedPackage = {
       request: { routeId: "taira_sol_xor" },
       submission: { instructionDataHex: "0x1234" },
@@ -1398,84 +1365,11 @@ describe("SCCP prover worker", () => {
       globalScope: expect.any(Object),
       importer: expect.any(Function),
       moduleUrl: "/sccp-solana/taira-solana-xor-destination-prover.js",
-      moduleHash: `0x${"45".repeat(32)}`,
+      semanticProofProfile:
+        solanaDestinationInput.proverInput.proof_request.semantic_proof_profile,
     });
-    expect(prove).toHaveBeenCalledWith(
-      solanaDestinationInput.witness,
-      expect.objectContaining(solanaDestinationInput),
-    );
+    expect(prove).toHaveBeenCalledWith(solanaDestinationInput.proverInput);
     expect(mocks.generateSolanaProofPackage).not.toHaveBeenCalled();
-  });
-
-  it("rejects stale build-time Solana destination prover config", async () => {
-    vi.stubEnv(
-      "VITE_SCCP_SOLANA_PROVER_MODULE_URL",
-      "/sccp-solana/stale-env-destination-prover.js",
-    );
-    const manifest = {
-      route_id: "taira_sol_xor",
-      destinationBrowserProver: {
-        moduleUrl: "/sccp-solana/route-destination-prover.js",
-        moduleHash: `0x${"46".repeat(32)}`,
-      },
-    };
-    mocks.readSolanaDestinationProverModuleUrl.mockReturnValue(
-      "/sccp-solana/route-destination-prover.js",
-    );
-    mocks.readSolanaDestinationProverModuleHash.mockReturnValue(
-      `0x${"46".repeat(32)}`,
-    );
-    const worker = await createWorkerHarness();
-
-    await expect(
-      worker.post({
-        id: "prove-solana-route-material",
-        kind: "prove-solana-proof-package",
-        input: {
-          ...solanaDestinationInput,
-          manifest,
-        },
-      }),
-    ).resolves.toEqual({
-      id: "prove-solana-route-material",
-      ok: false,
-      error:
-        "Solana destination prover build URL must exactly match the governed route-manifest URL.",
-    });
-    expect(mocks.readSolanaDestinationProverModuleUrl).toHaveBeenCalledWith(
-      manifest,
-    );
-    expect(mocks.readSolanaDestinationProverModuleHash).not.toHaveBeenCalled();
-    expect(mocks.loadSolanaDestinationProver).not.toHaveBeenCalled();
-    expect(mocks.generateSolanaProofPackage).not.toHaveBeenCalled();
-  });
-
-  it("rejects conflicting explicit and combined Solana destination build URLs", async () => {
-    vi.stubEnv(
-      "VITE_SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL",
-      "/sccp-solana/taira-solana-xor-destination-prover.js",
-    );
-    vi.stubEnv(
-      "VITE_SCCP_SOLANA_PROVER_MODULE_URL",
-      "/sccp-solana/substituted-combined-prover.js",
-    );
-    const worker = await createWorkerHarness();
-
-    await expect(
-      worker.post({
-        id: "prove-solana-conflicting-build-aliases",
-        kind: "prove-solana-proof-package",
-        input: solanaDestinationInput,
-      }),
-    ).resolves.toEqual({
-      id: "prove-solana-conflicting-build-aliases",
-      ok: false,
-      error: expect.stringMatching(
-        /destination prover build URL aliases must normalize and agree exactly/u,
-      ),
-    });
-    expect(mocks.readSolanaDestinationProverModuleHash).not.toHaveBeenCalled();
-    expect(mocks.loadSolanaDestinationProver).not.toHaveBeenCalled();
   });
 
   it("fails closed when the Solana destination prover is not linked", async () => {
@@ -1635,10 +1529,6 @@ describe("SCCP prover worker", () => {
 
   it("fails closed when the Solana source prover is not linked", async () => {
     vi.stubEnv(
-      "VITE_SCCP_SOLANA_PROVER_MODULE_URL",
-      "/sccp-solana/taira-solana-xor-source-prover.js",
-    );
-    vi.stubEnv(
       "VITE_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL",
       "/sccp-solana/taira-solana-xor-source-prover.js",
     );
@@ -1661,7 +1551,6 @@ describe("SCCP prover worker", () => {
       globalScope: expect.any(Object),
       importer: expect.any(Function),
       moduleUrl: "/sccp-solana/taira-solana-xor-source-prover.js",
-      moduleHash: `0x${"44".repeat(32)}`,
     });
     expect(mocks.bindSolanaSource).not.toHaveBeenCalled();
   });
@@ -1690,76 +1579,6 @@ describe("SCCP prover worker", () => {
       expect(mocks.bindSolanaSource).not.toHaveBeenCalled();
     },
   );
-
-  it("rejects stale build-time Solana source prover config", async () => {
-    vi.stubEnv(
-      "VITE_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL",
-      "/sccp-solana/stale-env-source-prover.js",
-    );
-    const manifest = {
-      ...solanaSourceInput.manifest,
-      sourceBrowserProver: {
-        moduleUrl: "/sccp-solana/route-source-prover.js",
-        moduleHash: `0x${"47".repeat(32)}`,
-      },
-    };
-    mocks.readSolanaSourceProverModuleUrl.mockReturnValue(
-      "/sccp-solana/route-source-prover.js",
-    );
-    mocks.readSolanaSourceProverModuleHash.mockReturnValue(
-      `0x${"47".repeat(32)}`,
-    );
-    const worker = await createWorkerHarness();
-
-    await expect(
-      worker.post({
-        id: "solana-source-route-material",
-        kind: "prove-solana-source-package",
-        input: {
-          ...solanaSourceInput,
-          manifest,
-        },
-      }),
-    ).resolves.toEqual({
-      id: "solana-source-route-material",
-      ok: false,
-      error:
-        "Solana source prover build URL must exactly match the governed route-manifest URL.",
-    });
-    expect(mocks.readSolanaSourceProverModuleUrl).toHaveBeenCalledWith(
-      manifest,
-    );
-    expect(mocks.readSolanaSourceProverModuleHash).not.toHaveBeenCalled();
-    expect(mocks.loadSolanaSourceProver).not.toHaveBeenCalled();
-  });
-
-  it("rejects conflicting explicit and combined Solana source build URLs", async () => {
-    vi.stubEnv(
-      "VITE_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL",
-      "/sccp-solana/taira-solana-xor-source-prover.js",
-    );
-    vi.stubEnv(
-      "VITE_SCCP_SOLANA_PROVER_MODULE_URL",
-      "/sccp-solana/substituted-combined-prover.js",
-    );
-    const worker = await createWorkerHarness();
-
-    await expect(
-      worker.post({
-        id: "solana-source-conflicting-build-aliases",
-        kind: "prove-solana-source-package",
-        input: solanaSourceInput,
-      }),
-    ).resolves.toEqual({
-      id: "solana-source-conflicting-build-aliases",
-      ok: false,
-      error: expect.stringMatching(
-        /source prover build URL aliases must normalize and agree exactly/u,
-      ),
-    });
-    expect(mocks.readSolanaSourceProverModuleHash).not.toHaveBeenCalled();
-    expect(mocks.loadSolanaSourceProver).not.toHaveBeenCalled();
-  });
 
   it("rebinds TRON source prover output to the original event and recipient context", async () => {
     const rawProofPackage = { raw: true, txId: "stale" };
@@ -1851,6 +1670,10 @@ describe("SCCP prover worker", () => {
   });
 
   it("rebinds Solana source prover output to the original burn and recipient context", async () => {
+    vi.stubEnv(
+      "VITE_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL",
+      "/sccp-solana/taira-solana-xor-source-prover.js",
+    );
     const rawProofPackage = { raw: true, txId: "stale" };
     const boundProofPackage = { submissionPayload: { proof: "0x23" } };
     const proveSource = vi.fn().mockResolvedValue(rawProofPackage);
@@ -1873,7 +1696,6 @@ describe("SCCP prover worker", () => {
       globalScope: expect.any(Object),
       importer: expect.any(Function),
       moduleUrl: "/sccp-solana/taira-solana-xor-source-prover.js",
-      moduleHash: `0x${"44".repeat(32)}`,
     });
     expect(proveSource).toHaveBeenCalledWith(solanaSourceInput);
     expect(mocks.bindSolanaSource).toHaveBeenCalledWith({

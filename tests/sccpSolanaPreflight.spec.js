@@ -28,6 +28,7 @@ import {
   solanaRouteManifestCanonicalSha256,
   solanaExecutableBlake2b256,
   SOLANA_DESTINATION_PROOF_BACKEND,
+  SOLANA_DESTINATION_PROOF_SYSTEM,
   SOLANA_DESTINATION_VERIFIER_PLAN,
   SOLANA_SOURCE_ADAPTER_CIRCUIT_ID,
   SOLANA_SOURCE_ADAPTER_PROOF_FAMILY,
@@ -65,8 +66,8 @@ const canonicalSolanaLaneRecord = (overrides = {}) => ({
   local_chain: "sora",
   counterparty_domain: 3,
   chain: "sol",
-  counterparty_account_codec: 3,
-  counterparty_account_codec_key: "solana_base58",
+  counterparty_account_codec: 6,
+  counterparty_account_codec_key: "solana_pubkey32",
   verifier_target: SOLANA_VERIFIER_TARGET,
   production_ready: false,
   ...overrides,
@@ -79,8 +80,8 @@ const canonicalSolanaRouteRecord = (overrides = {}) => ({
   chain: SOLANA_TESTNET_NETWORK_ID,
   solana_network: "testnet",
   network_id: SOLANA_TESTNET_NETWORK_ID,
-  counterparty_account_codec: 3,
-  counterparty_account_codec_key: "solana_base58",
+  counterparty_account_codec: 6,
+  counterparty_account_codec_key: "solana_pubkey32",
   verifier_target: SOLANA_VERIFIER_TARGET,
   destination_verifier_plan: SOLANA_DESTINATION_VERIFIER_PLAN,
   solana_genesis_hash: SOLANA_TESTNET_GENESIS_HASH,
@@ -143,6 +144,14 @@ const leU64 = (value) => {
   return out;
 };
 
+const sbpfV3Elf = (marker = 0) => {
+  const bytes = Buffer.alloc(64);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0]).copy(bytes);
+  bytes.writeUInt32LE(3, 48);
+  bytes[63] = marker;
+  return bytes;
+};
+
 const exactBridgePinManifest = () => ({
   solanaBridgeProgramId: "J72TNLJweK8veYwbtHhtFdx4sk885Xx3QNZfL15zdHjD",
   solana_bridge_program_id: "J72TNLJweK8veYwbtHhtFdx4sk885Xx3QNZfL15zdHjD",
@@ -180,6 +189,7 @@ const exactBridgeLiveEvidence = (role) => {
     programCodeHash: source ? `0x${"cd".repeat(32)}` : `0x${"ab".repeat(32)}`,
     immutable: true,
     upgradeAuthority: null,
+    sbpfVersion: "V3",
     programContextSlot: 500,
     programdataContextSlot: 500,
   };
@@ -409,8 +419,8 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
               {
                 domain: 3,
                 chain: "sol",
-                counterparty_account_codec: 3,
-                counterparty_account_codec_key: "solana_base58",
+                counterparty_account_codec: 6,
+                counterparty_account_codec_key: "solana_pubkey32",
                 production_ready: true,
               },
             ],
@@ -418,7 +428,7 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
         );
         return;
       }
-      if (request.url === "/v1/sccp/manifests") {
+      if (request.url === "/v1/sccp/registry") {
         setTimeout(() => {
           response.writeHead(200, { "content-type": "application/json" });
           response.end(JSON.stringify({ manifests: [], routes: [] }));
@@ -451,47 +461,30 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
       expect(report.ready).toBe(false);
       expect(report.failedCheckIds).toEqual(
         expect.arrayContaining([
-          "sccp-manifest-load",
-          "public-route-publication",
+          "sccp-registry-load",
+          "solana-lane-publication",
           "solana-route-instance-publication",
-          "route-manifest-shape",
+          "route-registry-shape",
           "production-ready-flag",
-          "browser-proof-modules",
         ]),
       );
       expect(report.blockerIds).toEqual(report.failedCheckIds);
-      expect(checks.get("sccp-manifest-load")).toMatchObject({
+      expect(checks.get("sccp-registry-load")).toMatchObject({
         status: "fail",
         detail: expect.stringMatching(/timed out after 20ms/u),
       });
-      expect(checks.get("public-route-publication")).toMatchObject({
-        status: "fail",
-        detail: expect.stringContaining(
-          "Public TAIRA route publication cannot be proven because manifest load failed",
-        ),
-      });
       expect(checks.get("solana-route-instance-publication")).toMatchObject({
         status: "fail",
-        detail: expect.stringContaining(
-          "Cannot determine taira_sol_xor Solana route publication because manifest load failed",
-        ),
+        detail: expect.stringMatching(/timed out after 20ms/u),
       });
-      expect(checks.get("route-manifest-shape")).toMatchObject({
+      expect(checks.get("route-registry-shape")).toMatchObject({
         status: "fail",
-        detail: expect.stringContaining(
-          "Cannot validate taira_sol_xor Solana route manifest shape because manifest load failed",
-        ),
+        detail: expect.stringMatching(/timed out after 20ms/u),
       });
       expect(checks.get("production-ready-flag")).toMatchObject({
         status: "fail",
         detail: expect.stringContaining(
-          "Cannot validate taira_sol_xor Solana production flag because manifest load failed",
-        ),
-      });
-      expect(checks.get("browser-proof-modules")).toMatchObject({
-        status: "fail",
-        detail: expect.stringContaining(
-          "Cannot validate Solana browser proof modules because manifest load failed",
+          "Cannot prove production activation without the exact public registry",
         ),
       });
     } finally {
@@ -506,7 +499,7 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
       "c4f2feefb3ccdacce6859d6302876c2ea14084081193d57133ba6b6cef08d5aa",
       "hex",
     );
-    const executable = Buffer.from("7f454c460102030405", "hex");
+    const executable = sbpfV3Elf(5);
     const programdata = Buffer.concat([
       leU32(SOLANA_UPGRADEABLE_PROGRAMDATA_TAG),
       leU64(slot),
@@ -528,6 +521,7 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
     expect(parsed.slot).toBe(slot.toString());
     expect(parsed.executableHash).toBe(solanaExecutableBlake2b256(executable));
     expect(parsed.executableLength).toBe(executable.length);
+    expect(parsed.sbpfVersion).toBe("V3");
   });
 
   it("rejects mutable ProgramData even when the executable is otherwise valid", () => {
@@ -536,12 +530,27 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
       leU64(419725105n),
       Buffer.from([1]),
       Buffer.from("11".repeat(32), "hex"),
-      Buffer.from("7f454c460102030405", "hex"),
+      sbpfV3Elf(5),
     ]);
 
     expect(() =>
       parseUpgradeableProgramDataAccountData(mutableProgramdata),
     ).toThrow("Solana ProgramData account must be immutable.");
+  });
+
+  it.each([0, 1, 2])("rejects immutable SBPF V%i ProgramData", (version) => {
+    const executable = sbpfV3Elf(5);
+    executable.writeUInt32LE(version, 48);
+    const programdata = Buffer.concat([
+      leU32(SOLANA_UPGRADEABLE_PROGRAMDATA_TAG),
+      leU64(419725105n),
+      Buffer.from([0]),
+      Buffer.alloc(32),
+      executable,
+    ]);
+    expect(() => parseUpgradeableProgramDataAccountData(programdata)).toThrow(
+      "Solana ProgramData executable must be exact SBPF V3.",
+    );
   });
 
   it("parses PDA-controlled SPL mint and initialized SCCP verifier state", () => {
@@ -612,7 +621,7 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
       destinationProofAdmission: {
         ...manifest.destinationProofAdmission,
         admissionMode: "governed-zk-verifier-v1",
-        proofSystem: "stark-fri-v1",
+        proofSystem: SOLANA_DESTINATION_PROOF_SYSTEM,
         shapeOnly: false,
         acceptsUnverifiedProofs: false,
       },
@@ -620,12 +629,21 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
 
     expect(checkDestinationProofAdmission(production)).toMatchObject({
       admissionMode: "governed-zk-verifier-v1",
-      proofSystem: "stark-fri-v1",
+      proofSystem: SOLANA_DESTINATION_PROOF_SYSTEM,
       entrypoint: "submit_sccp_message_proof",
       verifierCodeHash: `0x${"11".repeat(32)}`,
       verifierKeyHash: `0x${"22".repeat(32)}`,
       destinationBindingHash: `0x${"33".repeat(32)}`,
     });
+    expect(() =>
+      checkDestinationProofAdmission({
+        ...production,
+        destinationProofAdmission: {
+          ...production.destinationProofAdmission,
+          proofSystem: "stark-fri-v1",
+        },
+      }),
+    ).toThrow(/groth16-bn254-v1/u);
   });
 
   it("rejects conflicting Solana destination proof admission aliases", () => {
@@ -635,7 +653,7 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
       destinationBindingHash: `0x${"33".repeat(32)}`,
       destinationProofAdmission: {
         admissionMode: "governed-zk-verifier-v1",
-        proofSystem: "stark-fri-v1",
+        proofSystem: SOLANA_DESTINATION_PROOF_SYSTEM,
         entrypoint: "submit_sccp_message_proof",
         verifierCodeHash: `0x${"11".repeat(32)}`,
         verifierKeyHash: `0x${"22".repeat(32)}`,
@@ -679,7 +697,7 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
       destinationBindingHash: `0x${"33".repeat(32)}`,
       destinationProofAdmission: {
         admissionMode: "governed-zk-verifier-v1",
-        proofSystem: "stark-fri-v1",
+        proofSystem: SOLANA_DESTINATION_PROOF_SYSTEM,
         entrypoint: "submit_sccp_message_proof",
         verifierCodeHash: `0x${"11".repeat(32)}`,
         verifierKeyHash: `0x${"22".repeat(32)}`,
@@ -1011,7 +1029,7 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
         ...manifest,
         destinationBrowserProver: {
           ...manifest.destinationBrowserProver,
-          requiredProofBackend: "sccp-solana-recursive-testnet-v1",
+          requiredProofBackend: "legacy-stark-fri-backend",
         },
       }),
     ).toThrow(
@@ -1023,7 +1041,7 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
         ...manifest,
         destinationBrowserProver: {
           ...manifest.destinationBrowserProver,
-          proofBackend: SOLANA_SOURCE_PROOF_BACKEND,
+          proofBackend: "legacy-stark-fri-backend",
         },
       }),
     ).toThrow(
@@ -1034,7 +1052,7 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
         ...manifest,
         sourceBrowserProver: {
           ...manifest.sourceBrowserProver,
-          proofBackend: SOLANA_DESTINATION_PROOF_BACKEND,
+          proofBackend: "legacy-stark-fri-backend",
         },
       }),
     ).toThrow(
@@ -1054,8 +1072,8 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
               {
                 domain: 3,
                 chain: "sol",
-                counterparty_account_codec: 3,
-                counterparty_account_codec_key: "solana_base58",
+                counterparty_account_codec: 6,
+                counterparty_account_codec_key: "solana_pubkey32",
                 production_ready: false,
               },
             ],
@@ -1084,8 +1102,8 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
             {
               counterparty_domain: 3,
               chain: "sol",
-              counterparty_account_codec: 3,
-              counterparty_account_codec_key: "solana_base58",
+              counterparty_account_codec: 6,
+              counterparty_account_codec_key: "solana_pubkey32",
               production_ready: false,
             },
           ],
@@ -1241,8 +1259,8 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
               {
                 domain: 3,
                 chain: "sol",
-                counterparty_account_codec: 3,
-                counterparty_account_codec_key: "solana_base58",
+                counterparty_account_codec: 6,
+                counterparty_account_codec_key: "solana_pubkey32",
                 production_ready: false,
               },
             ],
@@ -1271,8 +1289,8 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
         chain: "solana-testnet",
         solana_network: "testnet",
         network_id: SOLANA_TESTNET_NETWORK_ID,
-        counterparty_account_codec_key: "solana_base58",
-        counterparty_account_codec: 3,
+        counterparty_account_codec_key: "solana_pubkey32",
+        counterparty_account_codec: 6,
         verifier_target: "SolanaProgram",
         destination_verifier_plan: SOLANA_DESTINATION_VERIFIER_PLAN,
         solana_genesis_hash: SOLANA_TESTNET_GENESIS_HASH,
@@ -1459,7 +1477,7 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
       ],
       [
         { counterparty_account_codec: 1 },
-        "taira_sol_xor account codec id must be 3",
+        "taira_sol_xor account codec id must be 6",
       ],
       [
         { verifier_target: "EvmContract" },
@@ -1523,7 +1541,7 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
           }),
         ],
       }),
-    ).toThrow("Solana lane manifest account codec key must be solana_base58");
+    ).toThrow("Solana lane manifest account codec key must be solana_pubkey32");
   });
 
   it("rejects duplicate, conflicting, and mixed-chain Solana capability records", () => {
@@ -1597,8 +1615,8 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
           local_chain: "sora",
           counterparty_domain: 3,
           chain: "sol",
-          counterparty_account_codec: 3,
-          counterparty_account_codec_key: "solana_base58",
+          counterparty_account_codec: 6,
+          counterparty_account_codec_key: "solana_pubkey32",
           production_ready: false,
           disabled_reason:
             "disabled until the immutable Solana recursive SCCP verifier and cryptographic trust anchors are live for this lane",
@@ -1657,7 +1675,7 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
       assetKey: "",
       chain: "sol",
       counterpartyDomain: 3,
-      counterpartyAccountCodecKey: "solana_base58",
+      counterpartyAccountCodecKey: "solana_pubkey32",
       productionReady: false,
       destinationRollout: {
         immutableVerifierReady: false,
@@ -1726,8 +1744,8 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
     const lane = {
       counterparty_domain: 3,
       chain: "sol",
-      counterparty_account_codec: 3,
-      counterparty_account_codec_key: "solana_base58",
+      counterparty_account_codec: 6,
+      counterparty_account_codec_key: "solana_pubkey32",
       disabled_reason:
         "disabled until the immutable Solana recursive SCCP verifier and cryptographic trust anchors are live for this lane",
       destination_rollout: {
@@ -1741,8 +1759,8 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
     const capability = {
       domain: 3,
       chain: "sol",
-      counterparty_account_codec: 3,
-      counterparty_account_codec_key: "solana_base58",
+      counterparty_account_codec: 6,
+      counterparty_account_codec_key: "solana_pubkey32",
       production_readiness: {
         source_adapter_ready: false,
         routes_allowlisted: false,
@@ -1785,8 +1803,8 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
     const manifest = {
       counterparty_domain: 3,
       chain: "sol",
-      counterparty_account_codec: 3,
-      counterparty_account_codec_key: "solana_base58",
+      counterparty_account_codec: 6,
+      counterparty_account_codec_key: "solana_pubkey32",
       production_ready: true,
       destination_rollout: {
         immutable_verifier_ready: true,
@@ -1830,7 +1848,7 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
       asset_key: "xor",
       counterparty_domain: 3,
       chain: "solana-testnet",
-      counterparty_account_codec_key: "solana_base58",
+      counterparty_account_codec_key: "solana_pubkey32",
       production_ready: false,
       disabled_reason:
         "Solana programs, mint, and state are deployed on testnet, but governed source/destination proof packages and public TAIRA route-manifest publication are not available.",
@@ -1901,8 +1919,8 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
         {
           domain: 3,
           chain: "sol",
-          counterparty_account_codec: 3,
-          counterparty_account_codec_key: "solana_base58",
+          counterparty_account_codec: 6,
+          counterparty_account_codec_key: "solana_pubkey32",
           production_ready: false,
           disabled_reason:
             "disabled until the immutable Solana recursive SCCP verifier and cryptographic trust anchors are live for this lane",

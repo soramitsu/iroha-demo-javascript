@@ -1,4 +1,4 @@
-import { type TronSccpProofRequest } from "@iroha/iroha-js/sccp";
+import { type TronSccpProofRequest } from "@/legacy/sccpLegacySdk";
 
 const BN254_BASE_FIELD_MODULUS =
   21888242871839275222246405745257275088696311157297823662689037894645226208583n;

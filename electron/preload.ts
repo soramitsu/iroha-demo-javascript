@@ -44,11 +44,11 @@ import {
   hashSignedTransaction,
   extractPipelineStatusKind,
   normalizeAssetHoldingId,
+  normalizeSccpRouteGovernanceAction,
   type KaigiCallView,
+  type NoritoFeePaymentIntent,
   type ToriiBridgeMessageSubmitPayload,
-  type ToriiBridgeProofSubmitPayload,
   type ToriiGovernanceDeployContractProposalRequest,
-  type ToriiSccpEvmDestinationQueryOptions,
   type ToriiSumeragiStatus,
 } from "@iroha/iroha-js";
 import {
@@ -58,7 +58,7 @@ import {
   buildBscTestnetSccpDestinationProofRequest,
   parseTronTriggerSmartContractRawData,
   type EvmSccpProofRequestInput,
-} from "@iroha/iroha-js/sccp";
+} from "../src/legacy/sccpLegacySdk.js";
 import {
   buildKaigiRosterJoinProof,
   generateKeyPair as generateSdkKeyPair,
@@ -177,6 +177,11 @@ import {
   installGlobalIrohaJsNativeBinding,
 } from "./irohaJsNativeDir";
 import { buildSoraCloudHfDeployRequest } from "./soraCloudDeployRequest";
+import {
+  buildAuthorityFeePaymentIntent,
+  extractIvmFeeContext,
+  stripRetiredFeeMetadata,
+} from "./feePayment";
 import { type ConfidentialReceiveKeyRecord } from "./secureVault";
 import {
   CONFIDENTIAL_WALLET_BACKUP_KDF_INFO,
@@ -224,7 +229,7 @@ const KNOWN_CHAIN_METADATA_FALLBACKS = [
   },
   {
     toriiUrl: "https://taira.sora.org",
-    chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+    chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
     networkPrefix: 369,
   },
 ] as const;
@@ -306,53 +311,7 @@ const extractConfidentialFeeMetadata = (
       `${operationLabel} does not allow public metadata or memos.`,
     );
   }
-  return Object.fromEntries(allowedEntries);
-};
-const withConfidentialGasMetadata = (
-  _toriiUrl: string,
-  assetDefinitionId: string,
-  metadata?: Record<string, unknown>,
-): Record<string, unknown> => {
-  const gasAssetId = trimString(metadata?.gas_asset_id ?? assetDefinitionId);
-  if (!gasAssetId) {
-    throw new Error(
-      "Confidential transaction metadata requires a non-empty gas asset id.",
-    );
-  }
-  return {
-    ...(isPlainRecord(metadata) ? metadata : {}),
-    gas_asset_id: gasAssetId,
-  };
-};
-const SORA_XOR_GAS_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
-const DEFAULT_GAS_ASSET_DISABLED_ORIGINS = new Set([
-  "https://minamoto.sora.org",
-]);
-const shouldAttachDefaultGasAssetMetadata = (toriiUrlRaw?: string) => {
-  if (!toriiUrlRaw) {
-    return true;
-  }
-  try {
-    return !DEFAULT_GAS_ASSET_DISABLED_ORIGINS.has(
-      new URL(normalizeBaseUrl(toriiUrlRaw)).origin,
-    );
-  } catch {
-    return true;
-  }
-};
-const withRequiredGasAssetMetadata = (
-  metadata: Record<string, unknown> | undefined,
-  toriiUrl?: string,
-) => {
-  const baseMetadata = isPlainRecord(metadata) ? { ...metadata } : {};
-  if (!shouldAttachDefaultGasAssetMetadata(toriiUrl)) {
-    delete baseMetadata.gas_asset_id;
-    return baseMetadata;
-  }
-  return {
-    ...baseMetadata,
-    gas_asset_id: SORA_XOR_GAS_ASSET_DEFINITION_ID,
-  };
+  return stripRetiredFeeMetadata(Object.fromEntries(allowedEntries));
 };
 const FAUCET_CLAIM_STATUS_TIMEOUT_MS = 240_000;
 const FAUCET_CLAIM_STATUS_INTERVAL_MS = 1_000;
@@ -1199,15 +1158,16 @@ type SccpCapabilitiesResponse = Awaited<
   ReturnType<ToriiClient["getSccpCapabilities"]>
 >;
 type SccpProofManifestSetResponse = Awaited<
-  ReturnType<ToriiClient["getSccpProofManifests"]>
+  ReturnType<ToriiClient["getSccpRegistry"]>
 >;
+type SccpSoraOutboundMaterialResponse = Awaited<
+  ReturnType<ToriiClient["getSccpSoraOutboundMaterial"]>
+>;
+type SccpSoraOutboundMaterialInput = ToriiConfig &
+  Parameters<ToriiClient["getSccpSoraOutboundMaterial"]>[0];
 type SccpMessageProofBundleResponse = Record<string, unknown>;
-type SccpMessageProofArtifactResponse = Awaited<
-  ReturnType<ToriiClient["getSccpMessageProofArtifact"]>
->;
-type SccpMessageProofJobResponse = Awaited<
-  ReturnType<ToriiClient["getSccpMessageProofJob"]>
->;
+type SccpMessageProofArtifactResponse = Record<string, unknown>;
+type SccpMessageProofJobResponse = Record<string, unknown>;
 type SccpRecentMessagesInput = ToriiConfig & {
   routeId?: string;
   limit?: number;
@@ -1256,18 +1216,22 @@ type SccpMessageProofInput = ToriiConfig &
 type SccpBridgeProofSubmitInput = ToriiConfig &
   SccpDestinationProofMaterialInput & {
     accountId: string;
+    destinationProofB64?: string;
     burnBundle?: Record<string, unknown>;
     messageBundle?: Record<string, unknown>;
     publicKeyHex?: string;
     signatureB64?: string;
+    transactionPayloadB64?: string;
     creationTimeMs?: number | string;
   };
 type SccpBridgeMessageSubmitInput = ToriiConfig &
   SccpDestinationProofMaterialInput & {
     accountId: string;
-    messageBundle: Record<string, unknown>;
+    nativeProofB64?: string;
+    messageBundle?: Record<string, unknown>;
     publicKeyHex?: string;
     signatureB64?: string;
+    transactionPayloadB64?: string;
     receiptLane?: number | string;
     settlement?: Record<string, unknown>;
     creationTimeMs?: number | string;
@@ -1734,6 +1698,9 @@ type IrohaBridge = {
   getSccpProofManifests(
     input: ToriiConfig,
   ): Promise<SccpProofManifestSetResponse>;
+  getSccpSoraOutboundMaterial(
+    input: SccpSoraOutboundMaterialInput,
+  ): Promise<SccpSoraOutboundMaterialResponse>;
   listSccpRecentMessages(
     input: SccpRecentMessagesInput,
   ): Promise<SccpRecentMessagesResponse>;
@@ -5274,39 +5241,6 @@ const getSoraCloudHfStatusFromTorii = async (
 
 const DEFAULT_TRON_GATEWAY_URL = "https://api.trongrid.io";
 
-const buildSccpDestinationProofOptions = (
-  input: SccpDestinationProofMaterialInput,
-): ToriiSccpEvmDestinationQueryOptions => {
-  const options: ToriiSccpEvmDestinationQueryOptions = {};
-  if (trimString(input.networkIdHex)) {
-    options.networkIdHex = trimString(input.networkIdHex);
-  }
-  if (trimString(input.verifierAddressHex)) {
-    options.verifierAddressHex = trimString(input.verifierAddressHex);
-  }
-  if (trimString(input.bridgeAddressHex)) {
-    options.bridgeAddressHex = trimString(input.bridgeAddressHex);
-  }
-  if (trimString(input.verifierCodeHashHex)) {
-    options.verifierCodeHashHex = trimString(input.verifierCodeHashHex);
-  }
-  if (trimString(input.verifierKeyHashHex)) {
-    options.verifierKeyHashHex = trimString(input.verifierKeyHashHex);
-  }
-  if (trimString(input.expectedDestinationBindingHashHex)) {
-    options.expectedDestinationBindingHashHex = trimString(
-      input.expectedDestinationBindingHashHex,
-    );
-  }
-  if (trimString(input.tronVerifierAddress)) {
-    options.tronVerifierAddress = trimString(input.tronVerifierAddress);
-  }
-  if (trimString(input.proofBytesHex)) {
-    options.proofBytesHex = trimString(input.proofBytesHex);
-  }
-  return options;
-};
-
 const normalizeSccpMessageIdPathSegment = (value: string): string => {
   const normalized = trimString(value).toLowerCase().replace(/^0x/u, "");
   if (!/^[0-9a-f]{64}$/u.test(normalized)) {
@@ -5373,8 +5307,23 @@ const getParametersFromTorii = (
 const getSccpProofManifestsFromTorii = (
   input: ToriiConfig,
 ): Promise<SccpProofManifestSetResponse> =>
-  withSccpDiscoveryTimeout("SCCP proof manifests", (signal) =>
-    getClient(input.toriiUrl).getSccpProofManifests({ signal }),
+  withSccpDiscoveryTimeout("SCCP governed registry", (signal) =>
+    getClient(input.toriiUrl).getSccpRegistry({ signal }),
+  );
+
+const getSccpSoraOutboundMaterialFromTorii = (
+  input: SccpSoraOutboundMaterialInput,
+): Promise<SccpSoraOutboundMaterialResponse> =>
+  withSccpDiscoveryTimeout("SCCP SORA outbound material", (signal) =>
+    getClient(input.toriiUrl).getSccpSoraOutboundMaterial(
+      {
+        sourceProfile: input.sourceProfile,
+        routeId: input.routeId,
+        assetKey: input.assetKey,
+        revision: input.revision,
+      },
+      { signal },
+    ),
   );
 
 const listSccpRecentMessagesFromTorii = async (
@@ -5410,101 +5359,190 @@ const listSccpRecentMessagesFromTorii = async (
   };
 };
 
-const normalizeSccpSubmissionRecord = (
-  value: unknown,
-  label: string,
-): Record<string, unknown> => {
-  if (!isPlainRecord(value)) {
-    throw new Error(`${label} must be an object.`);
+const normalizeSccpSubmitCreationTime = (
+  value: number | string | undefined,
+): number | undefined => {
+  if (value === undefined) {
+    return undefined;
   }
-  const normalized = snapshotSccpDataValue(value, label) as Record<
-    string,
-    unknown
-  >;
-  if (!isPlainRecord(normalized)) {
-    throw new Error(`${label} must be an object.`);
+  const normalized = Number(value);
+  if (!Number.isSafeInteger(normalized) || normalized <= 0) {
+    throw new Error("SCCP creationTimeMs must be a positive safe integer.");
   }
-  assertNoSecretLikePayloadFields(normalized, label);
   return normalized;
 };
 
-const normalizeOptionalSccpSubmissionRecord = (
+const normalizeRequiredSccpArtifactB64 = (
   value: unknown,
   label: string,
-): Record<string, unknown> | undefined => {
-  if (value === undefined || value === null) {
-    return undefined;
+): string => {
+  const normalized = trimString(value);
+  if (!normalized) {
+    throw new Error(`${label} is required.`);
   }
-  return normalizeSccpSubmissionRecord(value, label);
+  return normalized;
 };
 
-const buildSccpBridgeAuthorityPayload = async (
+const rejectLegacySccpSubmitFields = (
+  entries: ReadonlyArray<readonly [string, unknown]>,
+): void => {
+  const rejected = entries
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(([name]) => name);
+  if (rejected.length > 0) {
+    throw new Error(
+      `Legacy SCCP submit fields are not accepted by the exact first-release API: ${rejected.join(", ")}.`,
+    );
+  }
+};
+
+const resolveSccpDetachedSignature = async (
   input: {
     accountId: string;
-    privateKeyHex?: unknown;
-    publicKeyHex?: string;
     signatureB64?: string;
+    transactionPayloadB64?: string;
+    creationTimeMs?: number | string;
   },
   operationLabel: string,
-) => {
-  const accountId = normalizeCanonicalAccountIdLiteral(
+  prepare: () => Promise<{
+    submitted: boolean;
+    transaction_payload_b64: string | null;
+    signing_message_b64: string | null;
+    creation_time_ms: number;
+  }>,
+): Promise<{
+  authority: string;
+  signature_b64: string;
+  transaction_payload_b64: string;
+  creation_time_ms: number;
+}> => {
+  const authority = normalizeCanonicalAccountIdLiteral(
     input.accountId,
     "accountId",
   );
-  if (trimString(input.privateKeyHex)) {
-    throw new Error(
-      "SCCP bridge submissions must use stored wallet secrets or detached signatures; inline private keys are not accepted.",
-    );
-  }
-  const publicKeyHex = trimString(input.publicKeyHex);
   const signatureB64 = trimString(input.signatureB64);
-  if (Boolean(publicKeyHex) !== Boolean(signatureB64)) {
+  const transactionPayloadB64 = trimString(input.transactionPayloadB64);
+  const requestedCreationTime = normalizeSccpSubmitCreationTime(
+    input.creationTimeMs,
+  );
+  if (signatureB64 || transactionPayloadB64) {
+    if (!signatureB64 || !transactionPayloadB64 || !requestedCreationTime) {
+      throw new Error(
+        "Detached SCCP submission requires signatureB64, transactionPayloadB64, and creationTimeMs together.",
+      );
+    }
+    return {
+      authority,
+      signature_b64: signatureB64,
+      transaction_payload_b64: transactionPayloadB64,
+      creation_time_ms: requestedCreationTime,
+    };
+  }
+
+  const prepared = await prepare();
+  if (
+    prepared.submitted ||
+    !prepared.transaction_payload_b64 ||
+    !prepared.signing_message_b64
+  ) {
     throw new Error(
-      "SCCP detached signature submissions require both publicKeyHex and signatureB64.",
+      `${operationLabel} preparation did not return an unsigned transaction payload and signing message.`,
     );
   }
-  const hasDetachedSignature = Boolean(publicKeyHex && signatureB64);
+  const signingMessage = Buffer.from(prepared.signing_message_b64, "base64");
+  if (
+    signingMessage.length !== 32 ||
+    signingMessage.toString("base64") !== prepared.signing_message_b64
+  ) {
+    throw new Error(
+      `${operationLabel} preparation returned a non-canonical signing message.`,
+    );
+  }
+  const signingMaterial = await resolveSigningMaterial({
+    accountId: authority,
+    operationLabel,
+  });
+  const signature = sign(
+    signingMessage,
+    hexToBuffer(signingMaterial.privateKeyHex, "privateKeyHex"),
+    { algorithm: signingMaterial.signingAlgorithm },
+  );
   return {
-    authority: accountId,
-    ...(hasDetachedSignature
-      ? { publicKeyHex, signatureB64 }
-      : {
-          privateKey: formatExposedPrivateKey(
-            await resolveSigningMaterial({
-              accountId,
-              operationLabel,
-            }),
-          ),
-        }),
+    authority,
+    signature_b64: Buffer.from(signature).toString("base64"),
+    transaction_payload_b64: prepared.transaction_payload_b64,
+    creation_time_ms: prepared.creation_time_ms,
   };
 };
+
+const buildSccpAuthorityFeePayment =
+  (): ToriiBridgeMessageSubmitPayload["fee_payment"] => ({
+    payer: "authority",
+    value: {
+      charge_limits: [],
+      gas_limit: null,
+    },
+  });
 
 const submitSccpBridgeProofToTorii = async (
   input: SccpBridgeProofSubmitInput,
 ): Promise<Record<string, unknown>> => {
-  const burnBundle = normalizeOptionalSccpSubmissionRecord(
-    input.burnBundle,
-    "SCCP burnBundle",
+  if (
+    trimString(
+      (input as SccpBridgeProofSubmitInput & { privateKeyHex?: unknown })
+        .privateKeyHex,
+    )
+  ) {
+    throw new Error(
+      "SCCP bridge submissions must use the secure vault; inline private keys are not accepted.",
+    );
+  }
+  rejectLegacySccpSubmitFields([
+    ["burnBundle", input.burnBundle],
+    ["messageBundle", input.messageBundle],
+    ["publicKeyHex", trimString(input.publicKeyHex) || undefined],
+    ["networkIdHex", trimString(input.networkIdHex) || undefined],
+    ["verifierAddressHex", trimString(input.verifierAddressHex) || undefined],
+    ["bridgeAddressHex", trimString(input.bridgeAddressHex) || undefined],
+    ["verifierCodeHashHex", trimString(input.verifierCodeHashHex) || undefined],
+    ["verifierKeyHashHex", trimString(input.verifierKeyHashHex) || undefined],
+    [
+      "expectedDestinationBindingHashHex",
+      trimString(input.expectedDestinationBindingHashHex) || undefined,
+    ],
+    ["tronVerifierAddress", trimString(input.tronVerifierAddress) || undefined],
+    ["proofBytesHex", trimString(input.proofBytesHex) || undefined],
+  ]);
+  const destinationProofB64 = normalizeRequiredSccpArtifactB64(
+    input.destinationProofB64,
+    "SCCP destinationProofB64",
   );
-  const messageBundle = normalizeOptionalSccpSubmissionRecord(
-    input.messageBundle,
-    "SCCP messageBundle",
+  const client = getClient(input.toriiUrl);
+  const authority = normalizeCanonicalAccountIdLiteral(
+    input.accountId,
+    "accountId",
   );
-  const auth = await buildSccpBridgeAuthorityPayload(
+  const creationTime = normalizeSccpSubmitCreationTime(input.creationTimeMs);
+  const feePayment = buildSccpAuthorityFeePayment();
+  const detached = await resolveSccpDetachedSignature(
     input,
     "Submit SCCP bridge proof",
+    () =>
+      client.submitBridgeProof({
+        authority,
+        fee_payment: feePayment,
+        destination_proof_b64: destinationProofB64,
+        ...(creationTime === undefined
+          ? {}
+          : { creation_time_ms: creationTime }),
+      }),
   );
-  const payload: ToriiBridgeProofSubmitPayload = {
-    ...auth,
-    ...(burnBundle ? { burnBundle } : {}),
-    ...(messageBundle ? { messageBundle } : {}),
-    ...buildSccpDestinationProofOptions(input),
-    ...(input.creationTimeMs !== undefined
-      ? { creationTimeMs: input.creationTimeMs }
-      : {}),
-  };
-  const client = getClient(input.toriiUrl);
-  return client.submitBridgeProof(payload);
+  const response = await client.submitBridgeProof({
+    ...detached,
+    fee_payment: feePayment,
+    destination_proof_b64: destinationProofB64,
+  });
+  return response as unknown as Record<string, unknown>;
 };
 
 const SCCP_SUBMIT_DEBUG_DIR = resolvePath(
@@ -5631,31 +5669,62 @@ const writeSccpSubmitDebugTrace = (
 const submitSccpBridgeMessageToTorii = async (
   input: SccpBridgeMessageSubmitInput,
 ): Promise<Record<string, unknown>> => {
-  const messageBundle = normalizeSccpSubmissionRecord(
-    input.messageBundle,
-    "SCCP messageBundle",
+  if (
+    trimString(
+      (input as SccpBridgeMessageSubmitInput & { privateKeyHex?: unknown })
+        .privateKeyHex,
+    )
+  ) {
+    throw new Error(
+      "SCCP bridge submissions must use the secure vault; inline private keys are not accepted.",
+    );
+  }
+  rejectLegacySccpSubmitFields([
+    ["messageBundle", input.messageBundle],
+    ["settlement", input.settlement],
+    ["receiptLane", input.receiptLane],
+    ["publicKeyHex", trimString(input.publicKeyHex) || undefined],
+    ["networkIdHex", trimString(input.networkIdHex) || undefined],
+    ["verifierAddressHex", trimString(input.verifierAddressHex) || undefined],
+    ["bridgeAddressHex", trimString(input.bridgeAddressHex) || undefined],
+    ["verifierCodeHashHex", trimString(input.verifierCodeHashHex) || undefined],
+    ["verifierKeyHashHex", trimString(input.verifierKeyHashHex) || undefined],
+    [
+      "expectedDestinationBindingHashHex",
+      trimString(input.expectedDestinationBindingHashHex) || undefined,
+    ],
+    ["tronVerifierAddress", trimString(input.tronVerifierAddress) || undefined],
+    ["proofBytesHex", trimString(input.proofBytesHex) || undefined],
+  ]);
+  const nativeProofB64 = normalizeRequiredSccpArtifactB64(
+    input.nativeProofB64,
+    "SCCP nativeProofB64",
   );
-  const settlement = normalizeOptionalSccpSubmissionRecord(
-    input.settlement,
-    "SCCP settlement",
+  const client = getClient(input.toriiUrl);
+  const authority = normalizeCanonicalAccountIdLiteral(
+    input.accountId,
+    "accountId",
   );
-  const auth = await buildSccpBridgeAuthorityPayload(
+  const creationTime = normalizeSccpSubmitCreationTime(input.creationTimeMs);
+  const feePayment = buildSccpAuthorityFeePayment();
+  const detached = await resolveSccpDetachedSignature(
     input,
     "Submit SCCP bridge message",
+    () =>
+      client.submitBridgeMessage({
+        authority,
+        fee_payment: feePayment,
+        native_proof_b64: nativeProofB64,
+        ...(creationTime === undefined
+          ? {}
+          : { creation_time_ms: creationTime }),
+      }),
   );
   const payload: ToriiBridgeMessageSubmitPayload = {
-    ...auth,
-    messageBundle,
-    ...buildSccpDestinationProofOptions(input),
-    ...(input.receiptLane !== undefined
-      ? { receiptLane: input.receiptLane }
-      : {}),
-    ...(settlement ? { settlement } : {}),
-    ...(input.creationTimeMs !== undefined
-      ? { creationTimeMs: input.creationTimeMs }
-      : {}),
+    ...detached,
+    fee_payment: feePayment,
+    native_proof_b64: nativeProofB64,
   };
-  const client = getClient(input.toriiUrl);
   writeSccpSubmitDebugTrace(
     "request",
     payload as unknown as Record<string, unknown>,
@@ -5669,7 +5738,7 @@ const submitSccpBridgeMessageToTorii = async (
         response,
       },
     );
-    return response;
+    return response as unknown as Record<string, unknown>;
   } catch (error) {
     writeSccpSubmitDebugTrace(
       "error",
@@ -7709,21 +7778,22 @@ const deploySccpTairaInboundSettlementContractToTorii = async (
   let compiledAbiHashHex: string | undefined;
   const artifactBytes =
     externalArtifactBytes ??
-    (() => {
-      const compiled = compileKotodamaProgram(
+    (await (async () => {
+      const compiled = await compileKotodamaProgram(
         SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_CONTRACT_SOURCE,
         {
           sourceName: SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_SOURCE_NAME,
         },
       );
-      if (compiled.diagnostics.length > 0) {
+      if (!compiled.ok) {
         throw new Error(
           compiled.diagnostics
             .map((entry) => `${entry.severity}: ${entry.message}`)
             .join("\n"),
         );
       }
-      const entrypoint = compiled.manifest?.entrypoints.find(
+      const output = compiled.output;
+      const entrypoint = output.manifest?.entrypoints.find(
         (candidate) => candidate.name === "finalize_inbound",
       );
       const params = entrypoint?.params.map((param) => [
@@ -7739,10 +7809,10 @@ const deploySccpTairaInboundSettlementContractToTorii = async (
           "Compiled TAIRA SCCP settlement contract ABI is invalid.",
         );
       }
-      compiledCodeHashHex = compiled.codeHashHex;
-      compiledAbiHashHex = compiled.abiHashHex;
-      return Uint8Array.from(compiled.artifactBytes);
-    })();
+      compiledCodeHashHex = output.codeHashHex;
+      compiledAbiHashHex = output.abiHashHex;
+      return Uint8Array.from(output.artifactBytes);
+    })());
   if (artifactBytes.length === 0) {
     throw new Error("Compiled TAIRA SCCP settlement contract is empty.");
   }
@@ -7798,6 +7868,16 @@ type ZkIvmProvedTransactionSubmitInput = ToriiConfig & {
   nonce?: number;
 };
 
+const buildNoritoAuthorityFeePaymentIntent = (
+  gasLimit: number,
+): NoritoFeePaymentIntent => ({
+  payer: "authority",
+  value: {
+    charge_limits: [],
+    gas_limit: gasLimit,
+  },
+});
+
 const normalizeZkIvmVkRef = (
   input: unknown,
 ): { backend: string; name: string } => {
@@ -7835,13 +7915,15 @@ const buildZkIvmRequestPayload = (
   if (input.proved !== undefined && !isPlainRecord(input.proved)) {
     throw new Error("ZK IVM proved payload must be an object when provided.");
   }
+  const feeContext = extractIvmFeeContext(metadata, "ZK IVM request");
   return {
     vk_ref: normalizeZkIvmVkRef(input.vkRef ?? input.vk_ref),
     authority: normalizeCanonicalAccountIdLiteral(
       trimString(input.authority),
       "authority",
     ),
-    metadata,
+    fee_payment: buildNoritoAuthorityFeePaymentIntent(feeContext.gasLimit),
+    metadata: feeContext.metadata,
     bytecode: input.bytecode,
     ...(input.proved !== undefined ? { proved: input.proved } : {}),
   };
@@ -7939,12 +8021,17 @@ const submitZkIvmProvedTransactionToTorii = async (
   });
   const nativeBinding = installGlobalIrohaJsNativeBinding(import.meta.url);
   const creationTimeMs = input.creationTimeMs ?? Date.now();
+  const feeContext = extractIvmFeeContext(
+    input.metadata,
+    "ZK IVM proved transaction",
+  );
   const tx = buildIvmProvedTransaction({
     chainId,
     authority: accountId,
     proved: input.proved,
     attachment: input.attachment,
-    metadata: input.metadata,
+    feePayment: feeContext.feePayment,
+    metadata: feeContext.metadata,
     creationTimeMs,
     ttlMs: input.ttlMs ?? 10 * 60 * 1000,
     nonce: input.nonce,
@@ -12163,7 +12250,7 @@ const submitConfidentialSelfConsolidation = async (input: {
     verifyingKey: verifyingKeyContext.proofVerifyingKey,
   });
   const metadata = buildWalletConfidentialMetadataV3({
-    baseMetadata: withRequiredGasAssetMetadata(undefined, input.toriiUrl),
+    baseMetadata: stripRetiredFeeMetadata(undefined),
     outputs: [output],
   });
   const tx = buildZkTransferTransaction({
@@ -12180,6 +12267,7 @@ const submitConfidentialSelfConsolidation = async (input: {
       },
       rootHint: Buffer.from(materials.latestRootHex, "hex"),
     },
+    feePayment: buildAuthorityFeePaymentIntent(),
     metadata,
     privateKey,
     privateKeyAlgorithm: signingMaterial.signingAlgorithm,
@@ -12479,7 +12567,8 @@ const submitInstructionTransaction = async (input: {
     chainId,
     authority,
     instructions: [input.instruction],
-    metadata: withRequiredGasAssetMetadata(undefined, input.toriiUrl),
+    feePayment: buildAuthorityFeePaymentIntent(),
+    metadata: stripRetiredFeeMetadata(undefined),
     privateKey: hexToBuffer(signingMaterial.privateKeyHex, "privateKeyHex"),
     privateKeyAlgorithm: signingMaterial.signingAlgorithm,
   });
@@ -12975,7 +13064,8 @@ const api: IrohaBridge = {
         ),
         metadata: input.metadata ?? {},
       },
-      metadata: withRequiredGasAssetMetadata(undefined, input.toriiUrl),
+      feePayment: buildAuthorityFeePaymentIntent(),
+      metadata: stripRetiredFeeMetadata(undefined),
       privateKey: hexToBuffer(
         authoritySigningMaterial.privateKeyHex,
         "authorityPrivateKeyHex",
@@ -13220,12 +13310,11 @@ const api: IrohaBridge = {
           `Unsupported confidential unshield verifier circuit ${verifyingKeyContext.circuitId || "(missing circuit id)"}.`,
         );
       }
-      const confidentialExitMetadata = withRequiredGasAssetMetadata(
+      const confidentialExitMetadata = stripRetiredFeeMetadata(
         extractConfidentialFeeMetadata(
           input.metadata,
           "Confidential public exit",
         ),
-        input.toriiUrl,
       );
       const metadata =
         changeOutputs.length > 0
@@ -13253,6 +13342,7 @@ const api: IrohaBridge = {
           },
           rootHint: Buffer.from(refreshedMaterials.latestRootHex, "hex"),
         },
+        feePayment: buildAuthorityFeePaymentIntent(),
         metadata,
         privateKey,
         privateKeyAlgorithm: signingMaterial.signingAlgorithm,
@@ -13326,9 +13416,7 @@ const api: IrohaBridge = {
       }
 
       const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
-      const confidentialBaseMetadata = withConfidentialGasMetadata(
-        input.toriiUrl,
-        resolvedAssetId,
+      const confidentialBaseMetadata = stripRetiredFeeMetadata(
         extractConfidentialFeeMetadata(
           input.metadata,
           destinationAccountId === accountId
@@ -13336,9 +13424,8 @@ const api: IrohaBridge = {
             : "Shielded transfer",
         ),
       );
-      const confidentialTransactionMetadata = withRequiredGasAssetMetadata(
+      const confidentialTransactionMetadata = stripRetiredFeeMetadata(
         confidentialBaseMetadata,
-        input.toriiUrl,
       );
 
       if (destinationAccountId === accountId) {
@@ -13386,6 +13473,7 @@ const api: IrohaBridge = {
               ),
             },
           },
+          feePayment: buildAuthorityFeePaymentIntent(),
           metadata,
           privateKey,
           privateKeyAlgorithm: signingMaterial.signingAlgorithm,
@@ -13611,6 +13699,7 @@ const api: IrohaBridge = {
           },
           rootHint: Buffer.from(selectedRootHintHex, "hex"),
         },
+        feePayment: buildAuthorityFeePaymentIntent(),
         metadata,
         privateKey,
         privateKeyAlgorithm: signingMaterial.signingAlgorithm,
@@ -13808,7 +13897,8 @@ const api: IrohaBridge = {
       sourceAssetHoldingId,
       quantity: input.quantity,
       destinationAccountId,
-      metadata: withRequiredGasAssetMetadata(input.metadata, input.toriiUrl),
+      feePayment: buildAuthorityFeePaymentIntent(),
+      metadata: stripRetiredFeeMetadata(input.metadata),
       privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
       privateKeyAlgorithm: signingMaterial.signingAlgorithm,
     });
@@ -14179,16 +14269,17 @@ const api: IrohaBridge = {
     return client.governanceProposeDeployContract(payload);
   },
   proposeGovernanceSccpRouteManifest({ toriiUrl, manifest, mode, window }) {
-    const client = getClient(toriiUrl);
     if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
-      throw new Error("manifest is required.");
+      throw new Error("SCCP route governance action is required.");
     }
     const payload: {
-      manifest: Record<string, unknown>;
+      action: ReturnType<typeof normalizeSccpRouteGovernanceAction>;
       mode?: "Plain" | "Zk";
       window?: { lower: number; upper: number };
     } = {
-      manifest,
+      action: normalizeSccpRouteGovernanceAction(
+        manifest as Parameters<typeof normalizeSccpRouteGovernanceAction>[0],
+      ),
     };
     if (mode) {
       payload.mode = mode;
@@ -14196,7 +14287,11 @@ const api: IrohaBridge = {
     if (window) {
       payload.window = window;
     }
-    return client.governanceProposeSccpRouteManifest(payload);
+    return postJson(
+      buildNexusEndpoint(toriiUrl, "/v1/gov/proposals/sccp-route-governance"),
+      "Prepare SCCP route governance proposal",
+      payload,
+    ).then((response) => response as unknown as GovernanceDraftResponse);
   },
   submitGovernancePlainBallot({
     toriiUrl,
@@ -14895,7 +14990,8 @@ const api: IrohaBridge = {
         relayManifest: resolvedRelayManifest,
         metadata: callMetadata,
       },
-      metadata: withRequiredGasAssetMetadata(undefined, toriiUrl),
+      feePayment: buildAuthorityFeePaymentIntent(),
+      metadata: stripRetiredFeeMetadata(undefined),
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
       privateKeyAlgorithm: signingMaterial.signingAlgorithm,
     });
@@ -15035,7 +15131,8 @@ const api: IrohaBridge = {
         callId: answerPayload.callId,
         participant: authority,
       },
-      metadata: withRequiredGasAssetMetadata(metadata, toriiUrl),
+      feePayment: buildAuthorityFeePaymentIntent(),
+      metadata: stripRetiredFeeMetadata(metadata),
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
       privateKeyAlgorithm: signingMaterial.signingAlgorithm,
     });
@@ -15261,7 +15358,8 @@ const api: IrohaBridge = {
         callId: normalizedCallId,
         endedAtMs: resolvedEndedAtMs,
       },
-      metadata: withRequiredGasAssetMetadata(undefined, toriiUrl),
+      feePayment: buildAuthorityFeePaymentIntent(),
+      metadata: stripRetiredFeeMetadata(undefined),
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
       privateKeyAlgorithm: signingMaterial.signingAlgorithm,
     });
@@ -15420,6 +15518,9 @@ const api: IrohaBridge = {
   getSccpProofManifests({ toriiUrl }) {
     return getSccpProofManifestsFromTorii({ toriiUrl });
   },
+  getSccpSoraOutboundMaterial(input) {
+    return getSccpSoraOutboundMaterialFromTorii(input);
+  },
   listSccpRecentMessages(input) {
     return listSccpRecentMessagesFromTorii(input);
   },
@@ -15428,17 +15529,15 @@ const api: IrohaBridge = {
   },
   getSccpMessageProofArtifact(input) {
     const client = getClient(input.toriiUrl);
-    return client.getSccpMessageProofArtifact(
-      input.messageId,
-      buildSccpDestinationProofOptions(input),
-    );
+    return client
+      .getSccpMessageBundle(input.messageId)
+      .then((response) => response as unknown as Record<string, unknown>);
   },
   getSccpMessageProofJob(input) {
     const client = getClient(input.toriiUrl);
-    return client.getSccpMessageProofJob(
-      input.messageId,
-      buildSccpDestinationProofOptions(input),
-    );
+    return client
+      .getSccpProofRequest(input.messageId)
+      .then((response) => response as unknown as Record<string, unknown>);
   },
   proveBscSccpProof(input) {
     return proveBscSccpProofInNode(input);

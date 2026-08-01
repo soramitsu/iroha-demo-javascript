@@ -42,13 +42,20 @@ fn apply_process_limits() -> Result<(), ()> {
     Ok(())
 }
 
-const RELEVANT_SOLANA_V0_SYSCALLS: &[&str] = &[
+const ELF64_E_FLAGS_OFFSET: usize = 48;
+const ELF64_E_FLAGS_LENGTH: usize = 4;
+const SBPF_V3_E_FLAGS: u32 = 3;
+
+const RELEVANT_SOLANA_SYSCALLS: &[&str] = &[
     "abort",
+    "sol_alt_bn128_group_op",
+    "sol_curve_group_op",
     "sol_curve_validate_point",
     "sol_get_sysvar",
     "sol_invoke_signed_rust",
     "sol_keccak256",
     "sol_log_",
+    "sol_log_data",
     "sol_memcmp_",
     "sol_memcpy_",
     "sol_memset_",
@@ -101,20 +108,32 @@ fn read_stdin() -> Result<Vec<u8>, ()> {
 fn build_loader() -> Result<Arc<BuiltinProgram<ValidatorContext>>, ()> {
     let config = Config {
         reject_broken_elfs: true,
-        enabled_sbpf_versions: SBPFVersion::V0..=SBPFVersion::V0,
+        enabled_sbpf_versions: SBPFVersion::V3..=SBPFVersion::V3,
         ..Config::default()
     };
     let mut loader = BuiltinProgram::new_loader(config);
-    for name in RELEVANT_SOLANA_V0_SYSCALLS {
+    for name in RELEVANT_SOLANA_SYSCALLS {
         RelocationOnlySyscall::register(&mut loader, name).map_err(|_| ())?;
     }
     Ok(Arc::new(loader))
 }
 
+fn require_sbpf_v3_e_flags(bytes: &[u8]) -> Result<(), ()> {
+    let encoded = bytes
+        .get(ELF64_E_FLAGS_OFFSET..ELF64_E_FLAGS_OFFSET + ELF64_E_FLAGS_LENGTH)
+        .ok_or(())?;
+    let e_flags = u32::from_le_bytes(encoded.try_into().map_err(|_| ())?);
+    if e_flags != SBPF_V3_E_FLAGS {
+        return Err(());
+    }
+    Ok(())
+}
+
 fn validate(bytes: &[u8]) -> Result<&'static str, ()> {
+    require_sbpf_v3_e_flags(bytes)?;
     let loader = build_loader()?;
     let executable = Executable::<ValidatorContext>::from_elf(bytes, loader).map_err(|_| ())?;
-    if executable.get_sbpf_version() != SBPFVersion::V0
+    if executable.get_sbpf_version() != SBPFVersion::V3
         || !executable.get_config().reject_broken_elfs
     {
         return Err(());
@@ -131,7 +150,7 @@ fn validate(bytes: &[u8]) -> Result<&'static str, ()> {
             "\"exactClusterAdmission\":false,",
             "\"validatorId\":\"agave-solana-sbpf-requisite-verifier\",",
             "\"validatorVersion\":\"0.21.0\",",
-            "\"solanaSbpf\":\"0.21.0\",\"sbpfVersion\":\"V0\",",
+            "\"solanaSbpf\":\"0.21.0\",\"sbpfVersion\":\"V3\",",
             "\"rejectBrokenElfs\":true,\"requisiteVerifier\":true,",
             "\"helperTargetTriple\":\"",
             env!("IROHA_SBF_VALIDATOR_TARGET"),
@@ -161,7 +180,7 @@ fn validate(bytes: &[u8]) -> Result<&'static str, ()> {
             "\"exactClusterAdmission\":false,",
             "\"validatorId\":\"agave-solana-sbpf-requisite-verifier\",",
             "\"validatorVersion\":\"0.21.0\",",
-            "\"solanaSbpf\":\"0.21.0\",\"sbpfVersion\":\"V0\",",
+            "\"solanaSbpf\":\"0.21.0\",\"sbpfVersion\":\"V3\",",
             "\"rejectBrokenElfs\":true,\"requisiteVerifier\":true,",
             "\"helperTargetTriple\":\"",
             env!("IROHA_SBF_VALIDATOR_TARGET"),
@@ -214,13 +233,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn loader_is_exactly_v0_and_rejects_broken_elfs() {
+    fn loader_is_exactly_v3_and_rejects_broken_elfs() {
         let loader = build_loader().expect("loader");
         assert_eq!(
             loader.get_config().enabled_sbpf_versions,
-            SBPFVersion::V0..=SBPFVersion::V0
+            SBPFVersion::V3..=SBPFVersion::V3
         );
         assert!(loader.get_config().reject_broken_elfs);
+    }
+
+    #[test]
+    fn raw_elf_flags_reject_v0_v1_v2_and_reserved_versions() {
+        let mut header = vec![0_u8; ELF64_E_FLAGS_OFFSET + ELF64_E_FLAGS_LENGTH];
+        for rejected in [0_u32, 1, 2, 4, u32::MAX] {
+            header[ELF64_E_FLAGS_OFFSET..ELF64_E_FLAGS_OFFSET + ELF64_E_FLAGS_LENGTH]
+                .copy_from_slice(&rejected.to_le_bytes());
+            assert!(require_sbpf_v3_e_flags(&header).is_err());
+        }
+        header[ELF64_E_FLAGS_OFFSET..ELF64_E_FLAGS_OFFSET + ELF64_E_FLAGS_LENGTH]
+            .copy_from_slice(&SBPF_V3_E_FLAGS.to_le_bytes());
+        assert!(require_sbpf_v3_e_flags(&header).is_ok());
     }
 
     #[test]
@@ -232,10 +264,10 @@ mod tests {
 
     #[test]
     fn relevant_syscalls_are_unique_and_bounded() {
-        let mut names = RELEVANT_SOLANA_V0_SYSCALLS.to_vec();
+        let mut names = RELEVANT_SOLANA_SYSCALLS.to_vec();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), RELEVANT_SOLANA_V0_SYSCALLS.len());
+        assert_eq!(names.len(), RELEVANT_SOLANA_SYSCALLS.len());
         assert!(names
             .iter()
             .all(|name| *name == "abort" || name.starts_with("sol_")));

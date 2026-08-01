@@ -1,3 +1,4 @@
+/* global AggregateError */
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
@@ -6,6 +7,7 @@ import {
   lstat,
   mkdir,
   open,
+  readFile,
   readdir,
   realpath,
   rename,
@@ -14,16 +16,30 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { blake2b } from "@noble/hashes/blake2b";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultRepoRoot = path.resolve(path.dirname(scriptPath), "..");
 const SENTINEL_MARKER = ".iroha-signer-free-sbf-build-sentinel";
 const ELF_MAGIC = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
-const SBF_ARCH = "v0";
+const ELF64_E_FLAGS_OFFSET = 48;
+const ELF64_E_FLAGS_LENGTH = 4;
+const SBPF_V3_E_FLAGS = 3;
+const SBF_ARCH = "v3";
 const CARGO_BUILD_SBF_VERSION = "4.1.0";
 const SBF_PLATFORM_TOOLS_VERSION = "v1.54";
 const SBF_RUSTC_VERSION = "1.89.0";
 const MAX_TOOL_VERSION_OUTPUT_BYTES = 4096;
+
+export const SOLANA_SBF_BUILD_USAGE = `Usage:
+  node scripts/build-sccp-solana-programs.mjs [all|bridge|source|native]
+
+Builds exact signer-free SBPF V3 artifacts. The bridge selection builds both
+the destination and source role-gated bridge artifacts.
+
+Options:
+  --help, -h  Show this help without starting cargo or writing build outputs
+`;
 
 const CHILD_ENV_ALLOWLIST = Object.freeze([
   "CARGO_HOME",
@@ -51,6 +67,18 @@ export const SOLANA_SBF_PROGRAMS = Object.freeze({
     artifactName: "sccp_taira_xor.so",
     cargoKeypairName: "sccp_taira_xor-keypair.json",
     outputPath: "output/sccp-solana-program-artifacts/bridge/sccp_taira_xor.so",
+    cargoFeatures: Object.freeze(["destination-program"]),
+  }),
+  source: Object.freeze({
+    id: "source",
+    manifestPath: "solana/sccp-taira-xor/Cargo.toml",
+    lockPath: "solana/sccp-taira-xor/Cargo.lock",
+    rustToolchainPath: "solana/sccp-taira-xor/rust-toolchain.toml",
+    artifactName: "sccp_taira_xor.so",
+    cargoKeypairName: "sccp_taira_xor-keypair.json",
+    outputPath:
+      "output/sccp-solana-program-artifacts/source/sccp_taira_xor_source.so",
+    cargoFeatures: Object.freeze(["source-program"]),
   }),
   native: Object.freeze({
     id: "native",
@@ -62,6 +90,7 @@ export const SOLANA_SBF_PROGRAMS = Object.freeze({
     cargoKeypairName: "sccp_native_recursive_verifier-keypair.json",
     outputPath:
       "output/sccp-solana-program-artifacts/native-verifier/sccp_native_recursive_verifier.so",
+    cargoFeatures: Object.freeze([]),
   }),
 });
 
@@ -133,15 +162,21 @@ const assertRegularFile = async (target, label) => {
 
 const assertElf = async (target, label) => {
   const stats = await assertRegularFile(target, label);
-  if (stats.size < ELF_MAGIC.length) {
+  if (stats.size < ELF64_E_FLAGS_OFFSET + ELF64_E_FLAGS_LENGTH) {
     throw new Error(`${label} is too short to be an ELF program artifact.`);
   }
   const handle = await open(target, "r");
   try {
-    const prefix = Buffer.alloc(ELF_MAGIC.length);
-    const { bytesRead } = await handle.read(prefix, 0, prefix.length, 0);
-    if (bytesRead !== ELF_MAGIC.length || !prefix.equals(ELF_MAGIC)) {
+    const header = Buffer.alloc(ELF64_E_FLAGS_OFFSET + ELF64_E_FLAGS_LENGTH);
+    const { bytesRead } = await handle.read(header, 0, header.length, 0);
+    if (
+      bytesRead !== header.length ||
+      !header.subarray(0, 4).equals(ELF_MAGIC)
+    ) {
       throw new Error(`${label} is not an ELF program artifact.`);
+    }
+    if (header.readUInt32LE(ELF64_E_FLAGS_OFFSET) !== SBPF_V3_E_FLAGS) {
+      throw new Error(`${label} must be an exact SBPF V3 ELF artifact.`);
     }
   } finally {
     await handle.close();
@@ -159,6 +194,25 @@ const sha256File = async (target) => {
     await handle.close();
   }
   return `0x${hash.digest("hex")}`;
+};
+
+const blake2b256File = async (target) => {
+  const bytes = new Uint8Array(await readFile(target));
+  return `0x${Buffer.from(blake2b(bytes, { dkLen: 32 })).toString("hex")}`;
+};
+
+const assertDistinctBuiltSolanaSbfArtifacts = (results) => {
+  if (results.length <= 1) return;
+  const artifactSha256Values = results.map(({ sha256 }) => sha256);
+  const codeHashValues = results.map(({ codeHash }) => codeHash);
+  if (
+    new Set(artifactSha256Values).size !== results.length ||
+    new Set(codeHashValues).size !== results.length
+  ) {
+    throw new Error(
+      "Built Solana SBF roles must have distinct artifact SHA-256 and executable code hashes.",
+    );
+  }
 };
 
 export const sanitizeSolanaSbfBuildEnvironment = (env = process.env) => {
@@ -357,26 +411,10 @@ const atomicInstallArtifact = async (source, destination) => {
   }
 };
 
-export const normalizeSolanaSbfBuildSelection = (value = "all") => {
-  if (value === "all") return ["bridge", "native"];
-  if (value === "bridge" || value === "native") return [value];
-  throw new Error("Solana SBF build selection must be bridge, native, or all.");
-};
-
-export const buildSolanaSbfProgram = async ({
-  program,
-  repoRoot = defaultRepoRoot,
-  outputRoot = repoRoot,
-  scratchParent = tmpdir(),
-  cargoBin = "cargo",
-  env = process.env,
-  spawnImpl,
-} = {}) => {
-  const definition = SOLANA_SBF_PROGRAMS[program];
-  if (!definition) {
-    throw new Error("Solana SBF program must be bridge or native.");
-  }
-  const absoluteRepoRoot = await realpath(path.resolve(repoRoot));
+const resolveSolanaSbfArtifactDestination = async ({
+  definition,
+  outputRoot,
+}) => {
   const absoluteOutputRoot = path.resolve(outputRoot);
   const outputRootStats = await lstatOrNull(absoluteOutputRoot);
   if (outputRootStats?.isSymbolicLink()) {
@@ -400,10 +438,209 @@ export const buildSolanaSbfProgram = async ({
     realOutputRoot,
     "Solana SBF artifact directory",
   );
-  const destination = path.join(
-    destinationDirectory,
-    path.basename(requestedDestination),
+  return path.join(destinationDirectory, path.basename(requestedDestination));
+};
+
+const prepareArtifactPublication = async ({ source, destination }) => {
+  const destinationStats = await lstatOrNull(destination);
+  if (destinationStats?.isSymbolicLink()) {
+    throw new Error("Solana SBF output artifact must not be a symbolic link.");
+  }
+  if (destinationStats && !destinationStats.isFile()) {
+    throw new Error(
+      "Solana SBF output artifact must be a regular file when present.",
+    );
+  }
+  const nonce = `${process.pid}.${randomBytes(8).toString("hex")}`;
+  const candidate = path.join(
+    path.dirname(destination),
+    `.${path.basename(destination)}.${nonce}.candidate`,
   );
+  const backup = path.join(
+    path.dirname(destination),
+    `.${path.basename(destination)}.${nonce}.backup`,
+  );
+  try {
+    await copyFile(source, candidate, fsConstants.COPYFILE_EXCL);
+    const handle = await open(candidate, "r+");
+    try {
+      await handle.chmod(0o755);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await assertElf(candidate, "Staged Solana SBF artifact");
+    return {
+      backup,
+      backupMoved: false,
+      candidate,
+      destination,
+      hadExisting: Boolean(destinationStats),
+      installed: false,
+    };
+  } catch (error) {
+    await rm(candidate, { force: true });
+    throw error;
+  }
+};
+
+const rollbackArtifactPublications = async (publications) => {
+  const rollbackErrors = [];
+  for (const publication of [...publications].reverse()) {
+    try {
+      if (publication.installed) {
+        await rm(publication.destination, { force: true });
+        publication.installed = false;
+      }
+      if (publication.backupMoved) {
+        await rename(publication.backup, publication.destination);
+        publication.backupMoved = false;
+      }
+    } catch (error) {
+      rollbackErrors.push(error);
+    }
+  }
+  if (rollbackErrors.length > 0) {
+    throw new AggregateError(
+      rollbackErrors,
+      "Failed to restore Solana SBF outputs after publication failure.",
+    );
+  }
+};
+
+const publishStagedSolanaSbfArtifacts = async ({
+  stagedResults,
+  outputRoot,
+}) => {
+  const publications = [];
+  let committed = false;
+  try {
+    for (const result of stagedResults) {
+      const destination = await resolveSolanaSbfArtifactDestination({
+        definition: SOLANA_SBF_PROGRAMS[result.program],
+        outputRoot,
+      });
+      publications.push(
+        await prepareArtifactPublication({
+          source: result.artifactPath,
+          destination,
+        }),
+      );
+    }
+
+    for (const publication of publications) {
+      if (publication.hadExisting) {
+        await rename(publication.destination, publication.backup);
+        publication.backupMoved = true;
+      }
+      await rename(publication.candidate, publication.destination);
+      publication.installed = true;
+    }
+
+    const publishedResults = [];
+    for (let index = 0; index < publications.length; index += 1) {
+      const publication = publications[index];
+      const stagedResult = stagedResults[index];
+      await assertElf(publication.destination, "Published Solana SBF artifact");
+      const [sha256, codeHash] = await Promise.all([
+        sha256File(publication.destination),
+        blake2b256File(publication.destination),
+      ]);
+      if (
+        sha256 !== stagedResult.sha256 ||
+        codeHash !== stagedResult.codeHash
+      ) {
+        throw new Error(
+          "Published Solana SBF artifact differs from its validated staged artifact.",
+        );
+      }
+      publishedResults.push(
+        Object.freeze({
+          ...stagedResult,
+          artifactPath: publication.destination,
+        }),
+      );
+    }
+
+    committed = true;
+    return Object.freeze(publishedResults);
+  } catch (error) {
+    try {
+      await rollbackArtifactPublications(publications);
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        "Solana SBF publication failed and its output rollback was incomplete.",
+      );
+    }
+    throw error;
+  } finally {
+    await Promise.allSettled(
+      publications.flatMap((publication) => [
+        rm(publication.candidate, { force: true }),
+        ...(committed || !publication.backupMoved
+          ? [rm(publication.backup, { force: true })]
+          : []),
+      ]),
+    );
+  }
+};
+
+export const normalizeSolanaSbfBuildSelection = (value = "all") => {
+  if (value === "all") return ["bridge", "source", "native"];
+  if (value === "bridge") return ["bridge", "source"];
+  if (value === "source" || value === "native") return [value];
+  throw new Error(
+    "Solana SBF build selection must be bridge, source, native, or all.",
+  );
+};
+
+export const parseSolanaSbfBuildArgs = (argv) => {
+  if (!Array.isArray(argv) || argv.some((value) => typeof value !== "string")) {
+    throw new TypeError("Solana SBF build arguments must be strings.");
+  }
+  if (argv.length === 0) {
+    return Object.freeze({ help: false, selection: "all" });
+  }
+  if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
+    return Object.freeze({ help: true, selection: null });
+  }
+  if (argv.includes("--help") || argv.includes("-h")) {
+    throw new TypeError("--help and -h must be used alone.");
+  }
+  if (new Set(argv).size !== argv.length) {
+    throw new TypeError("Solana SBF build arguments must not be duplicated.");
+  }
+  if (argv.length !== 1) {
+    throw new TypeError(
+      "Solana SBF build accepts at most one program selection.",
+    );
+  }
+  if (argv[0].startsWith("-")) {
+    throw new TypeError("Solana SBF build received an unsupported option.");
+  }
+  normalizeSolanaSbfBuildSelection(argv[0]);
+  return Object.freeze({ help: false, selection: argv[0] });
+};
+
+export const buildSolanaSbfProgram = async ({
+  program,
+  repoRoot = defaultRepoRoot,
+  outputRoot = repoRoot,
+  scratchParent = tmpdir(),
+  cargoBin = "cargo",
+  env = process.env,
+  spawnImpl,
+} = {}) => {
+  const definition = SOLANA_SBF_PROGRAMS[program];
+  if (!definition) {
+    throw new Error("Solana SBF program must be bridge, source, or native.");
+  }
+  const absoluteRepoRoot = await realpath(path.resolve(repoRoot));
+  const destination = await resolveSolanaSbfArtifactDestination({
+    definition,
+    outputRoot,
+  });
 
   const absoluteScratchParent = path.resolve(scratchParent);
   const scratchParentStats = await lstatOrNull(absoluteScratchParent);
@@ -488,6 +725,14 @@ export const buildSolanaSbfProgram = async ({
       env: buildEnv,
       spawnImpl,
     });
+    const lockedCargoArgs = ["--locked"];
+    if (definition.cargoFeatures.length > 0) {
+      lockedCargoArgs.push(
+        "--no-default-features",
+        "--features",
+        definition.cargoFeatures.join(","),
+      );
+    }
     await spawnCargoBuildSbf({
       cargoBin,
       cwd: buildCwd,
@@ -504,7 +749,7 @@ export const buildSolanaSbfProgram = async ({
         "--sbf-out-dir",
         scratchOutput,
         "--",
-        "--locked",
+        ...lockedCargoArgs,
       ],
     });
 
@@ -542,10 +787,15 @@ export const buildSolanaSbfProgram = async ({
     await assertElf(scratchArtifact, "Compiled Solana SBF artifact");
     await atomicInstallArtifact(scratchArtifact, destination);
     await assertElf(destination, "Installed Solana SBF artifact");
+    const [sha256, codeHash] = await Promise.all([
+      sha256File(destination),
+      blake2b256File(destination),
+    ]);
     return Object.freeze({
       program,
       artifactPath: destination,
-      sha256: await sha256File(destination),
+      sha256,
+      codeHash,
       manifestSha256,
       lockSha256,
       rustToolchainSha256,
@@ -572,21 +822,59 @@ export const buildSolanaSbfPrograms = async ({
   ...options
 } = {}) => {
   const programs = normalizeSolanaSbfBuildSelection(selection);
-  const results = [];
-  for (const program of programs) {
-    results.push(await buildSolanaSbfProgram({ ...options, program }));
+  if (programs.length === 1) {
+    return Object.freeze([
+      await buildSolanaSbfProgram({ ...options, program: programs[0] }),
+    ]);
   }
-  return Object.freeze(results);
-};
 
-const main = async () => {
-  if (process.argv.length > 3) {
+  const scratchParent = path.resolve(options.scratchParent ?? tmpdir());
+  const scratchParentStats = await lstatOrNull(scratchParent);
+  if (
+    !scratchParentStats?.isDirectory() ||
+    scratchParentStats.isSymbolicLink()
+  ) {
     throw new Error(
-      "Usage: node scripts/build-sccp-solana-programs.mjs [all|bridge|native]",
+      "Solana SBF scratch parent must be an existing non-symbolic-link directory.",
     );
   }
-  const selection = process.argv[2] || "all";
-  const results = await buildSolanaSbfPrograms({ selection });
+  const realScratchParent = await realpath(scratchParent);
+  const publicationStage = path.join(
+    realScratchParent,
+    `iroha-sccp-solana-sbf-publication-${process.pid}-${randomBytes(8).toString("hex")}`,
+  );
+  await mkdir(publicationStage, { mode: 0o700 });
+  try {
+    const stagedResults = [];
+    for (const program of programs) {
+      stagedResults.push(
+        await buildSolanaSbfProgram({
+          ...options,
+          outputRoot: publicationStage,
+          scratchParent: realScratchParent,
+          program,
+        }),
+      );
+    }
+    assertDistinctBuiltSolanaSbfArtifacts(stagedResults);
+    return await publishStagedSolanaSbfArtifacts({
+      stagedResults,
+      outputRoot: options.outputRoot ?? options.repoRoot ?? defaultRepoRoot,
+    });
+  } finally {
+    await rm(publicationStage, { recursive: true, force: true });
+  }
+};
+
+const main = async (argv = process.argv.slice(2)) => {
+  const args = parseSolanaSbfBuildArgs(argv);
+  if (args.help) {
+    process.stdout.write(SOLANA_SBF_BUILD_USAGE);
+    return;
+  }
+  const results = await buildSolanaSbfPrograms({
+    selection: args.selection,
+  });
   process.stdout.write(
     `${JSON.stringify(
       {
@@ -603,6 +891,7 @@ const main = async () => {
           program: result.program,
           path: path.relative(defaultRepoRoot, result.artifactPath),
           sha256: result.sha256,
+          codeHash: result.codeHash,
           manifestSha256: result.manifestSha256,
           lockSha256: result.lockSha256,
           rustToolchainSha256: result.rustToolchainSha256,

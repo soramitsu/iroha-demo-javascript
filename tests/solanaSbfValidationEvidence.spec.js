@@ -20,13 +20,27 @@ import {
   SOLANA_SBF_VALIDATOR_SOURCE_FILES,
   assertSolanaSbfValidatorIntegrationPrerequisites,
   canonicalSolanaSbfValidatorSourceBundle,
+  createAuthenticatedSolanaLoaderV3FreshSbfValidationAdapter,
   executeAuthenticatedSolanaSbfValidatorBinary,
   generateSolanaLoaderV3SbfValidationEvidence,
+  generateSolanaLoaderV3SbfValidationEvidenceFromBytes,
   parseSolanaSbfValidationEvidenceArgs,
   runSolanaSbfValidationEvidenceCli,
   sha256CanonicalEvidenceBytes,
   withStableSolanaSbfArtifactSnapshot,
 } from "../scripts/solana-sbf-validation-evidence.mjs";
+import {
+  SOLANA_LOADER_V3_FRESH_REQUIRED_SBF_VALIDATION_CHECKS,
+  SOLANA_LOADER_V3_FRESH_SBF_ARCHITECTURE,
+  SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_EVIDENCE_SCHEMA,
+  SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_POLICY,
+  SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_POLICY_SHA256,
+  SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_SCOPE,
+  SOLANA_LOADER_V3_FRESH_SBF_VALIDATOR_ID,
+  SOLANA_LOADER_V3_FRESH_SBF_VALIDATOR_VERSION,
+  SOLANA_SCCP_FRESH_DEPLOY_ROLE_ORDER,
+  canonicalSolanaLoaderV3FreshSbfValidationEvidenceBytes,
+} from "../scripts/solana-loader-v3-fresh-deploy.mjs";
 
 const repoRoot = path.resolve(".");
 const manifest = path.join(repoRoot, "native/solana-sbf-validator/Cargo.toml");
@@ -34,19 +48,25 @@ const bridge = path.join(
   repoRoot,
   "output/sccp-solana-program-artifacts/bridge/sccp_taira_xor.so",
 );
+const source = path.join(
+  repoRoot,
+  "output/sccp-solana-program-artifacts/source/sccp_taira_xor_source.so",
+);
 const nativeVerifier = path.join(
   repoRoot,
   "output/sccp-solana-program-artifacts/native-verifier/sccp_native_recursive_verifier.so",
 );
 const bridgeSha =
-  "0xcc2c7a8b91dd15fd561d9d9841546bace247e6967a4051137cb7ebd40f88b47c";
+  "0x9c7a639b15dd114c1bb40e65dd0380f8fedb199d1d93f65918be03ac316233e1";
+const sourceSha =
+  "0xcec2718e975730befbfc9c2de70f2c81ee2cae68f5a880bbc4b14592273ca9ba";
 const nativeSha =
-  "0x9f366f14d586c3c5e79d915cde4ce3dc82822a1aa7311091b98b5fdcbe184bfb";
+  "0xbc77d3b8342f7da91b79c19bcdf7fa56c808eaae6692a13859385b3fe41fe33b";
 const requiredIntegration =
   process.env.SCCP_SOLANA_REQUIRE_SBF_VALIDATOR_INTEGRATION === "1";
 const cargoAvailable =
   spawnSync("cargo", ["--version"], { encoding: null }).status === 0;
-const artifactsAvailable = [bridge, nativeVerifier].every(existsSync);
+const artifactsAvailable = [bridge, source, nativeVerifier].every(existsSync);
 const integrationPossible =
   requiredIntegration ||
   (artifactsAvailable &&
@@ -72,7 +92,7 @@ beforeAll(() => {
   if (requiredIntegration) {
     assertSolanaSbfValidatorIntegrationPrerequisites({
       required: true,
-      paths: [bridge, nativeVerifier, DEFAULT_SOLANA_SBF_VALIDATOR_BIN],
+      paths: [bridge, source, nativeVerifier, DEFAULT_SOLANA_SBF_VALIDATOR_BIN],
     });
     if (process.platform !== "linux" || process.arch !== "x64") {
       throw new Error(
@@ -111,7 +131,7 @@ beforeAll(() => {
   if (integrationPossible) {
     assertSolanaSbfValidatorIntegrationPrerequisites({
       required: true,
-      paths: [bridge, nativeVerifier, helper],
+      paths: [bridge, source, nativeVerifier, helper],
     });
     helperSha256 = sha256(readFileSync(helper));
   }
@@ -143,9 +163,9 @@ const generate = (artifactPath, expectedArtifactSha256, extra = {}) =>
     ...extra,
   });
 
-describe("pinned local solana-sbpf V0 helper", () => {
-  integrationIt("accepts both exact reviewed bridge artifacts", () => {
-    for (const artifact of [bridge, nativeVerifier]) {
+describe("pinned local solana-sbpf V3 helper", () => {
+  integrationIt("accepts all three exact role-separated artifacts", () => {
+    for (const artifact of [bridge, source, nativeVerifier]) {
       const result = runHelper(readFileSync(artifact));
       expect(result.status).toBe(0);
       expect(result.stderr).toEqual(Buffer.alloc(0));
@@ -155,7 +175,7 @@ describe("pinned local solana-sbpf V0 helper", () => {
         validationScope: "local-solana-sbpf-structural-preflight",
         exactClusterAdmission: false,
         validatorVersion: "0.21.0",
-        sbpfVersion: "V0",
+        sbpfVersion: "V3",
       });
       expect(result.stdout.at(-1)).toBe("}".charCodeAt(0));
     }
@@ -179,6 +199,14 @@ describe("pinned local solana-sbpf V0 helper", () => {
       expect(runHelper(corrupted).status).not.toBe(0);
     },
   );
+
+  integrationIt("rejects V0, V1, and V2 ELF header downgrades", () => {
+    for (const version of [0, 1, 2]) {
+      const downgraded = Buffer.from(readFileSync(bridge));
+      downgraded.writeUInt32LE(version, 48);
+      expect(runHelper(downgraded).status).not.toBe(0);
+    }
+  });
 
   integrationIt("rejects every command-line argument", () => {
     const result = runHelper(readFileSync(nativeVerifier), ["--unexpected"]);
@@ -355,6 +383,88 @@ describe("authenticated helper execution", () => {
 
 describe("canonical Loader-v3 SBF evidence", () => {
   integrationIt(
+    "adapts authenticated byte validation to exact pinned fresh-deploy roles",
+    async () => {
+      const artifactBytesByRole = {
+        nativeVerifier: readFileSync(nativeVerifier),
+        destination: readFileSync(bridge),
+        source: readFileSync(source),
+      };
+      const expectedArtifactSha256ByRole = {
+        nativeVerifier: nativeSha,
+        destination: bridgeSha,
+        source: sourceSha,
+      };
+      const pinnedEvidenceBytesByRole = {};
+      const expectedEvidenceSha256ByRole = {};
+      for (const role of SOLANA_SCCP_FRESH_DEPLOY_ROLE_ORDER) {
+        const generated = generateSolanaLoaderV3SbfValidationEvidenceFromBytes({
+          executableBytes: artifactBytesByRole[role],
+          expectedArtifactSha256: expectedArtifactSha256ByRole[role],
+          expectedValidatorSha256: helperSha256,
+          validatorBin: helper,
+          validatorRoot: helperRoot,
+          validatorSourceRoot: DEFAULT_SOLANA_SBF_VALIDATOR_ROOT,
+          validationMode,
+        });
+        const freshEvidence = {
+          ...generated.evidence,
+          schema: SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_EVIDENCE_SCHEMA,
+          validationScope: SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_SCOPE,
+        };
+        pinnedEvidenceBytesByRole[role] =
+          canonicalSolanaLoaderV3FreshSbfValidationEvidenceBytes(freshEvidence);
+        expectedEvidenceSha256ByRole[role] = sha256(
+          pinnedEvidenceBytesByRole[role],
+        );
+      }
+      const adapter =
+        createAuthenticatedSolanaLoaderV3FreshSbfValidationAdapter({
+          artifactBytesByRole,
+          pinnedEvidenceBytesByRole,
+          expectedArtifactSha256ByRole,
+          expectedEvidenceSha256ByRole,
+          expectedValidatorSha256: helperSha256,
+          validatorBin: helper,
+          validatorRoot: helperRoot,
+          validatorSourceRoot: DEFAULT_SOLANA_SBF_VALIDATOR_ROOT,
+          validationMode,
+        });
+      const requestFor = (role) => {
+        const pinned = JSON.parse(
+          pinnedEvidenceBytesByRole[role].toString("utf8"),
+        );
+        return {
+          role,
+          executableBytes: artifactBytesByRole[role],
+          sbpfVersion: SOLANA_LOADER_V3_FRESH_SBF_ARCHITECTURE,
+          validatorId: SOLANA_LOADER_V3_FRESH_SBF_VALIDATOR_ID,
+          validatorVersion: SOLANA_LOADER_V3_FRESH_SBF_VALIDATOR_VERSION,
+          policy: SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_POLICY,
+          policySha256: SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_POLICY_SHA256,
+          artifactSha256: pinned.artifactSha256,
+          codeHash: pinned.codeHash,
+          executableLength: pinned.executableLength,
+          requiredChecks: [
+            ...SOLANA_LOADER_V3_FRESH_REQUIRED_SBF_VALIDATION_CHECKS,
+          ],
+        };
+      };
+      for (const role of SOLANA_SCCP_FRESH_DEPLOY_ROLE_ORDER) {
+        const evidence = await adapter(requestFor(role));
+        expect(
+          canonicalSolanaLoaderV3FreshSbfValidationEvidenceBytes(evidence),
+        ).toEqual(pinnedEvidenceBytesByRole[role]);
+      }
+      const aliased = requestFor("nativeVerifier");
+      aliased.executableBytes = artifactBytesByRole.destination;
+      await expect(adapter(aliased)).rejects.toThrow(
+        /differs from its pinned/u,
+      );
+    },
+  );
+
+  integrationIt(
     "binds exact helper, source, Cargo, rustc, host and JIT provenance",
     () => {
       const sourceBundle = canonicalSolanaSbfValidatorSourceBundle();
@@ -363,6 +473,7 @@ describe("canonical Loader-v3 SBF evidence", () => {
       );
       for (const [artifactPath, expectedArtifactSha256] of [
         [bridge, bridgeSha],
+        [source, sourceSha],
         [nativeVerifier, nativeSha],
       ]) {
         const first = generate(artifactPath, expectedArtifactSha256);

@@ -3,9 +3,23 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { nextTick } from "vue";
 import { AccountAddress } from "@iroha/iroha-js";
+import { PublicKey } from "@solana/web3.js";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { sha256 } from "@noble/hashes/sha256";
 import { keccak_256 } from "@noble/hashes/sha3";
+import {
+  canonicalSccpPayloadBytes as canonicalExactSccpPayloadBytes,
+  canonicalTairaSccpMessageBundleBytes,
+  deriveSccpSolanaDestinationHashesV1,
+  deriveSccpSolanaNativeVerifierConfigHashV1,
+  sccpCommitmentLeafHash,
+  sccpPayloadHash as exactSdkSccpPayloadHash,
+} from "@iroha/iroha-js/sccp";
+import {
+  buildSolanaDestinationProofBodyV1,
+  SCCP_SOLANA_COMPUTE_BUDGET_PROGRAM_ID_V1,
+  type SolanaDestinationProverInputV1,
+} from "@/utils/sccpSolanaDestination";
 import SccpView from "@/views/SccpView.vue";
 import { useSessionStore } from "@/stores/session";
 import {
@@ -16,10 +30,7 @@ import {
 import {
   canonicalEip55EvmAddress,
   buildSccpMessageBundleSubmitPayload,
-  buildSccpSolanaSettlementProofContextHash,
   decodeTronBase58CheckAddress,
-  deriveSccpSolanaMessageReceiptAddress,
-  deriveSccpSolanaMintAuthorityAddress,
   readBscSourceProverMaterialBinding,
   tairaXorBscBurnToTairaAccountCallData,
   tairaXorBurnToTairaCallData,
@@ -37,14 +48,12 @@ import {
 } from "@/utils/sccp";
 import {
   canonicalSccpPayloadEnvelopeBytes,
-  canonicalSccpMessageProofBundleBytes,
-  canonicalSccpMessageTransparentPublicInputsBytes,
   canonicalSccpTransferPayloadBytes,
   buildTairaXorBscToTairaTransferPayload,
   evmSccpDestinationBinding,
   SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
   SCCP_CODEC_EVM_HEX,
-  SCCP_CODEC_SOLANA_BASE58,
+  SCCP_CODEC_SOLANA_PUBKEY32,
   SCCP_CODEC_TEXT_UTF8,
   SCCP_CODEC_TRON_BASE58CHECK,
   SCCP_ETH_NATIVE_EVM_PROVER_REQUIRED_IMPLEMENTATIONS_V1,
@@ -59,7 +68,19 @@ import {
   tairaXorRouteIdHash,
   tairaXorAssetKeyHash,
   tronSccpDestinationBinding,
-} from "@iroha/iroha-js/sccp";
+} from "@/legacy/sccpLegacySdk";
+import {
+  SCCP_SOLANA_DESTINATION_ROLE_V1,
+  SCCP_SOLANA_DESTINATION_RECEIPT_SEED_V1,
+  SCCP_SOLANA_SOURCE_ROLE_V1,
+  SCCP_TAIRA_TO_SOLANA_LANE_V1,
+  canonicalSccpTextWireHex,
+  canonicalSolanaPubkeyWireHex,
+  deriveSccpSolanaRouteStateAddressV1,
+  deriveSolanaProgramAddressV1,
+  exactSccpMessageId,
+  readGovernedSolanaRoutePinsV1,
+} from "@/utils/sccpSolanaCanonical";
 
 const VALID_TRON_ADDRESS = "TGkWdpawVNfeset3P6uTBbLaPY7nZVZvXY";
 const fixtureBscAddress = (label: string): string =>
@@ -84,14 +105,19 @@ const SOLANA_SOURCE_BRIDGE_PROGRAM_ID =
   "CmGQYvNgCS9yycdp5tsKmGoDhJrwmEPg6oQrNwj64WQe";
 const SOLANA_TOKEN_MINT_ADDRESS =
   "7x76GchSm2spUY8koAFMaFwx5x7FjoMUDJa2vSfTDmre";
-const SOLANA_VERIFIER_PROGRAM_ID =
-  "6Q3jF6UmEH5sYBYF3iU43rfFroJjZVXiejvVG88fUZ7K";
+const SOLANA_VERIFIER_PROGRAM_ID = SOLANA_BRIDGE_PROGRAM_ID;
 const SOLANA_NATIVE_VERIFIER_PROGRAM_ID =
-  "ComputeBudget111111111111111111111111111111";
-const SOLANA_SOURCE_STATE_ADDRESS =
-  "433bWoeHHuaK2fLJWDJyk1EBxVhrQtp8Eie6YKkCiD6r";
-const SOLANA_VERIFIER_STATE_ADDRESS =
-  "HWaaX4WBs6iYiNQQbKUgRNR2pWBf1Ms81Q6aP58FzXQS";
+  "2VDW9dFE1ZXz4zWAbaBDQFynNVdRpQ73HyfSHMzBSL6Z";
+const SOLANA_SOURCE_STATE_ADDRESS = deriveSccpSolanaRouteStateAddressV1({
+  routeProgramAddress: SOLANA_SOURCE_BRIDGE_PROGRAM_ID,
+  role: SCCP_SOLANA_SOURCE_ROLE_V1,
+  tokenMintAddress: SOLANA_TOKEN_MINT_ADDRESS,
+});
+const SOLANA_VERIFIER_STATE_ADDRESS = deriveSccpSolanaRouteStateAddressV1({
+  routeProgramAddress: SOLANA_BRIDGE_PROGRAM_ID,
+  role: SCCP_SOLANA_DESTINATION_ROLE_V1,
+  tokenMintAddress: SOLANA_TOKEN_MINT_ADDRESS,
+});
 const SOLANA_DESTINATION_TOKEN_ADDRESS =
   "GkSa6kPaHffre7H4WmhvMNL6FvDGPNutYseUk3aHb86Y";
 const SOLANA_FINALIZE_SIGNATURE =
@@ -106,13 +132,237 @@ const BSC_TESTNET_NETWORK_ID_HEX =
 const TRON_TOKEN_ADDRESS = "TD5gsCwxykWsLN9aPrq2TAfNjByuZKYp4E";
 const TRON_SOURCE_BRIDGE_ADDRESS = "TEdvoHEatmDKvTh3o9vBRB9Vdtbhn4QFhy";
 const TRON_VERIFIER_ADDRESS = "TGCAjMXComunWZEXCT1LPBdcYbDVuyexBv";
-const TAIRA_ACCOUNT_PUBLIC_KEY_HEX = "12".repeat(32);
+// RFC 8032 test-vector public key: a canonical compressed Ed25519 point.
+const TAIRA_ACCOUNT_PUBLIC_KEY_HEX =
+  "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
 const TAIRA_ACCOUNT_ID = AccountAddress.fromAccount({
-  publicKey: Uint8Array.from({ length: 32 }, () => 0x12),
+  publicKey: Uint8Array.from(Buffer.from(TAIRA_ACCOUNT_PUBLIC_KEY_HEX, "hex")),
 }).toI105(TAIRA_NETWORK_PREFIX);
 const SORA_ACCOUNT_ID = AccountAddress.fromAccount({
-  publicKey: Uint8Array.from({ length: 32 }, () => 0x12),
+  publicKey: Uint8Array.from(Buffer.from(TAIRA_ACCOUNT_PUBLIC_KEY_HEX, "hex")),
 }).toI105(753);
+
+const solanaUpperHex = (address: string): string =>
+  Buffer.from(new PublicKey(address).toBytes()).toString("hex").toUpperCase();
+const solanaFixtureAddress = (label: string): string =>
+  new PublicKey(sha256(new TextEncoder().encode(label))).toBase58();
+const solanaProgramDerivedAddress = (
+  programAddress: string,
+  seeds: Uint8Array[],
+): string => {
+  const programBytes = new PublicKey(programAddress).toBytes();
+  const marker = new TextEncoder().encode("ProgramDerivedAddress");
+  for (let bump = 255; bump >= 0; bump -= 1) {
+    const parts = [...seeds, Uint8Array.of(bump), programBytes, marker];
+    const preimage = new Uint8Array(
+      parts.reduce((length, part) => length + part.length, 0),
+    );
+    let offset = 0;
+    for (const part of parts) {
+      preimage.set(part, offset);
+      offset += part.length;
+    }
+    const candidate = sha256(preimage);
+    if (!PublicKey.isOnCurve(candidate)) {
+      return new PublicKey(candidate).toBase58();
+    }
+  }
+  throw new Error("Unable to derive Solana fixture PDA.");
+};
+const solanaWord = (value: bigint): string =>
+  value.toString(16).padStart(64, "0").toUpperCase();
+const SOLANA_G1 = { x: solanaWord(1n), y: solanaWord(2n) };
+const SOLANA_G2 = {
+  x_c0: "1800DEEF121F1E76426A00665E5C4479674322D4F75EDADD46DEBD5CD992F6ED",
+  x_c1: "198E9393920D483A7260BFB731FB5D25F1AA493335A9E71297E485B7AEF312C2",
+  y_c0: "12C85EA5DB8C6DEB4AAB71808DCB408FE3D1E7690C43D37B4CE6CC0166FA7DAA",
+  y_c1: "090689D0585FF075EC9E99AD690C3395BC4B313370B38EF355ACDADCD122975B",
+};
+const exactSolanaVerifyingKey = () => ({
+  version: 1,
+  alpha1: SOLANA_G1,
+  beta2: SOLANA_G2,
+  gamma2: SOLANA_G2,
+  delta2: SOLANA_G2,
+  ic: Object.fromEntries([
+    ["constant", SOLANA_G1],
+    ...Array.from({ length: 11 }, (_, index) => [`signal_${index}`, SOLANA_G1]),
+  ]),
+});
+const exactSolanaVerifyingKeyBytes = (
+  key: ReturnType<typeof exactSolanaVerifyingKey>,
+): Uint8Array => {
+  const words = [
+    key.alpha1.x,
+    key.alpha1.y,
+    key.beta2.x_c0,
+    key.beta2.x_c1,
+    key.beta2.y_c0,
+    key.beta2.y_c1,
+    key.gamma2.x_c0,
+    key.gamma2.x_c1,
+    key.gamma2.y_c0,
+    key.gamma2.y_c1,
+    key.delta2.x_c0,
+    key.delta2.x_c1,
+    key.delta2.y_c0,
+    key.delta2.y_c1,
+    key.ic.constant.x,
+    key.ic.constant.y,
+    ...Array.from({ length: 11 }, (_, index) => [
+      key.ic[`signal_${index}`].x,
+      key.ic[`signal_${index}`].y,
+    ]).flat(),
+  ];
+  return Uint8Array.from(Buffer.from(words.join(""), "hex"));
+};
+
+const exactSolanaGovernedRoute = () => {
+  const verifyingKey = exactSolanaVerifyingKey();
+  const verifierKeyHash = Buffer.from(
+    keccak_256(exactSolanaVerifyingKeyBytes(verifyingKey)),
+  )
+    .toString("hex")
+    .toUpperCase();
+  const deployment = {
+    token_mint_address: solanaUpperHex(SOLANA_TOKEN_MINT_ADDRESS),
+    route_program_id: solanaUpperHex(SOLANA_BRIDGE_PROGRAM_ID),
+    route_program_data_address: solanaUpperHex(
+      solanaFixtureAddress("sccp view destination programdata"),
+    ),
+    route_program_data_slot: 17,
+    route_state_account: solanaUpperHex(SOLANA_VERIFIER_STATE_ADDRESS),
+    route_program_code_hash: "65".repeat(32).toUpperCase(),
+    native_verifier_program_id: solanaUpperHex(
+      SOLANA_NATIVE_VERIFIER_PROGRAM_ID,
+    ),
+    native_verifier_program_data_address: solanaUpperHex(
+      solanaFixtureAddress("sccp view native verifier programdata"),
+    ),
+    native_verifier_program_data_slot: 18,
+    native_verifier_material_account: "18".repeat(32).toUpperCase(),
+    native_verifier_program_code_hash: "66".repeat(32).toUpperCase(),
+    native_verifier_config_hash: "1A".repeat(32),
+    verifying_key: verifyingKey,
+    verifier_key_hash: verifierKeyHash,
+    outbound_proof_policy: {
+      version: 1,
+      semantic_profile: {
+        profile: "sora_taira_finality_inclusion_groth16_bn254",
+        commitments: {
+          version: 1,
+          circuit_commitment: "C1".repeat(32),
+          witness_generator_commitment: "C2".repeat(32),
+          public_signal_schema_hash:
+            "7567439F41173D6745A3D51923CB70371ACC7D66F23CEFB4100D6D5D7A432CBB",
+        },
+      },
+      sora_finality_anchor: {
+        version: 1,
+        source_network: { network: "sora_taira", profile: null },
+        protocol_version: 3,
+        chain_id_hash:
+          "CF1CFC0F57B0BFA4C21882A9870317A1F4812F86533897095E3944BE34C5BBA7",
+        checkpoint_height: 7,
+        checkpoint_block_hash: "A1".repeat(32),
+        checkpoint_context_id: "A2".repeat(32),
+        checkpoint_finality_artifact_hash: "A3".repeat(32),
+      },
+    },
+    taira_to_token_multiplier: 1,
+  };
+  deployment.native_verifier_config_hash =
+    deriveSccpSolanaNativeVerifierConfigHashV1(
+      deployment as never,
+      solanaUpperHex(SOLANA_SOURCE_BRIDGE_PROGRAM_ID),
+      1,
+    )
+      .slice(2)
+      .toUpperCase();
+  deployment.native_verifier_material_account = solanaUpperHex(
+    solanaProgramDerivedAddress(SOLANA_NATIVE_VERIFIER_PROGRAM_ID, [
+      new TextEncoder().encode("sccp-vk-v1"),
+      Uint8Array.from(Buffer.from(verifierKeyHash, "hex")),
+      Uint8Array.from(
+        Buffer.from(deployment.native_verifier_config_hash, "hex"),
+      ),
+    ]),
+  );
+  const hashes = deriveSccpSolanaDestinationHashesV1(
+    deployment as never,
+    solanaUpperHex(SOLANA_SOURCE_BRIDGE_PROGRAM_ID),
+    1,
+  );
+  return {
+    route: {
+      lane_id: {
+        source: { network: "solana_testnet", profile: null },
+        target: { network: "sora_taira", profile: null },
+      },
+      route_id: "taira_sol_xor",
+      asset_key: "xor",
+      revision: 1,
+      activation: { activation: "bidirectional", direction: null },
+      inbound_finality_cutoff: null,
+      source_identity: {
+        lane: {
+          source: { network: "solana_testnet", profile: null },
+          target: { network: "sora_taira", profile: null },
+        },
+        emitter: {
+          emitter: "solana",
+          identity: {
+            program_id: solanaUpperHex(SOLANA_SOURCE_BRIDGE_PROGRAM_ID),
+            program_data_address: solanaUpperHex(
+              solanaFixtureAddress("sccp view source programdata"),
+            ),
+            program_data_slot: 19,
+            state_account: solanaUpperHex(SOLANA_SOURCE_STATE_ADDRESS),
+            program_code_hash: "67".repeat(32).toUpperCase(),
+            route_config_hash: hashes.route_configuration_hash
+              .slice(2)
+              .toUpperCase(),
+          },
+        },
+      },
+      destination: { family: "solana", deployment },
+      sora_outbound_execution_policy: solanaSoraOutboundExecutionPolicy(),
+      settlement: {
+        asset_definition_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        custody_account_id: TAIRA_ACCOUNT_ID,
+        payload_amount_scale: 9,
+      },
+    },
+    hashes,
+    verifierKeyHash: `0x${verifierKeyHash.toLowerCase()}`,
+  };
+};
+const sampleSccpSoraOutboundMaterial = () => {
+  const exact = exactSolanaGovernedRoute();
+  const pins = readGovernedSolanaRoutePinsV1(exact.route);
+  return {
+    version: 1,
+    registry_revision: `0x${"10".repeat(32)}`,
+    route_key: {
+      lane_id: {
+        source: { network: "solana_testnet", profile: null },
+        target: { network: "sora_taira", profile: null },
+      },
+      route_id: "taira_sol_xor",
+      asset_key: "xor",
+      revision: 1,
+    },
+    route_configuration_hash: pins.routeConfigurationHash,
+    destination_binding_hash: pins.destinationBindingHash,
+    settlement_asset_definition_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+    policy: solanaSoraOutboundExecutionPolicy(),
+    contract_artifact_b64: Buffer.from(SOLANA_SORA_OUTBOUND_ARTIFACT).toString(
+      "base64",
+    ),
+    contract_code_hash: `0x${"22".repeat(32)}`,
+    verifying_key_version: 7,
+  };
+};
 const BRIDGE_AMOUNT_BASE_UNITS = "100000000000000";
 const BSC_BRIDGE_AMOUNT_BASE_UNITS = "100000";
 const BSC_BRIDGE_AMOUNT_TOKEN_BASE_UNITS = BRIDGE_AMOUNT_BASE_UNITS;
@@ -167,25 +417,24 @@ const TAIRA_TO_SOLANA_TRANSFER_PAYLOAD = {
   source_domain: 0,
   dest_domain: SCCP_SOLANA_DOMAIN,
   nonce: "7",
+  route_revision: 1,
   asset_home_domain: 0,
   asset_id_codec: SCCP_CODEC_TEXT_UTF8,
-  asset_id: "xor",
+  asset_id: canonicalSccpTextWireHex("xor"),
   amount: BSC_BRIDGE_AMOUNT_BASE_UNITS,
   sender_codec: SCCP_CODEC_TEXT_UTF8,
-  sender: TAIRA_ACCOUNT_ID,
-  recipient_codec: SCCP_CODEC_SOLANA_BASE58,
-  recipient: SOLANA_RECIPIENT_ADDRESS,
+  sender: canonicalSccpTextWireHex(TAIRA_ACCOUNT_ID),
+  recipient_codec: SCCP_CODEC_SOLANA_PUBKEY32,
+  recipient: canonicalSolanaPubkeyWireHex(
+    SOLANA_RECIPIENT_ADDRESS,
+    "Solana recipient",
+  ),
   route_id_codec: SCCP_CODEC_TEXT_UTF8,
-  route_id: "taira_sol_xor",
-};
-const SOLANA_MESSAGE_ID = sccpTransferMessageId(
+  route_id: canonicalSccpTextWireHex("taira_sol_xor"),
+} as const;
+const SOLANA_MESSAGE_ID = exactSccpMessageId(
+  SCCP_TAIRA_TO_SOLANA_LANE_V1,
   TAIRA_TO_SOLANA_TRANSFER_PAYLOAD,
-);
-const SOLANA_PAYLOAD_HASH = sccpPayloadHash(
-  canonicalSccpPayloadEnvelopeBytes({
-    kind: "Transfer",
-    value: TAIRA_TO_SOLANA_TRANSFER_PAYLOAD,
-  }),
 );
 const COMMITMENT_ROOT = `0x${"33".repeat(32)}`;
 const FINALITY_BLOCK_HASH = `0x${"44".repeat(32)}`;
@@ -407,28 +656,44 @@ const concatBytes = (...parts: Uint8Array[]): Uint8Array => {
   return out;
 };
 
-const solanaU32Le = (value: number): Uint8Array => {
-  const out = new Uint8Array(4);
-  new DataView(out.buffer).setUint32(0, value, true);
-  return out;
-};
-
 const solanaU64Le = (value: string): Uint8Array => {
   const out = new Uint8Array(8);
   new DataView(out.buffer).setBigUint64(0, BigInt(value), true);
   return out;
 };
 
-const solanaBorshVec = (value: Uint8Array): Uint8Array =>
-  concatBytes(solanaU32Le(value.length), value);
-
-const solanaSubmitEnvelopeHex = (args: Uint8Array[]): string =>
-  bytesToHex(
-    concatBytes(
-      solanaBorshVec(new TextEncoder().encode("submit_sccp_message_proof")),
-      ...args.map(solanaBorshVec),
-    ),
+const exactSolanaProofPolicyHashes = () => {
+  const semantic =
+    exactSolanaGovernedRoute().route.destination.deployment
+      .outbound_proof_policy.semantic_profile;
+  const anchor =
+    exactSolanaGovernedRoute().route.destination.deployment
+      .outbound_proof_policy.sora_finality_anchor;
+  const semanticBytes = concatBytes(
+    new TextEncoder().encode("sccp:semantic-proof-profile:v1"),
+    Uint8Array.of(1, 0, 1),
+    hexToBytes(semantic.commitments.circuit_commitment),
+    hexToBytes(semantic.commitments.witness_generator_commitment),
+    hexToBytes(semantic.commitments.public_signal_schema_hash),
   );
+  const anchorBytes = concatBytes(
+    new TextEncoder().encode("sccp:sora-finality-anchor:v1"),
+    Uint8Array.of(1, 1),
+    Uint8Array.of(
+      anchor.protocol_version & 0xff,
+      (anchor.protocol_version >> 8) & 0xff,
+    ),
+    hexToBytes(anchor.chain_id_hash),
+    solanaU64Le(String(anchor.checkpoint_height)),
+    hexToBytes(anchor.checkpoint_block_hash),
+    hexToBytes(anchor.checkpoint_context_id),
+    hexToBytes(anchor.checkpoint_finality_artifact_hash),
+  );
+  return {
+    semantic: bytesToHex(keccak_256(semanticBytes)),
+    anchor: bytesToHex(keccak_256(anchorBytes)),
+  };
+};
 
 const SOLANA_BASE58_ALPHABET =
   "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -566,8 +831,28 @@ const TRON_TO_TAIRA_RECIPIENT_HASH = bytesToHex(
   keccak_256(new TextEncoder().encode(TAIRA_ACCOUNT_ID)),
 );
 
+const SOLANA_SORA_OUTBOUND_ARTIFACT = Uint8Array.from(
+  { length: 64 },
+  (_, index) => (index * 19 + 5) & 0xff,
+);
+const solanaSoraOutboundExecutionPolicy = () => ({
+  version: 1,
+  semantics: "ivm_proved_record_sccp_message_v1",
+  contract_artifact_sha256: Buffer.from(sha256(SOLANA_SORA_OUTBOUND_ARTIFACT))
+    .toString("hex")
+    .toUpperCase(),
+  vk_ref: {
+    backend: "stark/fri/v1",
+    name: "ivm-execution-v1",
+    version: 7,
+    commitment: "B2".repeat(32),
+  },
+  gas_limit: 50_000_000,
+});
+
 const getSccpCapabilitiesMock = vi.fn();
 const getSccpProofManifestsMock = vi.fn();
+const getSccpSoraOutboundMaterialMock = vi.fn();
 const getParametersMock = vi.fn();
 const listSccpRecentMessagesMock = vi.fn();
 const fetchAccountAssetsMock = vi.fn();
@@ -597,6 +882,7 @@ const getEvmBlockByHashMock = vi.fn();
 const getEvmLogsMock = vi.fn();
 const getSolanaBalanceMock = vi.fn();
 const getSolanaTokenBalanceMock = vi.fn();
+const callSolanaRpcMock = vi.fn();
 const prepareSolanaAssociatedTokenAccountMock = vi.fn();
 const getSolanaSignatureStatusMock = vi.fn();
 const getSolanaTransactionMock = vi.fn();
@@ -606,6 +892,8 @@ const broadcastSolanaTransactionMock = vi.fn();
 vi.mock("@/services/iroha", () => ({
   getSccpCapabilities: (input: unknown) => getSccpCapabilitiesMock(input),
   getSccpProofManifests: (input: unknown) => getSccpProofManifestsMock(input),
+  getSccpSoraOutboundMaterial: (input: unknown) =>
+    getSccpSoraOutboundMaterialMock(input),
   getParameters: (input: unknown) => getParametersMock(input),
   listSccpRecentMessages: (input: unknown) => listSccpRecentMessagesMock(input),
   fetchAccountAssets: (input: unknown) => fetchAccountAssetsMock(input),
@@ -645,6 +933,7 @@ vi.mock("@/services/iroha", () => ({
   getEvmLogs: (input: unknown) => getEvmLogsMock(input),
   getSolanaBalance: (input: unknown) => getSolanaBalanceMock(input),
   getSolanaTokenBalance: (input: unknown) => getSolanaTokenBalanceMock(input),
+  callSolanaRpc: (input: unknown) => callSolanaRpcMock(input),
   prepareSolanaAssociatedTokenAccount: (input: unknown) =>
     prepareSolanaAssociatedTokenAccountMock(input),
   getSolanaSignatureStatus: (input: unknown) =>
@@ -856,140 +1145,90 @@ const sampleTairaToBscMessageProofJob = (): Record<string, unknown> => ({
   },
 });
 
-const sampleTairaToSolanaMessageProofJob = (): Record<string, unknown> => ({
-  publicInputs: {
+const sampleTairaToSolanaMessageProofJob = (): Record<string, unknown> => {
+  const exact = exactSolanaGovernedRoute();
+  const deployment = exact.route.destination.deployment;
+  const payload = { Transfer: TAIRA_TO_SOLANA_TRANSFER_PAYLOAD } as const;
+  const bundle = {
     version: 1,
-    messageId: SOLANA_MESSAGE_ID,
-    payloadHash: SOLANA_PAYLOAD_HASH,
-    targetDomain: SCCP_SOLANA_DOMAIN,
-    commitmentRoot: COMMITMENT_ROOT,
-    finalityHeight: 10,
-    finalityBlockHash: FINALITY_BLOCK_HASH,
-    destinationBindingHash: BINDING_HASH,
-  },
-  destinationBinding: {
-    version: 1,
-    key: "solana:testnet:taira_sol_xor",
-    bindingHash: BINDING_HASH,
-  },
-  solanaDestinationWitness: {
-    direction: "taira-to-solana",
-    solanaNetwork: "solana-testnet",
-    solanaGenesisHash: "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY",
-    proofBackend: "solana-program-v1",
-  },
-  submissionPackage: {
-    envelopeEncoding: "borsh_instruction_v1",
-    submissionKind: "program_instruction",
-    verifierEntrypoint: "submit_sccp_message_proof",
-    platformPayload: {
-      kind: "solana_program_instruction",
-      value: {
-        statementHash: STATEMENT_HASH,
-        proofContextHash: VERIFIER_KEY_HASH,
-        destinationBinding: {
-          version: 1,
-          key: "solana:testnet:taira_sol_xor",
-          bindingHash: BINDING_HASH,
-        },
-        destinationBindingHash: BINDING_HASH,
-      },
-    },
-    envelopeBytes: "0x01000000736f6c616e612d73636370",
-  },
-  payloadProjection: {
-    kind: "Transfer",
-    value: {
-      source_domain: 0,
-      dest_domain: SCCP_SOLANA_DOMAIN,
-      asset_home_domain: 0,
-      asset_id: { kind: "TextUtf8", value: "xor" },
-      route_id: { kind: "TextUtf8", value: "taira_sol_xor" },
-      amount: BSC_BRIDGE_AMOUNT_BASE_UNITS,
-      sender: { kind: "TextUtf8", value: TAIRA_ACCOUNT_ID },
-      recipient: { kind: "SolanaBase58", value: SOLANA_RECIPIENT_ADDRESS },
-    },
-  },
-  bundle: {
-    version: 1,
-    commitmentRoot: COMMITMENT_ROOT,
+    commitment_root: `0x${"51".repeat(32)}`,
     commitment: {
       version: 1,
       kind: "Transfer",
-      targetDomain: SCCP_SOLANA_DOMAIN,
-      messageId: SOLANA_MESSAGE_ID,
-      payloadHash: SOLANA_PAYLOAD_HASH,
+      context: {
+        lane: SCCP_TAIRA_TO_SOLANA_LANE_V1,
+        destination_binding_hash: exact.hashes.destination_binding_hash,
+        route_configuration_hash: exact.hashes.route_configuration_hash,
+      },
+      message_id: SOLANA_MESSAGE_ID,
+      payload_hash: exactSdkSccpPayloadHash(
+        canonicalExactSccpPayloadBytes(payload),
+      ),
     },
-    merkleProof: { steps: [] },
-    payload: {
-      kind: "Transfer",
-      value: TAIRA_TO_SOLANA_TRANSFER_PAYLOAD,
-    },
-    finalityProof: "0x010203",
-  },
-});
-
-const sampleTairaToSolanaBrowserProofPackage = (): Record<string, unknown> => {
-  const job = sampleTairaToSolanaMessageProofJob();
-  const proofContextHash = buildSccpSolanaSettlementProofContextHash({
-    statementHash: STATEMENT_HASH,
-    destinationBindingHash: BINDING_HASH,
-    messageId: SOLANA_MESSAGE_ID,
-    tokenMintAddress: SOLANA_TOKEN_MINT_ADDRESS,
-    destinationTokenAddress: SOLANA_DESTINATION_TOKEN_ADDRESS,
-    ownerAddress: SOLANA_WALLET_ADDRESS,
-    amountBaseUnits: BSC_BRIDGE_AMOUNT_BASE_UNITS,
-  });
-  const messageReceiptAddress = deriveSccpSolanaMessageReceiptAddress({
-    verifierProgramAddress: SOLANA_VERIFIER_PROGRAM_ID,
-    verifierStateAddress: SOLANA_VERIFIER_STATE_ADDRESS,
-    messageId: SOLANA_MESSAGE_ID,
-  });
-  const envelopeBytes = solanaSubmitEnvelopeHex([
-    Uint8Array.of(1, 2, 3, 4),
-    canonicalSccpMessageTransparentPublicInputsBytes(
-      job.publicInputs as Parameters<
-        typeof canonicalSccpMessageTransparentPublicInputsBytes
-      >[0],
-    ),
-    canonicalSccpMessageProofBundleBytes(
-      job.bundle as Parameters<typeof canonicalSccpMessageProofBundleBytes>[0],
-    ),
-    hexToBytes(STATEMENT_HASH),
-    hexToBytes(BINDING_HASH),
-    hexToBytes(proofContextHash),
-    solanaU64Le(BSC_BRIDGE_AMOUNT_BASE_UNITS),
-  ]);
+    merkle_proof: { steps: [] },
+    payload,
+    finality_proof: "0x0102",
+  };
+  bundle.commitment_root = sccpCommitmentLeafHash(bundle.commitment as never);
+  const policyHashes = exactSolanaProofPolicyHashes();
   return {
-    request: {
-      routeId: "taira_sol_xor",
-      assetKey: "xor",
-      direction: "taira-to-solana",
-      solanaNetwork: "solana-testnet",
-      solanaGenesisHash: "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY",
-      backend: "solana-program-v1",
-      messageId: SOLANA_MESSAGE_ID,
-      payloadHash: SOLANA_PAYLOAD_HASH,
-      destinationBindingHash: BINDING_HASH,
-      statementHash: STATEMENT_HASH,
-      proofContextHash,
-      ownerAddress: SOLANA_WALLET_ADDRESS,
-      tokenMintAddress: SOLANA_TOKEN_MINT_ADDRESS,
-      destinationTokenAddress: SOLANA_DESTINATION_TOKEN_ADDRESS,
-      verifierProgramAddress: SOLANA_VERIFIER_PROGRAM_ID,
-      verifierStateAddress: SOLANA_VERIFIER_STATE_ADDRESS,
-      messageReceiptAddress,
-      amountBaseUnits: BSC_BRIDGE_AMOUNT_BASE_UNITS,
+    proofRequest: {
+      version: 1,
+      backend: { backend: "solana_groth16_bn254_v1", family: null },
+      source_network: { network: "sora_taira", profile: null },
+      target_network: { network: "solana_testnet", profile: null },
+      public_inputs: {
+        version: 1,
+        message_id: SOLANA_MESSAGE_ID,
+        payload_hash: bundle.commitment.payload_hash,
+        target_domain: SCCP_SOLANA_DOMAIN,
+        commitment_root: bundle.commitment_root,
+        finality_height: "9",
+        finality_block_hash: FINALITY_BLOCK_HASH,
+      },
+      verifying_key: deployment.verifying_key,
+      verifier_key_hash: exact.verifierKeyHash,
+      semantic_proof_profile: deployment.outbound_proof_policy.semantic_profile,
+      semantic_proof_profile_hash: policyHashes.semantic,
+      sora_finality_anchor:
+        deployment.outbound_proof_policy.sora_finality_anchor,
+      sora_finality_anchor_hash: policyHashes.anchor,
+      bundle_bytes: bytesToHex(
+        canonicalTairaSccpMessageBundleBytes(bundle as never),
+      ),
+      statement_hash: STATEMENT_HASH,
+      destination_binding_hash: exact.hashes.destination_binding_hash,
+      route_configuration_hash: exact.hashes.route_configuration_hash,
+      request_hash: `0x${"64".repeat(32)}`,
     },
-    submission: {
-      ...(job.submissionPackage as Record<string, unknown>),
-      publicInputs: job.publicInputs,
-      destinationBindingHash: BINDING_HASH,
-      statementHash: STATEMENT_HASH,
-      proofContextHash,
-      instructionDataHex: envelopeBytes,
-      envelopeBytes,
-    },
+    messageBundle: bundle,
+  };
+};
+
+const sampleTairaToSolanaBrowserProofPackage = (
+  proverInput: SolanaDestinationProverInputV1,
+): Record<string, unknown> => {
+  const proof = Uint8Array.from({ length: 384 }, (_, index) => index & 0xff);
+  const proofBody = buildSolanaDestinationProofBodyV1({
+    publicInputsB64: proverInput.public_inputs_b64,
+    statementHashHex: proverInput.statement_hash_hex,
+    proofB64: Buffer.from(proof).toString("base64"),
+    payloadB64: proverInput.payload_b64,
+  });
+  return {
+    version: 1,
+    route_id: "taira_sol_xor",
+    revision: 1,
+    message_id_hex: proverInput.message_id_hex,
+    payload_amount_u64: proverInput.payload_amount_u64,
+    amount_u64_base_units: proverInput.amount_u64_base_units,
+    destination_token: proverInput.destination_token,
+    public_inputs_b64: proverInput.public_inputs_b64,
+    statement_hash_hex: proverInput.statement_hash_hex,
+    proof_b64: Buffer.from(proof).toString("base64"),
+    payload_b64: proverInput.payload_b64,
+    proof_body_b64: Buffer.from(proofBody).toString("base64"),
+    body_sha256_hex: bytesToHex(sha256(proofBody)),
   };
 };
 
@@ -1005,24 +1244,68 @@ const sampleFinalizedSolanaFinalizeTransaction = (input: {
     dataHex: string;
   }>;
 }): Record<string, unknown> => {
-  const instruction = input.instructions[0];
-  const accounts = instruction.accounts;
+  const finalize = input.instructions[2];
+  if (!finalize || finalize.accounts.length !== 12) {
+    throw new Error(
+      "fixture requires the staged 12-account finalize instruction",
+    );
+  }
+  const roles = new Map<string, { isSigner: boolean; isWritable: boolean }>();
+  for (const instruction of input.instructions) {
+    for (const account of instruction.accounts) {
+      const prior = roles.get(account.pubkey);
+      roles.set(account.pubkey, {
+        isSigner: (prior?.isSigner ?? false) || account.isSigner,
+        isWritable: (prior?.isWritable ?? false) || account.isWritable,
+      });
+    }
+    if (!roles.has(instruction.programId)) {
+      roles.set(instruction.programId, { isSigner: false, isWritable: false });
+    }
+  }
+  const roleEntries = [...roles.entries()];
+  const signedWritable = roleEntries.filter(
+    ([, role]) => role.isSigner && role.isWritable,
+  );
+  const signedReadonly = roleEntries.filter(
+    ([, role]) => role.isSigner && !role.isWritable,
+  );
+  const unsignedWritable = roleEntries.filter(
+    ([, role]) => !role.isSigner && role.isWritable,
+  );
+  const unsignedReadonly = roleEntries.filter(
+    ([, role]) => !role.isSigner && !role.isWritable,
+  );
   const staticAccountKeys = [
-    accounts[0].pubkey,
-    accounts[1].pubkey,
-    accounts[2].pubkey,
-    accounts[3].pubkey,
-    accounts[7].pubkey,
-    accounts[4].pubkey,
-    accounts[5].pubkey,
-    accounts[6].pubkey,
-    accounts[8].pubkey,
-    instruction.programId,
-  ];
+    ...signedWritable,
+    ...signedReadonly,
+    ...unsignedWritable,
+    ...unsignedReadonly,
+  ].map(([pubkey]) => pubkey);
+  const accountIndex = (pubkey: string): number => {
+    const index = staticAccountKeys.indexOf(pubkey);
+    if (index < 0) throw new Error(`fixture account ${pubkey} is absent`);
+    return index;
+  };
+  const compiledInstructions = input.instructions.map((instruction) => ({
+    programIdIndex: accountIndex(instruction.programId),
+    accounts: instruction.accounts.map(({ pubkey }) => accountIndex(pubkey)),
+    data: solanaBase58Encode(hexToBytes(instruction.dataHex)),
+  }));
+  const accounts = finalize.accounts;
+  const finalizeData = hexToBytes(finalize.dataHex);
+  const messageId = finalizeData.slice(2, 34);
+  const amountBytes = finalizeData.slice(34);
+  const receiptLamports = 1_000_000;
+  const receiptIndex = accountIndex(accounts[9].pubkey);
+  const destinationIndex = accountIndex(accounts[3].pubkey);
+  const preBalances = staticAccountKeys.map((_, index) =>
+    index === receiptIndex ? receiptLamports : 0,
+  );
   const preAmount = 900_000n;
   const mintAmount = BigInt(BSC_BRIDGE_AMOUNT_BASE_UNITS);
   const tokenBalance = (amount: bigint) => ({
-    accountIndex: 3,
+    accountIndex: destinationIndex,
     mint: SOLANA_TOKEN_MINT_ADDRESS,
     owner: SOLANA_WALLET_ADDRESS,
     programId: SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID,
@@ -1040,19 +1323,13 @@ const sampleFinalizedSolanaFinalizeTransaction = (input: {
       signatures: [SOLANA_FINALIZE_SIGNATURE],
       message: {
         header: {
-          numRequiredSignatures: 1,
-          numReadonlySignedAccounts: 0,
-          numReadonlyUnsignedAccounts: 5,
+          numRequiredSignatures: signedWritable.length + signedReadonly.length,
+          numReadonlySignedAccounts: signedReadonly.length,
+          numReadonlyUnsignedAccounts: unsignedReadonly.length,
         },
         accountKeys: staticAccountKeys,
         recentBlockhash: SOLANA_SOURCE_STATE_ADDRESS,
-        instructions: [
-          {
-            programIdIndex: 9,
-            accounts: [0, 1, 2, 3, 5, 6, 7, 4, 8],
-            data: solanaBase58Encode(hexToBytes(instruction.dataHex)),
-          },
-        ],
+        instructions: compiledInstructions,
       },
     },
     meta: {
@@ -1060,23 +1337,107 @@ const sampleFinalizedSolanaFinalizeTransaction = (input: {
       loadedAddresses: { writable: [], readonly: [] },
       innerInstructions: [
         {
-          index: 0,
+          index: 2,
           instructions: [
             {
-              programIdIndex: 6,
-              accounts: [2, 3, 5],
+              programIdIndex: accountIndex(accounts[6].pubkey),
+              accounts: [0, 7, 1, 2, 3, 4, 5].map((index) =>
+                accountIndex(accounts[index].pubkey),
+              ),
+              data: solanaBase58Encode(
+                concatBytes(Uint8Array.of(1, 6), messageId, amountBytes),
+              ),
+            },
+            {
+              programIdIndex: accountIndex(SCCP_SOLANA_SYSTEM_PROGRAM_ID),
+              accounts: [accountIndex(accounts[9].pubkey)],
+              data: solanaBase58Encode(
+                concatBytes(Uint8Array.of(8, 0, 0, 0), solanaU64Le("272")),
+              ),
+            },
+            {
+              programIdIndex: accountIndex(SCCP_SOLANA_SYSTEM_PROGRAM_ID),
+              accounts: [accountIndex(accounts[9].pubkey)],
               data: solanaBase58Encode(
                 concatBytes(
-                  Uint8Array.of(7),
-                  solanaU64Le(BSC_BRIDGE_AMOUNT_BASE_UNITS),
+                  Uint8Array.of(1, 0, 0, 0),
+                  new PublicKey(finalize.programId).toBytes(),
                 ),
+              ),
+            },
+            {
+              programIdIndex: accountIndex(SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID),
+              accounts: [2, 3, 8].map((index) =>
+                accountIndex(accounts[index].pubkey),
+              ),
+              data: solanaBase58Encode(
+                concatBytes(Uint8Array.of(7), amountBytes),
               ),
             },
           ],
         },
       ],
+      preBalances,
+      postBalances: preBalances,
       preTokenBalances: [tokenBalance(preAmount)],
       postTokenBalances: [tokenBalance(preAmount + mintAmount)],
+    },
+  };
+};
+
+const sampleSolanaDestinationReceiptAccount = (input: {
+  instructions: Array<{
+    programId: string;
+    accounts: Array<{ pubkey: string }>;
+    dataHex: string;
+  }>;
+}): Record<string, unknown> => {
+  const finalize = input.instructions[2];
+  if (!finalize || finalize.accounts.length !== 12) {
+    throw new Error(
+      "fixture requires the staged 12-account finalize instruction",
+    );
+  }
+  const data = hexToBytes(finalize.dataHex);
+  const messageId = data.slice(2, 34);
+  const receiptAddress = deriveSolanaProgramAddressV1({
+    programAddress: finalize.programId,
+    seeds: [
+      new TextEncoder().encode(SCCP_SOLANA_DESTINATION_RECEIPT_SEED_V1),
+      new PublicKey(finalize.accounts[1].pubkey).toBytes(),
+      messageId,
+    ],
+  });
+  if (receiptAddress.address !== finalize.accounts[9].pubkey) {
+    throw new Error("fixture receipt PDA differs from the approved plan");
+  }
+  const receipt = new Uint8Array(272);
+  receipt.set(new TextEncoder().encode("SCCPDS01"), 0);
+  receipt[8] = 1;
+  receipt[9] = receiptAddress.bump;
+  for (const [offset, accountIndex] of [
+    [16, 1],
+    [48, 2],
+    [80, 0],
+    [112, 3],
+    [144, 4],
+    [176, 5],
+  ] as const) {
+    receipt.set(
+      new PublicKey(finalize.accounts[accountIndex].pubkey).toBytes(),
+      offset,
+    );
+  }
+  receipt.set(messageId, 208);
+  receipt.set(data.slice(34), 240);
+  receipt.set(solanaU64Le("88"), 248);
+  return {
+    context: { slot: 88 },
+    value: {
+      owner: finalize.programId,
+      executable: false,
+      lamports: 1_000_000,
+      data: [Buffer.from(receipt).toString("base64"), "base64"],
     },
   };
 };
@@ -1609,200 +1970,11 @@ const sampleReadyBscManifestSet = () => ({
   ],
 });
 
-const sampleReadySolanaManifestSet = () => ({
-  manifests: [
-    {
-      solanaNetwork: "testnet",
-      chain: "solana-testnet",
-      networkId: SCCP_SOLANA_NETWORK.networkId,
-      counterpartyDomain: SCCP_SOLANA_DOMAIN,
-      counterpartyAccountCodecKey: "solana_base58",
-      counterpartyAccountCodec: SCCP_CODEC_SOLANA_BASE58,
-      verifierTarget: "SolanaProgram",
-      productionReady: true,
-      routeId: "taira_sol_xor",
-      assetKey: "xor",
-      solanaProgramId: SOLANA_BRIDGE_PROGRAM_ID,
-      solanaTokenMint: SOLANA_TOKEN_MINT_ADDRESS,
-      sccpSolanaSourceBridgeAddress: SOLANA_SOURCE_BRIDGE_PROGRAM_ID,
-      solanaSourceStateAddress: SOLANA_SOURCE_STATE_ADDRESS,
-      solanaVerifierProgramId: SOLANA_VERIFIER_PROGRAM_ID,
-      solanaNativeVerifierProgramId: SOLANA_NATIVE_VERIFIER_PROGRAM_ID,
-      solanaVerifierStateAddress: SOLANA_VERIFIER_STATE_ADDRESS,
-      solanaRpcUrl: SCCP_SOLANA_NETWORK.rpcUrl,
-      solanaProgramdataAddress: "2wen6hXkK13qnjfActBxfUxiGw1ASnUMrtqoNPMva7A7",
-      solanaProgramdataSlot: 123456,
-      solanaVerifierMintInstructionAccounts: [
-        {
-          pubkey: "$payer",
-          isSigner: true,
-          isWritable: true,
-        },
-        {
-          pubkey: SOLANA_VERIFIER_STATE_ADDRESS,
-          isSigner: false,
-          isWritable: true,
-        },
-        {
-          pubkey: SOLANA_TOKEN_MINT_ADDRESS,
-          isSigner: false,
-          isWritable: true,
-        },
-        {
-          pubkey: "$destinationToken",
-          isSigner: false,
-          isWritable: true,
-        },
-        {
-          pubkey: deriveSccpSolanaMintAuthorityAddress({
-            verifierProgramAddress: SOLANA_VERIFIER_PROGRAM_ID,
-            verifierStateAddress: SOLANA_VERIFIER_STATE_ADDRESS,
-          }),
-          isSigner: false,
-          isWritable: false,
-        },
-        {
-          pubkey: SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID,
-          isSigner: false,
-          isWritable: false,
-        },
-        {
-          pubkey: SOLANA_NATIVE_VERIFIER_PROGRAM_ID,
-          isSigner: false,
-          isWritable: false,
-        },
-        {
-          pubkey: "$messageReceipt",
-          isSigner: false,
-          isWritable: true,
-        },
-        {
-          pubkey: "$systemProgram",
-          isSigner: false,
-          isWritable: false,
-        },
-      ],
-      solanaSourceBurnInstructionAccounts: [
-        {
-          pubkey: "$owner",
-          isSigner: true,
-          isWritable: true,
-        },
-        {
-          pubkey: SOLANA_SOURCE_STATE_ADDRESS,
-          isSigner: false,
-          isWritable: true,
-        },
-        {
-          pubkey: "$sourceToken",
-          isSigner: false,
-          isWritable: true,
-        },
-        {
-          pubkey: SOLANA_TOKEN_MINT_ADDRESS,
-          isSigner: false,
-          isWritable: true,
-        },
-        {
-          pubkey: SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID,
-          isSigner: false,
-          isWritable: false,
-        },
-        {
-          pubkey: "$sourceBurnReceipt",
-          isSigner: false,
-          isWritable: true,
-        },
-        {
-          pubkey: "$systemProgram",
-          isSigner: false,
-          isWritable: false,
-        },
-      ],
-      sourceVerifierMaterial: {
-        sourceDomain: SCCP_SOLANA_DOMAIN,
-        targetDomain: SCCP_SORA_DOMAIN,
-        sourceChain: "solana-testnet",
-        sourceTrustAnchorHash: `0x${"21".repeat(32)}`,
-        consensusVerifierHash: `0x${"22".repeat(32)}`,
-        messageInclusionVerifierHash: `0x${"23".repeat(32)}`,
-        finalityPolicyHash: `0x${"24".repeat(32)}`,
-        sourceStateVerifierHash: `0x${"25".repeat(32)}`,
-        placeholderMaterial: false,
-      },
-      sourceAdapterEngineDeployment: {
-        sourceDomain: SCCP_SOLANA_DOMAIN,
-        targetDomain: SCCP_SORA_DOMAIN,
-        sourceChain: "solana-testnet",
-        sourceTrustAnchorHash: `0x${"21".repeat(32)}`,
-        consensusVerifierHash: `0x${"22".repeat(32)}`,
-        messageInclusionVerifierHash: `0x${"23".repeat(32)}`,
-        finalityPolicyHash: `0x${"24".repeat(32)}`,
-        sourceStateVerifierHash: `0x${"25".repeat(32)}`,
-        adapterVerifierVkHash: `0x${"26".repeat(32)}`,
-        deploymentReceiptHash: `0x${"27".repeat(32)}`,
-        placeholderMaterial: false,
-      },
-      sourceBrowserProver: {
-        moduleUrl: "/sccp-solana/taira-solana-xor-source-prover.js",
-        moduleHash: `0x${"28".repeat(32)}`,
-        manifestHash: `0x${"29".repeat(32)}`,
-        expectedExports: ["proveSolanaSccpSource"],
-      },
-      destinationBrowserProver: {
-        moduleUrl: "/sccp-solana/taira-solana-xor-destination-prover.js",
-        moduleHash: `0x${"2a".repeat(32)}`,
-        manifestHash: `0x${"2b".repeat(32)}`,
-        expectedExports: ["proveSolanaSccpDestination"],
-      },
-      destinationBinding: {
-        version: 1,
-        key: "solana:testnet:taira_sol_xor",
-        bindingHash: BINDING_HASH,
-      },
-      destinationProofAdmission: {
-        admissionMode: "governed-zk-verifier-v1",
-        proofSystem: "stark-fri-v1",
-        entrypoint: "submit_sccp_message_proof",
-        verifierCodeHash: VERIFIER_CODE_HASH,
-        verifierKeyHash: VERIFIER_KEY_HASH,
-        nativeVerifierProgramId: SOLANA_NATIVE_VERIFIER_PROGRAM_ID,
-        destinationBindingHash: BINDING_HASH,
-        shapeOnly: false,
-        acceptsUnverifiedProofs: false,
-      },
-      destinationRollout: {
-        verifierIdentity: SOLANA_VERIFIER_PROGRAM_ID,
-        nativeVerifierProgramId: SOLANA_NATIVE_VERIFIER_PROGRAM_ID,
-        verifierCodeHash: VERIFIER_CODE_HASH,
-        verifierKeyHash: VERIFIER_KEY_HASH,
-        destinationNetworkId: SCCP_SOLANA_NETWORK.networkId,
-        destinationBridgeAddress: SOLANA_BRIDGE_PROGRAM_ID,
-        destinationBindingHash: BINDING_HASH,
-      },
-      postDeployLiveEvidence: {
-        fullTomlReady: true,
-        offlineFullTomlSha256: OFFLINE_FULL_TOML_SHA256,
-        sourceBridgeConfigHash: `0x${"2c".repeat(32)}`,
-        sourceEventTransactionSignature:
-          "2d1KBhY5pyRuCBiXxoLUKmGEE9oEHRduBJKmjnFqSpEF85r8651FayJRC977ajGdjEvLvmTvTATwu53CSSTZZscR",
-        routeCanaryEvidenceHash: `0x${"2d".repeat(32)}`,
-        routeCanaryTransactionSignature:
-          "2sqsLAxG7ufxpq1nbLT7XV8qYQtjLfpPuHogdVrwkSMwBCNQ83z4NEbXY2wFA2YhyscyjmtnzczDFzpSjv2yuGLS",
-      },
-      tairaXorBurnRecord: {
-        settlementAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-        contractArtifactB64: "TnJ0MGZpeHR1cmUtYnl0ZWNvZGUtbWF0ZXJpYWwtdjEhIQ==",
-        artifactSha256: BSC_BURN_RECORD_ARTIFACT_SHA256,
-        vkRef: {
-          backend: "halo2/ipa",
-          name: "taira-xor-solana-burn-record-v1",
-        },
-        gasLimit: 123456,
-      },
-    },
-  ],
-});
+const sampleReadySolanaManifestSet = () => {
+  const exact = exactSolanaGovernedRoute();
+  readGovernedSolanaRoutePinsV1(exact.route);
+  return { manifests: [exact.route] };
+};
 
 const sampleReadyManifestSet = () => ({
   manifests: [
@@ -2160,9 +2332,18 @@ const mockSuccessfulTairaToBscBridgeStack = (
 
 describe("SccpView", () => {
   beforeEach(() => {
+    vi.stubEnv(
+      "VITE_SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL",
+      "/sccp-solana/taira-solana-xor-destination-prover.js",
+    );
+    vi.stubEnv(
+      "VITE_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL",
+      "/sccp-solana/taira-solana-xor-source-prover.js",
+    );
     localStorage.clear();
     getSccpCapabilitiesMock.mockReset();
     getSccpProofManifestsMock.mockReset();
+    getSccpSoraOutboundMaterialMock.mockReset();
     getParametersMock.mockReset();
     listSccpRecentMessagesMock.mockReset();
     fetchAccountAssetsMock.mockReset();
@@ -2192,6 +2373,7 @@ describe("SccpView", () => {
     getEvmLogsMock.mockReset();
     getSolanaBalanceMock.mockReset();
     getSolanaTokenBalanceMock.mockReset();
+    callSolanaRpcMock.mockReset();
     prepareSolanaAssociatedTokenAccountMock.mockReset();
     getSolanaSignatureStatusMock.mockReset();
     getSolanaTransactionMock.mockReset();
@@ -2200,8 +2382,12 @@ describe("SccpView", () => {
     getSccpCapabilitiesMock.mockResolvedValue({
       proofSubmitPath: "/v1/bridge/proofs/submit",
       messageSubmitPath: "/v1/bridge/messages",
+      registry_revision: `0x${"10".repeat(32)}`,
     });
     getSccpProofManifestsMock.mockResolvedValue(sampleReadyManifestSet());
+    getSccpSoraOutboundMaterialMock.mockResolvedValue(
+      sampleSccpSoraOutboundMaterial(),
+    );
     getParametersMock.mockResolvedValue({});
     listSccpRecentMessagesMock.mockResolvedValue({
       items: [{ message_id: "11".repeat(32), kind: "Transfer" }],
@@ -3290,7 +3476,7 @@ describe("SccpView", () => {
     await vi.dynamicImportSettled();
     await flushPromises();
 
-    expect(startZkIvmProveJobMock).toHaveBeenCalledWith(
+    expect(startZkIvmProveJobMock, wrapper.text()).toHaveBeenCalledWith(
       expect.objectContaining({
         toriiUrl: "https://taira.sora.org",
         authority: TAIRA_ACCOUNT_ID,
@@ -3348,19 +3534,29 @@ describe("SccpView", () => {
       onerror: null;
       onmessageerror: null;
       terminate: () => void;
-      postMessage: (message: { id: string; kind: string }) => void;
+      postMessage: (message: {
+        id: string;
+        kind: string;
+        input: { proverInput: SolanaDestinationProverInputV1 };
+      }) => void;
     }) {
       this.onmessage = null;
       this.onerror = null;
       this.onmessageerror = null;
       this.terminate = vi.fn();
-      this.postMessage = (message: { id: string; kind: string }) => {
+      this.postMessage = (message: {
+        id: string;
+        kind: string;
+        input: { proverInput: SolanaDestinationProverInputV1 };
+      }) => {
         expect(message.kind).toBe("prove-solana-proof-package");
         this.onmessage?.({
           data: {
             id: message.id,
             ok: true,
-            result: sampleTairaToSolanaBrowserProofPackage(),
+            result: sampleTairaToSolanaBrowserProofPackage(
+              message.input.proverInput,
+            ),
           },
         });
       };
@@ -3368,8 +3564,8 @@ describe("SccpView", () => {
     vi.stubGlobal("Worker", workerCtor);
     const proofJob = sampleTairaToSolanaMessageProofJob();
     getSccpProofManifestsMock.mockResolvedValue(sampleReadySolanaManifestSet());
-    getSccpMessageProofBundleMock.mockResolvedValue(proofJob.bundle);
-    getSccpMessageProofJobMock.mockResolvedValue(proofJob);
+    getSccpMessageProofBundleMock.mockResolvedValue(proofJob.messageBundle);
+    getSccpMessageProofJobMock.mockResolvedValue(proofJob.proofRequest);
     prepareSolanaAssociatedTokenAccountMock
       .mockResolvedValueOnce({
         associatedTokenAddress: SOLANA_DESTINATION_TOKEN_ADDRESS,
@@ -3397,6 +3593,16 @@ describe("SccpView", () => {
         ),
       );
     });
+    callSolanaRpcMock.mockImplementation(() => {
+      const transaction = buildSolanaTransactionMock.mock.calls.at(-1)?.[0];
+      return Promise.resolve(
+        sampleSolanaDestinationReceiptAccount(
+          transaction as Parameters<
+            typeof sampleSolanaDestinationReceiptAccount
+          >[0],
+        ),
+      );
+    });
 
     const wrapper = mountView({
       toriiUrl: "https://taira.sora.org",
@@ -3420,14 +3626,17 @@ describe("SccpView", () => {
     await fetchButton!.trigger("click");
     await flushPromises();
 
-    expect(prepareSolanaAssociatedTokenAccountMock).toHaveBeenCalledWith({
+    expect(
+      prepareSolanaAssociatedTokenAccountMock,
+      wrapper.text(),
+    ).toHaveBeenCalledWith({
       endpoint: SCCP_SOLANA_NETWORK.rpcUrl,
       payerAddress: SOLANA_WALLET_ADDRESS,
       ownerAddress: SOLANA_RECIPIENT_ADDRESS,
       mintAddress: SOLANA_TOKEN_MINT_ADDRESS,
     });
     expect(prepareSolanaAssociatedTokenAccountMock).toHaveBeenCalledTimes(2);
-    expect(workerCtor).toHaveBeenCalledTimes(1);
+    expect(workerCtor, wrapper.text()).toHaveBeenCalledTimes(1);
     expect(buildSolanaTransactionMock.mock.calls[0]?.[0]).toEqual({
       endpoint: SCCP_SOLANA_NETWORK.rpcUrl,
       feePayer: SOLANA_WALLET_ADDRESS,
@@ -3437,11 +3646,19 @@ describe("SccpView", () => {
       -1,
     )?.[0] as Record<string, unknown> | undefined;
     expect(transactionInput).toBeTruthy();
-    expect(transactionInput?.instructions).toHaveLength(1);
+    expect(transactionInput?.instructions, wrapper.text()).toHaveLength(3);
     expect(transactionInput).toMatchObject({
       endpoint: SCCP_SOLANA_NETWORK.rpcUrl,
       feePayer: SOLANA_WALLET_ADDRESS,
       instructions: [
+        {
+          programId: SCCP_SOLANA_COMPUTE_BUDGET_PROGRAM_ID_V1,
+          accounts: [],
+        },
+        {
+          programId: SOLANA_NATIVE_VERIFIER_PROGRAM_ID,
+          dataHex: "0x0105",
+        },
         {
           programId: SOLANA_VERIFIER_PROGRAM_ID,
           accounts: expect.arrayContaining([
@@ -3456,11 +3673,16 @@ describe("SccpView", () => {
               isWritable: false,
             },
             {
-              pubkey: deriveSccpSolanaMessageReceiptAddress({
-                verifierProgramAddress: SOLANA_VERIFIER_PROGRAM_ID,
-                verifierStateAddress: SOLANA_VERIFIER_STATE_ADDRESS,
-                messageId: SOLANA_MESSAGE_ID,
-              }),
+              pubkey: deriveSolanaProgramAddressV1({
+                programAddress: SOLANA_VERIFIER_PROGRAM_ID,
+                seeds: [
+                  new TextEncoder().encode(
+                    SCCP_SOLANA_DESTINATION_RECEIPT_SEED_V1,
+                  ),
+                  new PublicKey(SOLANA_VERIFIER_STATE_ADDRESS).toBytes(),
+                  hexToBytes(SOLANA_MESSAGE_ID),
+                ],
+              }).address,
               isSigner: false,
               isWritable: true,
             },
@@ -3470,19 +3692,24 @@ describe("SccpView", () => {
               isWritable: false,
             },
           ]),
-          dataHex: (
-            sampleTairaToSolanaBrowserProofPackage().submission as Record<
-              string,
-              unknown
-            >
-          ).envelopeBytes,
+          dataHex: bytesToHex(
+            concatBytes(
+              Uint8Array.of(1, 2),
+              hexToBytes(SOLANA_MESSAGE_ID),
+              solanaU64Le(BSC_BRIDGE_AMOUNT_BASE_UNITS),
+            ),
+          ),
         },
       ],
     });
-    expect(signTransactionMock).toHaveBeenCalledTimes(2);
+    expect(signTransactionMock).toHaveBeenCalledTimes(
+      buildSolanaTransactionMock.mock.calls.length,
+    );
     expect(signTransactionMock).toHaveBeenNthCalledWith(1, "AQIDBA==");
-    expect(signTransactionMock).toHaveBeenNthCalledWith(2, "AQIDBA==");
-    expect(broadcastSolanaTransactionMock).toHaveBeenCalledTimes(2);
+    expect(signTransactionMock).toHaveBeenLastCalledWith("AQIDBA==");
+    expect(broadcastSolanaTransactionMock).toHaveBeenCalledTimes(
+      buildSolanaTransactionMock.mock.calls.length,
+    );
     expect(broadcastSolanaTransactionMock).toHaveBeenCalledWith({
       endpoint: SCCP_SOLANA_NETWORK.rpcUrl,
       transactionB64: "BQYHCA==",

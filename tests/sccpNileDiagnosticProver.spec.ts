@@ -12,7 +12,7 @@ import {
   tronSccpDestinationBinding,
   wrapTronSccpProofResult,
   type TronSccpProofRequest,
-} from "@iroha/iroha-js/sccp";
+} from "@/legacy/sccpLegacySdk";
 import { prove } from "@/utils/sccpNileDiagnosticProver";
 
 const SCCP_SORA_DOMAIN = 0;

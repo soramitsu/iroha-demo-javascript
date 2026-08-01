@@ -1,90 +1,166 @@
-# TAIRA XOR SCCP Solana Program
+# TAIRA XOR SCCP Solana route program
 
-This standalone Solana SBF crate builds the testnet verifier surface used by
-the `taira_sol_xor` operator workflow. It is not, by itself, sufficient for a
-production-ready TAIRA route.
+This standalone SBF crate is the exact first-release value-moving program for
+the `taira_sol_xor` Solana-testnet route. The same reviewed source produces two
+different compile-time role-gated ELFs at different program addresses: the
+destination ELF accepts only TAIRA-to-Solana initialization/finalization, and
+the source ELF accepts only Solana-to-TAIRA initialization/burn. Their code
+hashes must differ and may not be substituted for one another.
+Their immutable states name each other and must match every governed route,
+mint, native-verifier, key, configuration, lane, and revision field.
 
-It parses the `borsh_instruction_v1` envelope emitted by the Iroha SCCP SDK for
-`submit_sccp_message_proof` and validates the envelope shape plus proof-context
-hash arguments. Submit envelopes must also bind to the canonical
-`taira_sol_xor` destination binding hash before the verifier branch is reached.
-Destination proof submission fails closed until `configure_native_recursive_verifier`
-stores a governed native verifier program id plus reviewed material/config
-hashes in the program state. Configuration is one-shot and immediately locked;
-both this bridge and the configured verifier must already be immutable
-upgradeable-loader programs whose ProgramData accounts have no upgrade
-authority. The submit path then calls that verifier over CPI
-with the `SCCP_SOLANA_NATIVE_RECURSIVE_VERIFIER_CPI_V1` marker before any state
-mutation or SPL XOR mint. Submit calls parse the canonical transfer bundle,
-recompute its message id, require its recipient to be the signing SPL owner,
-validate the exact mint and destination token account, and bind all of those
-fields plus the amount into the proof context passed to the native verifier.
-After verification they atomically create a writable per-message PDA receipt;
-the PDA is the transaction-level nullifier, so exact or concurrent replay can
-never mint twice. It must not record destination submissions or mint SPL XOR
-from shape-only proof envelopes. The crate is intentionally outside the
-Iroha Cargo workspace so the workspace `Cargo.lock` is not touched by Solana
-toolchain builds.
+Before creating any mint, material, route state, or proof account, deploy the
+destination, source, and native-verifier programs, pin their reviewed ELF
+hashes, and remove all three Loader-v3 upgrade authorities. Finalized RPC
+evidence must prove those immutable ProgramData slots precede every subsequent
+initialization transaction. Post-hoc finalization is not equivalent: mutable
+code could otherwise forge a sealed account that the reviewed executable never
+created.
 
-The reverse `burn_to_taira` instruction is also fail-closed. Its three envelope
-arguments are the positive SPL amount as an eight-byte little-endian `u64`, a
-canonical TAIRA I105 recipient, and a positive nonce in the same canonical
-eight-byte form. For this first release the recipient must be a current,
-checksum-valid TAIRA (`test...`, network discriminant 369) single-key Ed25519
-I105 address; aliases, Minamoto literals, numeric/non-canonical sentinels,
-Unicode lookalikes, weak keys, and checksum mutations are rejected on-chain.
-The source and mint must be classic SPL Token accounts for the exact route
-mint; the source must be initialized, owned by the signer, funded for the full
-amount, and unfrozen, while the mint must retain the route PDA mint authority,
-use nine decimals, and have no freeze authority.
-The instruction takes exactly these accounts, in order:
+Only after all three programs are immutable may the operator create the fresh
+classic SPL XOR mint and initialize native-verifier material. Those two actions
+must share one atomic transaction: mint account creation, nine-decimal mint
+initialization, and material initialization. The fresh mint key signs that
+transaction, so an observer cannot pre-create or substitute the reviewed mint.
+The mint starts with zero supply and uses
+`["sccp-mint-authority-v1", destination_state]` under the destination program
+as its authority.
 
-1. writable signing SPL owner and receipt payer;
-2. writable program-owned route state;
-3. writable SPL source token account;
-4. writable route SPL mint;
-5. executable SPL Token program;
-6. writable burn-receipt PDA; and
-7. executable System program.
+Route states are not operator keypairs. They are deterministic program-derived
+addresses:
 
-The burn-receipt PDA uses seeds
-`["sccp-source-burn-receipt", state, owner, nonce_le_u64]`. It makes each nonce
-one-time for an owner within a route state, including concurrent submissions
-and attempts to reuse the nonce with a substituted source, recipient, or
-amount. The receipt records the exact state/mint/owner/source, recipient hash,
-amount, nonce, slot, and the domain-separated event digest. That digest binds
-`program_id`, state, mint, owner, source token, length-delimited canonical
-recipient bytes, amount, nonce, and slot under
-`sccp:solana:source-burn:v1`. A pre-funded zero-data System-owned PDA is valid;
-any already program-owned or data-bearing receipt is a replay/error.
+- destination: `["sccp-route-state-v1", 1, mint]` under the destination
+  program;
+- source: `["sccp-route-state-v1", 2, mint]` under the source program.
 
-Build:
+Material is uploaded and sealed in bounded chunks before either route PDA is
+created. Once it is sealed, anyone may fund an exact route initialization, but
+the program creates only the canonical PDA and accepts only the complete sealed
+configuration. A competing exact initialization is harmless; a divergent one
+cannot pass. Source, destination, and native-verifier program addresses must
+all be distinct. This first-release ABI accepts route revision `1` only.
+The route program also checks the material's exact account length, magic,
+sealed status, zeroed upload authority, full VK length, key hash, config hash,
+source and destination program identities, destination state, mint, token
+program, route commitments, and directed lanes; neither route role can
+initialize against writing or substituted material.
+Initialization data is
+`[1, 1, role, revision:u32le, destination_state[32], destination_binding[32], route_config[32], verifier_key_keccak[32], verifier_config_sha256[32]]`.
+Its exact eight accounts are writable signing payer, writable uninitialized
+route-state PDA (not a signer), writable mint, executable peer program,
+executable native verifier, verifier-owned material PDA, executable classic SPL
+Token program, and executable System program. Role is `1` for destination and
+`2` for source.
+
+## Destination settlement
+
+`finalize_from_taira` data is the compact fixed wire
+`[1, 2, message_id[32], spl_amount:u64le]`. It takes exactly:
+
+1. writable payer, signer, payload recipient, and SPL owner;
+2. writable destination route state;
+3. writable governed SPL XOR mint;
+4. writable destination SPL token account;
+5. read-only sealed verifier-material PDA;
+6. read-only sealed message-proof PDA;
+7. executable native-verifier program;
+8. read-only bridge verifier-authority PDA;
+9. read-only mint-authority PDA;
+10. writable destination replay-receipt PDA;
+11. executable classic SPL Token program; and
+12. executable System program.
+
+The material PDA is
+`["sccp-vk-v1", verifier_key_keccak, verifier_config_sha256]` under the
+native verifier. The proof PDA is
+`["sccp-proof-v1", material, message_id, payer]`. The route validates both
+owners and derivations, then signs the verifier's exact seven-account CPI with
+`["sccp-verify-authority-v1", route_state]`. CPI data is
+`[1, 6, message_id[32], spl_amount:u64le]`.
+
+The verifier owns all proof parsing and enforces the canonical directed lane,
+revision, codec-6 raw Solana recipient, payload, governed configuration, and
+`taira_scale_9_mantissa == spl_base_units`. Only after verification may the
+route create `["sccp-destination-receipt-v1", state, message_id]` and mint the
+9-decimal SPL amount. Transaction atomicity rolls back the receipt if the mint
+fails.
+
+## Source settlement
+
+`burn_to_taira` data is
+`[1, 3, spl_amount:u64le, nonce:u64le, recipient_len:u16le, recipient]`. It
+takes exactly:
+
+1. writable SPL owner, signer, and receipt payer;
+2. writable source route state;
+3. read-only peer destination route state;
+4. writable governed SPL XOR mint;
+5. writable source SPL token account;
+6. writable source receipt PDA;
+7. executable classic SPL Token program; and
+8. executable System program.
+
+The positive SPL base-unit amount is copied exactly into the canonical SCCP
+payload as the TAIRA scale-9 mantissa; there is no Solana decimal conversion
+factor. Sender bytes are the raw 32-byte signer under codec 6. The recipient
+must be a checksum-valid TAIRA network-369 I105 single-key Ed25519 address in the prime-order subgroup;
+aliases, alternate networks, mixed-torsion keys, weak keys, and textual
+lookalikes fail closed.
+
+The program burns before creating
+`["sccp-source-receipt-v1", source_state, message_id]`. The fixed receipt and
+binary event log commit the exact Solana-testnet-to-TAIRA lane hash, canonical
+payload, lane-bound message ID, payload hash, source-event digest, both economic
+amounts, route revision, source/destination states, mint, owner, source token,
+nonce, and slot. This path emits no fabricated TAIRA hub commitment, finality
+proof, or Merkle bundle.
+
+The state records lifetime minted and burned base-unit totals as operational
+telemetry. Those counters saturate at `u64::MAX` (which means "at least this
+much") so recycled bridge volume can never disable an otherwise valid
+settlement. The operation counter remains checked and fails closed on overflow.
+
+Both settlement handlers rederive their expected route-state PDAs from the
+governed mint and role before trusting state bytes. The source path also
+rederives and validates its destination peer PDA. Passing a same-owner account
+with copied or hostile state bytes is therefore rejected.
+
+## Verification
+
+```sh
+cargo test --manifest-path solana/sccp-taira-xor/Cargo.toml
+cargo clippy --manifest-path solana/sccp-taira-xor/Cargo.toml --all-targets -- -D warnings
+cargo build-sbf --manifest-path solana/sccp-taira-xor/Cargo.toml -- --locked --no-default-features --features destination-program
+cargo build-sbf --manifest-path solana/sccp-taira-xor/Cargo.toml -- --locked --no-default-features --features source-program
+```
+
+The repository packaging wrapper remains the release path:
 
 ```sh
 npm run sccp:solana:build-program
 ```
 
-Use the repository wrapper, which builds both Solana programs without allowing
-`cargo-build-sbf` to generate its automatic deployment keypair. The bridge ELF
-is written to
-`output/sccp-solana-program-artifacts/bridge/sccp_taira_xor.so`; the native
-recursive verifier ELF is written alongside it under `native-verifier/`.
-Both crates have committed lockfiles and pinned Rust toolchain manifests. The
-wrapper requires the reviewed `cargo-build-sbf 4.1.0` + platform-tools `v1.54`
-toolchain, builds SBF arch `v0` with `--locked`, rejects build-metadata drift,
-and strips operator/wallet secrets from the Cargo child environment.
-
-The resulting `sccp_taira_xor.so` can be deployed with:
+After governance has reviewed the immutable program evidence, route hashes,
+and 1,216-byte verification key, the resumable production initializer is:
 
 ```sh
-npm run sccp:solana:deploy -- all --program-so output/sccp-solana-program-artifacts/bridge/sccp_taira_xor.so --template <manifest-template>
+npm run sccp:solana:exact-initialize -- \
+  --input reviewed-solana-initializer-input.json \
+  --expected-input-sha256 0x... \
+  --journal public-solana-initializer-journal.json \
+  --evidence solana-ordered-initialization-evidence.json \
+  --payer-env SCCP_SOLANA_INITIALIZER_SIGNER \
+  --submit true
 ```
 
-Do not mark a public TAIRA route `production_ready` until the deployed Solana
-program and browser proof modules verify the governed proof family required by
-the route manifest. Production manifests must advertise
-`destinationProofAdmission.admissionMode = "governed-zk-verifier-v1"`; the
-Solana SBF must be immutable, free of the old unlinked-verifier sentinel, and
-must contain the native-verifier CPI marker above. The current draft deployment
-rejects destination proof submissions and must stay fail-closed until those
-conditions and the governed proof-material ceremony pass.
+The payer secret is accepted only at runtime through the named environment
+variable (`hex:` or `base64:` form); the journal contains no secret key. The
+initializer persists the signed atomic bootstrap wire before submission,
+performs finalized readback after every stage, resumes safely across process
+failure, and emits ordered transaction evidence only after all exact account
+inspectors and RPC action checks pass.
+
+The program is only one deployment component. The public route must remain
+inactive until governance publishes the exact immutable source/destination
+program identities, sealed verifier material, reviewed circuit commitments,
+and successful live bidirectional evidence.

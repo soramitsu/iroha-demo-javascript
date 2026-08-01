@@ -153,6 +153,36 @@ describe("faucetApi", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects the retired TAIRA chain id before solving a faucet puzzle", async () => {
+    const puzzle = {
+      ...basePuzzle,
+      chain_id: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      chain_discriminant: 369,
+    };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      new Response(JSON.stringify(puzzle), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+    const solvePuzzle = vi.fn();
+
+    await expect(
+      requestFaucetFundsWithPuzzle({
+        baseUrl: "https://taira.sora.org",
+        accountId: testnetAccountId,
+        networkPrefix: 369,
+        fetchImpl,
+        solvePuzzle,
+      }),
+    ).rejects.toThrow(
+      "Faucet endpoint chain id mismatch: expected fc56984b-2be7-431d-840e-21514d1883f0, got 809574f5-fee7-5e69-bfcf-52451e42d50f.",
+    );
+    expect(solvePuzzle).not.toHaveBeenCalled();
+  });
+
   it("blocks Minamoto faucet use even if the endpoint exposes a puzzle", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(
       new Response(

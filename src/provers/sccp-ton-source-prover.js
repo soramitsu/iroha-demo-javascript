@@ -6,7 +6,7 @@ import {
   sccpMerkleRootFromCommitment,
   sccpPayloadHash,
   sccpTransferMessageId,
-} from "@iroha/iroha-js/sccp";
+} from "@/legacy/sccpLegacySdk";
 import { blake2b } from "@noble/hashes/blake2b";
 
 const ROUTE_ID = "taira_ton_xor";

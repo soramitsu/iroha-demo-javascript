@@ -324,9 +324,10 @@ export const extractGovernanceStats = (
   const laneIds = new Set<number>();
   const dataspaceIds = new Set<number>();
   const validatorIds = new Set<string>();
+  const statusRecord = toRecord(status);
 
-  const laneGovernance = Array.isArray(status?.lane_governance)
-    ? status.lane_governance
+  const laneGovernance = Array.isArray(statusRecord?.lane_governance)
+    ? statusRecord.lane_governance
     : [];
   for (const item of laneGovernance) {
     const itemRecord = item as unknown as Record<string, unknown>;
@@ -350,8 +351,10 @@ export const extractGovernanceStats = (
     }
   }
 
-  const dataspaceCommitments = Array.isArray(status?.dataspace_commitments)
-    ? status.dataspace_commitments
+  const dataspaceCommitments = Array.isArray(
+    statusRecord?.dataspace_commitments,
+  )
+    ? statusRecord.dataspace_commitments
     : [];
   for (const item of dataspaceCommitments) {
     const itemRecord = item as unknown as Record<string, unknown>;

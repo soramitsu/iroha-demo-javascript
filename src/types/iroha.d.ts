@@ -857,6 +857,38 @@ export interface SccpProofManifestSetResponse {
   routes?: readonly Record<string, unknown>[];
 }
 
+export interface SccpSoraOutboundMaterialResponse {
+  version: 1;
+  registry_revision: string;
+  route_key: {
+    lane_id: {
+      source: { network: string; profile: null };
+      target: { network: string; profile: null };
+    };
+    route_id: string;
+    asset_key: string;
+    revision: number;
+  };
+  route_configuration_hash: string;
+  destination_binding_hash: string;
+  settlement_asset_definition_id: string;
+  policy: {
+    version: 1;
+    semantics: "ivm_proved_record_sccp_message_v1";
+    contract_artifact_sha256: string;
+    vk_ref: {
+      backend: string;
+      name: string;
+      version: number;
+      commitment: string;
+    };
+    gas_limit: number;
+  };
+  contract_artifact_b64: string;
+  contract_code_hash: string;
+  verifying_key_version: number;
+}
+
 export interface SccpRecentMessagesResponse {
   items: Record<string, unknown>[];
   total: number;
@@ -910,10 +942,12 @@ export interface SccpBridgeProofSubmitInput
   extends SccpDestinationProofMaterialInput {
   toriiUrl: string;
   accountId: string;
+  destinationProofB64?: string;
   burnBundle?: Record<string, unknown>;
   messageBundle?: Record<string, unknown>;
   publicKeyHex?: string;
   signatureB64?: string;
+  transactionPayloadB64?: string;
   creationTimeMs?: number | string;
 }
 
@@ -921,9 +955,11 @@ export interface SccpBridgeMessageSubmitInput
   extends SccpDestinationProofMaterialInput {
   toriiUrl: string;
   accountId: string;
-  messageBundle: Record<string, unknown>;
+  nativeProofB64?: string;
+  messageBundle?: Record<string, unknown>;
   publicKeyHex?: string;
   signatureB64?: string;
+  transactionPayloadB64?: string;
   receiptLane?: number | string;
   settlement?: Record<string, unknown>;
   creationTimeMs?: number | string;
@@ -1845,6 +1881,13 @@ export interface IrohaBridge {
   getSccpProofManifests(input: {
     toriiUrl: string;
   }): Promise<SccpProofManifestSetResponse>;
+  getSccpSoraOutboundMaterial(input: {
+    toriiUrl: string;
+    sourceProfile: string;
+    routeId: string;
+    assetKey: string;
+    revision: number;
+  }): Promise<SccpSoraOutboundMaterialResponse>;
   listSccpRecentMessages(
     input: SccpRecentMessagesInput,
   ): Promise<SccpRecentMessagesResponse>;

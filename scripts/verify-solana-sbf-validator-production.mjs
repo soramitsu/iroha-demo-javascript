@@ -20,7 +20,16 @@ const artifacts = Object.freeze([
       "output/sccp-solana-program-artifacts/bridge/sccp_taira_xor.so",
     ),
     expectedSha256:
-      "0xcc2c7a8b91dd15fd561d9d9841546bace247e6967a4051137cb7ebd40f88b47c",
+      "0x9c7a639b15dd114c1bb40e65dd0380f8fedb199d1d93f65918be03ac316233e1",
+  }),
+  Object.freeze({
+    name: "source",
+    path: path.join(
+      repoRoot,
+      "output/sccp-solana-program-artifacts/source/sccp_taira_xor_source.so",
+    ),
+    expectedSha256:
+      "0xcec2718e975730befbfc9c2de70f2c81ee2cae68f5a880bbc4b14592273ca9ba",
   }),
   Object.freeze({
     name: "native-verifier",
@@ -29,7 +38,7 @@ const artifacts = Object.freeze([
       "output/sccp-solana-program-artifacts/native-verifier/sccp_native_recursive_verifier.so",
     ),
     expectedSha256:
-      "0x9f366f14d586c3c5e79d915cde4ce3dc82822a1aa7311091b98b5fdcbe184bfb",
+      "0xbc77d3b8342f7da91b79c19bcdf7fa56c808eaae6692a13859385b3fe41fe33b",
   }),
 ]);
 

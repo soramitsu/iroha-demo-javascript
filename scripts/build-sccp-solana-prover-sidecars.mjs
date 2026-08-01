@@ -10,10 +10,14 @@ import {
   SOLANA_SOURCE_PROOF_BACKEND,
   SOLANA_TESTNET_GENESIS_HASH,
   SOLANA_VERIFIER_TARGET,
-  buildSolanaProductionGovernanceApprovalValidation,
-  buildSolanaProverSidecarBody,
-  readStablePublicSolanaUpgradeArtifact,
-} from "./sccp-solana-deploy.mjs";
+  SOLANA_PROVER_GOVERNANCE_BINDING_SCHEMA,
+  SOLANA_EXACT_PROVER_APPROVAL_SHA256_ENV,
+  SOLANA_EXACT_PROVER_APPROVAL_FILE_ENV,
+  buildExactSolanaProductionProverApprovalValidation,
+  buildExactSolanaProverSidecarBody,
+  canonicalSolanaExactProverApprovalJson,
+  readStablePublicExactSolanaArtifact,
+} from "./e2e/sccp-solana-exact-prover-governance.mjs";
 import {
   canonicalSolanaProverKnownAnswerJson,
   invokeSolanaProverKnownAnswer,
@@ -25,9 +29,9 @@ const SOLANA_ROUTE_ID = "taira_sol_xor";
 const SOLANA_ASSET_KEY = "xor";
 const SOLANA_NETWORK = "solana-testnet";
 export const SCCP_SOLANA_KNOWN_ANSWER_GOVERNANCE_APPROVAL_FILE_ENV =
-  "SCCP_SOLANA_KNOWN_ANSWER_GOVERNANCE_APPROVAL_FILE";
+  SOLANA_EXACT_PROVER_APPROVAL_FILE_ENV;
 export const SCCP_SOLANA_KNOWN_ANSWER_GOVERNANCE_APPROVAL_SHA256_ENV =
-  "SCCP_SOLANA_KNOWN_ANSWER_GOVERNANCE_APPROVAL_SHA256";
+  SOLANA_EXACT_PROVER_APPROVAL_SHA256_ENV;
 const knownAnswerEnvForDirection = (direction) => {
   const prefix = `SCCP_SOLANA_${direction.toUpperCase()}_KNOWN_ANSWER`;
   return {
@@ -78,32 +82,26 @@ const sha256Hex = (bytes) =>
 
 const trimString = (value) => String(value ?? "").trim();
 
-const secretLikePath = (file) =>
-  /(^|[/\\])[^/\\]*(?:private|secret|seed|mnemonic|keypair|wallet|backup)[^/\\]*$/iu.test(
-    file,
-  );
-
 const readPublicEvidenceBytes = async ({ file, label, errors }) => {
   const configured = trimString(file);
   if (!configured) {
     errors.push(`${label} is not configured.`);
     return null;
   }
-  const resolved = resolve(configured);
-  if (secretLikePath(resolved)) {
-    errors.push(`${label} must use a public, non-secret-like path.`);
+  try {
+    return (
+      await readStablePublicExactSolanaArtifact({
+        file: configured,
+        label,
+        maxBytes: 32 * 1024 * 1024,
+      })
+    ).bytes;
+  } catch (error) {
+    errors.push(
+      `${label}: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return null;
   }
-  if (!existsSync(resolved)) {
-    errors.push(`${label} does not exist.`);
-    return null;
-  }
-  const bytes = await readFile(resolved);
-  if (bytes.length === 0) {
-    errors.push(`${label} must not be empty.`);
-    return null;
-  }
-  return bytes;
 };
 
 const readCanonicalKnownAnswerVector = async ({ file, errors }) => {
@@ -244,9 +242,19 @@ export const loadSolanaProverKnownAnswerMaterial = async ({
   if (approvalBytes) {
     try {
       approvalRecord = JSON.parse(approvalBytes.toString("utf8"));
+      const canonicalApprovalBytes = Buffer.from(
+        `${canonicalSolanaExactProverApprovalJson(approvalRecord)}\n`,
+        "utf8",
+      );
+      if (!approvalBytes.equals(canonicalApprovalBytes)) {
+        errors.push(
+          "Solana exact prover governance approval must be canonical UTF-8 JSON with sorted object keys, no insignificant whitespace, and one trailing newline.",
+        );
+        approvalRecord = null;
+      }
     } catch (error) {
       errors.push(
-        `Solana known-answer governance approval is not valid JSON: ${
+        `Solana exact prover governance approval is not valid JSON: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -256,11 +264,13 @@ export const loadSolanaProverKnownAnswerMaterial = async ({
   const expectedApprovalHash = trimString(
     env[SCCP_SOLANA_KNOWN_ANSWER_GOVERNANCE_APPROVAL_SHA256_ENV],
   );
-  const approvalValidation = buildSolanaProductionGovernanceApprovalValidation({
-    approvalRecord,
-    approvalSha256: approvalHash,
-    expectedApprovalSha256: expectedApprovalHash || null,
-  });
+  const approvalValidation = buildExactSolanaProductionProverApprovalValidation(
+    {
+      approvalRecord,
+      approvalSha256: approvalHash,
+      expectedApprovalSha256: expectedApprovalHash || null,
+    },
+  );
   if (approvalValidation.ready !== true) {
     errors.push(
       ...approvalValidation.blockers.map(
@@ -290,8 +300,87 @@ export const loadSolanaProverKnownAnswerMaterial = async ({
   };
 };
 
+export const bindSolanaProverModuleToApproval = ({
+  direction,
+  moduleHash,
+  knownAnswerMaterial,
+} = {}) => {
+  if (direction !== "destination" && direction !== "source") {
+    throw new Error("Solana prover direction must be destination or source.");
+  }
+  const pinKey = `${direction}ProverModuleHash`;
+  const approvedHash = knownAnswerMaterial?.approvalValidation?.pins?.[pinKey];
+  const errors = Array.isArray(knownAnswerMaterial?.errors)
+    ? [...knownAnswerMaterial.errors]
+    : ["Solana known-answer material errors must be an array."];
+  if (typeof approvedHash !== "string" || approvedHash !== moduleHash) {
+    errors.push(
+      `Solana ${direction} prover module bytes do not match the exact governance approval pin.`,
+    );
+  }
+  return {
+    ...knownAnswerMaterial,
+    errors: [...new Set(errors)],
+    moduleBinding: {
+      pinKey,
+      moduleHash,
+      approvedHash: approvedHash ?? null,
+      ready: approvedHash === moduleHash,
+    },
+  };
+};
+
 const isRecord = (value) =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const SELF_TEST_ALLOWED_FIELDS = new Set([
+  "ready",
+  "linked",
+  "productionProofsReady",
+  "production_proofs_ready",
+  "routeId",
+  "route_id",
+  "assetKey",
+  "asset_key",
+  "network",
+  "solanaNetwork",
+  "solana_network",
+  "sourceChain",
+  "source_chain",
+  "genesisHash",
+  "genesis_hash",
+  "direction",
+  "sourceDomain",
+  "source_domain",
+  "targetDomain",
+  "target_domain",
+  "proofBackend",
+  "proof_backend",
+  "requiredProofBackend",
+  "required_proof_backend",
+  "destinationVerifierPlan",
+  "destination_verifier_plan",
+  "verifierTarget",
+  "verifier_target",
+  "missingArtifactIds",
+  "missing_artifact_ids",
+  "missingMaterialIds",
+  "missing_material_ids",
+  "requiredArtifacts",
+  "required_artifacts",
+  "reason",
+]);
+
+const containsSecretField = (value) => {
+  if (Array.isArray(value)) return value.some(containsSecretField);
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(
+    ([key, child]) =>
+      /(?:private|secret|mnemonic|seed|credential|wallet.?connect|keypair|token)/iu.test(
+        key,
+      ) || containsSecretField(child),
+  );
+};
 
 const hasOwn = (record, key) =>
   Object.prototype.hasOwnProperty.call(record, key);
@@ -402,6 +491,17 @@ export const validateSolanaProverSelfTestForSidecar = ({
     };
   }
   const proofBackend = proofBackendForDirection(direction);
+  const unknownFields = Object.keys(selfTest).filter(
+    (key) => !SELF_TEST_ALLOWED_FIELDS.has(key),
+  );
+  if (unknownFields.length > 0) {
+    errors.push(
+      `self-test contains unknown field(s): ${unknownFields.join(", ")}.`,
+    );
+  }
+  if (containsSecretField(selfTest)) {
+    errors.push("self-test contains secret-bearing fields.");
+  }
 
   if (selfTest.ready !== true) {
     errors.push("ready must be true.");
@@ -430,7 +530,6 @@ export const validateSolanaProverSelfTestForSidecar = ({
     expected: SOLANA_ASSET_KEY,
     label: "assetKey",
     errors,
-    required: false,
   });
   expectAliasedValue({
     record: selfTest,
@@ -512,7 +611,160 @@ export const validateSolanaProverSelfTestForSidecar = ({
   };
 };
 
-const failClosedSelfTest = ({ direction, selfTest, knownAnswer }) => {
+const safeArtifactId = (value) =>
+  typeof value === "string" && /^[a-z0-9][a-z0-9._:-]{0,127}$/u.test(value)
+    ? value
+    : null;
+
+const sanitizedMissingIds = (selfTest) => {
+  const source = [
+    selfTest?.missingArtifactIds,
+    selfTest?.missing_artifact_ids,
+    selfTest?.missingMaterialIds,
+    selfTest?.missing_material_ids,
+  ].find(Array.isArray);
+  return source ? source.map(safeArtifactId).filter(Boolean) : [];
+};
+
+const sanitizedRequiredArtifacts = (selfTest) => {
+  const source = [
+    selfTest?.requiredArtifacts,
+    selfTest?.required_artifacts,
+  ].find(Array.isArray);
+  if (!source) return [];
+  return source.flatMap((artifact) => {
+    if (!isRecord(artifact)) return [];
+    const id = safeArtifactId(artifact.id);
+    const status = ["blocked", "missing", "present", "ready"].includes(
+      artifact.status,
+    )
+      ? artifact.status
+      : null;
+    if (!id || !status) return [];
+    const upstreamArtifactIds = Array.isArray(artifact.upstreamArtifactIds)
+      ? artifact.upstreamArtifactIds.map(safeArtifactId).filter(Boolean)
+      : [];
+    return [
+      {
+        id,
+        required: artifact.required !== false,
+        status,
+        ...(upstreamArtifactIds.length > 0 ? { upstreamArtifactIds } : {}),
+      },
+    ];
+  });
+};
+
+const canonicalPublicSelfTest = ({ direction, selfTest, ready, reason }) => {
+  const domains = SOLANA_DIRECTION_DOMAINS[direction];
+  const proofBackend = proofBackendForDirection(direction);
+  const missingArtifactIds = sanitizedMissingIds(selfTest);
+  const requiredArtifacts = sanitizedRequiredArtifacts(selfTest);
+  return {
+    ready,
+    linked: ready,
+    productionProofsReady: ready,
+    production_proofs_ready: ready,
+    routeId: SOLANA_ROUTE_ID,
+    assetKey: SOLANA_ASSET_KEY,
+    solanaNetwork: SOLANA_NETWORK,
+    genesisHash: SOLANA_TESTNET_GENESIS_HASH,
+    direction,
+    sourceDomain: domains.sourceDomain,
+    targetDomain: domains.targetDomain,
+    proofBackend,
+    requiredProofBackend: proofBackend,
+    ...(direction === "destination"
+      ? {
+          destinationVerifierPlan: SOLANA_DESTINATION_VERIFIER_PLAN,
+          verifierTarget: SOLANA_VERIFIER_TARGET,
+        }
+      : {}),
+    missingArtifactIds,
+    ...(requiredArtifacts.length > 0 ? { requiredArtifacts } : {}),
+    ...(ready ? {} : { reason }),
+  };
+};
+
+const validateExactGovernanceBinding = ({
+  direction,
+  moduleHash,
+  knownAnswer,
+  approvalValidation,
+  moduleBinding,
+}) => {
+  const errors = [];
+  const pins = isRecord(approvalValidation?.pins)
+    ? approvalValidation.pins
+    : {};
+  const governance = isRecord(knownAnswer?.governance)
+    ? knownAnswer.governance
+    : {};
+  const pinKey = `${direction}ProverModuleHash`;
+  const vectorPinKey = `${direction}ProverKnownAnswerVectorHash`;
+  const requiredHashes = {
+    approvalSha256: approvalValidation?.approvalSha256,
+    expectedApprovalSha256: approvalValidation?.expectedApprovalSha256,
+    governancePlanCanonicalSha256: pins.governancePlanCanonicalSha256,
+    orderedInitializationEvidenceSha256:
+      pins.orderedInitializationEvidenceSha256,
+    approvedModuleHash: pins[pinKey],
+    approvedVectorHash: pins[vectorPinKey],
+  };
+  const validHash = (value) =>
+    typeof value === "string" &&
+    /^0x[0-9a-f]{64}$/u.test(value) &&
+    !/^0x0{64}$/u.test(value);
+  if (approvalValidation?.ready !== true) {
+    errors.push("Exact prover governance approval validation is not ready.");
+  }
+  for (const [key, value] of Object.entries(requiredHashes)) {
+    if (!validHash(value)) {
+      errors.push(`Exact prover governance binding ${key} is missing.`);
+    }
+  }
+  if (requiredHashes.approvalSha256 !== requiredHashes.expectedApprovalSha256) {
+    errors.push("Exact prover governance approval hash binding disagrees.");
+  }
+  if (
+    governance.approvalHash !== requiredHashes.approvalSha256 ||
+    governance.expectedApprovalHash !== requiredHashes.expectedApprovalSha256
+  ) {
+    errors.push("Known-answer summary is not bound to the exact approval.");
+  }
+  if (
+    governance.vectorHashPin !== requiredHashes.approvedVectorHash ||
+    knownAnswer?.vectorHash !== requiredHashes.approvedVectorHash
+  ) {
+    errors.push("Known-answer summary is not bound to the approved vector.");
+  }
+  if (
+    moduleBinding?.ready !== true ||
+    moduleBinding?.pinKey !== pinKey ||
+    moduleBinding?.moduleHash !== moduleHash ||
+    moduleBinding?.approvedHash !== requiredHashes.approvedModuleHash ||
+    moduleHash !== requiredHashes.approvedModuleHash
+  ) {
+    errors.push("Prover module bytes are not bound to the exact approval.");
+  }
+  return {
+    schema: SOLANA_PROVER_GOVERNANCE_BINDING_SCHEMA,
+    ready: errors.length === 0,
+    direction,
+    approvalId: approvalValidation?.approvalId ?? null,
+    ...requiredHashes,
+    moduleHash,
+    vectorHash: knownAnswer?.vectorHash ?? null,
+    errors,
+  };
+};
+
+const failClosedSelfTest = ({
+  direction,
+  selfTest,
+  knownAnswer,
+  governanceBinding,
+}) => {
   const validation = validateSolanaProverSelfTestForSidecar({
     direction,
     selfTest,
@@ -521,36 +773,43 @@ const failClosedSelfTest = ({ direction, selfTest, knownAnswer }) => {
     direction,
     summary: knownAnswer,
   });
-  if (
-    (validation.ready && probeErrors.length === 0) ||
-    !isRecord(selfTest) ||
-    selfTest.ready !== true
-  ) {
-    return selfTest;
-  }
-  return {
-    ...selfTest,
-    ready: false,
+  const errors = [
+    ...validation.errors,
+    ...probeErrors,
+    ...(governanceBinding?.errors ?? ["Exact governance binding is missing."]),
+  ];
+  return canonicalPublicSelfTest({
+    direction,
+    selfTest,
+    ready: errors.length === 0,
     reason: `Solana ${direction} prover readiness is not production-ready: ${[
-      ...validation.errors,
-      ...probeErrors,
+      ...new Set(errors),
     ].join(" ")}`,
-  };
+  });
 };
 
 export const buildValidatedSolanaProverSidecarBody = (input = {}) => {
   const knownAnswer = isRecord(input.knownAnswer) ? input.knownAnswer : null;
-  const body = buildSolanaProverSidecarBody({
+  const governanceApprovalBinding = validateExactGovernanceBinding({
+    direction: input.direction,
+    moduleHash: input.moduleHash,
+    knownAnswer,
+    approvalValidation: input.approvalValidation,
+    moduleBinding: input.moduleBinding,
+  });
+  const body = buildExactSolanaProverSidecarBody({
     ...input,
     selfTest: failClosedSelfTest({
       direction: input.direction,
       selfTest: input.selfTest,
       knownAnswer,
+      governanceBinding: governanceApprovalBinding,
     }),
   });
   return {
     ...body,
     knownAnswer,
+    governanceApprovalBinding,
   };
 };
 
@@ -572,7 +831,7 @@ export const runSolanaProverValidation = async ({
   const selectedBytes = Buffer.isBuffer(moduleBytes)
     ? moduleBytes
     : (
-        await readStablePublicSolanaUpgradeArtifact({
+        await readStablePublicExactSolanaArtifact({
           file: modulePath,
           label: `Solana ${direction} browser prover module`,
           maxBytes: 16 * 1024 * 1024,
@@ -639,7 +898,7 @@ export const buildSolanaProverSidecarForModule = async ({
   env = process.env,
 } = {}) => {
   const resolvedModulePath = resolve(modulePath);
-  const moduleArtifact = await readStablePublicSolanaUpgradeArtifact({
+  const moduleArtifact = await readStablePublicExactSolanaArtifact({
     file: resolvedModulePath,
     label: `Solana ${direction} browser prover module`,
     maxBytes: 16 * 1024 * 1024,
@@ -649,19 +908,26 @@ export const buildSolanaProverSidecarForModule = async ({
     direction,
     env,
   });
+  const boundKnownAnswerMaterial = bindSolanaProverModuleToApproval({
+    direction,
+    moduleHash,
+    knownAnswerMaterial,
+  });
   const { exportsOk, selfTest, knownAnswer } = await runSolanaProverValidation({
     direction,
     modulePath: resolvedModulePath,
     moduleBytes: moduleArtifact.bytes,
     proveExport,
     selfTestExport,
-    knownAnswerMaterial,
+    knownAnswerMaterial: boundKnownAnswerMaterial,
   });
   return {
     moduleHash,
     exportsOk,
     selfTest,
     knownAnswer,
+    approvalValidation: knownAnswerMaterial.approvalValidation,
+    moduleBinding: boundKnownAnswerMaterial.moduleBinding,
     sidecar: buildValidatedSolanaProverSidecarBody({
       direction,
       moduleUrl,
@@ -670,6 +936,8 @@ export const buildSolanaProverSidecarForModule = async ({
       selfTestExport,
       selfTest,
       knownAnswer,
+      approvalValidation: knownAnswerMaterial.approvalValidation,
+      moduleBinding: boundKnownAnswerMaterial.moduleBinding,
       checkedAt,
     }),
   };
@@ -685,7 +953,13 @@ const buildOne = async (item) => {
     proveExport: item.proveExport,
     selfTestExport: item.selfTestExport,
   });
-  const { moduleHash, selfTest, knownAnswer } = validation;
+  const {
+    moduleHash,
+    selfTest,
+    knownAnswer,
+    approvalValidation,
+    moduleBinding,
+  } = validation;
   const existing = await readJsonIfExists(sidecarPath);
   const stableCheckedAt =
     typeof existing?.checkedAt === "string" && existing.checkedAt.trim()
@@ -699,6 +973,8 @@ const buildOne = async (item) => {
     selfTestExport: item.selfTestExport,
     selfTest,
     knownAnswer,
+    approvalValidation,
+    moduleBinding,
     checkedAt: stableCheckedAt,
   });
   const stableJson = `${JSON.stringify(stableCandidate, null, 2)}\n`;
@@ -714,6 +990,8 @@ const buildOne = async (item) => {
       selfTestExport: item.selfTestExport,
       selfTest,
       knownAnswer,
+      approvalValidation,
+      moduleBinding,
       checkedAt: new Date().toISOString(),
     });
     await mkdir(dirname(sidecarPath), { recursive: true });

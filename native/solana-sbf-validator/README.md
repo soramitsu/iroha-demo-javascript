@@ -3,7 +3,8 @@
 This standalone host helper performs local structural preflight on exact program
 bytes supplied through standard input. It never accepts a file path and never
 performs RPC or another network operation. The loader is pinned to
-`solana-sbpf` 0.21.0, permits only SBPF V0, sets `reject_broken_elfs = true`,
+`solana-sbpf` 0.21.0, permits only SBPF V3, requires the exact ELF64
+little-endian `e_flags` value `3`, sets `reject_broken_elfs = true`,
 resolves the syscalls used by the reviewed bridge and native-verifier artifacts,
 and runs `RequisiteVerifier`. This is not exact-cluster admission: the signed
 rollback-sentinel simulation against Solana testnet remains authoritative before
@@ -34,7 +35,7 @@ independent review, not from the evidence command itself:
 node scripts/solana-sbf-validation-evidence.mjs \
   --artifact output/sccp-solana-program-artifacts/bridge/sccp_taira_xor.so \
   --artifact-root output/sccp-solana-program-artifacts \
-  --expected-artifact-sha256 0xcc2c7a8b91dd15fd561d9d9841546bace247e6967a4051137cb7ebd40f88b47c \
+  --expected-artifact-sha256 0x9c7a639b15dd114c1bb40e65dd0380f8fedb199d1d93f65918be03ac316233e1 \
   --expected-validator-sha256 "$helper_sha" \
   > reviewed-bridge-sbf-validation-evidence.json
 ```

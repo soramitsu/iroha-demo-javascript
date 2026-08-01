@@ -5,12 +5,16 @@ import {
   getParameters,
   getSccpCapabilities,
   getSccpProofManifests,
+  getSccpSoraOutboundMaterial,
   listSccpRecentMessages,
 } from "@/services/iroha";
 import {
   classifySccpRouteLoadFailure,
   mergeSccpLaneMaterialsIntoManifestSet,
+  pickSolanaSccpManifest,
   resolveSccpRouteReadiness,
+  SCCP_SOLANA_XOR_ROUTE_ID,
+  SCCP_SOLANA_XOR_ROUTE_REVISION,
   SCCP_XOR_ROUTE,
   type SccpRouteConfig,
   type SccpRouteLoadFailure,
@@ -20,13 +24,55 @@ import type {
   AccountAssetItem,
   SccpCapabilitiesResponse,
   SccpProofManifestSetResponse,
+  SccpSoraOutboundMaterialResponse,
 } from "@/types/iroha";
+
+const exactSolanaRouteAllowsOutboundMaterial = (
+  manifestSet: unknown,
+): boolean => {
+  try {
+    const route = pickSolanaSccpManifest(manifestSet, "testnet");
+    if (!route) {
+      return false;
+    }
+    const lane = route.lane_id;
+    const activation = route.activation;
+    if (
+      typeof lane !== "object" ||
+      lane === null ||
+      Array.isArray(lane) ||
+      typeof activation !== "object" ||
+      activation === null ||
+      Array.isArray(activation)
+    ) {
+      return false;
+    }
+    const laneRecord = lane as Record<string, unknown>;
+    const source = laneRecord.source as Record<string, unknown> | undefined;
+    const target = laneRecord.target as Record<string, unknown> | undefined;
+    const activationRecord = activation as Record<string, unknown>;
+    return (
+      route.route_id === SCCP_SOLANA_XOR_ROUTE_ID &&
+      route.asset_key === "xor" &&
+      route.revision === SCCP_SOLANA_XOR_ROUTE_REVISION &&
+      source?.network === "solana_testnet" &&
+      source?.profile === null &&
+      target?.network === "sora_taira" &&
+      target?.profile === null &&
+      activationRecord.direction === null &&
+      activationRecord.activation === "bidirectional"
+    );
+  } catch {
+    return false;
+  }
+};
 
 export type SccpBridgeState = {
   route: SccpRouteConfig;
   readiness: SccpRouteReadiness;
   capabilities: SccpCapabilitiesResponse | null;
   manifestSet: SccpProofManifestSetResponse | null;
+  soraOutboundMaterial: SccpSoraOutboundMaterialResponse | null;
   routeLoadFailure: SccpRouteLoadFailure | null;
   parameters: Record<string, unknown> | null;
   recentMessages: Record<string, unknown>[];
@@ -42,6 +88,9 @@ export const useSccpBridge = (
   const session = useSessionStore();
   const capabilities = ref<SccpCapabilitiesResponse | null>(null);
   const manifestSet = ref<SccpProofManifestSetResponse | null>(null);
+  const soraOutboundMaterial = ref<SccpSoraOutboundMaterialResponse | null>(
+    null,
+  );
   const routeLoadFailure = ref<SccpRouteLoadFailure | null>(null);
   const parameters = ref<Record<string, unknown> | null>(null);
   const recentMessages = ref<Record<string, unknown>[]>([]);
@@ -64,6 +113,7 @@ export const useSccpBridge = (
     balanceRefreshSerial += 1;
     capabilities.value = null;
     manifestSet.value = null;
+    soraOutboundMaterial.value = null;
     routeLoadFailure.value = null;
     parameters.value = null;
     recentMessages.value = [];
@@ -85,6 +135,7 @@ export const useSccpBridge = (
         import.meta.env.VITE_SCCP_SOLANA_NETWORK || "testnet",
       ) as Record<string, unknown> | null,
       route: unref(route),
+      soraOutboundMaterial: soraOutboundMaterial.value,
       loadFailure: routeLoadFailure.value,
       bscNetwork: import.meta.env.VITE_SCCP_BSC_NETWORK || "testnet",
       tonNetwork: import.meta.env.VITE_SCCP_TON_NETWORK || "testnet",
@@ -97,6 +148,7 @@ export const useSccpBridge = (
     readiness: readiness.value,
     capabilities: capabilities.value,
     manifestSet: manifestSet.value,
+    soraOutboundMaterial: soraOutboundMaterial.value,
     routeLoadFailure: routeLoadFailure.value,
     parameters: parameters.value,
     recentMessages: recentMessages.value,
@@ -140,8 +192,10 @@ export const useSccpBridge = (
     const toriiUrl = session.connection.toriiUrl;
     error.value = "";
     routeLoadFailure.value = null;
+    soraOutboundMaterial.value = null;
     loading.value = true;
     try {
+      const activeRoute = unref(route);
       const [capabilitiesResult, manifestsResult, parametersResult] =
         await Promise.allSettled([
           getSccpCapabilities({ toriiUrl }),
@@ -164,6 +218,35 @@ export const useSccpBridge = (
       const nextManifestSet = manifestsResult.value;
       const nextParameters =
         parametersResult.status === "fulfilled" ? parametersResult.value : null;
+      let nextSoraOutboundMaterial: SccpSoraOutboundMaterialResponse | null =
+        null;
+      let nextMaterialFailure: SccpRouteLoadFailure | null = null;
+      if (
+        activeRoute.counterparty === "solana" &&
+        exactSolanaRouteAllowsOutboundMaterial(nextManifestSet)
+      ) {
+        try {
+          nextSoraOutboundMaterial = await getSccpSoraOutboundMaterial({
+            toriiUrl,
+            sourceProfile: "solana-testnet",
+            routeId: SCCP_SOLANA_XOR_ROUTE_ID,
+            assetKey: activeRoute.assetKey,
+            revision: SCCP_SOLANA_XOR_ROUTE_REVISION,
+          });
+        } catch (materialError) {
+          const classified = classifySccpRouteLoadFailure(materialError, {
+            toriiUrl,
+            stage: "manifest",
+          });
+          // An exact route-scoped endpoint intentionally returns 404 when the
+          // route is not outbound-enabled or governed material is unavailable.
+          // Preserve the authoritative registry and let readiness fail closed
+          // on the missing material instead of misreporting total route loss.
+          if (classified.status !== 404) {
+            nextMaterialFailure = classified;
+          }
+        }
+      }
       if (
         refreshSerial !== routeRefreshSerial ||
         connectionKey !== currentConnectionKey()
@@ -172,7 +255,8 @@ export const useSccpBridge = (
       }
       capabilities.value = nextCapabilities;
       manifestSet.value = nextManifestSet;
-      routeLoadFailure.value = null;
+      soraOutboundMaterial.value = nextSoraOutboundMaterial;
+      routeLoadFailure.value = nextMaterialFailure;
       parameters.value = nextParameters;
       void refreshRecentMessages(refreshSerial, connectionKey);
     } catch (routeError) {
@@ -184,6 +268,7 @@ export const useSccpBridge = (
       }
       capabilities.value = null;
       manifestSet.value = null;
+      soraOutboundMaterial.value = null;
       routeLoadFailure.value =
         routeError &&
         typeof routeError === "object" &&
@@ -257,6 +342,7 @@ export const useSccpBridge = (
   return {
     capabilities,
     manifestSet,
+    soraOutboundMaterial,
     routeLoadFailure,
     parameters,
     recentMessages,

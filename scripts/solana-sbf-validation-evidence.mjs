@@ -29,6 +29,18 @@ import {
   solanaBlake2b256,
   solanaSha256,
 } from "./solana-loader-v3-runtime.mjs";
+import {
+  SOLANA_LOADER_V3_FRESH_REQUIRED_SBF_VALIDATION_CHECKS,
+  SOLANA_LOADER_V3_FRESH_SBF_ARCHITECTURE,
+  SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_EVIDENCE_SCHEMA,
+  SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_POLICY,
+  SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_POLICY_SHA256,
+  SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_SCOPE,
+  SOLANA_LOADER_V3_FRESH_SBF_VALIDATOR_ID,
+  SOLANA_LOADER_V3_FRESH_SBF_VALIDATOR_VERSION,
+  SOLANA_SCCP_FRESH_DEPLOY_ROLE_ORDER,
+  canonicalSolanaLoaderV3FreshSbfValidationEvidenceBytes,
+} from "./solana-loader-v3-fresh-deploy.mjs";
 
 export const SOLANA_SBF_VALIDATOR_MAX_ARTIFACT_BYTES = 10 * 1024 * 1024;
 export const SOLANA_SBF_VALIDATOR_MAX_HELPER_BYTES = 64 * 1024 * 1024;
@@ -80,6 +92,19 @@ const HELPER_RESULT_KEYS = new Set([
   "rustcIdentity",
   "rustcIdentitySha256",
   "resourceLimits",
+]);
+const FRESH_VALIDATOR_REQUEST_KEYS = new Set([
+  "role",
+  "executableBytes",
+  "sbpfVersion",
+  "validatorId",
+  "validatorVersion",
+  "policy",
+  "policySha256",
+  "artifactSha256",
+  "codeHash",
+  "executableLength",
+  "requiredChecks",
 ]);
 
 const isRecord = (value) =>
@@ -564,7 +589,7 @@ const parseAndValidateHelperResult = ({
     result.validatorId !== SOLANA_LOADER_V3_SBF_VALIDATOR_ID ||
     result.validatorVersion !== SOLANA_LOADER_V3_SBF_VALIDATOR_VERSION ||
     result.solanaSbpf !== SOLANA_LOADER_V3_SBF_VALIDATOR_VERSION ||
-    result.sbpfVersion !== "V0" ||
+    result.sbpfVersion !== "V3" ||
     result.rejectBrokenElfs !== true ||
     result.requisiteVerifier !== true ||
     typeof result.helperTargetTriple !== "string" ||
@@ -597,9 +622,8 @@ const parseAndValidateHelperResult = ({
   return Object.freeze({ result, productionEligible });
 };
 
-export const generateSolanaLoaderV3SbfValidationEvidence = ({
-  artifactPath,
-  artifactRoot = process.cwd(),
+export const generateSolanaLoaderV3SbfValidationEvidenceFromBytes = ({
+  executableBytes,
   expectedArtifactSha256,
   expectedValidatorSha256,
   validatorBin = DEFAULT_SOLANA_SBF_VALIDATOR_BIN,
@@ -608,6 +632,14 @@ export const generateSolanaLoaderV3SbfValidationEvidence = ({
   validationMode = "production",
   timeoutMs = SOLANA_SBF_VALIDATOR_TIMEOUT_MS,
 } = {}) => {
+  if (
+    !(executableBytes instanceof Uint8Array) ||
+    executableBytes.length === 0 ||
+    executableBytes.length > SOLANA_SBF_VALIDATOR_MAX_ARTIFACT_BYTES
+  ) {
+    throw new Error("Exact bounded SBF executable bytes are required.");
+  }
+  const artifact = Buffer.from(executableBytes);
   const expectedArtifactHash = normalizeExpectedHash(
     expectedArtifactSha256,
     "Expected SBF artifact SHA-256",
@@ -625,66 +657,221 @@ export const generateSolanaLoaderV3SbfValidationEvidence = ({
   const sourceBundle = canonicalSolanaSbfValidatorSourceBundle({
     sourceRoot: validatorSourceRoot,
   });
-  return withStableSolanaSbfArtifactSnapshot(
+  const artifactSha256 = solanaSha256(artifact);
+  if (artifactSha256 !== expectedArtifactHash) {
+    throw new Error(
+      "SBF artifact does not match the independently reviewed SHA-256.",
+    );
+  }
+  if (artifact.length < 52 || artifact.readUInt32LE(48) !== 3) {
+    throw new Error("SBF artifact must be an exact SBPF V3 ELF.");
+  }
+  const executed = executeAuthenticatedSolanaSbfValidatorBinary({
+    validatorBin,
+    validatorRoot,
+    expectedValidatorSha256: expectedValidatorHash,
+    executableBytes: artifact,
+    timeoutMs,
+  });
+  const helper = parseAndValidateHelperResult({
+    stdout: executed.stdout,
+    sourceBundle,
+    validationMode,
+  });
+  if (solanaSha256(artifact) !== artifactSha256) {
+    throw new Error("SBF artifact bytes changed during validation.");
+  }
+  const evidence = Object.freeze({
+    schema: SOLANA_LOADER_V3_SBF_VALIDATION_EVIDENCE_SCHEMA,
+    valid: true,
+    deterministic: true,
+    validationScope: SOLANA_SBF_VALIDATOR_VALIDATION_SCOPE,
+    exactClusterAdmission: false,
+    productionEligible: helper.productionEligible,
+    validatorId: SOLANA_LOADER_V3_SBF_VALIDATOR_ID,
+    validatorVersion: SOLANA_LOADER_V3_SBF_VALIDATOR_VERSION,
+    sbpfVersion: "V3",
+    policySha256: SOLANA_LOADER_V3_SBF_VALIDATION_POLICY_SHA256,
+    artifactSha256,
+    codeHash: solanaBlake2b256(artifact),
+    executableLength: artifact.length,
+    helperBinarySha256: executed.helperBinarySha256,
+    helperTargetTriple: helper.result.helperTargetTriple,
+    jitOutcome: helper.result.jitOutcome,
+    buildProfile: helper.result.buildProfile,
+    validatorSourceBundleSha256: helper.result.validatorSourceBundleSha256,
+    cargoLockSha256: helper.result.cargoLockSha256,
+    rustcIdentity: helper.result.rustcIdentity,
+    rustcIdentitySha256: helper.result.rustcIdentitySha256,
+    resourceLimits: helper.result.resourceLimits,
+    checks: Object.freeze([...SOLANA_LOADER_V3_REQUIRED_SBF_VALIDATION_CHECKS]),
+  });
+  const evidenceBytes =
+    canonicalSolanaLoaderV3SbfValidationEvidenceBytes(evidence);
+  return Object.freeze({
+    evidence,
+    evidenceBytes,
+    evidenceSha256: solanaSha256(evidenceBytes),
+  });
+};
+
+export const generateSolanaLoaderV3SbfValidationEvidence = ({
+  artifactPath,
+  artifactRoot = process.cwd(),
+  ...options
+} = {}) =>
+  withStableSolanaSbfArtifactSnapshot(
     artifactPath,
     { root: artifactRoot },
-    (executableBytes) => {
-      const artifactSha256 = solanaSha256(executableBytes);
-      if (artifactSha256 !== expectedArtifactHash) {
+    (executableBytes) =>
+      generateSolanaLoaderV3SbfValidationEvidenceFromBytes({
+        ...options,
+        executableBytes,
+      }),
+  );
+
+/** Re-runs the authenticated helper and matches pinned fresh-role evidence. */
+export const createAuthenticatedSolanaLoaderV3FreshSbfValidationAdapter = ({
+  artifactBytesByRole,
+  pinnedEvidenceBytesByRole,
+  expectedArtifactSha256ByRole,
+  expectedEvidenceSha256ByRole,
+  expectedValidatorSha256,
+  validatorBin = DEFAULT_SOLANA_SBF_VALIDATOR_BIN,
+  validatorRoot = DEFAULT_SOLANA_SBF_VALIDATOR_ROOT,
+  validatorSourceRoot = DEFAULT_SOLANA_SBF_VALIDATOR_ROOT,
+  validationMode = "production",
+  timeoutMs = SOLANA_SBF_VALIDATOR_TIMEOUT_MS,
+} = {}) => {
+  const roleKeys = new Set(SOLANA_SCCP_FRESH_DEPLOY_ROLE_ORDER);
+  for (const [value, label] of [
+    [artifactBytesByRole, "Fresh SBF adapter artifact bytes"],
+    [pinnedEvidenceBytesByRole, "Fresh SBF adapter evidence bytes"],
+    [expectedArtifactSha256ByRole, "Fresh SBF adapter artifact hashes"],
+    [expectedEvidenceSha256ByRole, "Fresh SBF adapter evidence hashes"],
+  ]) {
+    assertExactKeys(value, roleKeys, label);
+  }
+  const pinned = Object.fromEntries(
+    SOLANA_SCCP_FRESH_DEPLOY_ROLE_ORDER.map((role) => {
+      const artifact = Buffer.from(artifactBytesByRole[role] ?? []);
+      const artifactSha256 = normalizeExpectedHash(
+        expectedArtifactSha256ByRole[role],
+        `${role} expected artifact SHA-256`,
+      );
+      if (
+        artifact.length === 0 ||
+        artifact.length > SOLANA_SBF_VALIDATOR_MAX_ARTIFACT_BYTES ||
+        solanaSha256(artifact) !== artifactSha256
+      ) {
         throw new Error(
-          "SBF artifact does not match the independently reviewed SHA-256.",
+          `${role} adapter artifact does not match its independently reviewed SHA-256.`,
         );
       }
-      const executed = executeAuthenticatedSolanaSbfValidatorBinary({
-        validatorBin,
-        validatorRoot,
-        expectedValidatorSha256: expectedValidatorHash,
-        executableBytes,
-        timeoutMs,
-      });
-      const helper = parseAndValidateHelperResult({
-        stdout: executed.stdout,
-        sourceBundle,
-        validationMode,
-      });
-      if (solanaSha256(executableBytes) !== artifactSha256) {
-        throw new Error("SBF artifact bytes changed during validation.");
+      const evidenceBytes = Buffer.from(pinnedEvidenceBytesByRole[role] ?? []);
+      const evidenceSha256 = normalizeExpectedHash(
+        expectedEvidenceSha256ByRole[role],
+        `${role} expected evidence SHA-256`,
+      );
+      if (
+        evidenceBytes.length === 0 ||
+        solanaSha256(evidenceBytes) !== evidenceSha256
+      ) {
+        throw new Error(
+          `${role} adapter evidence does not match its independently reviewed SHA-256.`,
+        );
       }
-      const evidence = Object.freeze({
-        schema: SOLANA_LOADER_V3_SBF_VALIDATION_EVIDENCE_SCHEMA,
-        valid: true,
-        deterministic: true,
-        validationScope: SOLANA_SBF_VALIDATOR_VALIDATION_SCOPE,
-        exactClusterAdmission: false,
-        productionEligible: helper.productionEligible,
-        validatorId: SOLANA_LOADER_V3_SBF_VALIDATOR_ID,
-        validatorVersion: SOLANA_LOADER_V3_SBF_VALIDATOR_VERSION,
-        policySha256: SOLANA_LOADER_V3_SBF_VALIDATION_POLICY_SHA256,
-        artifactSha256,
-        codeHash: solanaBlake2b256(executableBytes),
-        executableLength: executableBytes.length,
-        helperBinarySha256: executed.helperBinarySha256,
-        helperTargetTriple: helper.result.helperTargetTriple,
-        jitOutcome: helper.result.jitOutcome,
-        buildProfile: helper.result.buildProfile,
-        validatorSourceBundleSha256: helper.result.validatorSourceBundleSha256,
-        cargoLockSha256: helper.result.cargoLockSha256,
-        rustcIdentity: helper.result.rustcIdentity,
-        rustcIdentitySha256: helper.result.rustcIdentitySha256,
-        resourceLimits: helper.result.resourceLimits,
-        checks: Object.freeze([
-          ...SOLANA_LOADER_V3_REQUIRED_SBF_VALIDATION_CHECKS,
-        ]),
-      });
-      const evidenceBytes =
-        canonicalSolanaLoaderV3SbfValidationEvidenceBytes(evidence);
-      return Object.freeze({
-        evidence,
-        evidenceBytes,
-        evidenceSha256: solanaSha256(evidenceBytes),
-      });
-    },
+      let evidence;
+      try {
+        const text = evidenceBytes.toString("utf8");
+        if (!Buffer.from(text, "utf8").equals(evidenceBytes)) {
+          throw new Error("UTF-8");
+        }
+        evidence = JSON.parse(text);
+      } catch {
+        throw new Error(`${role} adapter evidence must be strict UTF-8 JSON.`);
+      }
+      const canonical =
+        canonicalSolanaLoaderV3FreshSbfValidationEvidenceBytes(evidence);
+      if (
+        !canonical.equals(evidenceBytes) ||
+        evidence.schema !==
+          SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_EVIDENCE_SCHEMA ||
+        evidence.validationScope !==
+          SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_SCOPE ||
+        evidence.sbpfVersion !== SOLANA_LOADER_V3_FRESH_SBF_ARCHITECTURE ||
+        evidence.validatorId !== SOLANA_LOADER_V3_FRESH_SBF_VALIDATOR_ID ||
+        evidence.validatorVersion !==
+          SOLANA_LOADER_V3_FRESH_SBF_VALIDATOR_VERSION ||
+        evidence.policySha256 !==
+          SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_POLICY_SHA256 ||
+        evidence.artifactSha256 !== artifactSha256 ||
+        evidence.codeHash !== solanaBlake2b256(artifact) ||
+        evidence.executableLength !== artifact.length ||
+        JSON.stringify(evidence.checks) !==
+          JSON.stringify(SOLANA_LOADER_V3_FRESH_REQUIRED_SBF_VALIDATION_CHECKS)
+      ) {
+        throw new Error(
+          `${role} adapter evidence is not the exact pinned fresh-deploy evidence.`,
+        );
+      }
+      return [role, Object.freeze({ artifact, artifactSha256, evidenceBytes })];
+    }),
   );
+  return Object.freeze(async (request) => {
+    assertExactKeys(
+      request,
+      FRESH_VALIDATOR_REQUEST_KEYS,
+      "Fresh SBF validator request",
+    );
+    if (!SOLANA_SCCP_FRESH_DEPLOY_ROLE_ORDER.includes(request.role)) {
+      throw new Error("Fresh SBF validator request role is unsupported.");
+    }
+    const expected = pinned[request.role];
+    const executable = Buffer.from(request.executableBytes ?? []);
+    if (
+      !executable.equals(expected.artifact) ||
+      request.sbpfVersion !== SOLANA_LOADER_V3_FRESH_SBF_ARCHITECTURE ||
+      request.validatorId !== SOLANA_LOADER_V3_FRESH_SBF_VALIDATOR_ID ||
+      request.validatorVersion !==
+        SOLANA_LOADER_V3_FRESH_SBF_VALIDATOR_VERSION ||
+      request.policy !== SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_POLICY ||
+      request.policySha256 !==
+        SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_POLICY_SHA256 ||
+      request.artifactSha256 !== expected.artifactSha256 ||
+      request.codeHash !== solanaBlake2b256(expected.artifact) ||
+      request.executableLength !== expected.artifact.length ||
+      JSON.stringify(request.requiredChecks) !==
+        JSON.stringify(SOLANA_LOADER_V3_FRESH_REQUIRED_SBF_VALIDATION_CHECKS)
+    ) {
+      throw new Error(
+        `${request.role} authenticated fresh SBF request differs from its pinned role.`,
+      );
+    }
+    const generated = generateSolanaLoaderV3SbfValidationEvidenceFromBytes({
+      executableBytes: expected.artifact,
+      expectedArtifactSha256: expected.artifactSha256,
+      expectedValidatorSha256,
+      validatorBin,
+      validatorRoot,
+      validatorSourceRoot,
+      validationMode,
+      timeoutMs,
+    });
+    const evidence = Object.freeze({
+      ...generated.evidence,
+      schema: SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_EVIDENCE_SCHEMA,
+      validationScope: SOLANA_LOADER_V3_FRESH_SBF_VALIDATION_SCOPE,
+    });
+    const evidenceBytes =
+      canonicalSolanaLoaderV3FreshSbfValidationEvidenceBytes(evidence);
+    if (!evidenceBytes.equals(expected.evidenceBytes)) {
+      throw new Error(
+        `${request.role} authenticated SBF result differs from the pinned fresh-deploy evidence.`,
+      );
+    }
+    return evidence;
+  });
 };
 
 const HELP = `Usage:

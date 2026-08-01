@@ -18,7 +18,7 @@ import {
   SCCP_ETH_NATIVE_EVM_PROVER_REQUIRED_IMPLEMENTATIONS_V1,
   SCCP_EVM_GROTH16_BN254_PROOF_BACKEND_V1,
   validateBscTestnetNativeEvmProverBundle,
-} from "@iroha/iroha-js/sccp";
+} from "@/legacy/sccpLegacySdk";
 import {
   BSC_MAINNET_CHAIN_ID_HEX,
   BSC_MAINNET_NETWORK_ID_HEX,
@@ -49,8 +49,8 @@ import {
   bscDestinationBindingHash,
   bscDestinationBindingKey,
   bscNativeProverReportProductionAttestationHash,
-  buildBscNativeEvmProverBundleFromArtifacts,
-} from "../../iroha/scripts/sccp_bsc_taira_xor_deploy.mjs";
+  buildBscNativeEvmProverFixtureBundleFromArtifacts,
+} from "./helpers/sccpBscProductionMaterialFixture.js";
 
 const fixtureAddress = (label) =>
   `0x${createHash("sha256")
@@ -1227,7 +1227,7 @@ const writeGeneratedNativeProverBundle = async ({
     routeManifestPath,
     nativeBundleRouteManifest(routeDeployment),
   );
-  const result = await buildBscNativeEvmProverBundleFromArtifacts({
+  const result = await buildBscNativeEvmProverFixtureBundleFromArtifacts({
     "route-manifest": routeManifestPath,
     "artifact-root": artifactRoot,
     "proof-artifact": "proof-artifact.r1cs",

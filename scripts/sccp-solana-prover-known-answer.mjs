@@ -1,14 +1,18 @@
 /* global BigInt */
 import { createHash } from "node:crypto";
 import { PublicKey } from "@solana/web3.js";
+import { AccountAddress } from "@iroha/iroha-js/address";
 import {
-  SCCP_CODEC_SOLANA_BASE58,
-  SCCP_CODEC_TEXT_UTF8,
-  canonicalSccpMessageProofBundleBytes,
-  canonicalSccpPayloadEnvelopeBytes,
+  SCCP_CODEC_CANONICAL_TEXT,
+  SCCP_CODEC_SOLANA_PUBKEY32,
+  canonicalSccpPayloadBytes,
+  canonicalTairaSccpMessageBundleBytes,
+  sccpHubCommitmentFromPayload,
+  sccpLaneIdHash,
+  sccpMessageId,
   sccpMerkleRootFromCommitment,
   sccpPayloadHash,
-  sccpTransferMessageId,
+  sccpSourceEventDigest,
 } from "@iroha/iroha-js/sccp";
 import {
   SCCP_SOLANA_DOMAIN,
@@ -30,6 +34,24 @@ export const SOLANA_PROVER_KNOWN_ANSWER_VERIFICATION_RECEIPT_SCHEMA =
   "iroha-demo-sccp-solana-prover-known-answer-verification-receipt/v1";
 
 const SCCP_SORA_DOMAIN = 0;
+const TAIRA_NETWORK_PREFIX = 369;
+const SOLANA_KAT_SENDER = AccountAddress.fromAccount({
+  publicKey: Uint8Array.from([
+    0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+  ]),
+}).toI105(TAIRA_NETWORK_PREFIX);
+const SOLANA_KAT_LANE = Object.freeze({
+  source: Object.freeze({ network: "sora_taira", profile: null }),
+  target: Object.freeze({ network: "solana_testnet", profile: null }),
+});
+const SOLANA_KAT_SOURCE_LANE = Object.freeze({
+  source: Object.freeze({ network: "solana_testnet", profile: null }),
+  target: Object.freeze({ network: "sora_taira", profile: null }),
+});
+const SOLANA_KAT_DESTINATION_BINDING_HASH = `0x${"21".repeat(32)}`;
+const SOLANA_KAT_ROUTE_CONFIGURATION_HASH = `0x${"31".repeat(32)}`;
 const HEX_BYTES = /^0x(?:[0-9a-f]{2})+$/iu;
 const PROOF_KEYS = new Set([
   "proof",
@@ -122,11 +144,6 @@ const u64Le = (value) => {
   const out = Buffer.alloc(8);
   out.writeBigUInt64LE(BigInt(value));
   return out;
-};
-
-const borshVector = (value) => {
-  const bytes = Buffer.from(value);
-  return concatBytes(u32Le(bytes.length), bytes);
 };
 
 const BASE58_ALPHABET =
@@ -306,41 +323,43 @@ export const buildSolanaProverKnownAnswerInvocation = (direction) => {
       source_domain: SCCP_SORA_DOMAIN,
       dest_domain: SCCP_SOLANA_DOMAIN,
       nonce: "13",
+      route_revision: 1,
       asset_home_domain: SCCP_SORA_DOMAIN,
-      asset_id_codec: SCCP_CODEC_TEXT_UTF8,
-      asset_id: SCCP_XOR_ASSET_KEY,
+      asset_id_codec: SCCP_CODEC_CANONICAL_TEXT,
+      asset_id: bytesToHex(Buffer.from(SCCP_XOR_ASSET_KEY, "utf8")),
       amount: "1000000000",
-      sender_codec: SCCP_CODEC_TEXT_UTF8,
-      sender: "testuﾛ1Npﾃﾕヱﾇq11pｳﾘ2ｱ5ﾇｦiCJKjRﾔzｷNMNﾆｹﾕPCｳﾙFvｵE9LBLB",
-      recipient_codec: SCCP_CODEC_SOLANA_BASE58,
-      recipient: "gBxS1f6uyyGPuW5MzGBukidSb71jdsCb5fZaoSzULE5",
-      route_id_codec: SCCP_CODEC_TEXT_UTF8,
-      route_id: SCCP_SOLANA_XOR_ROUTE_ID,
+      sender_codec: SCCP_CODEC_CANONICAL_TEXT,
+      sender: bytesToHex(Buffer.from(SOLANA_KAT_SENDER, "utf8")),
+      recipient_codec: SCCP_CODEC_SOLANA_PUBKEY32,
+      recipient: bytesToHex(
+        new PublicKey("gBxS1f6uyyGPuW5MzGBukidSb71jdsCb5fZaoSzULE5").toBytes(),
+      ),
+      route_id_codec: SCCP_CODEC_CANONICAL_TEXT,
+      route_id: bytesToHex(Buffer.from(SCCP_SOLANA_XOR_ROUTE_ID, "utf8")),
     };
-    const payload = { kind: "Transfer", value: transfer };
-    const messageId = sccpTransferMessageId(transfer);
-    const payloadHash = sccpPayloadHash(
-      canonicalSccpPayloadEnvelopeBytes(payload),
+    const payload = { Transfer: transfer };
+    const commitment = sccpHubCommitmentFromPayload(
+      {
+        lane: SOLANA_KAT_LANE,
+        destination_binding_hash: SOLANA_KAT_DESTINATION_BINDING_HASH,
+        route_configuration_hash: SOLANA_KAT_ROUTE_CONFIGURATION_HASH,
+      },
+      payload,
     );
-    const commitment = {
-      version: 1,
-      kind: "Transfer",
-      target_domain: SCCP_SOLANA_DOMAIN,
-      message_id: messageId,
-      payload_hash: payloadHash,
-    };
+    const messageId = commitment.message_id;
+    const payloadHash = sccpPayloadHash(canonicalSccpPayloadBytes(payload));
     const merkleProof = { steps: [] };
     const commitmentRoot = sccpMerkleRootFromCommitment(
       commitment,
       merkleProof,
     );
-    const bundleBytes = canonicalSccpMessageProofBundleBytes({
+    const bundleBytes = canonicalTairaSccpMessageBundleBytes({
       version: 1,
       commitment_root: commitmentRoot,
       commitment,
       merkle_proof: merkleProof,
       payload,
-      finality_proof: "0x",
+      finality_proof: "0x01",
     });
     const witness = {
       messageId,
@@ -386,6 +405,9 @@ export const buildSolanaProverKnownAnswerInvocation = (direction) => {
 
   const sourceBridgeAddress = "4ZKKGz983uec9Bcx6YA9nZ5tcAKCPi514tFyHuFGjcLq";
   const sourceStateAddress = "HWaaX4WBs6iYiNQQbKUgRNR2pWBf1Ms81Q6aP58FzXQS";
+  const destinationStateAddress = new PublicKey(
+    createHash("sha256").update("solana destination KAT state").digest(),
+  ).toBase58();
   const tokenMintAddress = new PublicKey(
     createHash("sha256").update("solana source KAT mint").digest(),
   ).toBase58();
@@ -393,59 +415,78 @@ export const buildSolanaProverKnownAnswerInvocation = (direction) => {
     createHash("sha256").update("solana source KAT token").digest(),
   ).toBase58();
   const ownerAddress = "gBxS1f6uyyGPuW5MzGBukidSb71jdsCb5fZaoSzULE5";
-  const tairaRecipient =
-    "testuﾛ1Npﾃﾕヱﾇq11pｳﾘ2ｱ5ﾇｦiCJKjRﾔzｷNMNﾆｹﾕPCｳﾙFvｵE9LBLB";
+  const tairaRecipient = SOLANA_KAT_SENDER;
   const txId =
     "2AXDGYSE4f2sz7tvMMzyHvUfcoJmxudvdhBcmiUSo6ijwfYmfZYsKRxboQMPh3R4kUhXRVdtSXFXMheka4Rc4P2";
   const amountBaseUnits = "1000000000";
   const nonce = "13";
   const finalizedSlot = 420_000_000;
   const nonceBytes = u64Le(nonce);
-  const sourceBurnReceiptAddress = findProgramAddress(
-    [
-      Buffer.from("sccp-source-burn-receipt"),
-      new PublicKey(sourceStateAddress).toBuffer(),
-      new PublicKey(ownerAddress).toBuffer(),
-      nonceBytes,
-    ],
-    sourceBridgeAddress,
-  );
   const recipientBytes = Buffer.from(tairaRecipient, "utf8");
   const recipientLength = Buffer.alloc(2);
   recipientLength.writeUInt16LE(recipientBytes.length);
-  const sourceEventHashBytes = createHash("sha256")
-    .update(Buffer.from("sccp:solana:source-burn:v1"))
-    .update(new PublicKey(sourceBridgeAddress).toBuffer())
-    .update(new PublicKey(sourceStateAddress).toBuffer())
-    .update(new PublicKey(tokenMintAddress).toBuffer())
-    .update(new PublicKey(ownerAddress).toBuffer())
-    .update(new PublicKey(sourceTokenAddress).toBuffer())
-    .update(recipientLength)
-    .update(recipientBytes)
-    .update(u64Le(amountBaseUnits))
-    .update(nonceBytes)
-    .update(u64Le(finalizedSlot))
+  const canonicalTransfer = {
+    version: 1,
+    source_domain: SCCP_SOLANA_DOMAIN,
+    dest_domain: SCCP_SORA_DOMAIN,
+    nonce,
+    route_revision: 1,
+    asset_home_domain: SCCP_SORA_DOMAIN,
+    asset_id_codec: SCCP_CODEC_CANONICAL_TEXT,
+    asset_id: bytesToHex(Buffer.from(SCCP_XOR_ASSET_KEY, "utf8")),
+    amount: amountBaseUnits,
+    sender_codec: SCCP_CODEC_SOLANA_PUBKEY32,
+    sender: bytesToHex(new PublicKey(ownerAddress).toBytes()),
+    recipient_codec: SCCP_CODEC_CANONICAL_TEXT,
+    recipient: bytesToHex(recipientBytes),
+    route_id_codec: SCCP_CODEC_CANONICAL_TEXT,
+    route_id: bytesToHex(Buffer.from(SCCP_SOLANA_XOR_ROUTE_ID, "utf8")),
+  };
+  const canonicalPayloadBytes = Buffer.from(
+    canonicalSccpPayloadBytes({ Transfer: canonicalTransfer }),
+  );
+  const payloadHash = sccpPayloadHash(canonicalPayloadBytes);
+  const messageId = sccpMessageId(SOLANA_KAT_SOURCE_LANE, {
+    Transfer: canonicalTransfer,
+  });
+  const laneHash = sccpLaneIdHash(SOLANA_KAT_SOURCE_LANE);
+  const sourceEventDigest = `0x${sccpSourceEventDigest(
+    laneHash.slice(2),
+    messageId.slice(2),
+    payloadHash.slice(2),
+  )}`;
+  const sourceBurnReceiptAddress = findProgramAddress(
+    [
+      Buffer.from("sccp-source-receipt-v1"),
+      new PublicKey(sourceStateAddress).toBuffer(),
+      Buffer.from(messageId.slice(2), "hex"),
+    ],
+    sourceBridgeAddress,
+  );
+  const sourceReceiptHashBytes = createHash("sha256")
+    .update("solana exact source KAT receipt")
     .digest();
   const burnEnvelope = concatBytes(
-    borshVector(Buffer.from("burn_to_taira")),
-    borshVector(u64Le(amountBaseUnits)),
-    borshVector(recipientBytes),
-    borshVector(nonceBytes),
+    Buffer.from([1, 3]),
+    u64Le(amountBaseUnits),
+    nonceBytes,
+    recipientLength,
+    recipientBytes,
   );
   const burnCpi = concatBytes(Buffer.from([8]), u64Le(amountBaseUnits));
   const createReceiptCpi = concatBytes(
     u32Le(0),
     u64Le(1),
-    u64Le(192),
+    u64Le(896),
     new PublicKey(sourceBridgeAddress).toBuffer(),
   );
-  const sourceEventHash = bytesToHex(sourceEventHashBytes);
   const accountKeys = [
     ownerAddress,
     sourceStateAddress,
-    sourceTokenAddress,
     tokenMintAddress,
+    sourceTokenAddress,
     sourceBurnReceiptAddress.toBase58(),
+    destinationStateAddress,
     "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
     "11111111111111111111111111111111",
     sourceBridgeAddress,
@@ -478,7 +519,7 @@ export const buildSolanaProverKnownAnswerInvocation = (direction) => {
           header: {
             numRequiredSignatures: 1,
             numReadonlySignedAccounts: 0,
-            numReadonlyUnsignedAccounts: 3,
+            numReadonlyUnsignedAccounts: 4,
           },
           accountKeys,
           recentBlockhash: new PublicKey(
@@ -488,8 +529,8 @@ export const buildSolanaProverKnownAnswerInvocation = (direction) => {
           ).toBase58(),
           instructions: [
             {
-              programIdIndex: 7,
-              accounts: [0, 1, 2, 3, 5, 4, 6],
+              programIdIndex: 8,
+              accounts: [0, 1, 5, 2, 3, 4, 6, 7],
               data: base58Encode(burnEnvelope),
             },
           ],
@@ -502,12 +543,12 @@ export const buildSolanaProverKnownAnswerInvocation = (direction) => {
             index: 0,
             instructions: [
               {
-                programIdIndex: 5,
-                accounts: [2, 3, 0],
+                programIdIndex: 6,
+                accounts: [3, 2, 0],
                 data: base58Encode(burnCpi),
               },
               {
-                programIdIndex: 6,
+                programIdIndex: 7,
                 accounts: [0, 4],
                 data: base58Encode(createReceiptCpi),
               },
@@ -516,7 +557,7 @@ export const buildSolanaProverKnownAnswerInvocation = (direction) => {
         ],
         preTokenBalances: [
           {
-            accountIndex: 2,
+            accountIndex: 3,
             mint: tokenMintAddress,
             owner: ownerAddress,
             programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
@@ -525,7 +566,7 @@ export const buildSolanaProverKnownAnswerInvocation = (direction) => {
         ],
         postTokenBalances: [
           {
-            accountIndex: 2,
+            accountIndex: 3,
             mint: tokenMintAddress,
             owner: ownerAddress,
             programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
@@ -533,7 +574,18 @@ export const buildSolanaProverKnownAnswerInvocation = (direction) => {
           },
         ],
         logMessages: [
-          `Program log: burned SCCP Solana XOR for TAIRA settlement: [${Array.from(sourceEventHashBytes).join(", ")}]`,
+          `Program data: ${[
+            Buffer.from("SCCP_SOLANA_SOURCE_EVENT_V1", "utf8"),
+            Buffer.from(laneHash.slice(2), "hex"),
+            Buffer.from(messageId.slice(2), "hex"),
+            Buffer.from(payloadHash.slice(2), "hex"),
+            Buffer.from(sourceEventDigest.slice(2), "hex"),
+            sourceBurnReceiptAddress.toBuffer(),
+            sourceReceiptHashBytes,
+            canonicalPayloadBytes,
+          ]
+            .map((part) => part.toString("base64"))
+            .join(" ")}`,
         ],
       },
     },
@@ -554,7 +606,10 @@ export const buildSolanaProverKnownAnswerInvocation = (direction) => {
     sourceTokenAddress,
     sourceBurnReceiptAddress: sourceBurnReceiptAddress.toBase58(),
     nonce,
-    sourceEventHash,
+    messageId,
+    payloadHash,
+    sourceEventDigest,
+    sourceReceiptHash: bytesToHex(sourceReceiptHashBytes),
     finalizedSlot: String(finalizedSlot),
   };
   const challenge = buildKnownAnswerChallenge(direction, inputBase);

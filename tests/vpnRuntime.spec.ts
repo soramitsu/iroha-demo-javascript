@@ -608,6 +608,11 @@ describe("VpnRuntime", () => {
             payload_hex: "abcd",
           },
         ],
+        feePayment: {
+          payer: "authority",
+          chargeLimits: [],
+          gasLimit: null,
+        },
         privateKey,
         privateKeyAlgorithm: "ed25519",
       }),

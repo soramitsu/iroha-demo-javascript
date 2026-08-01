@@ -1,25 +1,69 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { constants as fsConstants, existsSync } from "node:fs";
-import { lstat, open } from "node:fs/promises";
+import { existsSync, fstatSync, readSync } from "node:fs";
+import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AccountAddress } from "@iroha/iroha-js/address";
+import { Connection, PublicKey } from "@solana/web3.js";
 import {
   DEFAULT_SOLANA_TESTNET_RPC_URL,
   DEFAULT_TAIRA_TORII_URL,
+  SCCP_SOLANA_EXACT_MATERIAL_SEED,
+  SCCP_SOLANA_EXACT_MINT_AUTHORITY_SEED,
+  SCCP_SOLANA_EXACT_PUBLIC_SIGNAL_SCHEMA_HASH,
+  SCCP_SOLANA_EXACT_VERIFY_AUTHORITY_SEED,
+  SCCP_SOLANA_EXACT_VERIFYING_KEY_LEN,
   SCCP_SOLANA_DOMAIN,
   SCCP_SOLANA_XOR_ROUTE_ID,
   SCCP_XOR_ASSET_KEY,
+  SOLANA_SPL_TOKEN_PROGRAM_ID,
   SOLANA_TESTNET_CAIP_CHAIN_ID,
+  SOLANA_TESTNET_GENESIS_HASH,
   SOLANA_TESTNET_NETWORK_ID,
+  TAIRA_CHAIN_ID,
+  deriveExactSccpSolanaMaterialConfigHash,
   runSccpSolanaRoutePreflight,
 } from "./sccp-solana-route-preflight.mjs";
+import {
+  SOLANA_SCCP_REGISTRY_PATH,
+  canonicalSccpJson,
+} from "./sccp-solana-exact-registry.mjs";
+import {
+  SOLANA_EXACT_PROVER_APPROVAL_FILE_ENV,
+  SOLANA_EXACT_PROVER_APPROVAL_SHA256_ENV,
+  buildExactSolanaProductionProverApprovalValidation,
+  canonicalSolanaExactProverApprovalJson,
+} from "./sccp-solana-exact-prover-governance.mjs";
+import { runLocalProverSelfTest } from "./sccp-solana-live-smoke-readiness.mjs";
+import { buildSolanaGovernanceEvidenceChecks } from "./sccp-solana-governance-evidence.mjs";
+import {
+  parseSolanaGovernanceCanonicalJsonBytes,
+  parseSolanaGovernanceDuplicateFreeJsonText,
+} from "./sccp-solana-governance-json.mjs";
+import {
+  validateSolanaOrderedInitializationEvidence,
+  verifySolanaOrderedInitializationTransactions,
+} from "./sccp-solana-ordered-initialization.mjs";
+import {
+  validateSolanaLoaderV3FreshDeployReport,
+  verifySolanaLoaderV3FreshDeployReportTransactions,
+} from "../solana-loader-v3-fresh-deploy.mjs";
 import {
   buildSccpSolanaSuccessNetworkPolicy,
   CANONICAL_SOLANA_TESTNET_RPC_URL,
 } from "./sccp-solana-success-evidence-policy.mjs";
+import {
+  SOLANA_LIVE_CAPTURE_WITNESS_DWELL_OFFSETS_MILLISECONDS,
+  SOLANA_LIVE_CAPTURE_WITNESS_FRAME_HEIGHT,
+  SOLANA_LIVE_CAPTURE_WITNESS_FRAME_WIDTH,
+  analyzeSolanaLiveCaptureWitnessFrames,
+  decodeSolanaLiveCaptureWitnessQr,
+  normalizeSolanaLiveCaptureReviewPolicy,
+  normalizeSolanaLiveCaptureWitness,
+  verifySolanaLiveCaptureReviewAttestation,
+} from "./sccp-solana-live-capture-witness.mjs";
 import {
   DEFAULT_SOLANA_TEXT_MAX_BYTES,
   parseStrictCliArgs,
@@ -67,37 +111,49 @@ const DEFAULT_ROUTE_MANIFEST_PATH = path.join(
   DEFAULT_DEPLOY_DIR,
   "taira-solana-xor-route.manifest.json",
 );
-const DEFAULT_PUBLISH_READINESS_PATH = path.join(
+const DEFAULT_GOVERNANCE_PLAN_PATH = path.join(
   DEFAULT_DEPLOY_DIR,
-  "taira-solana-xor-route.publish-readiness.json",
+  "taira-solana-xor-governance-plan.json",
 );
-const DEFAULT_ROUTE_PUBLISH_BLOCKED_PATH = path.join(
+const DEFAULT_GOVERNANCE_REGISTER_RESULT_PATH = path.join(
   DEFAULT_DEPLOY_DIR,
-  "taira-solana-xor-route.publish-blocked.json",
+  "taira-solana-xor-governance-register.json",
 );
-const DEFAULT_ROUTE_PUBLICATION_REQUEST_PATH = path.join(
+const DEFAULT_GOVERNANCE_ACTIVATE_RESULT_PATH = path.join(
   DEFAULT_DEPLOY_DIR,
-  "taira-solana-xor-route-publication-request.json",
+  "taira-solana-xor-governance-activate.json",
 );
-const DEFAULT_ROUTE_MANAGER_ACCESS_REQUEST_PATH = path.join(
+const DEFAULT_ORDERED_INITIALIZATION_EVIDENCE_PATH = path.join(
   DEFAULT_DEPLOY_DIR,
-  "taira-solana-xor-route-manager-access-request.json",
+  "taira-solana-xor-ordered-initialization-evidence.json",
 );
-const DEFAULT_OPERATOR_HANDOFF_PATH = path.join(
+const DEFAULT_FRESH_DEPLOY_REPORT_PATH = path.join(
   DEFAULT_DEPLOY_DIR,
-  "taira-solana-xor-operator-handoff.json",
+  "taira-solana-xor-fresh-deploy-report.json",
 );
-const DEFAULT_ACTIVATION_PACKAGE_PATH = path.join(
+const DEFAULT_EXACT_INITIALIZER_INPUT_PATH = path.join(
   DEFAULT_DEPLOY_DIR,
-  "taira-solana-xor-activation-package.json",
+  "taira-solana-xor-exact-initializer-input.json",
 );
-const DEFAULT_LANE_ACTIVATION_PROPOSAL_PATH = path.join(
+const DEFAULT_EXACT_INITIALIZER_JOURNAL_PATH = path.join(
   DEFAULT_DEPLOY_DIR,
-  "taira-solana-xor-lane-activation-proposal.json",
+  "taira-solana-xor-exact-initialization.journal.jsonl",
 );
-const DEFAULT_LANE_ACTIVATION_REQUEST_PATH = path.join(
+const DEFAULT_GOVERNED_ROUTE_CANDIDATE_PATH = path.join(
   DEFAULT_DEPLOY_DIR,
-  "taira-solana-xor-lane-activation-request.json",
+  "taira-solana-xor-governed-route.json",
+);
+const DEFAULT_NATIVE_TRUST_ANCHOR_PATH = path.join(
+  DEFAULT_DEPLOY_DIR,
+  "taira-solana-xor-native-trust-anchor.json",
+);
+const DEFAULT_PROVER_GOVERNANCE_APPROVAL_PATH = path.join(
+  DEFAULT_DEPLOY_DIR,
+  "taira-solana-xor-prover-approval.json",
+);
+const DEFAULT_CAPTURE_REVIEW_POLICY_PATH = path.join(
+  DEFAULT_DEPLOY_DIR,
+  "taira-solana-xor-capture-review-policy.json",
 );
 const DEFAULT_SOURCE_MATERIAL_HANDOFF_PATH = path.join(
   DEFAULT_DEPLOY_DIR,
@@ -175,20 +231,19 @@ const DEPLOY_ARTIFACT_SENTINELS = Object.freeze([
   "sccp-solana-deployment-video.json",
 ]);
 const SOLANA_ROUTE_PREFLIGHT_SCHEMA =
-  "iroha-demo-sccp-solana-route-preflight/v1";
+  "iroha-demo-sccp-solana-route-preflight/v2";
 const SOLANA_PUBLIC_PREFLIGHT_REQUIRED_CHECK_IDS = Object.freeze([
+  "taira-endpoint",
   "sccp-capabilities-load",
   "sccp-submit-capabilities",
-  "sccp-manifest-load",
-  "solana-capability-publication",
-  "public-route-publication",
+  "sccp-registry-load",
   "solana-lane-publication",
   "solana-route-instance-publication",
-  "route-manifest-shape",
+  "route-registry-shape",
   "production-ready-flag",
-  "browser-proof-modules",
-  "solana-live-programdata-evidence",
-  "solana-live-bridge-source-evidence",
+  "solana-testnet-rpc-health",
+  "solana-live-exact-programdata-evidence",
+  "solana-live-exact-runtime-state",
 ]);
 
 const isRecord = (value) =>
@@ -270,6 +325,299 @@ const makeCheck = (id, ok, detail, evidence = undefined) => {
     check.evidence = evidence;
   }
   return check;
+};
+
+const LOCAL_SOLANA_SCCP_SDK_CAPABILITY_SCHEMA =
+  "iroha-demo-sccp-solana-local-sdk-capability/v2";
+const RESERVED_RETIRED_SCCP_NETWORK_TAGS = new Set([6, 7, 8, 9]);
+const ASSIGNED_FIRST_RELEASE_SCCP_NETWORK_PROFILE_TAGS = Object.freeze({
+  "sora-taira": 1,
+  "ethereum-mainnet": 2,
+  "ethereum-sepolia": 3,
+  "bsc-mainnet": 4,
+  "bsc-testnet": 5,
+  "tron-mainnet": 10,
+  "tron-nile": 11,
+  "tron-shasta": 12,
+});
+
+export const SOLANA_SCCP_REQUIRED_SDK_EXPORTS = Object.freeze({
+  SCCP_DOMAIN_SOLANA: { kind: "constant", value: 3 },
+  SCCP_CODEC_CANONICAL_TEXT: { kind: "constant", value: 1 },
+  SCCP_CODEC_SOLANA_PUBKEY32: { kind: "constant", value: 6 },
+  SCCP_NETWORK_PROFILES: { kind: "object" },
+  canonicalSccpTransferPayloadBytes: { kind: "function" },
+  canonicalSccpPayloadBytes: { kind: "function" },
+  sccpMessageId: { kind: "function" },
+  sccpPayloadHash: { kind: "function" },
+  sccpHubCommitmentFromPayload: { kind: "function" },
+  canonicalSccpHubCommitmentBytes: { kind: "function" },
+  sccpCommitmentLeafHash: { kind: "function" },
+  canonicalSccpMerkleProofBytes: { kind: "function" },
+  sccpMerkleRootFromCommitment: { kind: "function" },
+  canonicalTairaSccpMessageBundleBytes: { kind: "function" },
+  canonicalSccpMessagePublicInputsBytes: { kind: "function" },
+});
+
+export const SOLANA_SCCP_RETIRED_SDK_EXPORTS = Object.freeze([
+  "SCCP_DOMAIN_SOL",
+  "SCCP_CODEC_TEXT_UTF8",
+  "SCCP_CODEC_SOLANA_BASE58",
+  "SCCP_CODEC_SOLANA_ADDRESS32",
+  "canonicalSccpPayloadEnvelopeBytes",
+  "sccpTransferMessageId",
+  "canonicalSccpMessageProofBundleBytes",
+  "canonicalSccpMessageTransparentPublicInputsBytes",
+]);
+
+const observedSdkExport = (value, requirement) => {
+  if (requirement.kind === "function") return typeof value;
+  if (requirement.kind === "object") {
+    return isRecord(value)
+      ? "object"
+      : Array.isArray(value)
+        ? "array"
+        : typeof value;
+  }
+  return value;
+};
+
+const sdkExportMatches = (value, requirement) => {
+  if (requirement.kind === "function") return typeof value === "function";
+  if (requirement.kind === "object") return isRecord(value);
+  return value === requirement.value;
+};
+
+const expectedSdkExport = (requirement) =>
+  requirement.kind === "constant"
+    ? String(requirement.value)
+    : requirement.kind;
+
+const snapshotSccpNetworkProfiles = (profiles) => {
+  if (!isRecord(profiles)) return null;
+  return Object.fromEntries(
+    Object.entries(profiles).map(([key, descriptor]) => [
+      key,
+      isRecord(descriptor)
+        ? {
+            profile: descriptor.profile ?? null,
+            tag: descriptor.tag ?? null,
+            domain: descriptor.domain ?? null,
+            sora: descriptor.sora ?? null,
+            genesisHash: descriptor.genesisHash ?? null,
+          }
+        : null,
+    ]),
+  );
+};
+
+const evaluateLocalSolanaSccpSdkCapability = (capability) => {
+  const requiredExportNames = Object.keys(SOLANA_SCCP_REQUIRED_SDK_EXPORTS);
+  const declaredRequiredExports = readFirstArray(capability, "requiredExports");
+  const observedRequiredExports = readFirstRecord(
+    capability,
+    "observedRequiredExports",
+  );
+  const observedProtocolScope = readFirstRecord(
+    capability,
+    "observedProtocolScope",
+  );
+  const observedDomains = readFirstRecord(observedProtocolScope, "domains");
+  const observedCodecs = readFirstRecord(observedProtocolScope, "codecs");
+  const observedNetworkProfiles = readFirstRecord(
+    observedProtocolScope,
+    "networkProfiles",
+  );
+  const solanaTestnetProfile = readFirstRecord(
+    observedNetworkProfiles,
+    SOLANA_TESTNET_NETWORK_ID,
+  );
+  const networkProfileEntries = isRecord(observedNetworkProfiles)
+    ? Object.entries(observedNetworkProfiles)
+    : [];
+  const networkProfileTags = networkProfileEntries.map(([, profile]) =>
+    isRecord(profile) ? profile.tag : null,
+  );
+  const assignedProfilesRetainExactTags = Object.entries(
+    ASSIGNED_FIRST_RELEASE_SCCP_NETWORK_PROFILE_TAGS,
+  ).every(([profile, tag]) => observedNetworkProfiles?.[profile]?.tag === tag);
+  const highestAssignedNetworkTag = Math.max(
+    ...Object.values(ASSIGNED_FIRST_RELEASE_SCCP_NETWORK_PROFILE_TAGS),
+  );
+  const networkProfileTagsSafeAndUnique =
+    networkProfileTags.length > 1 &&
+    networkProfileTags.every(
+      (tag) =>
+        Number.isSafeInteger(tag) &&
+        tag > 0 &&
+        tag <= 0xff &&
+        !RESERVED_RETIRED_SCCP_NETWORK_TAGS.has(tag),
+    ) &&
+    new Set(networkProfileTags).size === networkProfileTags.length &&
+    assignedProfilesRetainExactTags &&
+    solanaTestnetProfile?.tag > highestAssignedNetworkTag;
+  const requiredExportsOk =
+    Array.isArray(capability?.requiredExports) &&
+    declaredRequiredExports.length === requiredExportNames.length &&
+    declaredRequiredExports.every(
+      (name, index) => name === requiredExportNames[index],
+    ) &&
+    isRecord(observedRequiredExports) &&
+    Object.keys(observedRequiredExports).length ===
+      requiredExportNames.length &&
+    requiredExportNames.every((name) => {
+      const requirement = SOLANA_SCCP_REQUIRED_SDK_EXPORTS[name];
+      return (
+        observedRequiredExports[name] ===
+        (requirement.kind === "constant" ? requirement.value : requirement.kind)
+      );
+    });
+  const retiredExportsOk =
+    Array.isArray(capability?.retiredExports) &&
+    capability.retiredExports.length ===
+      SOLANA_SCCP_RETIRED_SDK_EXPORTS.length &&
+    capability.retiredExports.every(
+      (name, index) => name === SOLANA_SCCP_RETIRED_SDK_EXPORTS[index],
+    ) &&
+    Array.isArray(capability?.retiredExportsPresent) &&
+    capability.retiredExportsPresent.length === 0;
+  const payloadKinds = readFirstArray(observedProtocolScope, "payloadKinds");
+  const protocolScopeOk =
+    observedDomains?.solana ===
+      SOLANA_SCCP_REQUIRED_SDK_EXPORTS.SCCP_DOMAIN_SOLANA.value &&
+    observedCodecs?.canonicalText ===
+      SOLANA_SCCP_REQUIRED_SDK_EXPORTS.SCCP_CODEC_CANONICAL_TEXT.value &&
+    observedCodecs?.solanaPubkey32 ===
+      SOLANA_SCCP_REQUIRED_SDK_EXPORTS.SCCP_CODEC_SOLANA_PUBKEY32.value &&
+    payloadKinds.length === 1 &&
+    payloadKinds[0] === "transfer" &&
+    solanaTestnetProfile?.profile === SOLANA_TESTNET_NETWORK_ID &&
+    solanaTestnetProfile?.domain ===
+      SOLANA_SCCP_REQUIRED_SDK_EXPORTS.SCCP_DOMAIN_SOLANA.value &&
+    solanaTestnetProfile?.sora === false &&
+    solanaTestnetProfile?.genesisHash === SOLANA_TESTNET_GENESIS_HASH &&
+    networkProfileTagsSafeAndUnique;
+  const evidenceReady =
+    isRecord(capability) &&
+    capability.schema === LOCAL_SOLANA_SCCP_SDK_CAPABILITY_SCHEMA &&
+    requiredExportsOk &&
+    retiredExportsOk &&
+    protocolScopeOk &&
+    Array.isArray(capability.missingExports) &&
+    capability.missingExports.length === 0 &&
+    Array.isArray(capability.mismatchedExports) &&
+    capability.mismatchedExports.length === 0 &&
+    !capability.loadError;
+  return {
+    evidenceReady,
+    requiredExportsOk,
+    retiredExportsOk,
+    protocolScopeOk,
+    networkProfileTagsSafeAndUnique,
+  };
+};
+
+export const inspectSolanaSccpSdkModuleCapability = (sdk) => {
+  const requiredExports = Object.keys(SOLANA_SCCP_REQUIRED_SDK_EXPORTS);
+  const missingExports = [];
+  const mismatchedExports = [];
+  const observedRequiredExports = {};
+  for (const [name, requirement] of Object.entries(
+    SOLANA_SCCP_REQUIRED_SDK_EXPORTS,
+  )) {
+    if (!isRecord(sdk) || !Object.hasOwn(sdk, name)) {
+      missingExports.push(name);
+      observedRequiredExports[name] = null;
+      continue;
+    }
+    const value = sdk[name];
+    observedRequiredExports[name] = observedSdkExport(value, requirement);
+    if (!sdkExportMatches(value, requirement)) {
+      mismatchedExports.push({
+        name,
+        expected: expectedSdkExport(requirement),
+        observed: String(observedRequiredExports[name]),
+      });
+    }
+  }
+  const retiredExportsPresent = isRecord(sdk)
+    ? SOLANA_SCCP_RETIRED_SDK_EXPORTS.filter((name) => Object.hasOwn(sdk, name))
+    : [];
+  const capability = {
+    schema: LOCAL_SOLANA_SCCP_SDK_CAPABILITY_SCHEMA,
+    ready: false,
+    requiredExports,
+    observedRequiredExports,
+    retiredExports: [...SOLANA_SCCP_RETIRED_SDK_EXPORTS],
+    retiredExportsPresent,
+    missingExports,
+    mismatchedExports,
+    loadError: null,
+    observedProtocolScope: isRecord(sdk)
+      ? {
+          domains: {
+            sora: sdk.SCCP_DOMAIN_SORA ?? null,
+            eth: sdk.SCCP_DOMAIN_ETH ?? null,
+            bsc: sdk.SCCP_DOMAIN_BSC ?? null,
+            solana: sdk.SCCP_DOMAIN_SOLANA ?? null,
+            tron: sdk.SCCP_DOMAIN_TRON ?? null,
+          },
+          codecs: {
+            canonicalText: sdk.SCCP_CODEC_CANONICAL_TEXT ?? null,
+            solanaPubkey32: sdk.SCCP_CODEC_SOLANA_PUBKEY32 ?? null,
+          },
+          payloadKinds: Array.isArray(sdk.SCCP_PAYLOAD_KINDS)
+            ? [...sdk.SCCP_PAYLOAD_KINDS]
+            : null,
+          networkProfiles: snapshotSccpNetworkProfiles(
+            sdk.SCCP_NETWORK_PROFILES,
+          ),
+        }
+      : null,
+  };
+  capability.ready =
+    evaluateLocalSolanaSccpSdkCapability(capability).evidenceReady;
+  return capability;
+};
+
+export const inspectLocalSolanaSccpSdkCapability = async () => {
+  try {
+    return inspectSolanaSccpSdkModuleCapability(
+      await import("@iroha/iroha-js/sccp"),
+    );
+  } catch (error) {
+    return {
+      schema: LOCAL_SOLANA_SCCP_SDK_CAPABILITY_SCHEMA,
+      ready: false,
+      requiredExports: Object.keys(SOLANA_SCCP_REQUIRED_SDK_EXPORTS),
+      observedRequiredExports: null,
+      retiredExports: [...SOLANA_SCCP_RETIRED_SDK_EXPORTS],
+      retiredExportsPresent: null,
+      missingExports: Object.keys(SOLANA_SCCP_REQUIRED_SDK_EXPORTS),
+      mismatchedExports: [],
+      loadError: error instanceof Error ? error.message : String(error),
+      observedProtocolScope: null,
+    };
+  }
+};
+
+export const checkLocalSolanaSccpSdkCapability = ({ capability } = {}) => {
+  const evidence = evaluateLocalSolanaSccpSdkCapability(capability);
+  const ready = capability?.ready === true && evidence.evidenceReady;
+  return makeCheck(
+    "local-solana-sccp-sdk-support",
+    ready,
+    ready
+      ? "The local Iroha SDK exposes the exact Solana SCCP V1 domain, codec, and canonical binding helpers."
+      : "The local Iroha SDK does not expose a deployable Solana SCCP V1 protocol surface.",
+    {
+      ...(capability ?? {}),
+      requiredExportsOk: evidence.requiredExportsOk,
+      retiredExportsOk: evidence.retiredExportsOk,
+      protocolScopeOk: evidence.protocolScopeOk,
+      networkProfileTagsSafeAndUnique: evidence.networkProfileTagsSafeAndUnique,
+    },
+  );
 };
 
 const failedChecks = (checks) =>
@@ -573,138 +921,6 @@ const actionSummaries = (actions) =>
         .filter((action) => action.id)
     : [];
 
-const normalizeActionRequiredInputs = (inputs) =>
-  inputs
-    .map((input) => {
-      if (typeof input === "string" && input.trim()) {
-        return input.trim();
-      }
-      return readFirstString(input, "id");
-    })
-    .filter(Boolean);
-
-const normalizeActionDetail = (action, source, depth = 0) => {
-  if (!isRecord(action)) {
-    return null;
-  }
-  const id = readFirstString(action, "id");
-  if (!id) {
-    return null;
-  }
-  const normalized = {
-    id,
-    title: readFirstString(action, "title") || id,
-    detail: readFirstString(action, "detail") || null,
-    source,
-    blockedBy: readFirstArray(action, "blockedBy", "blocked_by")
-      .map((blocker) => {
-        if (typeof blocker === "string" && blocker.trim()) {
-          return { id: blocker.trim(), detail: null };
-        }
-        return {
-          id: readFirstString(blocker, "id"),
-          detail: readFirstString(blocker, "detail") || null,
-        };
-      })
-      .filter((blocker) => blocker.id),
-    command: readFirstArray(action, "command"),
-    requiredInputs: normalizeActionRequiredInputs(
-      readFirstArray(action, "requiredInputs", "required_inputs"),
-    ),
-  };
-  const validationCommands = readFirstArray(
-    action,
-    "validationCommands",
-    "validation_commands",
-  );
-  if (validationCommands.length > 0) {
-    normalized.validationCommands = validationCommands;
-  }
-  if (depth < 1) {
-    const delegatedActions = readFirstArray(
-      action,
-      "delegatedActions",
-      "delegated_actions",
-    )
-      .map((delegatedAction) =>
-        normalizeActionDetail(delegatedAction, source, depth + 1),
-      )
-      .filter(Boolean);
-    if (delegatedActions.length > 0) {
-      normalized.delegatedActions = delegatedActions;
-    }
-  }
-  return normalized;
-};
-
-const findActionDetail = (reports, ids) => {
-  const wanted = new Set(ids);
-  for (const { report, source } of reports) {
-    for (const action of readFirstArray(
-      report,
-      "nextActionDetails",
-      "next_action_details",
-    )) {
-      const normalized = normalizeActionDetail(action, source);
-      if (normalized && wanted.has(normalized.id)) {
-        return normalized;
-      }
-    }
-  }
-  return null;
-};
-
-const productionGateAction = ({
-  id,
-  title,
-  detail,
-  source = "production-gate",
-  checkIds,
-  checks,
-  artifactDetail = null,
-  command = [],
-  requiredInputs = [],
-}) => {
-  const failed = failedChecks(checks);
-  const failedById = new Map(failed.map((check) => [check.id, check]));
-  const blockedBy = checkIds
-    .map((checkId) => failedById.get(checkId))
-    .filter(Boolean)
-    .map((check) => ({
-      id: check.id,
-      detail: check.detail ?? null,
-    }));
-  if (blockedBy.length === 0) {
-    return null;
-  }
-  return {
-    id,
-    title: artifactDetail?.title || title,
-    detail: artifactDetail?.detail || detail,
-    source: artifactDetail?.source || source,
-    blockedBy,
-    upstreamBlockedBy: artifactDetail?.blockedBy ?? [],
-    command:
-      Array.isArray(artifactDetail?.command) &&
-      artifactDetail.command.length > 0
-        ? artifactDetail.command
-        : command,
-    requiredInputs:
-      Array.isArray(artifactDetail?.requiredInputs) &&
-      artifactDetail.requiredInputs.length > 0
-        ? artifactDetail.requiredInputs
-        : requiredInputs,
-    ...(Array.isArray(artifactDetail?.validationCommands) &&
-    artifactDetail.validationCommands.length > 0
-      ? { validationCommands: artifactDetail.validationCommands }
-      : {}),
-    ...(Array.isArray(artifactDetail?.delegatedActions) &&
-    artifactDetail.delegatedActions.length > 0
-      ? { delegatedActions: artifactDetail.delegatedActions }
-      : {}),
-  };
-};
-
 const normalizePath = (file) => path.resolve(trimString(file));
 
 const isSolanaDeploymentArtifactDir = (dir) =>
@@ -759,6 +975,11 @@ const mp4StreamEvidenceReady = (artifactFacts, file) => {
       Number(fact.size) > 0 &&
       media?.formatOk === true &&
       media?.hasVideo === true &&
+      Array.isArray(media?.streams) &&
+      media.streams.some(
+        (stream) =>
+          stream?.codecType === "video" && stream?.codecName === "h264",
+      ) &&
       media?.hasAudio === true &&
       media?.hasEmbeddedSubtitle === true &&
       media?.embeddedSubtitle?.extracted === true &&
@@ -772,6 +993,132 @@ const vttEvidenceReady = (artifactFacts, file) => {
     fact.exists === true &&
       Number(fact.size) > 0 &&
       (fact.vtt?.webvtt === true || fact.vtt === undefined),
+  );
+};
+
+export const checkSolanaLiveVideoMediaArtifactPins = ({
+  mediaArtifacts,
+  mp4Fact,
+  vttFact,
+  mp4Path,
+  vttPath,
+} = {}) => {
+  const pinMatches = (pin, fact, expectedPath, mediaType) =>
+    isRecord(pin) &&
+    pin.path === normalizePath(expectedPath) &&
+    pin.mediaType === mediaType &&
+    Number.isSafeInteger(pin.size) &&
+    pin.size === fact?.size &&
+    isHex32(pin.sha256) &&
+    pin.sha256 === fact?.sha256;
+  const mp4Ready = pinMatches(
+    mediaArtifacts?.mp4,
+    mp4Fact,
+    mp4Path,
+    "video/mp4",
+  );
+  const vttReady = pinMatches(
+    mediaArtifacts?.vtt,
+    vttFact,
+    vttPath,
+    "text/vtt",
+  );
+  return makeCheck(
+    "live-video-media-artifact-pins",
+    mp4Ready && vttReady,
+    mp4Ready && vttReady
+      ? "Successful live MP4 and VTT bytes exactly match the transcript pins."
+      : "Successful live MP4/VTT bytes are missing, swapped, stale, or differ from the transcript pins.",
+    { mp4Ready, vttReady, mediaArtifacts: mediaArtifacts ?? null },
+  );
+};
+
+export const checkSolanaLiveCaptureWitnessArtifactPin = ({
+  witness,
+  artifact,
+  successPolicy,
+  externalArtifact = null,
+} = {}) => {
+  const encoding = isRecord(witness)
+    ? Buffer.from(`${canonicalSccpJson(witness)}\n`, "utf8")
+    : null;
+  const artifactSha256 = readFirstString(artifact, "sha256");
+  const artifactSize = Number(artifact?.size);
+  const embeddedWitnessBytesMatch =
+    encoding !== null &&
+    encoding.length === artifactSize &&
+    `0x${createHash("sha256").update(encoding).digest("hex")}` ===
+      artifactSha256;
+  const policyPinMatches =
+    successPolicy?.liveCaptureWitnessPinned === true &&
+    isHex32(successPolicy?.liveCaptureWitnessSha256) &&
+    successPolicy.liveCaptureWitnessSha256 === artifactSha256;
+  const externalArtifactMatches =
+    externalArtifact?.error === null &&
+    externalArtifact?.sha256 === artifactSha256 &&
+    externalArtifact?.size === artifactSize &&
+    canonicalSccpJson(externalArtifact?.value) === canonicalSccpJson(witness);
+  return makeCheck(
+    "live-capture-witness-artifact-pin",
+    embeddedWitnessBytesMatch && policyPinMatches && externalArtifactMatches,
+    embeddedWitnessBytesMatch && policyPinMatches && externalArtifactMatches
+      ? "Embedded capture witness exactly matches independently pinned canonical witness bytes."
+      : "Embedded capture witness is missing, noncanonical, or differs from the independently pinned witness artifact.",
+    {
+      embeddedWitnessBytesMatch,
+      policyPinMatches,
+      externalArtifactMatches,
+      artifactSize:
+        Number.isSafeInteger(artifactSize) && artifactSize > 0
+          ? artifactSize
+          : null,
+      artifactSha256: safeSha256(artifactSha256),
+    },
+  );
+};
+
+export const checkSolanaLiveCaptureReviewAttestationArtifactPin = ({
+  attestation,
+  artifact,
+  successPolicy,
+  externalArtifact = null,
+} = {}) => {
+  const artifactSha256 = readFirstString(artifact, "sha256");
+  const artifactSize = Number(artifact?.size);
+  const encoding = isRecord(attestation)
+    ? Buffer.from(`${canonicalSccpJson(attestation)}\n`, "utf8")
+    : null;
+  const embeddedBytesMatch =
+    encoding !== null &&
+    encoding.length === artifactSize &&
+    `0x${createHash("sha256").update(encoding).digest("hex")}` ===
+      artifactSha256;
+  const policyPinMatches =
+    successPolicy?.liveCaptureReviewAttestationPinned === true &&
+    isHex32(successPolicy?.liveCaptureReviewAttestationSha256) &&
+    successPolicy.liveCaptureReviewAttestationSha256 === artifactSha256;
+  const externalArtifactMatches =
+    externalArtifact?.error === null &&
+    externalArtifact?.sha256 === artifactSha256 &&
+    externalArtifact?.size === artifactSize &&
+    canonicalSccpJson(externalArtifact?.value) ===
+      canonicalSccpJson(attestation);
+  return makeCheck(
+    "live-capture-review-attestation-artifact-pin",
+    embeddedBytesMatch && policyPinMatches && externalArtifactMatches,
+    embeddedBytesMatch && policyPinMatches && externalArtifactMatches
+      ? "Embedded detached capture-review attestation exactly matches the pinned external artifact."
+      : "Detached capture-review attestation is missing, stale, noncanonical, or differs from its external pin.",
+    {
+      embeddedBytesMatch,
+      policyPinMatches,
+      externalArtifactMatches,
+      artifactSize:
+        Number.isSafeInteger(artifactSize) && artifactSize > 0
+          ? artifactSize
+          : null,
+      artifactSha256: safeSha256(artifactSha256),
+    },
   );
 };
 
@@ -800,7 +1147,7 @@ const videoArtifactPaths = ({
   return { mp4: normalizePath(mp4), vtt: normalizePath(vtt) };
 };
 
-const parseWebVttCueTexts = (webvtt) =>
+const parseWebVttCues = (webvtt) =>
   String(webvtt ?? "")
     .trim()
     .split(/\n\s*\n/u)
@@ -810,23 +1157,84 @@ const parseWebVttCueTexts = (webvtt) =>
         .map((line) => line.trim())
         .filter(Boolean);
       const timingIndex = lines.findIndex((line) => line.includes("-->"));
-      return timingIndex >= 0 ? lines.slice(timingIndex + 1).join(" ") : "";
+      if (timingIndex < 0) return null;
+      const [start, end] = lines[timingIndex]
+        .split(/\s+-->\s+/u)
+        .map((part) => part.trim().split(/\s+/u)[0]);
+      const text = lines.slice(timingIndex + 1).join(" ");
+      return text ? { start, end, text } : null;
     })
     .filter(Boolean);
 
-const deploymentTranscriptCueTexts = (deploymentVideoTranscript) => {
-  const cues = readFirstArray(
-    deploymentVideoTranscript,
-    "subtitleCues",
-    "subtitle_cues",
-    "captions",
+const webVttTimestampMilliseconds = (value) => {
+  const match = /^(?:(\d{2,}):)?(\d{2}):(\d{2})\.(\d{3})$/u.exec(
+    String(value ?? ""),
   );
-  return cues
-    .map((cue) => readFirstString(cue, "text", "caption", "body"))
+  if (!match) return null;
+  const hours = Number(match[1] ?? 0);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3]);
+  const milliseconds = Number(match[4]);
+  if (
+    !Number.isSafeInteger(hours) ||
+    minutes >= 60 ||
+    seconds >= 60 ||
+    milliseconds >= 1000
+  ) {
+    return null;
+  }
+  return ((hours * 60 + minutes) * 60 + seconds) * 1000 + milliseconds;
+};
+
+const canonicalSubtitleCueTimeline = (cues) => {
+  if (!Array.isArray(cues)) return null;
+  const normalized = cues.map((cue, index) => {
+    const startMilliseconds = webVttTimestampMilliseconds(cue?.start);
+    const endMilliseconds = webVttTimestampMilliseconds(cue?.end);
+    const text = typeof cue?.text === "string" ? cue.text : null;
+    if (
+      startMilliseconds === null ||
+      endMilliseconds === null ||
+      endMilliseconds <= startMilliseconds ||
+      text === null
+    ) {
+      return null;
+    }
+    const parsedStep = Number(text.match(/^Step\s+(\d+):/u)?.[1] ?? 0);
+    return {
+      index: index + 1,
+      startMilliseconds,
+      endMilliseconds,
+      text,
+      step:
+        Number.isSafeInteger(parsedStep) && parsedStep > 0 ? parsedStep : null,
+    };
+  });
+  return normalized.every(Boolean) ? normalized : null;
+};
+
+const cueTimelineHash = (cues) => {
+  const timeline = canonicalSubtitleCueTimeline(cues);
+  return timeline ? sha256Hex(canonicalSccpJson(timeline)) : null;
+};
+
+const deploymentTranscriptCues = (transcript) =>
+  readFirstArray(transcript, "subtitleCues", "subtitle_cues", "captions").map(
+    (cue) => ({
+      start: readFirstString(cue, "start"),
+      end: readFirstString(cue, "end"),
+      text: readFirstString(cue, "text", "caption", "body"),
+    }),
+  );
+
+const deploymentTranscriptCueTexts = (deploymentVideoTranscript) => {
+  return deploymentTranscriptCues(deploymentVideoTranscript)
+    .map((cue) => cue.text)
     .filter(Boolean);
 };
 
 const deploymentVideoSubtitleExplanation = (deploymentVideoTranscript) => {
+  const transcriptCues = deploymentTranscriptCues(deploymentVideoTranscript);
   const cueTexts = deploymentTranscriptCueTexts(deploymentVideoTranscript);
   const combinedText = cueTexts.join("\n");
   const numberedSteps = new Set(
@@ -884,6 +1292,7 @@ const deploymentVideoSubtitleExplanation = (deploymentVideoTranscript) => {
     cueCount: cueTexts.length,
     numberedStepCount: numberedSteps.size,
     cueTextSha256: cueTextHash(cueTexts),
+    cueTimelineSha256: cueTimelineHash(transcriptCues),
     requiredSteps,
     missingRequiredSteps,
     requiredEvidenceMarkerIds: evidenceMarkers.map(([id]) => id),
@@ -896,6 +1305,7 @@ const liveVideoSubtitleExplanation = (
   liveVideoTranscript,
   evidenceStatus = null,
 ) => {
+  const transcriptCues = deploymentTranscriptCues(liveVideoTranscript);
   const cueTexts = deploymentTranscriptCueTexts(liveVideoTranscript);
   const combinedText = cueTexts.join("\n");
   const numberedSteps = new Set(
@@ -918,6 +1328,11 @@ const liveVideoSubtitleExplanation = (
     "solanaToTaira",
     "solana_to_taira",
   );
+  const sourceCapture = readFirstRecord(
+    liveVideoTranscript,
+    "sourceCapture",
+    "source_capture",
+  );
   const normalizedEvidenceStatus =
     evidenceStatus ?? liveBidirectionalEvidenceStatus(forward, reverse);
   const evidenceMarkers = [
@@ -936,6 +1351,7 @@ const liveVideoSubtitleExplanation = (
       "reverse-taira-settlement-tx",
       normalizedEvidenceStatus.fields.reverseTairaSettlementTx,
     ],
+    ["real-capture-sha256", readFirstString(sourceCapture, "sha256")],
   ].map(([id, value]) => [id, trimString(value)]);
   const missingEvidenceMarkerIds = evidenceMarkers
     .filter(([, value]) => !value || !combinedText.includes(value))
@@ -950,6 +1366,7 @@ const liveVideoSubtitleExplanation = (
     cueCount: cueTexts.length,
     numberedStepCount: numberedSteps.size,
     cueTextSha256: cueTextHash(cueTexts),
+    cueTimelineSha256: cueTimelineHash(transcriptCues),
     requiredSteps,
     missingRequiredSteps,
     requiredEvidenceMarkerIds: evidenceMarkers.map(([id]) => id),
@@ -970,6 +1387,136 @@ const destinationAdmissionStatuses = (requirementsReport) =>
 
 const statusIsPresent = (status) => status?.status === "present";
 
+const publicReportPathMarker = (value) =>
+  value ? "[public-report-supplied]" : null;
+
+const canonicalSolanaPublicKeyOrNull = (value) => {
+  if (typeof value !== "string") return null;
+  try {
+    return new PublicKey(value).toBase58() === value ? value : null;
+  } catch {
+    return null;
+  }
+};
+
+const publicHex32OrNull = (value) => (isHex32(value) ? value : null);
+
+const publicPositiveSafeIntegerOrNull = (value) =>
+  Number.isSafeInteger(value) && value > 0 ? value : null;
+
+const publicExactRegistrySummary = (summary) => {
+  if (!isRecord(summary)) return null;
+  const publicKeyRecord = (record, keys) =>
+    Object.fromEntries(
+      keys.map((key) => [key, canonicalSolanaPublicKeyOrNull(record?.[key])]),
+    );
+  const hexRecord = (record, keys) =>
+    Object.fromEntries(
+      keys.map((key) => [key, publicHex32OrNull(record?.[key])]),
+    );
+  return {
+    registrySha256: publicHex32OrNull(summary.registrySha256),
+    routeId:
+      summary.routeId === SCCP_SOLANA_XOR_ROUTE_ID
+        ? SCCP_SOLANA_XOR_ROUTE_ID
+        : null,
+    assetKey:
+      summary.assetKey === SCCP_XOR_ASSET_KEY ? SCCP_XOR_ASSET_KEY : null,
+    revision: summary.revision === 1 ? 1 : null,
+    activation: summary.activation === "bidirectional" ? "bidirectional" : null,
+    currentNativeTrustAnchorHash:
+      typeof summary.currentNativeTrustAnchorHash === "string" &&
+      /^[0-9A-F]{64}$/u.test(summary.currentNativeTrustAnchorHash)
+        ? summary.currentNativeTrustAnchorHash
+        : null,
+    destinationBindingHash: publicHex32OrNull(summary.destinationBindingHash),
+    deploymentConfigHash: publicHex32OrNull(summary.deploymentConfigHash),
+    routeConfigurationHash: publicHex32OrNull(summary.routeConfigurationHash),
+    sourceEmitterIdentityHash: publicHex32OrNull(
+      summary.sourceEmitterIdentityHash,
+    ),
+    sourceIdentityHash: publicHex32OrNull(summary.sourceIdentityHash),
+    verifierKeyHash: publicHex32OrNull(summary.verifierKeyHash),
+    nativeVerifierConfigHash: publicHex32OrNull(
+      summary.nativeVerifierConfigHash,
+    ),
+    programs: publicKeyRecord(summary.programs, [
+      "destination",
+      "source",
+      "nativeVerifier",
+    ]),
+    accounts: publicKeyRecord(summary.accounts, [
+      "destinationProgramData",
+      "sourceProgramData",
+      "nativeVerifierProgramData",
+      "destinationState",
+      "sourceState",
+      "nativeVerifierMaterial",
+      "tokenMint",
+    ]),
+    programDataSlots: Object.fromEntries(
+      ["destination", "source", "nativeVerifier"].map((key) => [
+        key,
+        publicPositiveSafeIntegerOrNull(summary.programDataSlots?.[key]),
+      ]),
+    ),
+    codeHashes: hexRecord(summary.codeHashes, [
+      "destination",
+      "source",
+      "nativeVerifier",
+    ]),
+    proofPolicy: hexRecord(summary.proofPolicy, [
+      "soraFinalityAnchorHash",
+      "semanticProfileHash",
+      "circuitCommitment",
+      "witnessGeneratorCommitment",
+      "publicSignalSchemaHash",
+    ]),
+  };
+};
+
+const publicExactRegistryState = (state) =>
+  isRecord(state)
+    ? {
+        routePresent: state.routePresent === true,
+        activation:
+          state.activation === "bidirectional" ? "bidirectional" : null,
+        revision: state.revision === 1 ? 1 : null,
+      }
+    : null;
+
+const publicProgramdataRoleEvidence = (evidence, role) => {
+  if (!isRecord(evidence)) return null;
+  return {
+    role: evidence.role === role ? role : null,
+    programAddress: canonicalSolanaPublicKeyOrNull(evidence.programAddress),
+    programdataAddress: canonicalSolanaPublicKeyOrNull(
+      evidence.programdataAddress,
+    ),
+    immutable: evidence.immutable === true,
+    upgradeAuthorityCleared: evidence.upgradeAuthority === null,
+    sbpfVersion: evidence.sbpfVersion === "V3" ? "V3" : null,
+    programdataSlot: positiveIntegerString(evidence.programdataSlot)
+      ? evidence.programdataSlot
+      : null,
+    programCodeHash: publicHex32OrNull(evidence.programCodeHash),
+    programdataMetadataHash: publicHex32OrNull(
+      evidence.programdataMetadataHash,
+    ),
+    executableLength:
+      Number.isSafeInteger(evidence.executableLength) &&
+      evidence.executableLength >= 4
+        ? evidence.executableLength
+        : null,
+    programContextSlot: publicPositiveSafeIntegerOrNull(
+      evidence.programContextSlot,
+    ),
+    programdataContextSlot: publicPositiveSafeIntegerOrNull(
+      evidence.programdataContextSlot,
+    ),
+  };
+};
+
 export const checkPublicPreflightReady = ({
   preflightReport,
   preflightReportPath = null,
@@ -979,77 +1526,178 @@ export const checkPublicPreflightReady = ({
       "public-preflight-ready",
       false,
       "No public Solana route preflight report is available.",
-      { reportPath: preflightReportPath },
+      { reportPath: publicReportPathMarker(preflightReportPath) },
     );
   }
-  const schema = readConsistentStringAlias(preflightReport, "schema", [
-    "schema",
-  ]);
-  const routeId = readConsistentStringAlias(preflightReport, "routeId", [
-    "routeId",
+  const problems = [];
+  const routeId = preflightReport.routeId;
+  const assetKey = preflightReport.assetKey;
+  const routeRevision = preflightReport.routeRevision;
+  const manifestSource = preflightReport.manifestSource;
+  const taira = isRecord(preflightReport.taira) ? preflightReport.taira : {};
+  const solana = isRecord(preflightReport.solana) ? preflightReport.solana : {};
+  const summary = isRecord(preflightReport.registrySummary)
+    ? preflightReport.registrySummary
+    : null;
+  for (const retiredField of [
     "route_id",
-  ]);
-  const assetKey = readConsistentStringAlias(preflightReport, "assetKey", [
-    "assetKey",
     "asset_key",
-  ]);
-  const manifestSource = readConsistentStringAlias(
-    preflightReport,
-    "manifestSource",
-    ["manifestSource", "manifest_source"],
-  );
-  const solanaBinding = readFirstRecord(preflightReport, "solana") ?? {};
-  const solanaNetwork = readConsistentStringAlias(
-    solanaBinding,
-    "solana.network",
-    ["network", "solanaNetwork", "solana_network"],
-  );
-  const solanaCaipChainId = readConsistentStringAlias(
-    solanaBinding,
-    "solana.caipChainId",
-    ["caipChainId", "caip_chain_id"],
-  );
-  const aliasProblems = [
-    ...schema.problems,
-    ...routeId.problems,
-    ...assetKey.problems,
-    ...manifestSource.problems,
-    ...solanaNetwork.problems,
-    ...solanaCaipChainId.problems,
-  ];
-  if (schema.value !== SOLANA_ROUTE_PREFLIGHT_SCHEMA) {
-    aliasProblems.push(`schema must be ${SOLANA_ROUTE_PREFLIGHT_SCHEMA}.`);
+    "manifest_source",
+    "publicSolanaCapability",
+  ]) {
+    if (Object.hasOwn(preflightReport, retiredField)) {
+      problems.push(`retired preflight field ${retiredField} is forbidden.`);
+    }
   }
-  if (assetKey.value !== SCCP_XOR_ASSET_KEY) {
-    aliasProblems.push(`assetKey must be ${SCCP_XOR_ASSET_KEY}.`);
+  for (const [condition, detail] of [
+    [
+      preflightReport.schema === SOLANA_ROUTE_PREFLIGHT_SCHEMA,
+      `schema must be ${SOLANA_ROUTE_PREFLIGHT_SCHEMA}.`,
+    ],
+    [
+      preflightReport.protocolSource === "typed-sccp-registry-v1",
+      "protocolSource must be typed-sccp-registry-v1.",
+    ],
+    [routeId === SCCP_SOLANA_XOR_ROUTE_ID, "routeId is not taira_sol_xor."],
+    [assetKey === SCCP_XOR_ASSET_KEY, "assetKey is not xor."],
+    [routeRevision === 1, "routeRevision must be 1."],
+    [
+      manifestSource === "public-registry",
+      "manifestSource must be public-registry.",
+    ],
+    [taira.chainId === TAIRA_CHAIN_ID, "TAIRA chain id is not exact."],
+    [
+      taira.networkPrefix === TAIRA_NETWORK_PREFIX,
+      "TAIRA network prefix is not 369.",
+    ],
+    [
+      taira.registryPath === SOLANA_SCCP_REGISTRY_PATH,
+      "TAIRA registry path is not exact.",
+    ],
+    [
+      solana.network === SOLANA_TESTNET_NETWORK_ID,
+      "Solana network is not exact testnet.",
+    ],
+    [
+      solana.caipChainId === SOLANA_TESTNET_CAIP_CHAIN_ID,
+      "Solana CAIP chain id is not exact.",
+    ],
+    [
+      solana.genesisHash === SOLANA_TESTNET_GENESIS_HASH,
+      "Solana genesis hash is not exact.",
+    ],
+  ]) {
+    if (!condition) problems.push(detail);
   }
-  if (solanaNetwork.value !== SOLANA_TESTNET_NETWORK_ID) {
-    aliasProblems.push(`solana.network must be ${SOLANA_TESTNET_NETWORK_ID}.`);
-  }
-  if (solanaCaipChainId.value !== SOLANA_TESTNET_CAIP_CHAIN_ID) {
-    aliasProblems.push(
-      `solana.caipChainId must be ${SOLANA_TESTNET_CAIP_CHAIN_ID}.`,
-    );
+  if (!summary) {
+    problems.push("Typed-registry route summary is missing.");
+  } else {
+    for (const [condition, detail] of [
+      [
+        summary.routeId === SCCP_SOLANA_XOR_ROUTE_ID,
+        "Registry route id is invalid.",
+      ],
+      [
+        summary.assetKey === SCCP_XOR_ASSET_KEY,
+        "Registry asset key is invalid.",
+      ],
+      [summary.revision === 1, "Registry route revision is invalid."],
+      [
+        summary.activation === "bidirectional",
+        "Registry route is not bidirectional.",
+      ],
+      [isHex32(summary.registrySha256), "Registry object hash is invalid."],
+      [
+        isHex32(summary.destinationBindingHash),
+        "Destination binding hash is invalid.",
+      ],
+      [
+        isHex32(summary.deploymentConfigHash),
+        "Deployment config hash is invalid.",
+      ],
+      [
+        isHex32(summary.routeConfigurationHash),
+        "Route configuration hash is invalid.",
+      ],
+      [
+        isHex32(summary.sourceEmitterIdentityHash),
+        "Source emitter hash is invalid.",
+      ],
+      [isHex32(summary.sourceIdentityHash), "Source identity hash is invalid."],
+      [isHex32(summary.verifierKeyHash), "Verifier key hash is invalid."],
+      [
+        isHex32(summary.nativeVerifierConfigHash),
+        "Native verifier config hash is invalid.",
+      ],
+    ]) {
+      if (!condition) problems.push(detail);
+    }
+    const roleAddresses = [
+      summary.programs?.destination,
+      summary.programs?.source,
+      summary.programs?.nativeVerifier,
+      summary.accounts?.destinationProgramData,
+      summary.accounts?.sourceProgramData,
+      summary.accounts?.nativeVerifierProgramData,
+      summary.accounts?.destinationState,
+      summary.accounts?.sourceState,
+      summary.accounts?.nativeVerifierMaterial,
+      summary.accounts?.tokenMint,
+    ];
+    const canonicalAddresses = roleAddresses.every((address) => {
+      try {
+        return new PublicKey(address).toBase58() === address;
+      } catch {
+        return false;
+      }
+    });
+    if (
+      !canonicalAddresses ||
+      new Set(roleAddresses).size !== roleAddresses.length
+    ) {
+      problems.push(
+        "Typed-registry Solana role addresses are missing, invalid, or aliased.",
+      );
+    }
+    for (const slot of [
+      summary.programDataSlots?.destination,
+      summary.programDataSlots?.source,
+      summary.programDataSlots?.nativeVerifier,
+    ]) {
+      if (!Number.isSafeInteger(slot) || slot <= 0) {
+        problems.push(
+          "Typed-registry ProgramData slots must be positive safe integers.",
+        );
+        break;
+      }
+    }
   }
   const checks = readFirstArray(preflightReport, "checks");
-  const checkIds = new Set(
-    checks.map((check) => readFirstString(check, "id")).filter(Boolean),
-  );
+  const checkIds = checks.map((check) => check?.id).filter(Boolean);
+  const checkIdSet = new Set(checkIds);
+  if (checkIdSet.size !== checkIds.length) {
+    problems.push("Public Solana preflight contains duplicate check ids.");
+  }
   const missingRequiredCheckIds =
     SOLANA_PUBLIC_PREFLIGHT_REQUIRED_CHECK_IDS.filter(
-      (checkId) => !checkIds.has(checkId),
+      (checkId) => !checkIdSet.has(checkId),
     );
   if (missingRequiredCheckIds.length > 0) {
-    aliasProblems.push(
+    problems.push(
       `public Solana preflight missing required checks: ${missingRequiredCheckIds.join(", ")}.`,
     );
   }
   const failed = failedChecks(checks);
+  const reportedFailed = readFirstArray(preflightReport, "failedCheckIds");
+  const reportedBlockers = readFirstArray(preflightReport, "blockerIds");
+  if (reportedFailed.length !== 0 || reportedBlockers.length !== 0) {
+    problems.push(
+      "Ready public preflight must report no failed checks or blockers.",
+    );
+  }
   const ready =
-    aliasProblems.length === 0 &&
+    problems.length === 0 &&
     preflightReport.ready === true &&
-    routeId.value === SCCP_SOLANA_XOR_ROUTE_ID &&
-    manifestSource.value === "public" &&
     failed.length === 0;
   return makeCheck(
     "public-preflight-ready",
@@ -1058,29 +1706,52 @@ export const checkPublicPreflightReady = ({
       ? "Public TAIRA Solana route preflight is ready."
       : "Public TAIRA Solana route preflight is not ready.",
     {
-      reportPath: preflightReportPath,
-      schema: schema.value || null,
+      reportPath: publicReportPathMarker(preflightReportPath),
+      schema:
+        preflightReport.schema === SOLANA_ROUTE_PREFLIGHT_SCHEMA
+          ? SOLANA_ROUTE_PREFLIGHT_SCHEMA
+          : null,
+      protocolSource:
+        preflightReport.protocolSource === "typed-sccp-registry-v1"
+          ? "typed-sccp-registry-v1"
+          : null,
       ready: preflightReport.ready === true,
-      routeId: routeId.value || null,
-      assetKey: assetKey.value || null,
-      manifestSource: manifestSource.value || null,
+      routeId:
+        routeId === SCCP_SOLANA_XOR_ROUTE_ID ? SCCP_SOLANA_XOR_ROUTE_ID : null,
+      assetKey: assetKey === SCCP_XOR_ASSET_KEY ? SCCP_XOR_ASSET_KEY : null,
+      routeRevision: routeRevision === 1 ? 1 : null,
+      manifestSource:
+        manifestSource === "public-registry" ? "public-registry" : null,
       solana: {
-        network: solanaNetwork.value || null,
-        caipChainId: solanaCaipChainId.value || null,
+        network:
+          solana.network === SOLANA_TESTNET_NETWORK_ID
+            ? SOLANA_TESTNET_NETWORK_ID
+            : null,
+        caipChainId:
+          solana.caipChainId === SOLANA_TESTNET_CAIP_CHAIN_ID
+            ? SOLANA_TESTNET_CAIP_CHAIN_ID
+            : null,
+        genesisHash:
+          solana.genesisHash === SOLANA_TESTNET_GENESIS_HASH
+            ? SOLANA_TESTNET_GENESIS_HASH
+            : null,
       },
       requiredCheckIds: SOLANA_PUBLIC_PREFLIGHT_REQUIRED_CHECK_IDS,
       missingRequiredCheckIds,
-      aliasProblems,
-      publicSolanaCapability: isRecord(preflightReport.publicSolanaCapability)
-        ? preflightReport.publicSolanaCapability
-        : null,
-      publicSolanaLane: isRecord(preflightReport.publicSolanaLane)
-        ? preflightReport.publicSolanaLane
-        : null,
-      failedChecks: failed.map((check) => ({
-        id: check.id,
-        detail: check.detail,
-      })),
+      problems,
+      registrySummary: publicExactRegistrySummary(summary),
+      registryState: publicExactRegistryState(preflightReport.registryState),
+      failedCheckCount: failed.length,
+      failedChecks:
+        failed.length > 0
+          ? [
+              {
+                id: "public-route-preflight-failed",
+                detail:
+                  "Public route preflight contains failed or invalid checks.",
+              },
+            ]
+          : [],
     },
   );
 };
@@ -1128,6 +1799,9 @@ const immutableProgramdataEvidenceProblems = ({
     problems.push(
       `${expectedRole} ProgramData still has an upgrade authority.`,
     );
+  }
+  if (evidence.sbpfVersion !== "V3") {
+    problems.push(`${expectedRole} executable must be exact SBPF V3.`);
   }
   if (!positiveIntegerString(evidence.programdataSlot)) {
     problems.push(`${expectedRole} ProgramData slot must be positive.`);
@@ -1338,144 +2012,317 @@ export const checkPublicVerifierProgramdataReady = ({
   );
 };
 
-export const checkGovernanceProgramRolePinsFresh = ({
+/** Validate the exact three-role immutable ProgramData evidence from preflight v2. */
+export const checkPublicExactProgramdataReady = ({
   preflightReport,
   preflightReportPath = null,
-  productionMaterialInventoryReport,
-  productionMaterialInventoryPath = null,
 } = {}) => {
-  const rolePins = readFirstRecord(
-    productionMaterialInventoryReport,
-    "governanceProgramRolePins",
-    "governance_program_role_pins",
+  const checks = readFirstArray(preflightReport, "checks").filter(
+    (check) => check?.id === "solana-live-exact-programdata-evidence",
   );
-  const governanceApproval = readFirstRecord(
-    productionMaterialInventoryReport,
-    "governanceApproval",
-    "governance_approval",
-  );
-  const checks = readFirstArray(preflightReport, "checks");
-  const verifierChecks = checks.filter(
-    (check) => check?.id === "solana-live-programdata-evidence",
-  );
-  const bridgeChecks = checks.filter(
-    (check) => check?.id === "solana-live-bridge-source-evidence",
-  );
-  const verifierEvidence = isRecord(verifierChecks[0]?.evidence)
-    ? verifierChecks[0].evidence
+  const check = checks[0];
+  const evidence = isRecord(check?.evidence) ? check.evidence : {};
+  const summary = isRecord(preflightReport?.registrySummary)
+    ? preflightReport.registrySummary
     : {};
-  const bridgeEvidence = isRecord(bridgeChecks[0]?.evidence)
-    ? bridgeChecks[0].evidence
-    : {};
-  const liveRoles = {
-    outerVerifier: verifierEvidence.verifier,
-    nativeVerifier: verifierEvidence.nativeVerifier,
-    destinationBridge: bridgeEvidence.bridge,
-    sourceBridge: bridgeEvidence.sourceBridge,
-  };
+  const roles = [
+    [
+      "destination",
+      summary.programs?.destination,
+      summary.accounts?.destinationProgramData,
+    ],
+    ["source", summary.programs?.source, summary.accounts?.sourceProgramData],
+    [
+      "nativeVerifier",
+      summary.programs?.nativeVerifier,
+      summary.accounts?.nativeVerifierProgramData,
+    ],
+  ];
   const problems = [];
-  if (
-    rolePins?.schema !==
-      "iroha-demo-sccp-solana-governance-program-role-pins/v1" ||
-    rolePins?.ready !== true ||
-    rolePins?.independentApprovalReady !== true ||
-    !Array.isArray(rolePins?.statuses) ||
-    rolePins.statuses.length === 0 ||
-    rolePins.statuses.some((status) => status?.status !== "present")
-  ) {
+  if (checks.length !== 1 || check?.status !== "pass") {
     problems.push(
-      "Production inventory lacks complete independently approved program-role pins.",
+      "Exact destination/source/native-verifier ProgramData preflight evidence is missing, ambiguous, or failed.",
     );
   }
-  if (
-    !isHex32(rolePins?.approvalSha256) ||
-    rolePins?.approvalSha256 !== rolePins?.expectedApprovalSha256 ||
-    rolePins?.approvalSha256 !== governanceApproval?.approvalSha256 ||
-    rolePins?.expectedApprovalSha256 !==
-      governanceApproval?.expectedApprovalSha256
-  ) {
+  for (const [role, expectedProgram, expectedProgramData] of roles) {
+    const live = isRecord(evidence[role]) ? evidence[role] : null;
     problems.push(
-      "Program-role pins are not bound to the inventory's independently expected governance approval bytes.",
+      ...immutableProgramdataEvidenceProblems({
+        evidence: live,
+        expectedRole: role,
+        expectedProgramAddress: expectedProgram,
+      }),
     );
-  }
-  if (verifierChecks.length !== 1 || verifierChecks[0]?.status !== "pass") {
-    problems.push(
-      "Fresh outer/native verifier ProgramData evidence is missing or ambiguous.",
-    );
-  }
-  if (bridgeChecks.length !== 1 || bridgeChecks[0]?.status !== "pass") {
-    problems.push(
-      "Fresh destination/source bridge ProgramData evidence is missing or ambiguous.",
-    );
-  }
-  for (const [role, live] of Object.entries(liveRoles)) {
-    const pinned = rolePins?.roles?.[role];
-    const approved = pinned?.approved;
-    const selected = pinned?.selected;
-    if (!isRecord(approved) || !isRecord(selected) || !isRecord(live)) {
-      problems.push(`${role} approved, selected, or live pins are missing.`);
-      continue;
-    }
-    for (const field of [
-      "programId",
-      "programdataAddress",
-      "programdataSlot",
-      "artifactSha256",
-      "codeHash",
-    ]) {
-      if (!approved[field] || selected[field] !== approved[field]) {
-        problems.push(
-          `${role} selected ${field} does not match its independent governance pin.`,
-        );
-      }
-    }
-    for (const [field, liveField] of [
-      ["programId", "programAddress"],
-      ["programdataAddress", "programdataAddress"],
-      ["programdataSlot", "programdataSlot"],
-    ]) {
-      if (trimString(live[liveField]) !== trimString(approved[field])) {
-        problems.push(
-          `${role} fresh ${field} does not match its independent governance pin.`,
-        );
-      }
+    if (live && live.programdataAddress !== expectedProgramData) {
+      problems.push(
+        `${role} ProgramData address differs from typed governance.`,
+      );
     }
     if (
-      normalizedLiveHexIdentity(live.programCodeHash) !==
-      normalizedLiveHexIdentity(approved.codeHash)
+      live &&
+      live.programdataSlot !== String(summary.programDataSlots?.[role])
     ) {
-      problems.push(
-        `${role} fresh code hash does not match its independent governance pin.`,
-      );
+      problems.push(`${role} ProgramData slot differs from typed governance.`);
     }
-    if (live.immutable !== true || live.upgradeAuthority !== null) {
-      problems.push(`${role} fresh ProgramData is not immutable.`);
+    if (live && live.programCodeHash !== summary.codeHashes?.[role]) {
+      problems.push(`${role} executable hash differs from typed governance.`);
     }
   }
-  for (const field of ["programAddress", "programdataAddress"]) {
-    const values = Object.values(liveRoles)
-      .map((live) => trimString(live?.[field]))
-      .filter(Boolean);
-    if (values.length !== 4 || new Set(values).size !== 4) {
-      problems.push(
-        `Fresh ${field} evidence must remain distinct across all four Solana program roles.`,
-      );
-    }
+  const programAddresses = roles.map(([, value]) => value);
+  const programDataAddresses = roles.map(([, , value]) => value);
+  if (
+    new Set(programAddresses).size !== roles.length ||
+    new Set(programDataAddresses).size !== roles.length
+  ) {
+    problems.push("Typed governance aliases role-separated program addresses.");
   }
   const ready = problems.length === 0;
   return makeCheck(
-    "governance-program-role-pins-fresh",
+    "public-exact-programdata-immutable",
     ready,
     ready
-      ? "Fresh canonical Solana RPC readback matches every independently approved program-role pin."
-      : "Fresh Solana program-role evidence is missing, stale, substituted, or not independently approved.",
+      ? "Fresh Solana RPC evidence matches all three immutable typed-registry program roles."
+      : "Fresh exact Solana ProgramData evidence is missing, mutable, or differs from typed governance.",
     {
-      preflightReportPath,
-      productionMaterialInventoryPath,
-      approvalSha256: rolePins?.approvalSha256 ?? null,
-      roles: rolePins?.roles ?? null,
-      liveRoles,
+      reportPath: publicReportPathMarker(preflightReportPath),
       problems,
+      roles: Object.fromEntries(
+        ["destination", "source", "nativeVerifier"].map((role) => [
+          role,
+          publicProgramdataRoleEvidence(evidence[role], role),
+        ]),
+      ),
+    },
+  );
+};
+
+const productionGatePda = (program, seeds) => {
+  const [address, bump] = PublicKey.findProgramAddressSync(
+    seeds.map((seed) => Buffer.from(seed)),
+    new PublicKey(program),
+  );
+  return { address: address.toBase58(), bump };
+};
+
+const productionGatePublicKeyBytes = (value) => new PublicKey(value).toBytes();
+
+const productionGateHashBytes = (value) =>
+  Uint8Array.from(Buffer.from(trimString(value).replace(/^0x/u, ""), "hex"));
+
+/** Validate the fresh SCCPRT01/SPL/SCCPMAT1 evidence from public preflight. */
+export const checkPublicExactRuntimeStateReady = ({
+  preflightReport,
+  preflightReportPath = null,
+} = {}) => {
+  const matchingChecks = readFirstArray(preflightReport, "checks").filter(
+    (check) => check?.id === "solana-live-exact-runtime-state",
+  );
+  const check = matchingChecks[0];
+  const evidence = isRecord(check?.evidence) ? check.evidence : {};
+  const summary = isRecord(preflightReport?.registrySummary)
+    ? preflightReport.registrySummary
+    : {};
+  const destination = isRecord(evidence.destinationState)
+    ? evidence.destinationState
+    : {};
+  const source = isRecord(evidence.sourceState) ? evidence.sourceState : {};
+  const mint = isRecord(evidence.mint) ? evidence.mint : {};
+  const material = isRecord(evidence.material) ? evidence.material : {};
+  const policy = isRecord(summary.proofPolicy) ? summary.proofPolicy : {};
+  const problems = [];
+  const expectField = (record, field, expected, label) => {
+    if (record?.[field] !== expected) {
+      problems.push(`${label} differs from typed governance.`);
+    }
+  };
+  if (matchingChecks.length !== 1 || check?.status !== "pass") {
+    problems.push(
+      "Exact live route-state/mint/material preflight evidence is missing, ambiguous, or failed.",
+    );
+  }
+  const destinationProgram = summary.programs?.destination;
+  const sourceProgram = summary.programs?.source;
+  const verifierProgram = summary.programs?.nativeVerifier;
+  const destinationState = summary.accounts?.destinationState;
+  const sourceState = summary.accounts?.sourceState;
+  const mintAddress = summary.accounts?.tokenMint;
+  const materialAddress = summary.accounts?.nativeVerifierMaterial;
+  for (const [record, label] of [
+    [destination, "destination state"],
+    [source, "source state"],
+    [mint, "mint"],
+    [material, "material"],
+  ]) {
+    if (!Number.isSafeInteger(record.contextSlot) || record.contextSlot <= 0) {
+      problems.push(`${label} finalized context slot is missing.`);
+    }
+  }
+  expectField(
+    destination,
+    "address",
+    destinationState,
+    "Destination state address",
+  );
+  expectField(
+    destination,
+    "owner",
+    destinationProgram,
+    "Destination state owner",
+  );
+  expectField(destination, "role", 1, "Destination state role");
+  expectField(
+    destination,
+    "peerProgram",
+    sourceProgram,
+    "Destination peer program",
+  );
+  expectField(source, "address", sourceState, "Source state address");
+  expectField(source, "owner", sourceProgram, "Source state owner");
+  expectField(source, "role", 2, "Source state role");
+  expectField(source, "peerProgram", destinationProgram, "Source peer program");
+  for (const [record, label] of [
+    [destination, "Destination state"],
+    [source, "Source state"],
+  ]) {
+    for (const [field, expected] of [
+      ["routeRevision", summary.revision],
+      ["mint", mintAddress],
+      ["destinationState", destinationState],
+      ["verifierProgram", verifierProgram],
+      ["material", materialAddress],
+      ["destinationBindingHash", summary.destinationBindingHash],
+      ["routeConfigurationHash", summary.routeConfigurationHash],
+      ["verifierKeyHash", summary.verifierKeyHash],
+      ["verifierConfigHash", summary.nativeVerifierConfigHash],
+    ]) {
+      expectField(record, field, expected, `${label} ${field}`);
+    }
+  }
+  expectField(mint, "address", mintAddress, "SPL mint address");
+  expectField(mint, "owner", SOLANA_SPL_TOKEN_PROGRAM_ID, "SPL mint owner");
+  expectField(mint, "decimals", 9, "SPL mint decimals");
+  expectField(mint, "initialized", true, "SPL mint initialization");
+  expectField(mint, "freezeAuthority", null, "SPL mint freeze authority");
+  expectField(material, "address", materialAddress, "Material address");
+  expectField(material, "owner", verifierProgram, "Material owner");
+  expectField(material, "status", "sealed", "Material status");
+  expectField(
+    material,
+    "written",
+    SCCP_SOLANA_EXACT_VERIFYING_KEY_LEN,
+    "Material VK length",
+  );
+  for (const [field, expected] of [
+    ["routeRevision", summary.revision],
+    ["asset", summary.assetKey],
+    ["vkKeccak", summary.verifierKeyHash],
+    ["configHash", summary.nativeVerifierConfigHash],
+    ["bridgeProgram", destinationProgram],
+    ["sourceProgram", sourceProgram],
+    ["bridgeState", destinationState],
+    ["mint", mintAddress],
+    ["tokenProgram", SOLANA_SPL_TOKEN_PROGRAM_ID],
+    ["destinationBindingHash", summary.destinationBindingHash],
+    ["routeConfigurationHash", summary.routeConfigurationHash],
+    ["soraFinalityAnchorHash", policy.soraFinalityAnchorHash],
+    ["semanticProfileHash", policy.semanticProfileHash],
+    ["circuitHash", policy.circuitCommitment],
+    ["witnessGeneratorCommitment", policy.witnessGeneratorCommitment],
+    ["schemaCommitment", policy.publicSignalSchemaHash],
+    ["publicSignalSchemaHash", SCCP_SOLANA_EXACT_PUBLIC_SIGNAL_SCHEMA_HASH],
+    ["routeId", summary.routeId],
+  ]) {
+    expectField(material, field, expected, `Material ${field}`);
+  }
+  if (
+    destination.sourceLaneHash !== source.sourceLaneHash ||
+    destination.sourceLaneHash !== material.sourceLaneHash ||
+    destination.destinationLaneHash !== source.destinationLaneHash ||
+    destination.destinationLaneHash !== material.destinationLaneHash
+  ) {
+    problems.push("Runtime state and material lane hashes disagree.");
+  }
+  try {
+    const destinationVerify = productionGatePda(destinationProgram, [
+      new TextEncoder().encode(SCCP_SOLANA_EXACT_VERIFY_AUTHORITY_SEED),
+      productionGatePublicKeyBytes(destinationState),
+    ]);
+    const sourceVerify = productionGatePda(sourceProgram, [
+      new TextEncoder().encode(SCCP_SOLANA_EXACT_VERIFY_AUTHORITY_SEED),
+      productionGatePublicKeyBytes(sourceState),
+    ]);
+    const mintAuthority = productionGatePda(destinationProgram, [
+      new TextEncoder().encode(SCCP_SOLANA_EXACT_MINT_AUTHORITY_SEED),
+      productionGatePublicKeyBytes(destinationState),
+    ]);
+    const materialPda = productionGatePda(verifierProgram, [
+      new TextEncoder().encode(SCCP_SOLANA_EXACT_MATERIAL_SEED),
+      productionGateHashBytes(summary.verifierKeyHash),
+      productionGateHashBytes(summary.nativeVerifierConfigHash),
+    ]);
+    for (const [actual, expected, label] of [
+      [
+        destination.verifyAuthority,
+        destinationVerify.address,
+        "Destination verify authority",
+      ],
+      [
+        destination.verifyBump,
+        destinationVerify.bump,
+        "Destination verify bump",
+      ],
+      [source.verifyAuthority, sourceVerify.address, "Source verify authority"],
+      [source.verifyBump, sourceVerify.bump, "Source verify bump"],
+      [mint.mintAuthority, mintAuthority.address, "Mint authority"],
+      [
+        evidence.mintAuthority,
+        mintAuthority.address,
+        "Evidence mint authority",
+      ],
+      [destination.mintBump, mintAuthority.bump, "Destination mint bump"],
+      [source.mintBump, mintAuthority.bump, "Source mint bump"],
+      [material.address, materialPda.address, "Material PDA"],
+      [material.bump, materialPda.bump, "Material PDA bump"],
+    ]) {
+      if (actual !== expected) problems.push(`${label} is invalid.`);
+    }
+    expectField(
+      material,
+      "bridgeAuthority",
+      destinationVerify.address,
+      "Material bridge authority",
+    );
+    const recomputedConfigHash = deriveExactSccpSolanaMaterialConfigHash({
+      verifierProgram,
+      material,
+    });
+    if (
+      recomputedConfigHash !== summary.nativeVerifierConfigHash ||
+      material.recomputedConfigHash !== recomputedConfigHash
+    ) {
+      problems.push("Material config hash does not independently rederive.");
+    }
+  } catch {
+    problems.push("Runtime PDA/config evidence is invalid.");
+  }
+  const ready = problems.length === 0;
+  return makeCheck(
+    "public-exact-runtime-state",
+    ready,
+    ready
+      ? "Fresh Solana RPC evidence matches the exact route states, SPL mint, and sealed verifier material."
+      : "Fresh exact Solana route-state/mint/material evidence is missing or differs from typed governance.",
+    {
+      reportPath: publicReportPathMarker(preflightReportPath),
+      problems,
+      runtime: {
+        destinationStatePresent: isRecord(evidence.destinationState),
+        sourceStatePresent: isRecord(evidence.sourceState),
+        mintPresent: isRecord(evidence.mint),
+        materialPresent: isRecord(evidence.material),
+        mintAuthorityPresent:
+          canonicalSolanaPublicKeyOrNull(evidence.mintAuthority) !== null,
+      },
     },
   );
 };
@@ -1489,7 +2336,84 @@ export const checkPublicSolanaLaneReady = ({
       "public-solana-lane-ready",
       false,
       "No public Solana lane publication evidence is available.",
-      { reportPath: preflightReportPath },
+      { reportPath: publicReportPathMarker(preflightReportPath) },
+    );
+  }
+  if (preflightReport.schema === SOLANA_ROUTE_PREFLIGHT_SCHEMA) {
+    const summary = isRecord(preflightReport.registrySummary)
+      ? preflightReport.registrySummary
+      : null;
+    const laneChecks = readFirstArray(preflightReport, "checks").filter(
+      (check) => check?.id === "solana-lane-publication",
+    );
+    const productionChecks = readFirstArray(preflightReport, "checks").filter(
+      (check) => check?.id === "production-ready-flag",
+    );
+    const laneEvidence = isRecord(laneChecks[0]?.evidence)
+      ? laneChecks[0].evidence
+      : {};
+    const productionEvidence = isRecord(productionChecks[0]?.evidence)
+      ? productionChecks[0].evidence
+      : {};
+    const problems = [];
+    if (laneChecks.length !== 1 || laneChecks[0]?.status !== "pass") {
+      problems.push(
+        "Exact Solana lane publication check is missing or failed.",
+      );
+    }
+    if (
+      productionChecks.length !== 1 ||
+      productionChecks[0]?.status !== "pass"
+    ) {
+      problems.push(
+        "Exact Solana production activation check is missing or failed.",
+      );
+    }
+    if (laneEvidence.sourceNetwork !== SOLANA_TESTNET_NETWORK_ID) {
+      problems.push("Exact lane source network is not Solana testnet.");
+    }
+    if (
+      typeof laneEvidence.currentNativeTrustAnchorHash !== "string" ||
+      !/^[0-9A-F]{64}$/u.test(laneEvidence.currentNativeTrustAnchorHash) ||
+      summary?.currentNativeTrustAnchorHash !==
+        laneEvidence.currentNativeTrustAnchorHash
+    ) {
+      problems.push(
+        "Exact current Solana trust anchor is missing or inconsistent.",
+      );
+    }
+    if (
+      summary?.activation !== "bidirectional" ||
+      productionEvidence.activation !== "bidirectional" ||
+      productionEvidence.nativeTrustAnchorHash !==
+        summary?.currentNativeTrustAnchorHash
+    ) {
+      problems.push("Exact Solana lane is not consistently bidirectional.");
+    }
+    const ready = problems.length === 0;
+    return makeCheck(
+      "public-solana-lane-ready",
+      ready,
+      ready
+        ? "Public typed TAIRA registry exposes a bidirectional Solana lane with a current native trust anchor."
+        : "Public typed TAIRA Solana lane evidence is missing or inconsistent.",
+      {
+        reportPath: publicReportPathMarker(preflightReportPath),
+        present: summary !== null,
+        chain:
+          laneEvidence.sourceNetwork === SOLANA_TESTNET_NETWORK_ID
+            ? SOLANA_TESTNET_NETWORK_ID
+            : null,
+        activation:
+          summary?.activation === "bidirectional" ? "bidirectional" : null,
+        currentNativeTrustAnchorHash:
+          typeof summary?.currentNativeTrustAnchorHash === "string" &&
+          /^[0-9A-F]{64}$/u.test(summary.currentNativeTrustAnchorHash)
+            ? summary.currentNativeTrustAnchorHash
+            : null,
+        problems,
+        blockerIds: ready ? [] : ["typed-registry-solana-lane"],
+      },
     );
   }
   const lane = isRecord(preflightReport.publicSolanaLane)
@@ -1647,24 +2571,34 @@ export const checkPublicSolanaLaneReady = ({
       ? "Public TAIRA Solana SCCP lane is production-ready."
       : "Public TAIRA Solana SCCP lane is missing or not production-ready.",
     {
-      reportPath: preflightReportPath,
+      reportPath: publicReportPathMarker(preflightReportPath),
       present: lane !== null,
-      chain: laneChain.value || evidenceChain.value || null,
+      chain: isExpectedSolanaLaneChain(laneChain.value || evidenceChain.value)
+        ? SOLANA_TESTNET_NETWORK_ID
+        : null,
       counterpartyDomain:
-        laneCounterpartyDomain.value ?? evidenceCounterpartyDomain.value,
+        (laneCounterpartyDomain.value ?? evidenceCounterpartyDomain.value) ===
+        SCCP_SOLANA_DOMAIN
+          ? SCCP_SOLANA_DOMAIN
+          : null,
       productionReady:
         laneProductionReady.value === true ||
         evidenceProductionReady.value === true,
-      disabledReason:
-        laneDisabledReason.value || evidenceDisabledReason.value || null,
+      disabledReasonPresent: Boolean(
+        laneDisabledReason.value || evidenceDisabledReason.value,
+      ),
       laneCheck: laneCheck
         ? {
-            status: laneCheck.status ?? null,
-            detail: laneCheck.detail ?? null,
+            status: laneCheck.status === "pass" ? "pass" : "fail",
+            detail:
+              laneCheck.status === "pass"
+                ? "Legacy lane check passed."
+                : "Legacy or invalid lane check did not pass.",
           }
         : null,
-      aliasProblems,
-      blockerIds,
+      aliasProblemCount: aliasProblems.length,
+      blockerCount: blockerIds.length,
+      blockerIds: blockerIds.length > 0 ? ["legacy-solana-lane-blocked"] : [],
     },
   );
 };
@@ -1676,12 +2610,69 @@ const summarizePublicSolanaRoutePublication = ({
   if (!isRecord(preflightReport)) {
     return {
       ready: false,
-      reportPath: preflightReportPath,
+      reportPath: publicReportPathMarker(preflightReportPath),
       manifestSource: null,
       routeId: null,
       assetKey: null,
       publicationChecks: [],
       blockerIds: ["public-preflight-missing"],
+    };
+  }
+  if (preflightReport.schema === SOLANA_ROUTE_PREFLIGHT_SCHEMA) {
+    const checks = readFirstArray(preflightReport, "checks");
+    const byId = new Map(checks.map((check) => [check?.id, check]));
+    const requiredCheckIds = [
+      "sccp-registry-load",
+      "solana-lane-publication",
+      "solana-route-instance-publication",
+      "route-registry-shape",
+      "production-ready-flag",
+    ];
+    const publicationChecks = requiredCheckIds.map((id) => {
+      const check = byId.get(id) ?? null;
+      return {
+        id,
+        status: check?.status === "pass" ? "pass" : check ? "fail" : "missing",
+        detail:
+          check?.status === "pass"
+            ? "Required public registry publication check passed."
+            : "Required public registry publication check is missing or failed.",
+      };
+    });
+    const identityReady =
+      preflightReport.protocolSource === "typed-sccp-registry-v1" &&
+      preflightReport.manifestSource === "public-registry" &&
+      preflightReport.routeId === SCCP_SOLANA_XOR_ROUTE_ID &&
+      preflightReport.assetKey === SCCP_XOR_ASSET_KEY &&
+      preflightReport.routeRevision === 1;
+    return {
+      ready:
+        identityReady &&
+        publicationChecks.every((check) => check.status === "pass"),
+      reportPath: publicReportPathMarker(preflightReportPath),
+      manifestSource:
+        preflightReport.manifestSource === "public-registry"
+          ? "public-registry"
+          : null,
+      routeId:
+        preflightReport.routeId === SCCP_SOLANA_XOR_ROUTE_ID
+          ? SCCP_SOLANA_XOR_ROUTE_ID
+          : null,
+      assetKey:
+        preflightReport.assetKey === SCCP_XOR_ASSET_KEY
+          ? SCCP_XOR_ASSET_KEY
+          : null,
+      revision: preflightReport.routeRevision === 1 ? 1 : null,
+      registrySha256: publicHex32OrNull(
+        preflightReport.registrySummary?.registrySha256,
+      ),
+      publicationChecks,
+      blockerIds: [
+        ...(identityReady ? [] : ["typed-registry-route-identity"]),
+        ...publicationChecks
+          .filter((check) => check.status !== "pass")
+          .map((check) => check.id),
+      ],
     };
   }
   const checks = readFirstArray(preflightReport, "checks");
@@ -1696,16 +2687,19 @@ const summarizePublicSolanaRoutePublication = ({
     const check = byId.get(id) ?? null;
     return {
       id,
-      status: check?.status ?? "missing",
-      detail: check?.detail ?? null,
+      status: check?.status === "pass" ? "pass" : check ? "fail" : "missing",
+      detail:
+        check?.status === "pass"
+          ? "Required legacy publication check passed."
+          : "Required legacy publication check is missing or failed.",
     };
   });
   return {
     ready: publicationChecks.every((check) => check.status === "pass"),
-    reportPath: preflightReportPath,
-    manifestSource: readFirstString(preflightReport, "manifestSource") || null,
-    routeId: readFirstString(preflightReport, "routeId", "route_id") || null,
-    assetKey: readFirstString(preflightReport, "assetKey", "asset_key") || null,
+    reportPath: publicReportPathMarker(preflightReportPath),
+    manifestSource: null,
+    routeId: null,
+    assetKey: null,
     publicationChecks,
     blockerIds: publicationChecks
       .filter((check) => check.status !== "pass")
@@ -2120,19 +3114,27 @@ export const checkDeploymentVideoPresent = ({
     "mediaVerification",
     "media_verification",
   );
-  const mediaVerificationOk = mediaVerification?.ready === true;
+  const mediaVerificationOk =
+    mediaVerification?.ready === true &&
+    mediaVerification?.streams?.video?.codec === "h264";
   const subtitleExplanation = deploymentVideoSubtitleExplanation(
     deploymentVideoTranscript,
   );
   const vttFact = artifactFact(artifactFacts, paths.vtt);
   const vttCueTextMatchesTranscript =
     vttFact.vtt?.cueCount === subtitleExplanation.cueCount &&
-    vttFact.vtt?.cueTextSha256 === subtitleExplanation.cueTextSha256;
+    vttFact.vtt?.cueTextSha256 === subtitleExplanation.cueTextSha256 &&
+    isHex32(vttFact.vtt?.cueTimelineSha256) &&
+    vttFact.vtt?.cueTimelineSha256 === subtitleExplanation.cueTimelineSha256;
   const mp4Fact = artifactFact(artifactFacts, paths.mp4);
   const embeddedSubtitleMatchesVtt =
     mp4Fact.media?.embeddedSubtitle?.extracted === true &&
     mp4Fact.media.embeddedSubtitle.cueCount === vttFact.vtt?.cueCount &&
-    mp4Fact.media.embeddedSubtitle.cueTextSha256 === vttFact.vtt?.cueTextSha256;
+    mp4Fact.media.embeddedSubtitle.cueTextSha256 ===
+      vttFact.vtt?.cueTextSha256 &&
+    isHex32(mp4Fact.media.embeddedSubtitle.cueTimelineSha256) &&
+    mp4Fact.media.embeddedSubtitle.cueTimelineSha256 ===
+      vttFact.vtt?.cueTimelineSha256;
   const vttOk =
     vttEvidenceReady(artifactFacts, paths.vtt) && vttCueTextMatchesTranscript;
   const ok =
@@ -6297,89 +7299,688 @@ export const checkOperatorHandoffArtifactConsistency = ({
   );
 };
 
+export const SOLANA_SMOKE_READINESS_REQUIRED_CHECK_IDS = Object.freeze([
+  "route-preflight",
+  "walletconnect-project-id",
+  "destination-prover-module-url",
+  "source-prover-module-url",
+  "smoke-readiness-runbook-contract",
+]);
+
+export const SOLANA_PRODUCTION_GATE_REQUIRED_LIVE_SMOKE_STEPS = Object.freeze([
+  "Connect a TAIRA local wallet with testnet XOR on the TAIRA endpoint.",
+  "Connect a Solana testnet wallet through WalletConnect/AppKit.",
+  "Run one tiny TAIRA -> Solana transfer and verify the Solana finalize transaction link.",
+  "Run one tiny Solana -> TAIRA transfer and verify the TAIRA finalize_inbound transaction link.",
+]);
+
+const SOLANA_PROVER_GOVERNANCE_BINDING_SCHEMA =
+  "iroha-sccp-solana-prover-sidecar-governance-binding/v1";
+const SOLANA_PROVER_RUNTIME_REINSPECTION_SCHEMA =
+  "iroha-sccp-solana-production-gate-prover-reinspection/v1";
+const SOLANA_PROVER_RUNTIME_SPECS = Object.freeze([
+  Object.freeze({
+    direction: "destination",
+    checkId: "destination-prover-module-url",
+    proveExport: "proveSolanaSccpDestination",
+    selfTestExport: "solanaSccpDestinationProverSelfTest",
+  }),
+  Object.freeze({
+    direction: "source",
+    checkId: "source-prover-module-url",
+    proveExport: "proveSolanaSccpSource",
+    selfTestExport: "solanaSccpSourceProverSelfTest",
+  }),
+]);
+const SOLANA_SMOKE_READY_EMPTY_ARRAY_KEYS = Object.freeze([
+  "failedCheckIds",
+  "blockerIds",
+  "rootCauseBlockerIds",
+  "nextActions",
+  "nextActionIds",
+  "missingProductionInputs",
+  "missingProductionInputIds",
+]);
+const SOLANA_SMOKE_OPTIONAL_EMPTY_ARRAY_KEYS = Object.freeze([
+  "failedChecks",
+  "blockers",
+  "actions",
+  "nextActionDetails",
+  "missingInputs",
+  "requiredInputs",
+]);
+
+const exactArrayEquals = (value, expected) =>
+  Array.isArray(value) && JSON.stringify(value) === JSON.stringify(expected);
+
+const isNonzeroHex32 = (value) => isHex32(value) && !/^0x0{64}$/u.test(value);
+
+const smokeProverGovernanceBinding = (inspection) =>
+  readFirstRecord(
+    inspection,
+    "governanceApprovalBinding",
+    "governance_approval_binding",
+  );
+
+const smokeCheckById = (report, id) =>
+  readFirstArray(report, "checks").find((check) => check?.id === id) ?? null;
+
+const smokeProverModuleUrl = (report, checkId) =>
+  readFirstString(
+    readFirstRecord(smokeCheckById(report, checkId), "evidence"),
+    "moduleUrl",
+    "module_url",
+  );
+
+/**
+ * Reopen the exact package-relative module and sidecar bytes and rerun the
+ * governed known-answer probe. This deliberately does not reuse any readiness
+ * boolean or digest from the smoke report; that report supplies only the URL
+ * whose installed bytes must be independently verified.
+ */
+export const reinspectSolanaSmokeProverArtifacts = ({
+  smokeReadinessReport,
+  expectedProverGovernanceApprovalSha256 = null,
+  proverGovernanceApprovalValidation = null,
+} = {}) => ({
+  schema: SOLANA_PROVER_RUNTIME_REINSPECTION_SCHEMA,
+  expectedProverGovernanceApprovalSha256:
+    trimString(expectedProverGovernanceApprovalSha256) || null,
+  directions: Object.fromEntries(
+    SOLANA_PROVER_RUNTIME_SPECS.map((spec) => {
+      const moduleUrl = smokeProverModuleUrl(
+        smokeReadinessReport,
+        spec.checkId,
+      );
+      let inspection = null;
+      let error = null;
+      try {
+        inspection = moduleUrl
+          ? runLocalProverSelfTest({
+              moduleUrl,
+              proveExport: spec.proveExport,
+              selfTestExport: spec.selfTestExport,
+              expectedApprovalSha256: expectedProverGovernanceApprovalSha256,
+              approvalValidation: proverGovernanceApprovalValidation,
+            })
+          : null;
+      } catch (caught) {
+        error = "Solana prover artifact reinspection failed.";
+      }
+      return [
+        spec.direction,
+        Object.freeze({
+          direction: spec.direction,
+          checkId: spec.checkId,
+          moduleUrl: moduleUrl || null,
+          inspection,
+          ...(error ? { error: error.slice(0, 512) } : {}),
+        }),
+      ];
+    }),
+  ),
+});
+
+const smokeProverInspectionProblems = ({ check, direction }) => {
+  const problems = [];
+  const evidence = readFirstRecord(check, "evidence");
+  const inspection = readFirstRecord(evidence, "inspection");
+  const proofProbe = readFirstRecord(inspection, "proofProbe", "proof_probe");
+  const selfTest = readFirstRecord(inspection, "selfTest", "self_test");
+  const governanceBinding = smokeProverGovernanceBinding(inspection);
+  const moduleHash = readFirstString(inspection, "moduleHash", "module_hash");
+  const sidecarHash = readFirstString(
+    inspection,
+    "sidecarHash",
+    "sidecar_hash",
+  );
+  const bindingModuleHash = readFirstString(
+    governanceBinding,
+    "moduleHash",
+    "module_hash",
+  );
+  const approvedModuleHash = readFirstString(
+    governanceBinding,
+    "approvedModuleHash",
+    "approved_module_hash",
+  );
+  const vectorHash = readFirstString(
+    governanceBinding,
+    "vectorHash",
+    "vector_hash",
+  );
+  const approvedVectorHash = readFirstString(
+    governanceBinding,
+    "approvedVectorHash",
+    "approved_vector_hash",
+  );
+  const proofProbeVectorHash = readFirstString(
+    proofProbe,
+    "vectorHash",
+    "vector_hash",
+  );
+  const proofProbePackageHash = readFirstString(
+    proofProbe,
+    "packageHash",
+    "package_hash",
+  );
+  const approvalSha256 = readFirstString(
+    governanceBinding,
+    "approvalSha256",
+    "approval_sha256",
+  );
+  const expectedApprovalSha256 = readFirstString(
+    governanceBinding,
+    "expectedApprovalSha256",
+    "expected_approval_sha256",
+  );
+  const governancePlanCanonicalSha256 = readFirstString(
+    governanceBinding,
+    "governancePlanCanonicalSha256",
+    "governance_plan_canonical_sha256",
+  );
+  const orderedInitializationEvidenceSha256 = readFirstString(
+    governanceBinding,
+    "orderedInitializationEvidenceSha256",
+    "ordered_initialization_evidence_sha256",
+  );
+  const expect = (condition, problem) => {
+    if (!condition) problems.push(problem);
+  };
+  expect(check?.status === "pass", `${direction} prover check did not pass.`);
+  expect(Boolean(evidence), `${direction} prover evidence is missing.`);
+  expect(
+    evidence?.configured === true,
+    `${direction} prover module is not marked configured.`,
+  );
+  expect(
+    Boolean(readFirstString(evidence, "moduleUrl", "module_url")),
+    `${direction} prover module URL is missing.`,
+  );
+  expect(Boolean(inspection), `${direction} prover inspection is missing.`);
+  for (const [field, value] of [
+    ["inspected", inspection?.inspected],
+    ["exists", inspection?.exists],
+    ["exportsOk", inspection?.exportsOk],
+    ["ready", inspection?.ready],
+    ["sidecarReady", inspection?.sidecarReady],
+  ]) {
+    expect(
+      value === true,
+      `${direction} prover inspection ${field} must be true.`,
+    );
+  }
+  expect(
+    Array.isArray(inspection?.sidecarErrors) &&
+      inspection.sidecarErrors.length === 0,
+    `${direction} prover sidecar errors must be empty.`,
+  );
+  expect(
+    proofProbe?.ready === true && proofProbe?.invoked === true,
+    `${direction} prover known-answer export was not invoked successfully.`,
+  );
+  expect(
+    isNonzeroHex32(proofProbePackageHash),
+    `${direction} prover known-answer package hash is invalid.`,
+  );
+  expect(
+    selfTest?.ready === true &&
+      selfTest?.linked === true &&
+      selfTest?.productionProofsReady === true,
+    `${direction} prover self-test is not production-ready.`,
+  );
+  expect(
+    isNonzeroHex32(moduleHash),
+    `${direction} prover module hash is invalid.`,
+  );
+  expect(
+    isNonzeroHex32(sidecarHash),
+    `${direction} prover sidecar hash is invalid.`,
+  );
+  expect(
+    governanceBinding?.schema === SOLANA_PROVER_GOVERNANCE_BINDING_SCHEMA &&
+      governanceBinding?.ready === true &&
+      governanceBinding?.direction === direction,
+    `${direction} prover governance binding is missing or invalid.`,
+  );
+  expect(
+    isRecord(governanceBinding) &&
+      JSON.stringify(Object.keys(governanceBinding).sort()) ===
+        JSON.stringify(
+          [
+            "schema",
+            "ready",
+            "direction",
+            "approvalId",
+            "approvalSha256",
+            "expectedApprovalSha256",
+            "governancePlanCanonicalSha256",
+            "orderedInitializationEvidenceSha256",
+            "approvedModuleHash",
+            "approvedVectorHash",
+            "moduleHash",
+            "vectorHash",
+            "errors",
+          ].sort(),
+        ),
+    `${direction} prover governance binding fields are not exact.`,
+  );
+  expect(
+    typeof governanceBinding?.approvalId === "string" &&
+      /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(governanceBinding.approvalId),
+    `${direction} prover governance approval id is invalid.`,
+  );
+  expect(
+    Array.isArray(governanceBinding?.errors) &&
+      governanceBinding.errors.length === 0,
+    `${direction} prover governance binding errors must be empty.`,
+  );
+  for (const [field, value] of [
+    ["approvalSha256", approvalSha256],
+    ["expectedApprovalSha256", expectedApprovalSha256],
+    ["governancePlanCanonicalSha256", governancePlanCanonicalSha256],
+    [
+      "orderedInitializationEvidenceSha256",
+      orderedInitializationEvidenceSha256,
+    ],
+    ["approvedModuleHash", approvedModuleHash],
+    ["moduleHash", bindingModuleHash],
+    ["approvedVectorHash", approvedVectorHash],
+    ["vectorHash", vectorHash],
+  ]) {
+    expect(
+      isNonzeroHex32(value),
+      `${direction} prover governance binding ${field} is invalid.`,
+    );
+  }
+  expect(
+    approvalSha256 === expectedApprovalSha256,
+    `${direction} prover governance approval hashes disagree.`,
+  );
+  expect(
+    moduleHash === bindingModuleHash && moduleHash === approvedModuleHash,
+    `${direction} prover module bytes do not match the governed module hash.`,
+  );
+  expect(
+    vectorHash === approvedVectorHash &&
+      proofProbeVectorHash === approvedVectorHash,
+    `${direction} prover known-answer vector does not match governance.`,
+  );
+  return {
+    problems,
+    governanceBinding,
+    observation: {
+      moduleUrl: readFirstString(evidence, "moduleUrl", "module_url") || null,
+      moduleHash: moduleHash || null,
+      sidecarUrl:
+        readFirstString(inspection, "sidecarUrl", "sidecar_url") || null,
+      sidecarHash: sidecarHash || null,
+      proofProbeVectorHash: proofProbeVectorHash || null,
+      proofProbePackageHash: proofProbePackageHash || null,
+      governanceBinding: governanceBinding ?? null,
+    },
+  };
+};
+
 export const checkSmokeReadinessReady = ({
   smokeReadinessReport,
   smokeReadinessPath = null,
+  expectedProverGovernanceApprovalSha256 = null,
+  proverGovernanceApprovalValidation = null,
+  proverRuntimeReinspection = null,
 } = {}) => {
   if (!isRecord(smokeReadinessReport)) {
     return makeCheck(
       "smoke-readiness-ready",
       false,
       "No Solana live smoke-readiness report is available.",
-      { smokeReadinessPath },
+      {
+        smokeReadinessPath: smokeReadinessPath
+          ? "[public-report-supplied]"
+          : null,
+      },
     );
   }
-  const schemaOk =
+  const problems = [];
+  const expect = (condition, problem) => {
+    if (!condition) problems.push(problem);
+  };
+  const checks = smokeReadinessReport.checks;
+  const independentApprovalSha256 = trimString(
+    expectedProverGovernanceApprovalSha256,
+  );
+  expect(
+    isNonzeroHex32(independentApprovalSha256),
+    `An independent ${SOLANA_EXACT_PROVER_APPROVAL_SHA256_ENV} pin is required.`,
+  );
+  expect(
+    isRecord(proverGovernanceApprovalValidation) &&
+      proverGovernanceApprovalValidation.ready === true,
+    "The canonical exact prover governance approval descriptor is missing or invalid.",
+  );
+  expect(
+    proverGovernanceApprovalValidation?.approvalSha256 ===
+      independentApprovalSha256 &&
+      proverGovernanceApprovalValidation?.expectedApprovalSha256 ===
+        independentApprovalSha256,
+    "The loaded exact prover approval bytes do not match the independent approval hash.",
+  );
+  const checkIds = Array.isArray(checks)
+    ? checks.map((check) => (isRecord(check) ? check.id : null))
+    : [];
+  expect(
+    exactArrayEquals(checkIds, SOLANA_SMOKE_READINESS_REQUIRED_CHECK_IDS),
+    "Smoke-readiness checks must contain exactly the five canonical unique checks in canonical order.",
+  );
+  expect(
+    Array.isArray(checks) && checks.every((check) => check?.status === "pass"),
+    "Every canonical smoke-readiness check must pass.",
+  );
+  expect(
     smokeReadinessReport.schema ===
-    "iroha-demo-sccp-solana-live-smoke-readiness/v1";
-  const routeOk =
-    readFirstString(smokeReadinessReport, "routeId", "route_id") ===
-    SCCP_SOLANA_XOR_ROUTE_ID;
-  const checks = readFirstArray(smokeReadinessReport, "checks");
-  const failed = failedChecks(checks);
-  const ready =
-    schemaOk &&
-    routeOk &&
-    smokeReadinessReport.ready === true &&
-    failed.length === 0;
+      "iroha-demo-sccp-solana-live-smoke-readiness/v1",
+    "Smoke-readiness schema is invalid.",
+  );
+  expect(smokeReadinessReport.ready === true, "Smoke-readiness is not ready.");
+  expect(
+    smokeReadinessReport.routeId === SCCP_SOLANA_XOR_ROUTE_ID,
+    "Smoke-readiness routeId is invalid.",
+  );
+  expect(
+    smokeReadinessReport.assetKey === SCCP_XOR_ASSET_KEY,
+    "Smoke-readiness assetKey is invalid.",
+  );
+  const topSolana = readFirstRecord(smokeReadinessReport, "solana");
+  expect(
+    topSolana?.network === SOLANA_TESTNET_NETWORK_ID &&
+      topSolana?.caipChainId === SOLANA_TESTNET_CAIP_CHAIN_ID &&
+      topSolana?.genesisHash === SOLANA_TESTNET_GENESIS_HASH,
+    "Smoke-readiness is not exactly bound to the canonical Solana testnet identity.",
+  );
+  for (const key of SOLANA_SMOKE_READY_EMPTY_ARRAY_KEYS) {
+    expect(
+      Array.isArray(smokeReadinessReport[key]) &&
+        smokeReadinessReport[key].length === 0,
+      `Smoke-readiness ${key} must be an explicit empty array.`,
+    );
+  }
+  for (const key of SOLANA_SMOKE_OPTIONAL_EMPTY_ARRAY_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(smokeReadinessReport, key)) {
+      expect(
+        Array.isArray(smokeReadinessReport[key]) &&
+          smokeReadinessReport[key].length === 0,
+        `Smoke-readiness optional ${key} must be empty when present.`,
+      );
+    }
+  }
+  const unexpectedReadyStateArrayCount = Object.entries(
+    smokeReadinessReport,
+  ).filter(
+    ([key, value]) =>
+      Array.isArray(value) &&
+      /(?:fail|block|missing|action)/iu.test(key) &&
+      value.length > 0,
+  ).length;
+  if (unexpectedReadyStateArrayCount > 0) {
+    problems.push(
+      "Smoke-readiness contains non-empty ready-state failure, blocker, missing-input, or action arrays.",
+    );
+  }
+  expect(
+    exactArrayEquals(
+      smokeReadinessReport.requiredLiveSmokeSteps,
+      SOLANA_PRODUCTION_GATE_REQUIRED_LIVE_SMOKE_STEPS,
+    ),
+    "Smoke-readiness live-smoke steps are missing, reordered, or changed.",
+  );
+
+  const routeCheck = Array.isArray(checks) ? checks[0] : null;
+  const routeEvidence = readFirstRecord(routeCheck, "evidence");
+  const routeSolana = readFirstRecord(routeEvidence, "solana");
+  expect(
+    routeCheck?.id === "route-preflight" && routeCheck?.status === "pass",
+    "Exact route-preflight check did not pass.",
+  );
+  expect(
+    routeEvidence?.ready === true &&
+      routeEvidence?.schema === SOLANA_ROUTE_PREFLIGHT_SCHEMA &&
+      routeEvidence?.protocolSource === "typed-sccp-registry-v1" &&
+      routeEvidence?.manifestSource === "public-registry" &&
+      routeEvidence?.routeId === SCCP_SOLANA_XOR_ROUTE_ID &&
+      routeEvidence?.assetKey === SCCP_XOR_ASSET_KEY &&
+      routeEvidence?.routeRevision === 1,
+    "Smoke-readiness route preflight is not the ready exact-v2 typed public-registry route.",
+  );
+  expect(
+    routeSolana?.network === SOLANA_TESTNET_NETWORK_ID &&
+      routeSolana?.caipChainId === SOLANA_TESTNET_CAIP_CHAIN_ID &&
+      routeSolana?.genesisHash === SOLANA_TESTNET_GENESIS_HASH &&
+      routeSolana?.networkReady === true &&
+      routeSolana?.caipChainReady === true &&
+      routeSolana?.genesisReady === true,
+    "Smoke-readiness route preflight Solana identity is invalid.",
+  );
+  expect(
+    Array.isArray(routeEvidence?.failedChecks) &&
+      routeEvidence.failedChecks.length === 0,
+    "Smoke-readiness route preflight failures must be empty.",
+  );
+
+  const walletCheck = Array.isArray(checks) ? checks[1] : null;
+  const walletEvidence = readFirstRecord(walletCheck, "evidence");
+  expect(
+    walletCheck?.id === "walletconnect-project-id" &&
+      walletCheck?.status === "pass" &&
+      walletEvidence?.configured === true &&
+      walletEvidence?.valueStoredInReport === false,
+    "WalletConnect readiness evidence is invalid.",
+  );
+  expect(
+    !Object.prototype.hasOwnProperty.call(walletEvidence ?? {}, "value") &&
+      !Object.prototype.hasOwnProperty.call(walletEvidence ?? {}, "projectId"),
+    "WalletConnect project ID must not be stored in the smoke report.",
+  );
+
+  const proverResults = [
+    smokeProverInspectionProblems({
+      check: Array.isArray(checks) ? checks[2] : null,
+      direction: "destination",
+    }),
+    smokeProverInspectionProblems({
+      check: Array.isArray(checks) ? checks[3] : null,
+      direction: "source",
+    }),
+  ];
+  problems.push(...proverResults.flatMap((result) => result.problems));
+  const [destinationBinding, sourceBinding] = proverResults.map(
+    (result) => result.governanceBinding,
+  );
+  expect(
+    destinationBinding?.approvalSha256 === sourceBinding?.approvalSha256 &&
+      destinationBinding?.governancePlanCanonicalSha256 ===
+        sourceBinding?.governancePlanCanonicalSha256 &&
+      destinationBinding?.orderedInitializationEvidenceSha256 ===
+        sourceBinding?.orderedInitializationEvidenceSha256,
+    "Destination and source prover governance bindings do not share one approval and deployment evidence set.",
+  );
+  expect(
+    destinationBinding?.approvalSha256 === independentApprovalSha256 &&
+      destinationBinding?.expectedApprovalSha256 ===
+        independentApprovalSha256 &&
+      sourceBinding?.approvalSha256 === independentApprovalSha256 &&
+      sourceBinding?.expectedApprovalSha256 === independentApprovalSha256,
+    "Destination and source prover bindings do not match the independently supplied approval hash.",
+  );
+  const approvalPins = isRecord(proverGovernanceApprovalValidation?.pins)
+    ? proverGovernanceApprovalValidation.pins
+    : {};
+  for (const [direction, binding] of [
+    ["destination", destinationBinding],
+    ["source", sourceBinding],
+  ]) {
+    expect(
+      binding?.approvedModuleHash ===
+        approvalPins[`${direction}ProverModuleHash`] &&
+        binding?.approvedVectorHash ===
+          approvalPins[`${direction}ProverKnownAnswerVectorHash`],
+      `${direction} prover smoke evidence does not match the canonical approval descriptor pins.`,
+    );
+    expect(
+      binding?.governancePlanCanonicalSha256 ===
+        approvalPins.governancePlanCanonicalSha256 &&
+        binding?.orderedInitializationEvidenceSha256 ===
+          approvalPins.orderedInitializationEvidenceSha256,
+      `${direction} prover deployment evidence does not match the canonical approval descriptor pins.`,
+    );
+  }
+
+  const reinspectionDirections = isRecord(proverRuntimeReinspection?.directions)
+    ? proverRuntimeReinspection.directions
+    : {};
+  expect(
+    proverRuntimeReinspection?.schema ===
+      SOLANA_PROVER_RUNTIME_REINSPECTION_SCHEMA,
+    "Independent prover module/sidecar reinspection is missing or invalid.",
+  );
+  expect(
+    proverRuntimeReinspection?.expectedProverGovernanceApprovalSha256 ===
+      independentApprovalSha256,
+    "Independent prover reinspection does not use the canonical approval hash.",
+  );
+  const runtimeResults = SOLANA_PROVER_RUNTIME_SPECS.map((spec) => {
+    const runtime = isRecord(reinspectionDirections[spec.direction])
+      ? reinspectionDirections[spec.direction]
+      : null;
+    const runtimeInspection = readFirstRecord(runtime, "inspection");
+    const runtimeResult = smokeProverInspectionProblems({
+      check: {
+        id: spec.checkId,
+        status: runtimeInspection?.ready === true ? "pass" : "fail",
+        evidence: {
+          configured: Boolean(runtime?.moduleUrl),
+          moduleUrl: runtime?.moduleUrl ?? null,
+          inspection: runtimeInspection,
+        },
+      },
+      direction: spec.direction,
+    });
+    expect(
+      runtime?.direction === spec.direction &&
+        runtime?.checkId === spec.checkId,
+      `${spec.direction} prover reinspection identity is invalid.`,
+    );
+    expect(
+      runtime?.error === undefined,
+      `${spec.direction} prover reinspection failed: ${runtime?.error ?? "missing inspection"}.`,
+    );
+    problems.push(
+      ...runtimeResult.problems.map((problem) => `Independent ${problem}`),
+    );
+    return runtimeResult;
+  });
+
+  for (let index = 0; index < SOLANA_PROVER_RUNTIME_SPECS.length; index += 1) {
+    const { direction } = SOLANA_PROVER_RUNTIME_SPECS[index];
+    const smokeObservation = proverResults[index].observation;
+    const runtimeObservation = runtimeResults[index].observation;
+    expect(
+      canonicalSccpJson(smokeObservation) ===
+        canonicalSccpJson(runtimeObservation),
+      `${direction} prover smoke evidence does not match independently reopened module/sidecar bytes and KAT output.`,
+    );
+    const binding = runtimeResults[index].governanceBinding;
+    expect(
+      binding?.approvalSha256 === independentApprovalSha256 &&
+        binding?.expectedApprovalSha256 === independentApprovalSha256,
+      `${direction} independently inspected prover does not match the canonical approval hash.`,
+    );
+    expect(
+      binding?.approvedModuleHash ===
+        approvalPins[`${direction}ProverModuleHash`] &&
+        binding?.approvedVectorHash ===
+          approvalPins[`${direction}ProverKnownAnswerVectorHash`] &&
+        binding?.governancePlanCanonicalSha256 ===
+          approvalPins.governancePlanCanonicalSha256 &&
+        binding?.orderedInitializationEvidenceSha256 ===
+          approvalPins.orderedInitializationEvidenceSha256,
+      `${direction} independently inspected prover does not match the canonical approval descriptor pins.`,
+    );
+  }
+  const runtimeBindings = runtimeResults.map(
+    (result) => result.governanceBinding,
+  );
+  expect(
+    runtimeBindings[0]?.approvalSha256 === runtimeBindings[1]?.approvalSha256 &&
+      runtimeBindings[0]?.governancePlanCanonicalSha256 ===
+        runtimeBindings[1]?.governancePlanCanonicalSha256 &&
+      runtimeBindings[0]?.orderedInitializationEvidenceSha256 ===
+        runtimeBindings[1]?.orderedInitializationEvidenceSha256,
+    "Independently inspected destination/source provers do not share one approval and deployment evidence set.",
+  );
+
+  const runbookCheck = Array.isArray(checks) ? checks[4] : null;
+  const runbookEvidence = readFirstRecord(runbookCheck, "evidence");
+  expect(
+    runbookCheck?.id === "smoke-readiness-runbook-contract" &&
+      runbookCheck?.status === "pass" &&
+      Array.isArray(runbookEvidence?.problems) &&
+      runbookEvidence.problems.length === 0,
+    "Smoke-readiness runbook contract is not clean.",
+  );
+
+  const ready = problems.length === 0;
+  const blockerValues = readFirstArray(smokeReadinessReport, "blockerIds");
+  const missingProductionInputValues = readFirstArray(
+    smokeReadinessReport,
+    "missingProductionInputs",
+  );
+  const nextActionValues = readFirstArray(smokeReadinessReport, "nextActions");
   return makeCheck(
     "smoke-readiness-ready",
     ready,
     ready
-      ? "Solana live smoke-readiness report proves app runtime prerequisites are ready."
-      : "Solana live smoke-readiness report is missing or not ready.",
+      ? "Solana live smoke-readiness report proves the exact app runtime prerequisites are ready."
+      : "Solana live smoke-readiness report is malformed, forged, or not ready.",
     {
-      smokeReadinessPath,
-      schemaOk,
-      routeOk,
+      smokeReadinessPath: smokeReadinessPath
+        ? "[public-report-supplied]"
+        : null,
+      schemaOk:
+        smokeReadinessReport.schema ===
+        "iroha-demo-sccp-solana-live-smoke-readiness/v1",
+      routeOk: smokeReadinessReport.routeId === SCCP_SOLANA_XOR_ROUTE_ID,
       ready: smokeReadinessReport.ready === true,
-      failedChecks: failed.map((check) => ({
-        id: check.id,
-        detail: check.detail ?? null,
-      })),
-      blockerIds: readFirstArray(
-        smokeReadinessReport,
-        "blockerIds",
-        "blocker_ids",
-        "blockers",
+      requiredCheckIds: [...SOLANA_SMOKE_READINESS_REQUIRED_CHECK_IDS],
+      observedCheckCount: checkIds.length,
+      observedCheckIdsCanonical: exactArrayEquals(
+        checkIds,
+        SOLANA_SMOKE_READINESS_REQUIRED_CHECK_IDS,
+      ),
+      blockerCount: blockerValues.length,
+      missingProductionInputCount: missingProductionInputValues.length,
+      nextActionCount: nextActionValues.length,
+      problems,
+      expectedProverGovernanceApprovalSha256: isNonzeroHex32(
+        independentApprovalSha256,
       )
-        .map((blocker) =>
-          typeof blocker === "string"
-            ? blocker.trim()
-            : readFirstString(blocker, "id"),
-        )
-        .filter(Boolean),
-      missingProductionInputs: readFirstArray(
-        smokeReadinessReport,
-        "missingProductionInputs",
-        "missing_production_inputs",
-      ),
-      nextActions: actionSummaries(
-        readFirstArray(smokeReadinessReport, "nextActions"),
-      ),
+        ? independentApprovalSha256
+        : null,
+      ...(ready
+        ? {
+            observedCheckIds: checkIds,
+            blockerIds: [],
+            missingProductionInputs: [],
+            nextActions: [],
+            proverGovernanceApprovalValidation,
+            proverRuntimeReinspection,
+          }
+        : {}),
     },
   );
 };
 
 const reportCheckById = (report, id) =>
   readFirstArray(report, "checks").find((check) => check?.id === id) ?? null;
-
-const routePreflightBrowserProofModules = (routePreflight) => {
-  const evidence = readFirstRecord(
-    reportCheckById(routePreflight, "browser-proof-modules"),
-    "evidence",
-  );
-  return evidence
-    ? {
-        destinationModuleUrl:
-          readFirstString(evidence, "destinationModuleUrl") || null,
-        destinationModuleHash:
-          readFirstString(evidence, "destinationModuleHash") || null,
-        sourceModuleUrl: readFirstString(evidence, "sourceModuleUrl") || null,
-        sourceModuleHash: readFirstString(evidence, "sourceModuleHash") || null,
-      }
-    : null;
-};
 
 const solanaConsistencyBinding = (record) => {
   const solana = readFirstRecord(record, "solana");
@@ -6388,13 +7989,16 @@ const solanaConsistencyBinding = (record) => {
         network: readFirstString(solana, "network", "solanaNetwork") || null,
         caipChainId:
           readFirstString(solana, "caipChainId", "caip_chain_id") || null,
+        genesisHash:
+          readFirstString(solana, "genesisHash", "genesis_hash") || null,
       }
     : null;
 };
 
 const TRANSIENT_ROUTE_PREFLIGHT_FAILURE_IDS = new Set([
   "sccp-capabilities-load",
-  "solana-capability-publication",
+  "sccp-registry-load",
+  "solana-testnet-rpc-health",
 ]);
 
 const stableRoutePreflightFailedChecks = (checks) => {
@@ -6418,6 +8022,13 @@ const routePreflightConsistencySnapshot = (routePreflight) =>
         checkedAt:
           readFirstString(routePreflight, "checkedAt", "checked_at") || null,
         ready: routePreflight.ready === true,
+        schema: readFirstString(routePreflight, "schema") || null,
+        protocolSource:
+          readFirstString(
+            routePreflight,
+            "protocolSource",
+            "protocol_source",
+          ) || null,
         routeId: readFirstString(routePreflight, "routeId", "route_id") || null,
         assetKey:
           readFirstString(routePreflight, "assetKey", "asset_key") || null,
@@ -6427,11 +8038,12 @@ const routePreflightConsistencySnapshot = (routePreflight) =>
             "manifestSource",
             "manifest_source",
           ) || null,
+        routeRevision:
+          routePreflight.routeRevision ?? routePreflight.route_revision ?? null,
         solana: solanaConsistencyBinding(routePreflight),
         failedChecks: stableRoutePreflightFailedChecks(
           readFirstArray(routePreflight, "checks"),
         ),
-        browserProofModules: routePreflightBrowserProofModules(routePreflight),
       }
     : null;
 
@@ -6440,61 +8052,23 @@ const smokeRoutePreflightConsistencySnapshot = (evidence) =>
     ? {
         checkedAt: readFirstString(evidence, "checkedAt", "checked_at") || null,
         ready: evidence.ready === true,
+        schema: readFirstString(evidence, "schema") || null,
+        protocolSource:
+          readFirstString(evidence, "protocolSource", "protocol_source") ||
+          null,
         routeId: readFirstString(evidence, "routeId", "route_id") || null,
         assetKey: readFirstString(evidence, "assetKey", "asset_key") || null,
         manifestSource:
           readFirstString(evidence, "manifestSource", "manifest_source") ||
           null,
+        routeRevision:
+          evidence.routeRevision ?? evidence.route_revision ?? null,
         solana: solanaConsistencyBinding(evidence),
         failedChecks: stableRoutePreflightFailedChecks(
           readFirstArray(evidence, "failedChecks", "failed_checks"),
         ),
-        browserProofModules:
-          readFirstRecord(
-            evidence,
-            "browserProofModules",
-            "browser_proof_modules",
-          ) ?? null,
       }
     : null;
-
-const proofBundleProverExpectation = (proofMaterialBundleReport, direction) => {
-  const proofMaterialRequest = readFirstRecord(
-    proofMaterialBundleReport,
-    "proofMaterialRequest",
-    "proof_material_request",
-  );
-  const proverEntry = readFirstArray(
-    proofMaterialRequest,
-    "browserProverModules",
-    "browser_prover_modules",
-  ).find((entry) => readFirstString(entry, "direction") === direction);
-  if (!proverEntry) {
-    return null;
-  }
-  const sidecarArtifact = readFirstArray(proofMaterialBundleReport, "artifacts")
-    .filter((artifact) => isRecord(artifact))
-    .find((artifact) => artifact.id === `${direction}-prover-sidecar`);
-  return {
-    moduleUrl: readFirstString(proverEntry, "moduleUrl", "module_url") || null,
-    moduleHash:
-      readFirstString(
-        proverEntry,
-        "actualModuleHash",
-        "actual_module_hash",
-        "expectedModuleHash",
-        "expected_module_hash",
-        "moduleHash",
-        "module_hash",
-      ) || null,
-    sidecarUrl:
-      readFirstString(proverEntry, "sidecarUrl", "sidecar_url") || null,
-    sidecarHash:
-      readFirstString(sidecarArtifact, "sha256", "hash", "sidecarHash") ||
-      readFirstString(proverEntry, "sidecarHash", "sidecar_hash") ||
-      null,
-  };
-};
 
 const smokeProverObservation = (smokeReadinessReport, checkId) => {
   const evidence = readFirstRecord(
@@ -6513,6 +8087,7 @@ const smokeProverObservation = (smokeReadinessReport, checkId) => {
       readFirstString(inspection, "sidecarUrl", "sidecar_url") || null,
     sidecarHash:
       readFirstString(inspection, "sidecarHash", "sidecar_hash") || null,
+    governanceBinding: smokeProverGovernanceBinding(inspection) ?? null,
   };
 };
 
@@ -6531,8 +8106,6 @@ const pushFieldMismatch = ({
     mismatches.push({
       id,
       field,
-      expected: expected ?? null,
-      observed: observed ?? null,
       detail,
     });
   }
@@ -6550,8 +8123,11 @@ export const checkSmokeReadinessArtifactConsistency = ({
   smokeReadinessPath = null,
   preflightReport = null,
   preflightReportPath = null,
-  proofMaterialBundleReport = null,
-  proofMaterialBundlePath = null,
+  governancePlanReport = null,
+  governancePlanPath = null,
+  orderedInitializationEvidenceReport = null,
+  orderedInitializationEvidencePath = null,
+  orderedInitializationEvidenceArtifactSha256 = null,
 } = {}) => {
   if (!isRecord(smokeReadinessReport)) {
     return makeCheck(
@@ -6584,12 +8160,14 @@ export const checkSmokeReadinessArtifactConsistency = ({
       ].includes("route-preflight");
     for (const field of [
       "ready",
+      "schema",
+      "protocolSource",
       "routeId",
       "assetKey",
       "manifestSource",
+      "routeRevision",
       "solana",
       "failedChecks",
-      "browserProofModules",
     ]) {
       if (field === "failedChecks" && tolerateBlockedPreflightDrift) {
         continue;
@@ -6610,8 +8188,6 @@ export const checkSmokeReadinessArtifactConsistency = ({
       mismatches.push({
         id: "route-preflight",
         field: "checkedAt",
-        expected: JSON.stringify(directPreflightSnapshot.checkedAt ?? null),
-        observed: null,
         detail:
           "Smoke-readiness route preflight evidence is missing the embedded preflight timestamp.",
       });
@@ -6624,14 +8200,52 @@ export const checkSmokeReadinessArtifactConsistency = ({
       mismatches.push({
         id: "route-preflight",
         field: "checkedAt",
-        expected: JSON.stringify(directPreflightSnapshot.checkedAt ?? null),
-        observed: JSON.stringify(smokePreflightSnapshot.checkedAt ?? null),
         detail:
           "Smoke-readiness route preflight evidence is older than the allowed freshness window.",
       });
     }
   } else if (smokeClaimsReady) {
     missingEvidence.push("route-preflight");
+  }
+  const expectedGovernancePlanSha256 = readFirstString(
+    governancePlanReport,
+    "plan_sha256",
+    "planSha256",
+  );
+  const governancePlanOrderedInitializationSha256 = readFirstString(
+    governancePlanReport,
+    "ordered_initialization_evidence_sha256",
+    "orderedInitializationEvidenceSha256",
+  );
+  const expectedOrderedInitializationSha256 = trimString(
+    orderedInitializationEvidenceArtifactSha256,
+  );
+  if (smokeClaimsReady && !isRecord(governancePlanReport)) {
+    missingEvidence.push("governance-plan");
+  }
+  if (smokeClaimsReady && !isRecord(orderedInitializationEvidenceReport)) {
+    missingEvidence.push("ordered-initialization-evidence");
+  }
+  if (smokeClaimsReady && !isNonzeroHex32(expectedGovernancePlanSha256)) {
+    missingEvidence.push("governance-plan-sha256");
+  }
+  if (
+    smokeClaimsReady &&
+    !isNonzeroHex32(expectedOrderedInitializationSha256)
+  ) {
+    missingEvidence.push("ordered-initialization-evidence-sha256");
+  }
+  if (
+    expectedOrderedInitializationSha256 &&
+    governancePlanOrderedInitializationSha256 !==
+      expectedOrderedInitializationSha256
+  ) {
+    mismatches.push({
+      id: "ordered-initialization-evidence",
+      field: "governancePlanOrderedInitializationEvidenceSha256",
+      detail:
+        "The reviewed governance plan does not pin the actual loaded ordered-initialization evidence bytes.",
+    });
   }
   for (const { direction, checkId } of [
     {
@@ -6640,51 +8254,77 @@ export const checkSmokeReadinessArtifactConsistency = ({
     },
     { direction: "source", checkId: "source-prover-module-url" },
   ]) {
-    const expected = proofBundleProverExpectation(
-      proofMaterialBundleReport,
-      direction,
-    );
     const observed = smokeProverObservation(smokeReadinessReport, checkId);
-    if (!expected && !observed) {
-      continue;
-    }
-    if (!expected || !observed) {
+    if (!observed) {
       if (smokeClaimsReady) {
         missingEvidence.push(`${direction}-prover`);
       }
       continue;
     }
-    for (const field of [
-      "moduleUrl",
-      "moduleHash",
-      "sidecarUrl",
-      "sidecarHash",
-    ]) {
-      if (!smokeClaimsReady && !expected[field]) {
-        continue;
+    const binding = observed.governanceBinding;
+    if (!isRecord(binding)) {
+      if (smokeClaimsReady) {
+        missingEvidence.push(`${direction}-prover-governance-binding`);
       }
-      pushFieldMismatch({
-        mismatches,
-        id: `${direction}-prover`,
-        field,
-        expected: expected[field],
-        observed: observed[field],
-        detail:
-          "Smoke-readiness prover inspection does not match the direct Solana proof-material bundle.",
-      });
+      continue;
     }
+    pushFieldMismatch({
+      mismatches,
+      id: `${direction}-prover`,
+      field: "governancePlanCanonicalSha256",
+      expected: expectedGovernancePlanSha256 || null,
+      observed:
+        readFirstString(
+          binding,
+          "governancePlanCanonicalSha256",
+          "governance_plan_canonical_sha256",
+        ) || null,
+      detail:
+        "Smoke-readiness prover governance binding does not match the actual reviewed governance plan.",
+    });
+    pushFieldMismatch({
+      mismatches,
+      id: `${direction}-prover`,
+      field: "orderedInitializationEvidenceSha256",
+      expected: expectedOrderedInitializationSha256 || null,
+      observed:
+        readFirstString(
+          binding,
+          "orderedInitializationEvidenceSha256",
+          "ordered_initialization_evidence_sha256",
+        ) || null,
+      detail:
+        "Smoke-readiness prover governance binding does not match the actual loaded ordered-initialization evidence.",
+    });
   }
   const ok = mismatches.length === 0 && missingEvidence.length === 0;
   return makeCheck(
     "smoke-readiness-artifact-consistency",
     ok,
     ok
-      ? "Solana smoke-readiness report matches the current preflight and prover bundle evidence."
-      : "Solana smoke-readiness report is stale or missing current preflight/prover evidence.",
+      ? "Solana smoke-readiness report matches the exact public preflight and governed prover evidence."
+      : "Solana smoke-readiness report is stale or missing exact public/governed prover evidence.",
     {
-      smokeReadinessPath,
-      preflightReportPath,
-      proofMaterialBundlePath,
+      smokeReadinessPath: smokeReadinessPath
+        ? "[public-report-supplied]"
+        : null,
+      preflightReportPath: preflightReportPath
+        ? "[public-report-supplied]"
+        : null,
+      governancePlanPath: governancePlanPath
+        ? "[public-report-supplied]"
+        : null,
+      orderedInitializationEvidencePath: orderedInitializationEvidencePath
+        ? "[public-report-supplied]"
+        : null,
+      expectedGovernancePlanSha256: isNonzeroHex32(expectedGovernancePlanSha256)
+        ? expectedGovernancePlanSha256
+        : null,
+      expectedOrderedInitializationSha256: isNonzeroHex32(
+        expectedOrderedInitializationSha256,
+      )
+        ? expectedOrderedInitializationSha256
+        : null,
       smokeClaimsReady,
       missingEvidence,
       mismatches,
@@ -6692,1002 +8332,369 @@ export const checkSmokeReadinessArtifactConsistency = ({
   );
 };
 
-const solanaSmokeReadinessNextRequiredAction = (smokeReadinessCheck) => {
-  if (smokeReadinessCheck?.status === "pass") {
-    return null;
-  }
-  const missingIds = new Set(
-    readFirstArray(
-      smokeReadinessCheck?.evidence,
-      "missingProductionInputs",
-      "missing_production_inputs",
-    )
-      .map((input) => readFirstString(input, "id"))
-      .filter(Boolean),
-  );
-  const needsWalletConnect = missingIds.has("walletconnect-project-id");
-  const needsProductionProverPackages =
-    missingIds.has("solana-destination-production-prover-package") ||
-    missingIds.has("solana-source-production-prover-package");
-  if (needsWalletConnect && needsProductionProverPackages) {
-    return "Run Solana smoke-readiness with a WalletConnect project ID and governed Solana production prover packages.";
-  }
-  if (needsProductionProverPackages) {
-    return "Publish governed Solana production prover packages and rerun Solana smoke-readiness.";
-  }
-  if (needsWalletConnect) {
-    return "Run Solana smoke-readiness with a WalletConnect project ID.";
-  }
-  return "Run Solana smoke-readiness with WalletConnect, live Solana RPC, and browser-safe destination/source prover module URLs.";
-};
+const publicReportPath = (file) =>
+  typeof file === "string" && file.trim() ? "[public-report-supplied]" : null;
 
-const commandPath = (file, fallback) => {
-  const candidate = typeof file === "string" && file.trim() ? file : fallback;
-  if (typeof candidate !== "string" || !candidate.trim()) {
-    return "";
+const safeNonnegativeInteger = (value) =>
+  Number.isSafeInteger(value) && value >= 0 ? value : 0;
+
+const safeSha256 = (value) => (isHex32(value) ? trimString(value) : null);
+
+const safeArtifactFactSummary = (fact, kind) => {
+  const summary = {
+    path: publicReportPath(fact?.path),
+    exists: fact?.exists === true,
+    size: safeNonnegativeInteger(fact?.size),
+    sha256: safeSha256(fact?.sha256),
+  };
+  if (kind === "mp4") {
+    const media = isRecord(fact?.media) ? fact.media : null;
+    const embeddedSubtitle = isRecord(media?.embeddedSubtitle)
+      ? media.embeddedSubtitle
+      : null;
+    return {
+      ...summary,
+      media: {
+        present: media !== null,
+        formatOk: media?.formatOk === true,
+        hasVideo: media?.hasVideo === true,
+        hasAudio: media?.hasAudio === true,
+        hasEmbeddedSubtitle: media?.hasEmbeddedSubtitle === true,
+        h264VideoPresent:
+          Array.isArray(media?.streams) &&
+          media.streams.some(
+            (stream) =>
+              stream?.codecType === "video" && stream?.codecName === "h264",
+          ),
+        streamCount: Array.isArray(media?.streams) ? media.streams.length : 0,
+        embeddedSubtitle: {
+          present: embeddedSubtitle !== null,
+          extracted: embeddedSubtitle?.extracted === true,
+          cueCount: safeNonnegativeInteger(embeddedSubtitle?.cueCount),
+          cueTextSha256: safeSha256(embeddedSubtitle?.cueTextSha256),
+          cueTimelineSha256: safeSha256(embeddedSubtitle?.cueTimelineSha256),
+        },
+      },
+    };
   }
-  return path.relative(repoRoot, path.resolve(candidate)).replace(/\\/gu, "/");
-};
-
-const buildProductionGateActionDetails = ({
-  checks,
-  activationPackageReport,
-  operatorHandoffReport,
-  smokeReadinessReport,
-  productionGateReportPath = null,
-  smokeReadinessPath = null,
-  activationPackagePath = null,
-  operatorHandoffPath = null,
-}) => {
-  const actionSources = [
-    { report: activationPackageReport, source: "activation-package" },
-    { report: operatorHandoffReport, source: "operator-handoff" },
-  ];
-  const smokeMissingInputIds = readFirstArray(
-    smokeReadinessReport,
-    "missingProductionInputs",
-    "missing_production_inputs",
-  )
-    .map((input) => readFirstString(input, "id"))
-    .filter(Boolean);
-  const explicitPublicNodeArtifactDetail = findActionDetail(actionSources, [
-    "provide-explicit-taira-public-node-target",
-  ]);
-  const publishReadinessBlockerIds = readFirstArray(
-    checks.find((check) => check.id === "publish-readiness-ready")?.evidence,
-    "blockerIds",
-    "blocker_ids",
-  )
-    .map((blocker) =>
-      typeof blocker === "string" ? blocker : readFirstString(blocker, "id"),
-    )
-    .filter(Boolean);
-  const needsExplicitPublicNodeRepair = publishReadinessBlockerIds.some((id) =>
-    /^taira-(?:explicit-public-node-target|public-node-)/u.test(id),
-  );
-  return [
-    productionGateAction({
-      id: "activate-public-solana-lane",
-      title: "Activate public Solana SCCP lane",
-      detail:
-        "Activate the public TAIRA Solana SCCP lane with immutable verifier and trust-anchor evidence.",
-      checkIds: [
-        "public-preflight-ready",
-        "public-solana-lane-ready",
-        "public-verifier-programdata-immutable",
-        "public-bridge-source-programdata-immutable",
-      ],
-      checks,
-      artifactDetail: findActionDetail(actionSources, [
-        "activate-public-solana-lane",
-      ]),
-      command: [
-        "npm",
-        "run",
-        "sccp:solana:deploy",
-        "--",
-        "lane-activation-proposal",
-      ],
-      requiredInputs: [
-        "public-solana-lane-activation",
-        "immutable-solana-verifier-evidence",
-        "active-solana-trust-anchor",
-      ],
-    }),
-    productionGateAction({
-      id: "refresh-solana-activation-package",
-      title: "Refresh Solana activation package",
-      detail:
-        "Regenerate the Solana activation package after proof-material or lane proposal artifacts change.",
-      checkIds: ["activation-artifact-consistency"],
-      checks,
-      artifactDetail: findActionDetail(actionSources, [
-        "refresh-lane-activation-request",
-        "refresh-operator-handoff",
-      ]),
-      command: ["npm", "run", "sccp:solana:deploy", "--", "activation-package"],
-      requiredInputs: [
-        "current-proof-material-ceremony-package",
-        "current-lane-activation-proposal",
-      ],
-    }),
-    productionGateAction({
-      id: "refresh-solana-lane-activation-proposal",
-      title: "Refresh Solana lane activation proposal",
-      detail:
-        "Regenerate the Solana lane activation proposal after the lane activation request changes.",
-      checkIds: ["lane-activation-proposal-artifact-consistency"],
-      checks,
-      command: [
-        "npm",
-        "run",
-        "sccp:solana:deploy",
-        "--",
-        "lane-activation-proposal",
-      ],
-      requiredInputs: ["current-lane-activation-request"],
-    }),
-    productionGateAction({
-      id: "publish-taira-solana-route-manifest",
-      title: "Publish TAIRA Solana route manifest",
-      detail:
-        "Publish the production-ready public TAIRA taira_sol_xor manifest with a route-manager signer.",
-      checkIds: [
-        "public-preflight-ready",
-        "route-publication-request-ready",
-        "publish-readiness-ready",
-      ],
-      checks,
-      artifactDetail: findActionDetail(actionSources, [
-        "publish-taira-solana-route-manifest",
-        "refresh-route-publication-request",
-      ]),
-      command: [
-        "SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY=<runtime-only-private-key-hex>",
-        "npm",
-        "run",
-        "sccp:solana:deploy",
-        "--",
-        "publish-route-manifest",
-        "--submit",
-        "true",
-        "--authority",
-        "<taira-route-manager-account-id>",
-      ],
-      requiredInputs: [
-        "taira-route-manager-i105-account",
-        "CanManageSccpRouteManifests",
-        "SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY",
-      ],
-    }),
-    ...(needsExplicitPublicNodeRepair
-      ? [
-          productionGateAction({
-            id: "provide-explicit-taira-public-node-target",
-            title: "Provide explicit TAIRA public node",
-            detail:
-              "Repair and use the exact TAIRA public-node root and matching /v1/mcp endpoint before route publication readiness can pass.",
-            checkIds: ["publish-readiness-ready"],
-            checks,
-            artifactDetail: explicitPublicNodeArtifactDetail,
-            command: [
-              "SCCP_TAIRA_ROUTE_MANIFEST_AUTHORITY=<taira-route-manager-account-id>",
-              "npm",
-              "run",
-              "sccp:solana:deploy",
-              "--",
-              "publish-readiness",
-              "--torii-url",
-              "https://<taira-public-node-root>",
-              "--mcp-url",
-              "https://<taira-public-node-root>/v1/mcp",
-            ],
-            requiredInputs: [
-              "taira-public-node-root-url",
-              "taira-public-node-mcp-url",
-            ],
-          }),
-        ]
-      : []),
-    productionGateAction({
-      id: "refresh-solana-route-publication-request",
-      title: "Refresh Solana route-publication request",
-      detail:
-        "Regenerate the Solana route-publication request after manifest, publish-readiness, or proof-bundle artifacts change.",
-      checkIds: ["route-publication-request-artifact-consistency"],
-      checks,
-      command: [
-        "npm",
-        "run",
-        "sccp:solana:deploy",
-        "--",
-        "route-publication-request",
-        "--authority",
-        "<taira-route-manager-account-id>",
-      ],
-      requiredInputs: [
-        "current-solana-route-manifest",
-        "current-solana-publish-readiness",
-        "current-proof-material-bundle",
-      ],
-    }),
-    productionGateAction({
-      id: "refresh-solana-route-publish-blocked",
-      title: "Refresh Solana route publish-blocked report",
-      detail:
-        "Rerun the Solana route publish attempt after publish-readiness or production requirements change.",
-      checkIds: ["route-publish-blocked-artifact-consistency"],
-      checks,
-      command: [
-        "npm",
-        "run",
-        "sccp:solana:deploy",
-        "--",
-        "publish-route-manifest",
-        "--submit",
-        "true",
-        "--authority",
-        "<taira-route-manager-account-id>",
-      ],
-      requiredInputs: [
-        "current-solana-route-manifest",
-        "current-solana-publish-readiness",
-        "current-production-requirements",
-      ],
-    }),
-    productionGateAction({
-      id: "refresh-solana-production-requirements",
-      title: "Refresh Solana production requirements",
-      detail:
-        "Regenerate Solana production requirements after post-deploy, prover, or inventory artifacts change.",
-      checkIds: ["production-requirements-artifact-consistency"],
-      checks,
-      command: [
-        "npm",
-        "run",
-        "sccp:solana:deploy",
-        "--",
-        "production-requirements",
-      ],
-      requiredInputs: [
-        "current-post-deploy-evidence",
-        "current-prover-readiness",
-        "current-production-material-inventory",
-      ],
-    }),
-    productionGateAction({
-      id: "replace-destination-proof-admission",
-      title: "Replace destination proof admission",
-      detail:
-        "Replace fail-closed Solana admission with governed-zk-verifier-v1 proof admission.",
-      checkIds: ["destination-proof-admission"],
-      checks,
-      command: [
-        "npm",
-        "run",
-        "sccp:solana:deploy",
-        "--",
-        "production-manifest-patch",
-        "--confirm-governed-solana-material",
-        "true",
-        "--apply",
-        "true",
-      ],
-      requiredInputs: ["governed-solana-destination-proof-admission"],
-    }),
-    productionGateAction({
-      id: "publish-governed-solana-proof-material",
-      title: "Publish governed Solana proof material",
-      detail:
-        "Publish governed Solana source proof packages, final TOML evidence, and production-ready browser prover sidecars.",
-      checkIds: [
-        "production-requirements-ready",
-        "destination-proof-admission",
-        "proof-material-ceremony-package-ready",
-        "proof-material-bundle-ready",
-      ],
-      checks,
-      artifactDetail: findActionDetail(actionSources, [
-        "complete-governed-proof-material",
-        "complete-governed-proof-material-and-production-manifest",
-      ]),
-      command: [
-        "npm",
-        "run",
-        "sccp:solana:deploy",
-        "--",
-        "proof-material-ceremony-package",
-      ],
-      requiredInputs: [
-        "governed-solana-source-proof-material",
-        "reviewed-final-solana-offline-toml",
-        "production-ready-solana-browser-prover-sidecars",
-      ],
-    }),
-    productionGateAction({
-      id: "refresh-solana-proof-material-ceremony-package",
-      title: "Refresh Solana proof-material ceremony package",
-      detail:
-        "Regenerate the Solana proof-material ceremony package after proof bundle or source-burn scaffold artifacts change.",
-      checkIds: ["proof-material-ceremony-artifact-consistency"],
-      checks,
-      command: [
-        "npm",
-        "run",
-        "sccp:solana:deploy",
-        "--",
-        "proof-material-ceremony-package",
-      ],
-      requiredInputs: [
-        "current-proof-material-bundle",
-        "current-source-burn-proof-scaffold",
-      ],
-    }),
-    productionGateAction({
-      id: "refresh-solana-proof-material-bundle",
-      title: "Refresh Solana proof-material bundle",
-      detail:
-        "Regenerate the Solana proof-material bundle after the proof-material request changes.",
-      checkIds: ["proof-material-bundle-artifact-consistency"],
-      checks,
-      command: [
-        "npm",
-        "run",
-        "sccp:solana:deploy",
-        "--",
-        "proof-material-bundle",
-      ],
-      requiredInputs: ["current-proof-material-request"],
-    }),
-    productionGateAction({
-      id: "refresh-solana-source-material-handoff-verification",
-      title: "Refresh Solana source-material handoff verification",
-      detail:
-        "Re-run live Solana source-material handoff verification after the handoff package changes.",
-      checkIds: ["source-material-handoff-artifact-consistency"],
-      checks,
-      command: [
-        "npm",
-        "run",
-        "sccp:solana:deploy",
-        "--",
-        "verify-source-material-handoff",
-      ],
-      requiredInputs: ["current-source-material-handoff"],
-    }),
-    productionGateAction({
-      id: "refresh-solana-source-burn-proof-scaffold",
-      title: "Refresh Solana source-burn proof scaffold",
-      detail:
-        "Re-run source-burn-readiness and source-burn-proof-request after the selected source burn evidence changes.",
-      checkIds: ["source-burn-artifact-consistency"],
-      checks,
-      command: [
-        "npm",
-        "run",
-        "sccp:solana:deploy",
-        "--",
-        "source-burn-proof-request",
-      ],
-      requiredInputs: [
-        "current-source-burn-readiness",
-        "current-source-burn-submission",
-      ],
-    }),
-    productionGateAction({
-      id: "configure-route-manager-runtime",
-      title: "Configure route-manager runtime",
-      detail:
-        "Run publish-readiness with a permitted TAIRA route-manager authority and runtime-only signing key.",
-      checkIds: [
-        "publish-readiness-ready",
-        "route-manager-access-ready",
-        "operator-handoff-ready",
-      ],
-      checks,
-      artifactDetail: findActionDetail(actionSources, [
-        "grant-taira-route-manager-access",
-        "set-runtime-route-manager-private-key",
-      ]),
-      command: [
-        "SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY=<runtime-only-private-key-hex>",
-        "npm",
-        "run",
-        "sccp:solana:deploy",
-        "--",
-        "publish-readiness",
-        "--authority",
-        "<taira-route-manager-account-id>",
-      ],
-      requiredInputs: [
-        "taira-route-manager-i105-account",
-        "CanManageSccpRouteManifests",
-        "SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY",
-      ],
-    }),
-    productionGateAction({
-      id: "refresh-solana-route-manager-access-request",
-      title: "Refresh Solana route-manager access request",
-      detail:
-        "Regenerate the Solana route-manager access request after publication, proof, runtime, or requirements artifacts change.",
-      checkIds: ["route-manager-access-artifact-consistency"],
-      checks,
-      command: [
-        "npm",
-        "run",
-        "sccp:solana:deploy",
-        "--",
-        "route-manager-access-request",
-        "--authority",
-        "<taira-route-manager-account-id>",
-      ],
-      requiredInputs: [
-        "current-route-publication-request",
-        "current-solana-publish-readiness",
-        "current-production-requirements",
-        "current-proof-material-bundle",
-      ],
-    }),
-    productionGateAction({
-      id: "refresh-solana-operator-handoff",
-      title: "Refresh Solana operator handoff",
-      detail:
-        "Regenerate the Solana operator handoff after proof, publication, access, or lane artifacts change.",
-      checkIds: ["operator-handoff-artifact-consistency"],
-      checks,
-      artifactDetail: findActionDetail(actionSources, [
-        "refresh-operator-handoff",
-        "refresh-route-publication-request",
-        "refresh-route-manager-access-request",
-      ]),
-      command: [
-        "npm",
-        "run",
-        "sccp:solana:deploy",
-        "--",
-        "operator-handoff",
-        "--authority",
-        "<taira-route-manager-account-id>",
-      ],
-      requiredInputs: [
-        "current-proof-material-ceremony-package",
-        "current-route-publication-request",
-        "current-route-manager-access-request",
-        "current-lane-activation-proposal",
-      ],
-    }),
-    productionGateAction({
-      id: "run-solana-smoke-readiness",
-      title: "Run Solana smoke-readiness",
-      detail: solanaSmokeReadinessNextRequiredAction(
-        checks.find((check) => check.id === "smoke-readiness-ready"),
-      ),
-      checkIds: ["smoke-readiness-ready"],
-      checks,
-      command: [
-        "npm",
-        "run",
-        "e2e:sccp:solana-smoke-readiness",
-        "--",
-        "--walletconnect-project-id",
-        "<32-hex-walletconnect-project-id>",
-        "--destination-prover-module-url",
-        "<https-or-package-relative-solana-destination-prover-module>",
-        "--source-prover-module-url",
-        "<https-or-package-relative-solana-source-prover-module>",
-        "--skip-solana-rpc",
-        "false",
-      ],
-      requiredInputs: smokeMissingInputIds,
-    }),
-    productionGateAction({
-      id: "refresh-solana-smoke-readiness",
-      title: "Refresh Solana smoke-readiness",
-      detail:
-        "Regenerate Solana smoke-readiness after public preflight or prover package artifacts change.",
-      checkIds: ["smoke-readiness-artifact-consistency"],
-      checks,
-      command: [
-        "npm",
-        "run",
-        "e2e:sccp:solana-smoke-readiness",
-        "--",
-        "--allow-incomplete",
-        "true",
-      ],
-      requiredInputs: [
-        "current-public-solana-route-preflight",
-        "current-solana-prover-modules-and-sidecars",
-      ],
-    }),
-    productionGateAction({
-      id: "refresh-solana-deployment-video",
-      title: "Refresh Solana deployment video",
-      detail:
-        "Regenerate the Solana deployment MP4 and subtitles after activation or smoke-readiness artifacts change.",
-      checkIds: ["deployment-video-artifact-consistency"],
-      checks,
-      command: ["npm", "run", "sccp:solana:deploy", "--", "deployment-video"],
-      requiredInputs: [
-        "current-solana-activation-package",
-        "current-solana-smoke-readiness",
-      ],
-    }),
-    productionGateAction({
-      id: "record-bidirectional-live-video",
-      title: "Record bidirectional live-transfer MP4",
-      detail:
-        "Record a real bidirectional TAIRA <-> Solana SCCP MP4 after public preflight, proof material, route publication, smoke-readiness, and completed transfer evidence are available.",
-      checkIds: ["live-bidirectional-video"],
-      checks,
-      command: [
-        "npm",
-        "run",
-        "e2e:sccp:solana-video",
-        "--",
-        "--live-evidence",
-        "<completed-solana-bidirectional-live-evidence.json>",
-        "--production-gate",
-        commandPath(
-          productionGateReportPath,
-          path.join(DEFAULT_OUTPUT_DIR, REPORT_FILE),
-        ),
-        "--smoke-readiness",
-        commandPath(smokeReadinessPath, DEFAULT_SMOKE_READINESS_PATH),
-        "--activation-package",
-        commandPath(activationPackagePath, DEFAULT_ACTIVATION_PACKAGE_PATH),
-        "--operator-handoff",
-        commandPath(operatorHandoffPath, DEFAULT_OPERATOR_HANDOFF_PATH),
-        "--skip-solana-rpc",
-        "false",
-      ],
-      requiredInputs: [
-        "public-solana-route-preflight-ready",
-        "walletconnect-project-id",
-        "production-solana-prover-packages",
-        "funded-taira-and-solana-test-wallets",
-        "completed-solana-bidirectional-live-evidence",
-      ],
-    }),
-  ].filter(Boolean);
-};
-
-const auditItem = ({
-  id,
-  requirement,
-  checkIds,
-  evidence = {},
-  blockers = [],
-  checks,
-}) => {
-  const relatedChecks = checkIds.map((checkId) =>
-    checks.find((check) => check.id === checkId),
-  );
-  const missingCheckIds = checkIds.filter(
-    (checkId, index) => !relatedChecks[index],
-  );
-  const failed = relatedChecks.filter((check) => check?.status !== "pass");
-  const failedCheckIds = failed.map((check) => check.id);
-  const blockerIds = blockers
-    .map((blocker) => {
-      if (typeof blocker === "string") {
-        return blocker;
-      }
-      if (isRecord(blocker)) {
-        return readFirstString(blocker, "id");
-      }
-      return "";
-    })
-    .filter(Boolean);
-  const proven =
-    missingCheckIds.length === 0 &&
-    failedCheckIds.length === 0 &&
-    blockers.length === 0;
+  const vtt = isRecord(fact?.vtt) ? fact.vtt : null;
   return {
-    id,
-    requirement,
-    status: proven ? "proven" : "incomplete",
-    checkIds,
-    missingCheckIds,
-    failedCheckIds,
-    blockerIds,
-    unresolvedIds: [...missingCheckIds, ...failedCheckIds, ...blockerIds],
-    evidence,
-    blockers,
+    ...summary,
+    vtt: {
+      present: vtt !== null,
+      webvtt: vtt?.webvtt === true,
+      cueCount: safeNonnegativeInteger(vtt?.cueCount),
+      cueTextSha256: safeSha256(vtt?.cueTextSha256),
+      cueTimelineSha256: safeSha256(vtt?.cueTimelineSha256),
+    },
   };
 };
 
-const buildCompletionAudit = ({ checks, deploymentVideoTranscript }) => {
-  const deployment = readFirstRecord(deploymentVideoTranscript, "deployment");
-  const routePublicationRequestCheck = checks.find(
-    (check) => check.id === "route-publication-request-ready",
-  );
-  const productionRequirementsArtifactConsistencyCheck = checks.find(
-    (check) => check.id === "production-requirements-artifact-consistency",
-  );
-  const routePublicationArtifactConsistencyCheck = checks.find(
-    (check) => check.id === "route-publication-request-artifact-consistency",
-  );
-  const routePublishBlockedArtifactConsistencyCheck = checks.find(
-    (check) => check.id === "route-publish-blocked-artifact-consistency",
-  );
-  const routeManagerAccessArtifactConsistencyCheck = checks.find(
-    (check) => check.id === "route-manager-access-artifact-consistency",
-  );
-  const sourceMaterialHandoffArtifactConsistencyCheck = checks.find(
-    (check) => check.id === "source-material-handoff-artifact-consistency",
-  );
-  const sourceBurnArtifactConsistencyCheck = checks.find(
-    (check) => check.id === "source-burn-artifact-consistency",
-  );
-  const activationPackageCheck = checks.find(
-    (check) => check.id === "activation-package-ready",
-  );
-  const laneActivationProposalCheck = checks.find(
-    (check) => check.id === "lane-activation-proposal-ready",
-  );
-  const laneActivationProposalArtifactConsistencyCheck = checks.find(
-    (check) => check.id === "lane-activation-proposal-artifact-consistency",
-  );
-  const activationArtifactConsistencyCheck = checks.find(
-    (check) => check.id === "activation-artifact-consistency",
-  );
-  const operatorHandoffArtifactConsistencyCheck = checks.find(
-    (check) => check.id === "operator-handoff-artifact-consistency",
-  );
-  const proofMaterialCeremonyArtifactConsistencyCheck = checks.find(
-    (check) => check.id === "proof-material-ceremony-artifact-consistency",
-  );
-  const proofMaterialBundleArtifactConsistencyCheck = checks.find(
-    (check) => check.id === "proof-material-bundle-artifact-consistency",
-  );
-  const smokeReadinessArtifactConsistencyCheck = checks.find(
-    (check) => check.id === "smoke-readiness-artifact-consistency",
-  );
-  const deploymentVideoArtifactConsistencyCheck = checks.find(
-    (check) => check.id === "deployment-video-artifact-consistency",
-  );
-  const deploymentVideoCheck = checks.find(
-    (check) => check.id === "deployment-video-present",
-  );
-  const productionManifestPatch = readFirstRecord(
-    deployment,
-    "productionManifestPatch",
-    "production_manifest_patch",
-  );
-  const noFakeProofBlockers = [];
-  if (
-    productionManifestPatch?.productionProofMaterialGenerated === true ||
-    productionManifestPatch?.production_proof_material_generated === true
-  ) {
-    noFakeProofBlockers.push(
-      "Production manifest patch claims generated proof material.",
-    );
-  }
-  return [
-    ...(routePublicationRequestCheck
-      ? [
-          auditItem({
-            id: "route-manager-publication-handoff",
-            requirement:
-              "Package the non-secret Solana route publication request for route-manager review.",
-            checkIds: [
-              "route-publication-request-ready",
-              ...(routePublicationArtifactConsistencyCheck
-                ? ["route-publication-request-artifact-consistency"]
-                : []),
-            ],
-            evidence: {
-              routePublicationRequest:
-                routePublicationRequestCheck.evidence ?? {},
-              routePublicationArtifactConsistency:
-                routePublicationArtifactConsistencyCheck?.evidence ?? null,
-            },
-            checks,
-          }),
-        ]
-      : []),
-    auditItem({
-      id: "solana-testnet-deployment",
-      requirement:
-        "Create and deploy real Solana SCCP testnet programs, mint, state, canary, and source-burn evidence.",
-      checkIds: [
-        "deployment-video-present",
-        "source-material-handoff-verified",
-        ...(sourceMaterialHandoffArtifactConsistencyCheck
-          ? ["source-material-handoff-artifact-consistency"]
-          : []),
-        "source-burn-proof-request-ready",
-        ...(sourceBurnArtifactConsistencyCheck
-          ? ["source-burn-artifact-consistency"]
-          : []),
-      ],
-      evidence: {
-        verifierProgramId:
-          deployment?.verifierProgramId ?? deployment?.verifier_program_id,
-        bridgeProgramId:
-          deployment?.bridgeProgramId ?? deployment?.bridge_program_id,
-        sourceBridgeProgramId:
-          deployment?.sourceBridgeProgramId ??
-          deployment?.source_bridge_program_id,
-        tokenMintAddress:
-          deployment?.tokenMintAddress ?? deployment?.token_mint_address,
-        sourceBurnSignature:
-          deployment?.sourceBurnSubmission?.signature ??
-          deployment?.source_burn_submission?.signature ??
-          null,
-        sourceBurnProofRequest:
-          checks.find((check) => check.id === "source-burn-proof-request-ready")
-            ?.evidence ?? null,
-        sourceMaterialHandoffArtifactConsistency:
-          sourceMaterialHandoffArtifactConsistencyCheck?.evidence ?? null,
-        sourceBurnArtifactConsistency:
-          sourceBurnArtifactConsistencyCheck?.evidence ?? null,
-      },
-      checks,
-    }),
-    auditItem({
-      id: "public-taira-route-publication",
-      requirement:
-        "Publish a production-ready public TAIRA taira_sol_xor route manifest.",
-      checkIds: [
-        "public-preflight-ready",
-        "public-solana-lane-ready",
-        "public-verifier-programdata-immutable",
-        "public-bridge-source-programdata-immutable",
-        ...(laneActivationProposalCheck
-          ? ["lane-activation-proposal-ready"]
-          : []),
-        ...(laneActivationProposalArtifactConsistencyCheck
-          ? ["lane-activation-proposal-artifact-consistency"]
-          : []),
-        ...(activationPackageCheck ? ["activation-package-ready"] : []),
-        ...(activationArtifactConsistencyCheck
-          ? ["activation-artifact-consistency"]
-          : []),
-        "publish-readiness-ready",
-        ...(productionRequirementsArtifactConsistencyCheck
-          ? ["production-requirements-artifact-consistency"]
-          : []),
-        "route-manager-access-ready",
-        "operator-handoff-ready",
-        ...(routePublicationArtifactConsistencyCheck
-          ? ["route-publication-request-artifact-consistency"]
-          : []),
-        ...(routePublishBlockedArtifactConsistencyCheck
-          ? ["route-publish-blocked-artifact-consistency"]
-          : []),
-        ...(routeManagerAccessArtifactConsistencyCheck
-          ? ["route-manager-access-artifact-consistency"]
-          : []),
-        ...(operatorHandoffArtifactConsistencyCheck
-          ? ["operator-handoff-artifact-consistency"]
-          : []),
-      ],
-      evidence: {
-        publicPreflight:
-          checks.find((check) => check.id === "public-preflight-ready")
-            ?.evidence ?? null,
-        publicSolanaLane:
-          checks.find((check) => check.id === "public-solana-lane-ready")
-            ?.evidence ?? null,
-        activationPackage: activationPackageCheck?.evidence ?? null,
-        laneActivationProposal: laneActivationProposalCheck?.evidence ?? null,
-        laneActivationProposalArtifactConsistency:
-          laneActivationProposalArtifactConsistencyCheck?.evidence ?? null,
-        activationArtifactConsistency:
-          activationArtifactConsistencyCheck?.evidence ?? null,
-        publishReadiness:
-          checks.find((check) => check.id === "publish-readiness-ready")
-            ?.evidence ?? null,
-        productionRequirementsArtifactConsistency:
-          productionRequirementsArtifactConsistencyCheck?.evidence ?? null,
-        routeManagerAccess:
-          checks.find((check) => check.id === "route-manager-access-ready")
-            ?.evidence ?? null,
-        routeManagerAccessArtifactConsistency:
-          routeManagerAccessArtifactConsistencyCheck?.evidence ?? null,
-        routePublicationArtifactConsistency:
-          routePublicationArtifactConsistencyCheck?.evidence ?? null,
-        routePublishBlockedArtifactConsistency:
-          routePublishBlockedArtifactConsistencyCheck?.evidence ?? null,
-        operatorHandoff:
-          checks.find((check) => check.id === "operator-handoff-ready")
-            ?.evidence ?? null,
-        operatorHandoffArtifactConsistency:
-          operatorHandoffArtifactConsistencyCheck?.evidence ?? null,
-      },
-      checks,
-    }),
-    auditItem({
-      id: "governed-proof-material",
-      requirement:
-        "Use governed Solana source/destination proof material instead of placeholder or envelope-only proof paths.",
-      checkIds: [
-        "production-requirements-ready",
-        ...(productionRequirementsArtifactConsistencyCheck
-          ? ["production-requirements-artifact-consistency"]
-          : []),
-        "destination-proof-admission",
-        ...checks
-          .filter(
-            (check) => check.id === "proof-material-ceremony-package-ready",
-          )
-          .map((check) => check.id),
-        ...(proofMaterialCeremonyArtifactConsistencyCheck
-          ? ["proof-material-ceremony-artifact-consistency"]
-          : []),
-        "proof-material-bundle-ready",
-        ...(proofMaterialBundleArtifactConsistencyCheck
-          ? ["proof-material-bundle-artifact-consistency"]
-          : []),
-      ],
-      evidence: {
-        productionRequirements:
-          checks.find((check) => check.id === "production-requirements-ready")
-            ?.evidence ?? null,
-        productionRequirementsArtifactConsistency:
-          productionRequirementsArtifactConsistencyCheck?.evidence ?? null,
-        destinationProofAdmission:
-          checks.find((check) => check.id === "destination-proof-admission")
-            ?.evidence ?? null,
-        proofMaterialBundle:
-          checks.find((check) => check.id === "proof-material-bundle-ready")
-            ?.evidence ?? null,
-        proofMaterialBundleArtifactConsistency:
-          proofMaterialBundleArtifactConsistencyCheck?.evidence ?? null,
-        proofMaterialCeremonyPackage:
-          checks.find(
-            (check) => check.id === "proof-material-ceremony-package-ready",
-          )?.evidence ?? null,
-        proofMaterialCeremonyArtifactConsistency:
-          proofMaterialCeremonyArtifactConsistencyCheck?.evidence ?? null,
-      },
-      checks,
-    }),
-    auditItem({
-      id: "wallet-and-prover-smoke-readiness",
-      requirement:
-        "Configure wallet/prover runtime inputs needed for real bidirectional SCCP smoke.",
-      checkIds: [
-        "smoke-readiness-ready",
-        ...(smokeReadinessArtifactConsistencyCheck
-          ? ["smoke-readiness-artifact-consistency"]
-          : []),
-      ],
-      evidence: {
-        smokeReadiness:
-          checks.find((check) => check.id === "smoke-readiness-ready")
-            ?.evidence ?? {},
-        smokeReadinessArtifactConsistency:
-          smokeReadinessArtifactConsistencyCheck?.evidence ?? null,
-      },
-      checks,
-    }),
-    auditItem({
-      id: "bidirectional-live-transfer-video",
-      requirement:
-        "Record a real bidirectional TAIRA <-> Solana SCCP MP4 after public route and proof gates pass.",
-      checkIds: ["live-bidirectional-video"],
-      evidence:
-        checks.find((check) => check.id === "live-bidirectional-video")
-          ?.evidence ?? {},
-      checks,
-    }),
-    auditItem({
-      id: "deployment-walkthrough-video",
-      requirement:
-        "Provide an MP4 with subtitles explaining the real Solana deployment steps.",
-      checkIds: [
-        "deployment-video-present",
-        ...(deploymentVideoArtifactConsistencyCheck
-          ? ["deployment-video-artifact-consistency"]
-          : []),
-        "deployment-video-honest-status",
-      ],
-      evidence:
-        checks.find((check) => check.id === "deployment-video-present")
-          ?.evidence ?? {},
-      checks,
-    }),
-    auditItem({
-      id: "no-fake-completion-claims",
-      requirement:
-        "Do not leave fake proof material or claim production completion before all live gates pass.",
-      checkIds: ["deployment-video-honest-status"],
-      evidence: {
-        productionManifestPatch,
-        deploymentVideoReady: deploymentVideoCheck?.status === "pass",
-      },
-      blockers: noFakeProofBlockers,
-      checks,
-    }),
+const safeLiveEvidenceStatus = (status) => {
+  const fields = isRecord(status?.fields) ? status.fields : {};
+  const fieldValidators = {
+    forwardMessageId: isLiveHex32,
+    forwardTairaSourceTx: isLiveHex32,
+    forwardSolanaTxId: isSolanaSignature,
+    reverseSolanaSourceTx: isSolanaSignature,
+    reverseTairaSettlementTx: isLiveHex32,
+  };
+  const requiredFieldIds = [
+    "forward-message-id",
+    "forward-taira-source-tx",
+    "forward-solana-tx",
+    "reverse-solana-source-tx",
+    "reverse-taira-settlement-tx",
+    "real-capture-sha256",
   ];
+  const requiredFieldIdSet = new Set(requiredFieldIds);
+  const safeFieldIds = (values) =>
+    Array.isArray(values)
+      ? [...new Set(values.filter((value) => requiredFieldIdSet.has(value)))]
+      : [];
+  const duplicateFieldIdPairs = Array.isArray(status?.duplicateFieldIdPairs)
+    ? status.duplicateFieldIdPairs.filter(
+        (pair) =>
+          Array.isArray(pair) &&
+          pair.length === 2 &&
+          pair.every((id) => requiredFieldIdSet.has(id)),
+      )
+    : [];
+  return {
+    ok: status?.ok === true,
+    fields: Object.fromEntries(
+      Object.entries(fieldValidators).map(([key, validate]) => {
+        const value = fields[key];
+        return [key, validate(value) ? trimString(value) : null];
+      }),
+    ),
+    requiredFieldIds,
+    missingFieldIds: safeFieldIds(status?.missingFieldIds),
+    invalidFieldIds: safeFieldIds(status?.invalidFieldIds),
+    distinctOk: status?.distinctOk === true,
+    duplicateFieldIdPairs,
+  };
 };
 
-const sanitizeBlockedLiveVideoDiagnostics = (diagnostics) => {
-  if (!isRecord(diagnostics)) {
-    return null;
-  }
-  const sanitized = Object.fromEntries(
-    Object.entries(diagnostics).filter(([key]) => key !== "productionGate"),
-  );
-  const booleanArtifactStatusFields = [
-    "ready",
-    "productionReady",
-    "submitReady",
-    "readyForLaneGovernanceReview",
-    "publicLaneReady",
-    "productionProofMaterialReady",
-    "productionLaneReady",
-  ];
-  const summarizeArtifactReady = (artifact) =>
-    firstBooleanFlag(
-      artifact?.ready,
-      artifact?.readyForRouteManagerReview,
-      artifact?.readyForOperatorReview,
-      artifact?.readyForLaneGovernanceReview,
-      artifact?.readyForProofMaterialCeremony,
-      artifact?.readyForActivationReview,
-      artifact?.readyToBuildIsi,
-      artifact?.readyToPublish,
-      artifact?.accessReady,
-      artifact?.readyToSubmitWithCurrentRuntime,
-      artifact?.productionActivationReady,
-      artifact?.productionRouteReady,
-      artifact?.productionLaneReady,
-      artifact?.productionProofMaterialReady,
-      artifact?.publicLaneReady,
+const safePolicySummary = (policy, kind) => {
+  const present = isRecord(policy);
+  if (kind === "transcript") {
+    const preflight = readFirstRecord(policy, "preflight");
+    const productionGate = readFirstRecord(
+      policy,
+      "productionGate",
+      "production_gate",
     );
-  const normalizeArtifactSummary = (artifact) => {
-    if (!isRecord(artifact)) {
-      return artifact;
-    }
-    const normalized = { ...artifact, ready: summarizeArtifactReady(artifact) };
-    for (const field of booleanArtifactStatusFields) {
-      normalized[field] = normalized[field] === true;
-    }
-    return normalized;
+    return {
+      present,
+      schemaOk:
+        policy?.schema ===
+        "iroha-demo-sccp-solana-live-video-success-policy/v1",
+      modeOk: policy?.mode === "canonical-fresh-read-only-v1",
+      ready: policy?.ready === true,
+      diagnosticOnlyFalse: policy?.diagnosticOnly === false,
+      readOnly: policy?.readOnly === true,
+      freshPreflightCompleted: policy?.freshPreflightCompleted === true,
+      freshProductionGateCompleted:
+        policy?.freshProductionGateCompleted === true,
+      nativeNetworkClientsUsed: policy?.nativeNetworkClientsUsed === true,
+      canonicalTairaValidatorRoot: policy?.canonicalTairaValidatorRoot === true,
+      canonicalSolanaTestnetRpc: policy?.canonicalSolanaTestnetRpc === true,
+      governancePinReady: policy?.governancePinReady === true,
+      liveCapturePinned: policy?.liveCapturePinned === true,
+      liveCaptureWitnessPinned: policy?.liveCaptureWitnessPinned === true,
+      liveCaptureWitnessSha256: safeSha256(policy?.liveCaptureWitnessSha256),
+      liveCaptureReviewAttestationPinned:
+        policy?.liveCaptureReviewAttestationPinned === true,
+      liveCaptureReviewAttestationSha256: safeSha256(
+        policy?.liveCaptureReviewAttestationSha256,
+      ),
+      preflightReportOverrideFalse: policy?.preflightReportOverride === false,
+      skipSolanaRpcFalse: policy?.skipSolanaRpc === false,
+      prerequisiteReportOverrideCount: readFirstArray(
+        policy,
+        "prerequisiteReportOverrideIds",
+      ).length,
+      problemCount: readFirstArray(policy, "problems").length,
+      preflight: {
+        present: isRecord(preflight),
+        freshlyComputed: preflight?.freshlyComputed === true,
+        suppliedReportUsedFalse: preflight?.suppliedReportUsed === false,
+        skipSolanaRpcFalse: preflight?.skipSolanaRpc === false,
+      },
+      productionGate: {
+        present: isRecord(productionGate),
+        freshlyComputed: productionGate?.freshlyComputed === true,
+        suppliedReportUsedFalse: productionGate?.suppliedReportUsed === false,
+        ready: productionGate?.ready === true,
+        failedCheckCount: readFirstArray(
+          productionGate,
+          "failedCheckIds",
+          "failed_check_ids",
+        ).length,
+        preLiveInputSnapshotSha256: safeSha256(
+          readFirstString(
+            productionGate,
+            "preLiveInputSnapshotSha256",
+            "pre_live_input_snapshot_sha256",
+          ),
+        ),
+      },
+    };
+  }
+  return {
+    present,
+    ready: policy?.ready === true,
+    freshPreflightCompleted: policy?.freshPreflightCompleted === true,
+    preflightEndpointIdentityReady:
+      policy?.preflightEndpointIdentityReady === true,
+    canonicalTairaValidatorRoot: policy?.canonicalTairaValidatorRoot === true,
+    canonicalSolanaTestnetRpc: policy?.canonicalSolanaTestnetRpc === true,
+    governancePinReady: policy?.governancePinReady === true,
+    preflightReportOverrideFalse: policy?.preflightReportOverride === false,
+    skipSolanaRpcFalse: policy?.skipSolanaRpc === false,
+    problemCount: readFirstArray(policy, "problems").length,
   };
-  for (const key of [
-    "activationPackage",
-    "activation_package",
-    "operatorHandoff",
-    "operator_handoff",
-  ]) {
-    const diagnostic = readFirstRecord(sanitized, key);
-    const artifacts = readFirstRecord(diagnostic, "artifacts");
-    if (!isRecord(diagnostic) || !isRecord(artifacts)) {
-      continue;
-    }
-    sanitized[key] = {
-      ...diagnostic,
-      artifacts: Object.fromEntries(
-        Object.entries(artifacts).map(([artifactKey, artifact]) => [
-          artifactKey,
-          normalizeArtifactSummary(artifact),
-        ]),
+};
+
+const safeAuthoritativeRevalidationSummary = (revalidation) => ({
+  present: isRecord(revalidation),
+  ready: revalidation?.ready === true,
+  readOnly: revalidation?.readOnly === true,
+  nativeNetworkClientsUsed: revalidation?.nativeNetworkClientsUsed === true,
+  packageHashesReady: revalidation?.packageHashesReady === true,
+});
+
+const safeMediaArtifactsSummary = (mediaArtifacts) => {
+  const summarizePin = (pin, mediaType) => ({
+    present: isRecord(pin),
+    path: publicReportPath(pin?.path),
+    mediaType: pin?.mediaType === mediaType ? mediaType : null,
+    size: Number.isSafeInteger(pin?.size) && pin.size >= 0 ? pin.size : null,
+    sha256: safeSha256(pin?.sha256),
+  });
+  return {
+    present: isRecord(mediaArtifacts),
+    mp4: summarizePin(mediaArtifacts?.mp4, "video/mp4"),
+    vtt: summarizePin(mediaArtifacts?.vtt, "text/vtt"),
+  };
+};
+
+const safeMediaVerificationSummary = (mediaVerification) => ({
+  present: isRecord(mediaVerification),
+  ready: mediaVerification?.ready === true,
+  videoCodecH264: mediaVerification?.streams?.video?.codec === "h264",
+  verifiedRealCapture:
+    mediaVerification?.sourceCapture?.verifiedRealCapture === true,
+  semanticWitnessReady:
+    mediaVerification?.sourceCapture?.semanticWitnessAnalysis?.ready === true &&
+    mediaVerification?.sourceCapture?.semanticWitnessAnalysis
+      ?.semanticallyBound === true,
+});
+
+const safeSourceCaptureSummary = (sourceCapture) => ({
+  present: isRecord(sourceCapture),
+  verifiedRealCapture: sourceCapture?.verifiedRealCapture === true,
+  mediaType: sourceCapture?.mediaType === "video/mp4" ? "video/mp4" : null,
+  size:
+    Number.isSafeInteger(sourceCapture?.size) && sourceCapture.size > 0
+      ? sourceCapture.size
+      : null,
+  sha256: safeSha256(sourceCapture?.sha256),
+  durationSeconds: Number.isFinite(Number(sourceCapture?.durationSeconds))
+    ? Number(sourceCapture.durationSeconds)
+    : null,
+  sampledFrameCount: safeNonnegativeInteger(sourceCapture?.sampledFrameCount),
+  uniqueFrameCount: safeNonnegativeInteger(sourceCapture?.uniqueFrameCount),
+  sampledFrameSha256: safeSha256(sourceCapture?.sampledFrameSha256),
+  audioSampleCount: safeNonnegativeInteger(sourceCapture?.audioSampleCount),
+  audioSampleSha256: safeSha256(sourceCapture?.audioSampleSha256),
+  videoEssenceSha256: safeSha256(sourceCapture?.videoEssenceSha256),
+  audioEssenceSha256: safeSha256(sourceCapture?.audioEssenceSha256),
+  audioMaxVolumeDb: Number.isFinite(Number(sourceCapture?.audioMaxVolumeDb))
+    ? Number(sourceCapture.audioMaxVolumeDb)
+    : null,
+  semanticWitnessReady:
+    sourceCapture?.semanticWitnessAnalysis?.ready === true &&
+    sourceCapture?.semanticWitnessAnalysis?.semanticallyBound === true,
+  semanticEvidenceBindingSha256: safeSha256(
+    sourceCapture?.semanticWitnessAnalysis?.evidenceBindingSha256,
+  ),
+});
+
+const safeLiveCaptureContentSummary = (analysis) => ({
+  present: isRecord(analysis),
+  ready: analysis?.ready === true,
+  verifiedRealCapture: analysis?.verifiedRealCapture === true,
+  durationSeconds: Number.isFinite(Number(analysis?.durationSeconds))
+    ? Number(analysis.durationSeconds)
+    : null,
+  width: safeNonnegativeInteger(analysis?.width),
+  height: safeNonnegativeInteger(analysis?.height),
+  sampledFrameCount: safeNonnegativeInteger(analysis?.sampledFrameCount),
+  uniqueFrameCount: safeNonnegativeInteger(analysis?.uniqueFrameCount),
+  sampledFrameSha256: safeSha256(analysis?.sampledFrameSha256),
+  audioSampleCount: safeNonnegativeInteger(analysis?.audioSampleCount),
+  audioSampleSha256: safeSha256(analysis?.audioSampleSha256),
+  videoEssenceSha256: safeSha256(analysis?.videoEssenceSha256),
+  audioEssenceSha256: safeSha256(analysis?.audioEssenceSha256),
+  audioMaxVolumeDb: Number.isFinite(Number(analysis?.audioMaxVolumeDb))
+    ? Number(analysis.audioMaxVolumeDb)
+    : null,
+  streamShape: {
+    videoCount: safeNonnegativeInteger(analysis?.streamShape?.videoCount),
+    audioCount: safeNonnegativeInteger(analysis?.streamShape?.audioCount),
+    subtitleCount: safeNonnegativeInteger(analysis?.streamShape?.subtitleCount),
+    expectedSubtitleCount: Number.isSafeInteger(
+      analysis?.streamShape?.expectedSubtitleCount,
+    )
+      ? analysis.streamShape.expectedSubtitleCount
+      : null,
+    subtitleCodec:
+      analysis?.streamShape?.subtitleCodec === "mov_text" ? "mov_text" : null,
+    unexpectedCount: safeNonnegativeInteger(
+      analysis?.streamShape?.unexpectedCount,
+    ),
+  },
+  streamTimeline: {
+    video: {
+      ready: analysis?.streamTimeline?.video?.ready === true,
+      timeBase: analysis?.streamTimeline?.video?.timeBase ?? null,
+      startTime: analysis?.streamTimeline?.video?.startTime ?? null,
+      duration: analysis?.streamTimeline?.video?.duration ?? null,
+      frameCount: safeNonnegativeInteger(
+        analysis?.streamTimeline?.video?.frameCount,
       ),
-    };
-  }
-  for (const key of ["deploymentVideo", "deployment_video"]) {
-    const deploymentVideo = readFirstRecord(sanitized, key);
-    const activationSmokeReadiness = readFirstRecord(
-      deploymentVideo,
-      "activationSmokeReadiness",
-      "activation_smoke_readiness",
-    );
-    if (!isRecord(deploymentVideo) || !isRecord(activationSmokeReadiness)) {
-      continue;
-    }
-    sanitized[key] = {
-      ...deploymentVideo,
-      activationSmokeReadiness: normalizeArtifactSummary(
-        activationSmokeReadiness,
+    },
+    audio: {
+      ready: analysis?.streamTimeline?.audio?.ready === true,
+      timeBase: analysis?.streamTimeline?.audio?.timeBase ?? null,
+      startTime: analysis?.streamTimeline?.audio?.startTime ?? null,
+      duration: analysis?.streamTimeline?.audio?.duration ?? null,
+      frameCount: safeNonnegativeInteger(
+        analysis?.streamTimeline?.audio?.frameCount,
       ),
-    };
-  }
-  return sanitized;
+    },
+  },
+  semanticWitnessReady:
+    analysis?.semanticWitnessAnalysis?.ready === true &&
+    analysis?.semanticWitnessAnalysis?.semanticallyBound === true,
+  semanticEvidenceBindingSha256: safeSha256(
+    analysis?.semanticWitnessAnalysis?.evidenceBindingSha256,
+  ),
+  blockerIds: Array.isArray(analysis?.blockers)
+    ? analysis.blockers.filter(
+        (id) => typeof id === "string" && /^capture-[a-z-]+$/u.test(id),
+      )
+    : [],
+});
+
+const safeSubtitleExplanation = (subtitleExplanation) => {
+  const evidenceMarkerIds = [
+    "route-id",
+    "forward-message-id",
+    "forward-taira-source-tx",
+    "forward-solana-tx",
+    "reverse-solana-source-tx",
+    "reverse-taira-settlement-tx",
+  ];
+  const evidenceMarkerIdSet = new Set(evidenceMarkerIds);
+  const safeMarkerIds = (values) =>
+    Array.isArray(values)
+      ? [...new Set(values.filter((value) => evidenceMarkerIdSet.has(value)))]
+      : [];
+  const safeSteps = (values) =>
+    Array.isArray(values)
+      ? [...new Set(values.filter((value) => [1, 2, 3, 4, 5].includes(value)))]
+      : [];
+  return {
+    ok: subtitleExplanation?.ok === true,
+    cueCount: safeNonnegativeInteger(subtitleExplanation?.cueCount),
+    numberedStepCount: safeNonnegativeInteger(
+      subtitleExplanation?.numberedStepCount,
+    ),
+    cueTextSha256: safeSha256(subtitleExplanation?.cueTextSha256),
+    cueTimelineSha256: safeSha256(subtitleExplanation?.cueTimelineSha256),
+    requiredSteps: safeSteps(subtitleExplanation?.requiredSteps),
+    missingRequiredSteps: safeSteps(subtitleExplanation?.missingRequiredSteps),
+    requiredEvidenceMarkerIds: safeMarkerIds(
+      subtitleExplanation?.requiredEvidenceMarkerIds,
+    ),
+    missingEvidenceMarkerIds: safeMarkerIds(
+      subtitleExplanation?.missingEvidenceMarkerIds,
+    ),
+    missingEvidenceFieldIds: safeMarkerIds(
+      subtitleExplanation?.missingEvidenceFieldIds,
+    ),
+    invalidEvidenceFieldIds: safeMarkerIds(
+      subtitleExplanation?.invalidEvidenceFieldIds,
+    ),
+    duplicateEvidenceFieldIdPairCount: Array.isArray(
+      subtitleExplanation?.duplicateEvidenceFieldIdPairs,
+    )
+      ? subtitleExplanation.duplicateEvidenceFieldIdPairs.length
+      : 0,
+  };
 };
 
 const blockedLiveVideoSubtitleEvidence = ({
@@ -7699,16 +8706,27 @@ const blockedLiveVideoSubtitleEvidence = ({
   const cueTexts = Array.isArray(fact.vtt?.cueTexts) ? fact.vtt.cueTexts : [];
   const combinedText = cueTexts.join("\n");
   const requiredFragments = [
-    "Solana SCCP live video blocked before recording.",
-    "This MP4 is a blocked diagnostic only and is not live transfer evidence.",
-    "Publish the real route manifest and enable Solana wallet/proof execution, then rerun this command.",
+    {
+      id: "blocked-before-recording",
+      text: "Solana SCCP live video blocked before recording.",
+    },
+    {
+      id: "diagnostic-not-live-evidence",
+      text: "This MP4 is a blocked diagnostic only and is not live transfer evidence.",
+    },
+    {
+      id: "rerun-after-prerequisites",
+      text: "Publish the real route manifest and enable Solana wallet/proof execution, then rerun this command.",
+    },
   ];
-  const missingRequiredFragments = requiredFragments.filter(
-    (fragment) =>
-      fact.vtt?.firstCue !== fragment &&
-      fact.vtt?.lastCue !== fragment &&
-      !combinedText.includes(fragment),
-  );
+  const missingRequiredFragmentIds = requiredFragments
+    .filter(
+      ({ text }) =>
+        fact.vtt?.firstCue !== text &&
+        fact.vtt?.lastCue !== text &&
+        !combinedText.includes(text),
+    )
+    .map(({ id }) => id);
   const blockedReason = isRecord(blockedLiveVideoTranscript)
     ? readFirstString(blockedLiveVideoTranscript, "reason")
     : "";
@@ -7723,23 +8741,22 @@ const blockedLiveVideoSubtitleEvidence = ({
       reasonTokens.some((token) => cue.toLowerCase().includes(token)),
     );
   return {
-    path: normalizePath(blockedLiveVideoVttPath),
+    path: publicReportPath(blockedLiveVideoVttPath),
     exists: fact.exists === true,
-    size: Number(fact.size) || 0,
+    size: safeNonnegativeInteger(fact.size),
     webvtt: fact.vtt?.webvtt === true,
-    cueCount: fact.vtt?.cueCount ?? 0,
-    cueTextSha256: fact.vtt?.cueTextSha256 ?? null,
-    firstCue: fact.vtt?.firstCue ?? null,
-    lastCue: fact.vtt?.lastCue ?? null,
-    requiredFragments,
-    missingRequiredFragments,
+    cueCount: safeNonnegativeInteger(fact.vtt?.cueCount),
+    cueTextSha256: safeSha256(fact.vtt?.cueTextSha256),
+    requiredFragmentIds: requiredFragments.map(({ id }) => id),
+    missingRequiredFragmentIds,
+    reasonPresent: Boolean(blockedReason),
     reasonExplained,
     ready:
       fact.exists === true &&
       Number(fact.size) > 0 &&
       fact.vtt?.webvtt === true &&
       Number(fact.vtt?.cueCount ?? 0) >= 10 &&
-      missingRequiredFragments.length === 0 &&
+      missingRequiredFragmentIds.length === 0 &&
       reasonExplained,
   };
 };
@@ -7770,10 +8787,10 @@ const blockedLiveVideoDiagnosticMp4Evidence = ({
     transcriptMp4?.diagnosticOnly === true &&
     transcriptMp4?.notLiveTransferEvidence === true;
   return {
-    path: normalizePath(blockedLiveVideoMp4Path),
+    path: publicReportPath(blockedLiveVideoMp4Path),
     exists: fact.exists === true,
-    size: Number(fact.size) || 0,
-    media: fact.media ?? null,
+    size: safeNonnegativeInteger(fact.size),
+    media: safeArtifactFactSummary(fact, "mp4").media,
     diagnosticFlagsReady,
     ready:
       fact.exists === true &&
@@ -7810,7 +8827,7 @@ const liveVideoDiagnosticFlagEvidence = ({
     "videoArtifacts",
     "video_artifacts",
   )
-    .map((artifact, index) => {
+    .map((artifact) => {
       if (!isRecord(artifact)) {
         return null;
       }
@@ -7840,21 +8857,23 @@ const liveVideoDiagnosticFlagEvidence = ({
       ) {
         return null;
       }
-      return {
-        index,
-        path: normalizedPath,
-        mediaType: readFirstString(artifact, "mediaType", "media_type") || null,
-        blockedDiagnosticPath,
-        diagnosticOnly,
-        notLiveTransferEvidence,
-      };
+      return { blockedDiagnosticPath, diagnosticOnly, notLiveTransferEvidence };
     })
     .filter(Boolean);
   return {
     transcriptDiagnosticVideoOnly,
     transcriptNotLiveTransferEvidence,
-    blockedArtifactPaths,
-    diagnosticArtifacts,
+    blockedArtifactPathCount: blockedArtifactPaths.length,
+    diagnosticArtifactCount: diagnosticArtifacts.length,
+    blockedDiagnosticArtifactCount: diagnosticArtifacts.filter(
+      (artifact) => artifact.blockedDiagnosticPath,
+    ).length,
+    diagnosticOnlyArtifactCount: diagnosticArtifacts.filter(
+      (artifact) => artifact.diagnosticOnly,
+    ).length,
+    notLiveTransferEvidenceArtifactCount: diagnosticArtifacts.filter(
+      (artifact) => artifact.notLiveTransferEvidence,
+    ).length,
     ready:
       !transcriptDiagnosticVideoOnly &&
       !transcriptNotLiveTransferEvidence &&
@@ -7870,37 +8889,22 @@ export const buildSolanaProductionGateSuccessExecutionPolicy = ({
   preflightReportOverride = false,
   freshPreflightCompleted = false,
   preflightReport = null,
-  publishReadinessReport = null,
-  generatedHandoffPinsReady = true,
+  governancePlan = null,
+  governanceRegistration = null,
+  governanceActivation = null,
+  governanceEvidenceReady = false,
 } = {}) => {
-  const publicEndpoint = readFirstRecord(
-    publishReadinessReport,
-    "publicEndpoint",
-    "public_endpoint",
+  const registrationToriiUrl = readFirstString(
+    governanceRegistration,
+    "torii_url",
   );
-  const target = readFirstRecord(publicEndpoint, "target");
-  const governancePinnedToriiUrl =
-    readFirstString(target, "toriiUrl", "torii_url") ||
-    readFirstString(publicEndpoint, "toriiUrl", "torii_url");
-  const normalizedGovernanceToriiUrl = trimString(
-    governancePinnedToriiUrl,
-  ).replace(/\/+$/u, "");
+  const activationToriiUrl = readFirstString(governanceActivation, "torii_url");
+  const governancePinnedToriiUrl = registrationToriiUrl;
   const governancePinReady =
-    publicEndpoint?.publicationTargetReady === true &&
-    publicEndpoint?.directPublicNodePublicationReady === true &&
-    trimString(publicEndpoint?.toriiUrl).replace(/\/+$/u, "") ===
-      normalizedGovernanceToriiUrl &&
-    readFirstString(target, "targetKind", "target_kind") ===
-      "explicit-taira-public-node" &&
-    readFirstString(target, "mcpUrl", "mcp_url").replace(/\/+$/u, "") ===
-      `${normalizedGovernanceToriiUrl}/v1/mcp` &&
-    readFirstString(publicEndpoint, "mcpUrl", "mcp_url").replace(
-      /\/+$/u,
-      "",
-    ) === `${normalizedGovernanceToriiUrl}/v1/mcp` &&
-    target?.canonicalPublicNodeRoot === true &&
-    target?.canonicalRolloutTargetReady === true &&
-    target?.mcpMatchesToriiRoot === true;
+    governanceEvidenceReady === true &&
+    isRecord(governancePlan) &&
+    registrationToriiUrl.length > 0 &&
+    registrationToriiUrl === activationToriiUrl;
   const base = buildSccpSolanaSuccessNetworkPolicy({
     toriiUrl,
     solanaRpcUrl: solanaRpcUrl || CANONICAL_SOLANA_TESTNET_RPC_URL,
@@ -7913,11 +8917,11 @@ export const buildSolanaProductionGateSuccessExecutionPolicy = ({
     governancePinReady,
   });
   const problems = [...base.problems];
-  if (!generatedHandoffPinsReady) {
+  if (!governanceEvidenceReady) {
     problems.push({
-      id: "generated-handoff-byte-pins",
+      id: "governance-evidence",
       detail:
-        "Production completion requires exact byte pins for all six generated publication, access, lane, operator, and activation handoffs.",
+        "Production completion requires a reviewed governance plan, exact byte-pinned registration and activation evidence, and matching public typed-registry readback.",
     });
   }
   if (!freshPreflightCompleted) {
@@ -7928,7 +8932,9 @@ export const buildSolanaProductionGateSuccessExecutionPolicy = ({
     });
   }
   const preflightEndpointIdentityReady =
-    preflightReport?.manifestSource === "public" &&
+    preflightReport?.schema === SOLANA_ROUTE_PREFLIGHT_SCHEMA &&
+    preflightReport?.protocolSource === "typed-sccp-registry-v1" &&
+    preflightReport?.manifestSource === "public-registry" &&
     preflightReport?.taira?.toriiUrl === base.toriiUrl &&
     preflightReport?.solana?.rpcUrl === base.solanaRpcUrl;
   if (!preflightEndpointIdentityReady) {
@@ -7943,7 +8949,7 @@ export const buildSolanaProductionGateSuccessExecutionPolicy = ({
     schema: "iroha-demo-sccp-solana-production-gate-success-policy/v1",
     mode: "canonical-fresh-read-only-v1",
     freshPreflightCompleted,
-    generatedHandoffPinsReady,
+    governanceEvidenceReady,
     preflightEndpointIdentityReady,
     ready: problems.length === 0,
     problems,
@@ -7960,11 +8966,15 @@ export const checkLiveBidirectionalVideo = ({
   blockedLiveVideoMp4Path = DEFAULT_BLOCKED_LIVE_VIDEO_MP4_PATH,
   blockedLiveVideoVttPath = DEFAULT_BLOCKED_LIVE_VIDEO_VTT_PATH,
   artifactFacts = {},
+  preLiveInputSnapshot = null,
   successExecutionPolicy,
   authoritativeRevalidation,
-  activationPackageReport = null,
-  operatorHandoffReport = null,
   expectedLiveEvidencePackageHashes = null,
+  liveCaptureWitnessArtifact = null,
+  liveCaptureReviewAttestationArtifact = null,
+  finalCaptureReviewBoundary = null,
+  liveCaptureVideoPath = null,
+  expectedLiveCaptureVideoSha256 = null,
 } = {}) => {
   if (!isRecord(liveVideoTranscript)) {
     const blockedDiagnostics = isRecord(blockedLiveVideoTranscript)
@@ -7988,29 +8998,33 @@ export const checkLiveBidirectionalVideo = ({
       false,
       "No completed Solana bidirectional live-video transcript is available.",
       {
-        transcriptPath: liveVideoTranscriptPath,
-        blockedTranscriptPath: blockedLiveVideoTranscriptPath,
+        transcriptPath: publicReportPath(liveVideoTranscriptPath),
+        blockedTranscriptPath: publicReportPath(blockedLiveVideoTranscriptPath),
         blockedTranscript: isRecord(blockedLiveVideoTranscript)
           ? {
-              path: blockedLiveVideoTranscriptPath,
+              path: publicReportPath(blockedLiveVideoTranscriptPath),
               present: true,
-              schema:
-                readFirstString(blockedLiveVideoTranscript, "schema") || null,
-              routeId:
+              schemaOk:
+                readFirstString(blockedLiveVideoTranscript, "schema") ===
+                "iroha-demo-sccp-solana-live-video-blocked/v1",
+              routeOk:
                 readFirstString(
                   blockedLiveVideoTranscript,
                   "routeId",
                   "route_id",
-                ) || null,
-              checkedAt:
-                readFirstString(
-                  blockedLiveVideoTranscript,
-                  "checkedAt",
-                  "checked_at",
-                ) || null,
+                ) === SCCP_SOLANA_XOR_ROUTE_ID,
+              checkedAtValid:
+                parseTimestampMs(
+                  readFirstString(
+                    blockedLiveVideoTranscript,
+                    "checkedAt",
+                    "checked_at",
+                  ),
+                ) !== null,
               ready: blockedLiveVideoTranscript.ready === true,
-              reason:
-                readFirstString(blockedLiveVideoTranscript, "reason") || null,
+              reasonPresent: Boolean(
+                readFirstString(blockedLiveVideoTranscript, "reason"),
+              ),
               nextActionIdCount: readFirstArray(
                 blockedLiveVideoTranscript,
                 "nextActionIds",
@@ -8023,55 +9037,53 @@ export const checkLiveBidirectionalVideo = ({
               ).length,
             }
           : {
-              path: blockedLiveVideoTranscriptPath,
+              path: publicReportPath(blockedLiveVideoTranscriptPath),
               present: false,
             },
         blockedSubtitle,
         blockedDiagnosticMp4,
-        blockedReason: isRecord(blockedLiveVideoTranscript)
-          ? readFirstString(blockedLiveVideoTranscript, "reason")
-          : null,
         blockedPreflightReady: isRecord(blockedLiveVideoTranscript)
           ? blockedLiveVideoTranscript.preflightReady === true
           : null,
-        blockedNextActionIds: isRecord(blockedLiveVideoTranscript)
-          ? readFirstArray(
-              blockedLiveVideoTranscript,
-              "nextActionIds",
-              "next_action_ids",
-            ).filter((id) => typeof id === "string" && id.trim())
-          : [],
-        blockedNextActionDetails: isRecord(blockedLiveVideoTranscript)
-          ? readFirstArray(
-              blockedLiveVideoTranscript,
-              "nextActionDetails",
-              "next_action_details",
-            )
-              .map((action) =>
-                normalizeActionDetail(action, "blocked-live-video"),
-              )
-              .filter(Boolean)
-          : [],
-        blockedDiagnostics:
-          sanitizeBlockedLiveVideoDiagnostics(blockedDiagnostics),
+        blockedDiagnosticsPresent: isRecord(blockedDiagnostics),
         blockedProductionGateSnapshotOmitted,
         blockedProductionGateSnapshotOmissionReason:
           blockedProductionGateSnapshotOmitted
             ? "Omitted to avoid recursively embedding stale production-gate evidence in the current production-gate report."
             : null,
         blockedPublicSolanaCapability: isRecord(blockedLiveVideoTranscript)
-          ? readFirstRecord(
-              blockedLiveVideoTranscript,
-              "publicSolanaCapability",
-              "public_solana_capability",
-            )
+          ? {
+              present: isRecord(
+                readFirstRecord(
+                  blockedLiveVideoTranscript,
+                  "publicSolanaCapability",
+                  "public_solana_capability",
+                ),
+              ),
+              ready:
+                readFirstRecord(
+                  blockedLiveVideoTranscript,
+                  "publicSolanaCapability",
+                  "public_solana_capability",
+                )?.ready === true,
+            }
           : null,
         blockedPublicSolanaLane: isRecord(blockedLiveVideoTranscript)
-          ? readFirstRecord(
-              blockedLiveVideoTranscript,
-              "publicSolanaLane",
-              "public_solana_lane",
-            )
+          ? {
+              present: isRecord(
+                readFirstRecord(
+                  blockedLiveVideoTranscript,
+                  "publicSolanaLane",
+                  "public_solana_lane",
+                ),
+              ),
+              ready:
+                readFirstRecord(
+                  blockedLiveVideoTranscript,
+                  "publicSolanaLane",
+                  "public_solana_lane",
+                )?.ready === true,
+            }
           : null,
       },
     );
@@ -8123,41 +9135,77 @@ export const checkLiveBidirectionalVideo = ({
     "failedCheckIds",
     "failed_check_ids",
   ).filter((id) => typeof id === "string" && id.trim());
+  const transcriptPreLiveInputSnapshotSha256 = readFirstString(
+    transcriptProductionGatePolicy,
+    "preLiveInputSnapshotSha256",
+    "pre_live_input_snapshot_sha256",
+  );
+  const currentPreLiveInputSnapshotSha256 = readFirstString(
+    preLiveInputSnapshot,
+    "preLiveInputSnapshotSha256",
+    "pre_live_input_snapshot_sha256",
+  );
+  const transcriptPreLiveInputSnapshotOk =
+    /^0x[0-9a-f]{64}$/u.test(transcriptPreLiveInputSnapshotSha256) &&
+    transcriptPreLiveInputSnapshotSha256 === currentPreLiveInputSnapshotSha256;
   const transcriptProductionGateStateOk =
-    transcriptProductionGatePolicy?.ready === true ||
-    (transcriptProductionGatePolicy?.ready === false &&
-      transcriptProductionGateFailedIds.length === 1 &&
-      transcriptProductionGateFailedIds[0] === "live-bidirectional-video");
-  const liveActivationPackageHash = readFirstString(
+    transcriptPreLiveInputSnapshotOk &&
+    ((transcriptProductionGatePolicy?.ready === true &&
+      transcriptProductionGateFailedIds.length === 0) ||
+      (transcriptProductionGatePolicy?.ready === false &&
+        transcriptProductionGateFailedIds.length === 1 &&
+        transcriptProductionGateFailedIds[0] === "live-bidirectional-video"));
+  const liveGovernancePlanSha256 = readFirstString(
     liveEvidence,
-    "activationPackageHash",
-    "activation_package_hash",
+    "governancePlanSha256",
   );
-  const liveOperatorHandoffHash = readFirstString(
+  const liveGovernanceRegistrationSha256 = readFirstString(
     liveEvidence,
-    "operatorHandoffHash",
-    "operator_handoff_hash",
+    "governanceRegistrationSha256",
   );
-  const expectedActivationPackageHash = readFirstString(
-    expectedLiveEvidencePackageHashes ?? activationPackageReport,
-    "activationPackageHash",
-    "activation_package_hash",
+  const liveGovernanceActivationSha256 = readFirstString(
+    liveEvidence,
+    "governanceActivationSha256",
   );
-  const expectedOperatorHandoffHash = readFirstString(
-    expectedLiveEvidencePackageHashes ?? operatorHandoffReport,
-    "operatorHandoffHash",
-    "operator_handoff_hash",
-    "handoffHash",
-    "handoff_hash",
+  const livePublicRegistrySha256 = readFirstString(
+    liveEvidence,
+    "publicRegistrySha256",
+  );
+  const expectedGovernancePlanSha256 = readFirstString(
+    expectedLiveEvidencePackageHashes,
+    "governancePlanSha256",
+    "planSha256",
+  );
+  const expectedGovernanceRegistrationSha256 = readFirstString(
+    expectedLiveEvidencePackageHashes,
+    "governanceRegistrationSha256",
+    "registrationArtifactSha256",
+  );
+  const expectedGovernanceActivationSha256 = readFirstString(
+    expectedLiveEvidencePackageHashes,
+    "governanceActivationSha256",
+    "activationArtifactSha256",
+  );
+  const expectedPublicRegistrySha256 = readFirstString(
+    expectedLiveEvidencePackageHashes,
+    "publicRegistrySha256",
   );
   const packageHashesOk =
-    isHex32(liveActivationPackageHash) &&
-    isHex32(liveOperatorHandoffHash) &&
-    liveActivationPackageHash === expectedActivationPackageHash &&
-    liveOperatorHandoffHash === expectedOperatorHandoffHash &&
-    transcriptSuccessPolicy?.activationPackageHash ===
-      liveActivationPackageHash &&
-    transcriptSuccessPolicy?.operatorHandoffHash === liveOperatorHandoffHash;
+    isHex32(liveGovernancePlanSha256) &&
+    isHex32(liveGovernanceRegistrationSha256) &&
+    isHex32(liveGovernanceActivationSha256) &&
+    isHex32(livePublicRegistrySha256) &&
+    liveGovernancePlanSha256 === expectedGovernancePlanSha256 &&
+    liveGovernanceRegistrationSha256 === expectedGovernanceRegistrationSha256 &&
+    liveGovernanceActivationSha256 === expectedGovernanceActivationSha256 &&
+    livePublicRegistrySha256 === expectedPublicRegistrySha256 &&
+    transcriptSuccessPolicy?.governancePlanSha256 ===
+      liveGovernancePlanSha256 &&
+    transcriptSuccessPolicy?.governanceRegistrationSha256 ===
+      liveGovernanceRegistrationSha256 &&
+    transcriptSuccessPolicy?.governanceActivationSha256 ===
+      liveGovernanceActivationSha256 &&
+    transcriptSuccessPolicy?.publicRegistrySha256 === livePublicRegistrySha256;
   const transcriptSuccessPolicyOk =
     transcriptSuccessPolicy?.schema ===
       "iroha-demo-sccp-solana-live-video-success-policy/v1" &&
@@ -8171,6 +9219,11 @@ export const checkLiveBidirectionalVideo = ({
     transcriptSuccessPolicy?.canonicalTairaValidatorRoot === true &&
     transcriptSuccessPolicy?.canonicalSolanaTestnetRpc === true &&
     transcriptSuccessPolicy?.governancePinReady === true &&
+    transcriptSuccessPolicy?.liveCapturePinned === true &&
+    transcriptSuccessPolicy?.liveCaptureWitnessPinned === true &&
+    isHex32(transcriptSuccessPolicy?.liveCaptureWitnessSha256) &&
+    transcriptSuccessPolicy?.liveCaptureReviewAttestationPinned === true &&
+    isHex32(transcriptSuccessPolicy?.liveCaptureReviewAttestationSha256) &&
     transcriptSuccessPolicy?.preflightReportOverride === false &&
     transcriptSuccessPolicy?.skipSolanaRpc === false &&
     readFirstArray(transcriptSuccessPolicy, "prerequisiteReportOverrideIds")
@@ -8216,29 +9269,280 @@ export const checkLiveBidirectionalVideo = ({
     "mediaVerification",
     "media_verification",
   );
-  const mediaVerificationOk = mediaVerification?.ready === true;
+  const sourceCapture = readFirstRecord(
+    liveVideoTranscript,
+    "sourceCapture",
+    "source_capture",
+  );
+  const mediaSourceCapture = readFirstRecord(
+    mediaVerification,
+    "sourceCapture",
+    "source_capture",
+  );
+  const sourceCaptureSha256 = readFirstString(sourceCapture, "sha256");
+  const sourceCaptureSize = Number(sourceCapture?.size);
+  const sourceSemanticWitnessAnalysis = readFirstRecord(
+    sourceCapture,
+    "semanticWitnessAnalysis",
+    "semantic_witness_analysis",
+  );
+  const sourceSemanticWitnessOk =
+    sourceSemanticWitnessAnalysis?.ready === true &&
+    sourceSemanticWitnessAnalysis?.semanticallyBound === true &&
+    isHex32(sourceSemanticWitnessAnalysis?.evidenceBindingSha256) &&
+    readFirstArray(sourceSemanticWitnessAnalysis, "blockers").length === 0 &&
+    readFirstArray(sourceSemanticWitnessAnalysis, "markers").length === 4 &&
+    readFirstArray(sourceSemanticWitnessAnalysis, "markers").every(
+      (marker) =>
+        marker?.ready === true &&
+        marker?.payloadMatches === true &&
+        marker?.frameMatches === true &&
+        marker?.dwellShapeMatches === true,
+    ) &&
+    sourceSemanticWitnessAnalysis?.reviewAuthentication?.ready === true &&
+    sourceSemanticWitnessAnalysis?.reviewAuthentication?.authenticated === true;
+  const captureSemanticWitnessArtifact = readFirstRecord(
+    liveVideoTranscript,
+    "captureSemanticWitnessArtifact",
+    "capture_semantic_witness_artifact",
+  );
+  const captureSemanticWitness = readFirstRecord(
+    liveVideoTranscript,
+    "captureSemanticWitness",
+    "capture_semantic_witness",
+  );
+  const semanticWitnessArtifactPin = checkSolanaLiveCaptureWitnessArtifactPin({
+    witness: captureSemanticWitness,
+    artifact: captureSemanticWitnessArtifact,
+    successPolicy: transcriptSuccessPolicy,
+    externalArtifact: liveCaptureWitnessArtifact,
+  });
+  const semanticWitnessArtifactOk =
+    semanticWitnessArtifactPin.status === "pass";
+  const captureReviewAttestation = readFirstRecord(
+    liveVideoTranscript,
+    "captureReviewAttestation",
+    "capture_review_attestation",
+  );
+  const captureReviewAttestationArtifact = readFirstRecord(
+    liveVideoTranscript,
+    "captureReviewAttestationArtifact",
+    "capture_review_attestation_artifact",
+  );
+  const captureReviewAttestationPin =
+    checkSolanaLiveCaptureReviewAttestationArtifactPin({
+      attestation: captureReviewAttestation,
+      artifact: captureReviewAttestationArtifact,
+      successPolicy: transcriptSuccessPolicy,
+      externalArtifact: liveCaptureReviewAttestationArtifact,
+    });
+  const captureReviewAttestationOk =
+    captureReviewAttestationPin.status === "pass" &&
+    finalCaptureReviewBoundary?.ready === true &&
+    finalCaptureReviewBoundary?.authentication?.ready === true &&
+    finalCaptureReviewBoundary?.authentication?.authenticated === true;
+  const sourceCaptureOk =
+    sourceCapture?.verifiedRealCapture === true &&
+    sourceCapture?.ready === true &&
+    sourceCapture?.mediaType === "video/mp4" &&
+    Number.isSafeInteger(sourceCaptureSize) &&
+    sourceCaptureSize > 0 &&
+    isHex32(sourceCaptureSha256) &&
+    isHex32(sourceCapture?.sampledFrameSha256) &&
+    isHex32(sourceCapture?.audioSampleSha256) &&
+    isHex32(sourceCapture?.videoEssenceSha256) &&
+    isHex32(sourceCapture?.audioEssenceSha256) &&
+    mediaSourceCapture?.verifiedRealCapture === true &&
+    mediaSourceCapture?.ready === true &&
+    mediaSourceCapture?.sha256 === sourceCaptureSha256 &&
+    Number(mediaSourceCapture?.size) === sourceCaptureSize &&
+    mediaSourceCapture?.sampledFrameSha256 ===
+      sourceCapture?.sampledFrameSha256 &&
+    mediaSourceCapture?.audioSampleSha256 ===
+      sourceCapture?.audioSampleSha256 &&
+    mediaSourceCapture?.videoEssenceSha256 ===
+      sourceCapture?.videoEssenceSha256 &&
+    mediaSourceCapture?.audioEssenceSha256 ===
+      sourceCapture?.audioEssenceSha256 &&
+    sourceSemanticWitnessOk &&
+    semanticWitnessArtifactOk &&
+    captureReviewAttestationOk &&
+    transcriptSuccessPolicy?.liveCapturePinned === true &&
+    transcriptSuccessPolicy?.liveCaptureSha256 === sourceCaptureSha256;
+  const mediaVerificationOk =
+    mediaVerification?.ready === true &&
+    mediaVerification?.streams?.video?.codec === "h264" &&
+    sourceCaptureOk;
   const subtitleExplanation = liveVideoSubtitleExplanation(
     liveVideoTranscript,
     liveEvidenceStatus,
   );
   const vttFact = artifactFact(artifactFacts, paths.vtt);
+  const subtitleSnapshotBindingOk =
+    /^0x[0-9a-f]{64}$/u.test(currentPreLiveInputSnapshotSha256) &&
+    Array.isArray(vttFact.vtt?.cueTexts) &&
+    vttFact.vtt.cueTexts.some((text) =>
+      String(text).includes(currentPreLiveInputSnapshotSha256),
+    );
   const vttCueTextMatchesTranscript =
     vttFact.vtt?.cueCount === subtitleExplanation.cueCount &&
-    vttFact.vtt?.cueTextSha256 === subtitleExplanation.cueTextSha256;
+    vttFact.vtt?.cueTextSha256 === subtitleExplanation.cueTextSha256 &&
+    isHex32(vttFact.vtt?.cueTimelineSha256) &&
+    vttFact.vtt?.cueTimelineSha256 === subtitleExplanation.cueTimelineSha256;
   const mp4Fact = artifactFact(artifactFacts, paths.mp4);
+  const sourceCaptureFact =
+    typeof liveCaptureVideoPath === "string" && liveCaptureVideoPath.trim()
+      ? artifactFact(artifactFacts, liveCaptureVideoPath)
+      : { path: null, exists: false, size: 0 };
+  const outputContentAnalysis = mp4Fact.media?.contentAnalysis;
+  const actualSourceContentAnalysis = sourceCaptureFact.media?.contentAnalysis;
+  const outputSemanticWitnessAnalysis = readFirstRecord(
+    outputContentAnalysis,
+    "semanticWitnessAnalysis",
+    "semantic_witness_analysis",
+  );
+  const outputSemanticWitnessOk =
+    outputSemanticWitnessAnalysis?.ready === true &&
+    outputSemanticWitnessAnalysis?.semanticallyBound === true &&
+    outputSemanticWitnessAnalysis?.evidenceBindingSha256 ===
+      sourceSemanticWitnessAnalysis?.evidenceBindingSha256 &&
+    canonicalSccpJson(outputSemanticWitnessAnalysis?.markers ?? []) ===
+      canonicalSccpJson(sourceSemanticWitnessAnalysis?.markers ?? []) &&
+    outputSemanticWitnessAnalysis?.reviewAuthentication?.ready === true &&
+    outputSemanticWitnessAnalysis?.reviewAuthentication?.authenticated ===
+      true &&
+    outputSemanticWitnessAnalysis?.reviewAuthentication?.signedPayloadSha256 ===
+      finalCaptureReviewBoundary?.authentication?.signedPayloadSha256;
+  const outputContentAnalysisOk =
+    outputContentAnalysis?.ready === true &&
+    outputContentAnalysis?.verifiedRealCapture === true &&
+    outputSemanticWitnessOk;
+  const normalizedExpectedSourceCaptureSha256 = String(
+    expectedLiveCaptureVideoSha256 ?? "",
+  ).toLowerCase();
+  const sourceFinalMediaDisjoint =
+    typeof sourceCaptureFact.path === "string" &&
+    typeof mp4Fact.path === "string" &&
+    normalizePath(sourceCaptureFact.path) !== normalizePath(mp4Fact.path) &&
+    !(
+      sourceCaptureFact.device === mp4Fact.device &&
+      sourceCaptureFact.inode === mp4Fact.inode
+    );
+  const reopenedSourceCaptureOk =
+    sourceCaptureFact.exists === true &&
+    Number.isSafeInteger(sourceCaptureFact.size) &&
+    sourceCaptureFact.size > 0 &&
+    /^0x[0-9a-f]{64}$/u.test(normalizedExpectedSourceCaptureSha256) &&
+    sourceCaptureFact.sha256 === normalizedExpectedSourceCaptureSha256 &&
+    sourceCaptureFact.sha256 === sourceCaptureSha256 &&
+    sourceCaptureFact.size === sourceCaptureSize &&
+    actualSourceContentAnalysis?.ready === true &&
+    actualSourceContentAnalysis?.verifiedRealCapture === true &&
+    actualSourceContentAnalysis?.streamShape?.videoCount === 1 &&
+    actualSourceContentAnalysis?.streamShape?.audioCount === 1 &&
+    actualSourceContentAnalysis?.streamShape?.subtitleCount === 0 &&
+    actualSourceContentAnalysis?.streamShape?.unexpectedCount === 0 &&
+    actualSourceContentAnalysis?.sampledFrameSha256 ===
+      sourceCapture?.sampledFrameSha256 &&
+    actualSourceContentAnalysis?.audioSampleSha256 ===
+      sourceCapture?.audioSampleSha256 &&
+    actualSourceContentAnalysis?.videoEssenceSha256 ===
+      sourceCapture?.videoEssenceSha256 &&
+    actualSourceContentAnalysis?.audioEssenceSha256 ===
+      sourceCapture?.audioEssenceSha256 &&
+    actualSourceContentAnalysis?.semanticWitnessAnalysis?.ready === true &&
+    actualSourceContentAnalysis?.semanticWitnessAnalysis?.semanticallyBound ===
+      true &&
+    actualSourceContentAnalysis?.semanticWitnessAnalysis?.reviewAuthentication
+      ?.authenticated === true &&
+    sourceFinalMediaDisjoint;
+  const fullDecodedEssenceMatches =
+    reopenedSourceCaptureOk &&
+    outputContentAnalysisOk &&
+    isHex32(actualSourceContentAnalysis?.videoEssenceSha256) &&
+    isHex32(actualSourceContentAnalysis?.audioEssenceSha256) &&
+    actualSourceContentAnalysis.videoEssenceSha256 ===
+      outputContentAnalysis.videoEssenceSha256 &&
+    actualSourceContentAnalysis.audioEssenceSha256 ===
+      outputContentAnalysis.audioEssenceSha256;
+  const sourceOutputDurationMatches =
+    Number.isFinite(Number(actualSourceContentAnalysis?.durationSeconds)) &&
+    Number.isFinite(Number(outputContentAnalysis?.durationSeconds)) &&
+    Math.abs(
+      Number(actualSourceContentAnalysis.durationSeconds) -
+        Number(outputContentAnalysis.durationSeconds),
+    ) <= 0.05;
+  const sourceOutputShapeMatches =
+    actualSourceContentAnalysis?.width === outputContentAnalysis?.width &&
+    actualSourceContentAnalysis?.height === outputContentAnalysis?.height &&
+    actualSourceContentAnalysis?.streamShape?.videoCount === 1 &&
+    actualSourceContentAnalysis?.streamShape?.audioCount === 1 &&
+    actualSourceContentAnalysis?.streamShape?.subtitleCount === 0 &&
+    actualSourceContentAnalysis?.streamShape?.unexpectedCount === 0 &&
+    outputContentAnalysis?.streamShape?.videoCount === 1 &&
+    outputContentAnalysis?.streamShape?.audioCount === 1 &&
+    outputContentAnalysis?.streamShape?.subtitleCount === 1 &&
+    outputContentAnalysis?.streamShape?.subtitleCodec === "mov_text" &&
+    outputContentAnalysis?.streamShape?.unexpectedCount === 0;
+  const sourceOutputSampleSequenceMatches =
+    actualSourceContentAnalysis?.sampledFrameSha256 ===
+      outputContentAnalysis?.sampledFrameSha256 &&
+    actualSourceContentAnalysis?.audioSampleSha256 ===
+      outputContentAnalysis?.audioSampleSha256;
+  const sourceOutputTimelineMatches =
+    actualSourceContentAnalysis?.streamTimeline?.video?.ready === true &&
+    actualSourceContentAnalysis?.streamTimeline?.audio?.ready === true &&
+    outputContentAnalysis?.streamTimeline?.video?.ready === true &&
+    outputContentAnalysis?.streamTimeline?.audio?.ready === true &&
+    canonicalSccpJson(actualSourceContentAnalysis.streamTimeline.video) ===
+      canonicalSccpJson(outputContentAnalysis.streamTimeline.video) &&
+    canonicalSccpJson(actualSourceContentAnalysis.streamTimeline.audio) ===
+      canonicalSccpJson(outputContentAnalysis.streamTimeline.audio);
+  const sourceCaptureContentBindingOk =
+    reopenedSourceCaptureOk &&
+    fullDecodedEssenceMatches &&
+    sourceOutputDurationMatches &&
+    sourceOutputShapeMatches &&
+    sourceOutputSampleSequenceMatches &&
+    sourceOutputTimelineMatches &&
+    outputContentAnalysisOk &&
+    outputContentAnalysis?.sampledFrameSha256 ===
+      sourceCapture?.sampledFrameSha256 &&
+    outputContentAnalysis?.audioSampleSha256 ===
+      sourceCapture?.audioSampleSha256 &&
+    outputSemanticWitnessOk;
+  const mediaArtifacts = readFirstRecord(liveVideoTranscript, "mediaArtifacts");
+  const mediaArtifactPinCheck = checkSolanaLiveVideoMediaArtifactPins({
+    mediaArtifacts,
+    mp4Fact,
+    vttFact,
+    mp4Path: paths.mp4,
+    vttPath: paths.vtt,
+  });
+  const mediaArtifactPinsOk = mediaArtifactPinCheck.status === "pass";
   const embeddedSubtitleMatchesVtt =
     mp4Fact.media?.embeddedSubtitle?.extracted === true &&
     mp4Fact.media.embeddedSubtitle.cueCount === vttFact.vtt?.cueCount &&
-    mp4Fact.media.embeddedSubtitle.cueTextSha256 === vttFact.vtt?.cueTextSha256;
+    mp4Fact.media.embeddedSubtitle.cueTextSha256 ===
+      vttFact.vtt?.cueTextSha256 &&
+    isHex32(mp4Fact.media.embeddedSubtitle.cueTimelineSha256) &&
+    mp4Fact.media.embeddedSubtitle.cueTimelineSha256 ===
+      vttFact.vtt?.cueTimelineSha256;
   const vttOk =
-    vttEvidenceReady(artifactFacts, paths.vtt) && vttCueTextMatchesTranscript;
+    vttEvidenceReady(artifactFacts, paths.vtt) &&
+    vttCueTextMatchesTranscript &&
+    subtitleSnapshotBindingOk;
   const ok =
     schemaOk &&
     routeOk &&
     readyOk &&
     evidenceOk &&
     mp4Ok &&
+    mediaArtifactPinsOk &&
     mediaVerificationOk &&
+    outputContentAnalysisOk &&
+    sourceCaptureContentBindingOk &&
+    captureReviewAttestationOk &&
     vttOk &&
     embeddedSubtitleMatchesVtt &&
     subtitleExplanation.ok &&
@@ -8255,88 +9559,875 @@ export const checkLiveBidirectionalVideo = ({
       ? "Solana bidirectional SCCP live MP4 has video plus embedded explanatory subtitles, and the VTT artifact is present."
       : "Solana bidirectional SCCP live video evidence is missing, incomplete, generic, or lacks embedded explanatory subtitles.",
     {
-      transcriptPath: liveVideoTranscriptPath,
+      transcriptPath: publicReportPath(liveVideoTranscriptPath),
       schemaOk,
       routeOk,
       readyOk,
       evidenceOk,
-      liveEvidenceStatus,
+      liveEvidenceStatus: safeLiveEvidenceStatus(liveEvidenceStatus),
       packageHashesOk,
       packageHashes: {
-        activationPackageHash: liveActivationPackageHash || null,
-        expectedActivationPackageHash: expectedActivationPackageHash || null,
-        operatorHandoffHash: liveOperatorHandoffHash || null,
-        expectedOperatorHandoffHash: expectedOperatorHandoffHash || null,
+        governancePlanSha256: safeSha256(liveGovernancePlanSha256),
+        expectedGovernancePlanSha256: safeSha256(expectedGovernancePlanSha256),
+        governanceRegistrationSha256: safeSha256(
+          liveGovernanceRegistrationSha256,
+        ),
+        expectedGovernanceRegistrationSha256: safeSha256(
+          expectedGovernanceRegistrationSha256,
+        ),
+        governanceActivationSha256: safeSha256(liveGovernanceActivationSha256),
+        expectedGovernanceActivationSha256: safeSha256(
+          expectedGovernanceActivationSha256,
+        ),
+        publicRegistrySha256: safeSha256(livePublicRegistrySha256),
+        expectedPublicRegistrySha256: safeSha256(expectedPublicRegistrySha256),
       },
-      transcriptSuccessPolicy: transcriptSuccessPolicy ?? null,
+      transcriptSuccessPolicy: safePolicySummary(
+        transcriptSuccessPolicy,
+        "transcript",
+      ),
       transcriptSuccessPolicyOk,
+      transcriptPreLiveInputSnapshotSha256: safeSha256(
+        transcriptPreLiveInputSnapshotSha256,
+      ),
+      currentPreLiveInputSnapshotSha256: safeSha256(
+        currentPreLiveInputSnapshotSha256,
+      ),
+      transcriptPreLiveInputSnapshotOk,
       transcriptAuthoritativeReadbackOk,
-      successExecutionPolicy: successExecutionPolicy ?? null,
+      successExecutionPolicy: safePolicySummary(
+        successExecutionPolicy,
+        "production-gate",
+      ),
       successExecutionPolicyOk,
-      authoritativeRevalidation: authoritativeRevalidation ?? null,
+      authoritativeRevalidation: safeAuthoritativeRevalidationSummary(
+        authoritativeRevalidation,
+      ),
       trustedFreshRevalidationOk,
-      mp4: mp4Fact,
-      mediaVerification: mediaVerification ?? null,
+      mp4: safeArtifactFactSummary(mp4Fact, "mp4"),
+      mediaArtifacts: safeMediaArtifactsSummary(mediaArtifacts),
+      mediaArtifactPinsOk,
+      mediaArtifactPinCheck: {
+        status: mediaArtifactPinCheck.status === "pass" ? "pass" : "fail",
+        mp4Ready: mediaArtifactPinCheck.evidence?.mp4Ready === true,
+        vttReady: mediaArtifactPinCheck.evidence?.vttReady === true,
+      },
+      mediaVerification: safeMediaVerificationSummary(mediaVerification),
       mediaVerificationOk,
-      vtt: vttFact,
+      sourceCapture: safeSourceCaptureSummary(sourceCapture),
+      reopenedSourceCapture: safeArtifactFactSummary(sourceCaptureFact, "mp4"),
+      sourceCaptureOk,
+      reopenedSourceCaptureOk,
+      sourceFinalMediaDisjoint,
+      actualSourceContentAnalysis: safeLiveCaptureContentSummary(
+        actualSourceContentAnalysis,
+      ),
+      fullDecodedEssenceMatches,
+      sourceOutputDurationMatches,
+      sourceOutputShapeMatches,
+      sourceOutputSampleSequenceMatches,
+      sourceOutputTimelineMatches,
+      sourceSemanticWitnessOk,
+      semanticWitnessArtifactOk,
+      semanticWitnessArtifactPin: {
+        status: semanticWitnessArtifactPin.status,
+        embeddedWitnessBytesMatch:
+          semanticWitnessArtifactPin.evidence?.embeddedWitnessBytesMatch ===
+          true,
+        policyPinMatches:
+          semanticWitnessArtifactPin.evidence?.policyPinMatches === true,
+        externalArtifactMatches:
+          semanticWitnessArtifactPin.evidence?.externalArtifactMatches === true,
+      },
+      captureReviewAttestationOk,
+      captureReviewAttestationPin: {
+        status: captureReviewAttestationPin.status,
+        embeddedBytesMatch:
+          captureReviewAttestationPin.evidence?.embeddedBytesMatch === true,
+        policyPinMatches:
+          captureReviewAttestationPin.evidence?.policyPinMatches === true,
+        externalArtifactMatches:
+          captureReviewAttestationPin.evidence?.externalArtifactMatches ===
+          true,
+      },
+      captureReviewAuthentication: {
+        ready: finalCaptureReviewBoundary?.ready === true,
+        stableArtifactReinspection:
+          finalCaptureReviewBoundary?.stableArtifactReinspection === true,
+        stableMediaReinspection:
+          finalCaptureReviewBoundary?.stableMediaReinspection === true,
+        authenticated:
+          finalCaptureReviewBoundary?.authentication?.authenticated === true,
+        policySha256: safeSha256(
+          finalCaptureReviewBoundary?.policyLoad?.artifactSha256,
+        ),
+        signedPayloadSha256: safeSha256(
+          finalCaptureReviewBoundary?.authentication?.signedPayloadSha256,
+        ),
+        threshold:
+          finalCaptureReviewBoundary?.authentication?.threshold ?? null,
+        validSignatureCount:
+          finalCaptureReviewBoundary?.authentication?.validSignatureCount ?? 0,
+        error: finalCaptureReviewBoundary?.error ?? null,
+      },
+      outputContentAnalysis: safeLiveCaptureContentSummary(
+        outputContentAnalysis,
+      ),
+      outputContentAnalysisOk,
+      outputSemanticWitnessOk,
+      sourceCaptureContentBindingOk,
+      vtt: safeArtifactFactSummary(vttFact, "vtt"),
+      subtitleSnapshotBindingOk,
       vttCueTextMatchesTranscript,
       embeddedSubtitleMatchesVtt,
-      subtitleExplanation,
+      subtitleExplanation: safeSubtitleExplanation(subtitleExplanation),
       diagnosticFlags,
+    },
+  );
+};
+
+const productionActionPath = (deployDir, defaultPath) => {
+  const selected = deployDir
+    ? path.join(path.resolve(deployDir), path.basename(defaultPath))
+    : defaultPath;
+  const relative = path.relative(repoRoot, selected);
+  return relative &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+    ? relative
+    : selected;
+};
+
+const SOLANA_PRODUCTION_ACTION_ORDER = Object.freeze([
+  "deploy-fresh-exact-solana-programs",
+  "capture-and-pin-solana-ordered-initialization-evidence",
+  "provide-reviewed-solana-route-candidate",
+  "build-reviewed-solana-governance-plan",
+  "submit-solana-route-registration-proposal",
+  "enact-and-readback-solana-route-registration",
+  "submit-solana-route-activation-proposal",
+  "enact-and-readback-solana-route-activation",
+  "complete-solana-smoke-readiness",
+  "record-solana-live-bidirectional-video",
+]);
+
+export const SOLANA_PRODUCTION_NEXT_ACTION_ORDER =
+  SOLANA_PRODUCTION_ACTION_ORDER;
+
+/**
+ * Build a fail-closed first-release operator DAG. A runnable command appears
+ * only on the first missing stage and only when that stage has a real CLI.
+ * Parliament enactment intentionally remains commandless because this
+ * repository exposes proposal submission, not enactment authority. Fresh
+ * Loader-v3 deployment uses the single-process, runtime-only signer ceremony.
+ */
+export const buildSolanaProductionNextActionDag = ({
+  deployDir = null,
+  freshDeployReady = false,
+  exactInitializationReady = false,
+  routeCandidateReady = false,
+  governancePlanReady = false,
+  registrationProposalReady = false,
+  registrationReadbackReady = false,
+  activationProposalReady = false,
+  activationReadbackReady = false,
+  smokeReady = false,
+  liveCaptureReady = false,
+} = {}) => {
+  const selectedDeployDir = deployDir
+    ? path.resolve(deployDir)
+    : DEFAULT_DEPLOY_DIR;
+  const initializerInput = productionActionPath(
+    selectedDeployDir,
+    DEFAULT_EXACT_INITIALIZER_INPUT_PATH,
+  );
+  const freshDeployReport = productionActionPath(
+    selectedDeployDir,
+    DEFAULT_FRESH_DEPLOY_REPORT_PATH,
+  );
+  const freshDeployContext = productionActionPath(
+    selectedDeployDir,
+    path.join(DEFAULT_DEPLOY_DIR, "taira-solana-xor-fresh-deploy-context.json"),
+  );
+  const freshDeployPlan = productionActionPath(
+    selectedDeployDir,
+    path.join(DEFAULT_DEPLOY_DIR, "taira-solana-xor-fresh-deploy-plan.json"),
+  );
+  const freshDeployConfirmationTemplate = productionActionPath(
+    selectedDeployDir,
+    path.join(
+      DEFAULT_DEPLOY_DIR,
+      "taira-solana-xor-fresh-deploy-confirmation.template.json",
+    ),
+  );
+  const freshDeployConfirmation = productionActionPath(
+    selectedDeployDir,
+    path.join(
+      DEFAULT_DEPLOY_DIR,
+      "taira-solana-xor-fresh-deploy-confirmation.json",
+    ),
+  );
+  const freshDeployConfirmationSha256 = productionActionPath(
+    selectedDeployDir,
+    path.join(
+      DEFAULT_DEPLOY_DIR,
+      "taira-solana-xor-fresh-deploy-confirmation.sha256",
+    ),
+  );
+  const freshDeployJournal = productionActionPath(
+    selectedDeployDir,
+    path.join(
+      DEFAULT_DEPLOY_DIR,
+      "taira-solana-xor-fresh-deploy.journal.jsonl",
+    ),
+  );
+  const initializerJournal = productionActionPath(
+    selectedDeployDir,
+    DEFAULT_EXACT_INITIALIZER_JOURNAL_PATH,
+  );
+  const orderedInitialization = productionActionPath(
+    selectedDeployDir,
+    DEFAULT_ORDERED_INITIALIZATION_EVIDENCE_PATH,
+  );
+  const routeCandidate = productionActionPath(
+    selectedDeployDir,
+    DEFAULT_GOVERNED_ROUTE_CANDIDATE_PATH,
+  );
+  const nativeTrustAnchor = productionActionPath(
+    selectedDeployDir,
+    DEFAULT_NATIVE_TRUST_ANCHOR_PATH,
+  );
+  const governancePlan = productionActionPath(
+    selectedDeployDir,
+    DEFAULT_GOVERNANCE_PLAN_PATH,
+  );
+  const governanceRegistration = productionActionPath(
+    selectedDeployDir,
+    DEFAULT_GOVERNANCE_REGISTER_RESULT_PATH,
+  );
+  const governanceActivation = productionActionPath(
+    selectedDeployDir,
+    DEFAULT_GOVERNANCE_ACTIVATE_RESULT_PATH,
+  );
+  const proverGovernanceApproval = productionActionPath(
+    selectedDeployDir,
+    DEFAULT_PROVER_GOVERNANCE_APPROVAL_PATH,
+  );
+  const smokeOutputDir = productionActionPath(
+    selectedDeployDir,
+    path.join(DEFAULT_DEPLOY_DIR, "smoke-readiness"),
+  );
+  const productionGateSnapshot = productionActionPath(
+    path.join(selectedDeployDir, "production-gate"),
+    path.join(DEFAULT_DEPLOY_DIR, "production-gate", REPORT_FILE),
+  );
+  const stages = [
+    {
+      id: SOLANA_PRODUCTION_ACTION_ORDER[0],
+      ready: freshDeployReady,
+      title: "Deploy three fresh immutable Loader-v3 programs",
+      detail:
+        "Run the single-process production ceremony: it validates every independent pin, generates all eight signers only in memory, exposes the ephemeral payer for funding and public plan for review, then accepts one separately hash-pinned irreversible confirmation before any mutation.",
+      command: [
+        "npm",
+        "run",
+        "sccp:solana:fresh-deploy",
+        "--",
+        "ceremony",
+        "--solana-rpc-url",
+        CANONICAL_SOLANA_TESTNET_RPC_URL,
+        "--context",
+        freshDeployContext,
+        "--expected-context-sha256",
+        "<reviewed-context-sha256>",
+        "--native-verifier-artifact",
+        "<reviewed-native-verifier-sbpf-v3.so>",
+        "--native-verifier-artifact-sha256",
+        "<reviewed-native-verifier-artifact-sha256>",
+        "--destination-artifact",
+        "<reviewed-destination-sbpf-v3.so>",
+        "--destination-artifact-sha256",
+        "<reviewed-destination-artifact-sha256>",
+        "--source-artifact",
+        "<reviewed-source-sbpf-v3.so>",
+        "--source-artifact-sha256",
+        "<reviewed-source-artifact-sha256>",
+        "--native-verifier-sbf-evidence",
+        "<reviewed-native-verifier-sbf-evidence.json>",
+        "--native-verifier-sbf-evidence-sha256",
+        "<reviewed-native-verifier-sbf-evidence-sha256>",
+        "--destination-sbf-evidence",
+        "<reviewed-destination-sbf-evidence.json>",
+        "--destination-sbf-evidence-sha256",
+        "<reviewed-destination-sbf-evidence-sha256>",
+        "--source-sbf-evidence",
+        "<reviewed-source-sbf-evidence.json>",
+        "--source-sbf-evidence-sha256",
+        "<reviewed-source-sbf-evidence-sha256>",
+        "--expected-validator-sha256",
+        "<reviewed-validator-binary-sha256>",
+        "--plan",
+        freshDeployPlan,
+        "--confirmation-template",
+        freshDeployConfirmationTemplate,
+        "--confirmation",
+        freshDeployConfirmation,
+        "--confirmation-sha256-file",
+        freshDeployConfirmationSha256,
+        "--journal",
+        freshDeployJournal,
+        "--report",
+        freshDeployReport,
+        "--review-timeout-ms",
+        "900000",
+        "--submit",
+        "true",
+      ],
+      requiredInputs: [
+        "reviewed-solana-testnet-context-snapshot",
+        "three-reviewed-sbpf-v3-artifacts",
+        "three-authenticated-sbf-validation-evidence-files",
+        "independent-irrevocable-confirmation-sha256-sidecar",
+        "funded-ephemeral-runtime-only-payer",
+        "atomic-three-program-set-authority-none",
+      ],
+      produces: [freshDeployReport],
+    },
+    {
+      id: SOLANA_PRODUCTION_ACTION_ORDER[1],
+      ready: exactInitializationReady,
+      title: "Run exact post-immutability initialization",
+      detail:
+        "Run the exact initializer after the fresh deployment is immutably finalized; it writes the ordered-initialization evidence consumed by governance and this gate.",
+      command: [
+        "npm",
+        "run",
+        "sccp:solana:exact-initialize",
+        "--",
+        "--input",
+        initializerInput,
+        "--expected-input-sha256",
+        "<reviewed-initializer-input-sha256>",
+        "--fresh-deploy-report",
+        freshDeployReport,
+        "--expected-fresh-deploy-report-sha256",
+        "<reviewed-fresh-deploy-report-sha256>",
+        "--journal",
+        initializerJournal,
+        "--evidence",
+        orderedInitialization,
+        "--submit",
+        "true",
+      ],
+      requiredInputs: [
+        freshDeployReport,
+        "reviewed-exact-initializer-input",
+        "SCCP_SOLANA_INITIALIZER_SIGNER",
+        "SCCP_SOLANA_INITIALIZER_MINT_SIGNER",
+      ],
+      produces: [orderedInitialization],
+    },
+    {
+      id: SOLANA_PRODUCTION_ACTION_ORDER[2],
+      ready: routeCandidateReady,
+      title: "Provide the reviewed typed route candidate",
+      detail:
+        "Independently review and byte-pin the exact typed taira_sol_xor revision-1 governed route and native Solana trust anchor; no local manifest may substitute for them.",
+      command: [],
+      requiredInputs: [
+        "independently-reviewed-governed-route",
+        "independently-reviewed-native-trust-anchor",
+      ],
+      produces: [routeCandidate, nativeTrustAnchor],
+    },
+    {
+      id: SOLANA_PRODUCTION_ACTION_ORDER[3],
+      ready: governancePlanReady,
+      title: "Build the reviewed two-phase governance plan",
+      detail:
+        "Compile the byte-pinned typed route, native trust anchor, and ordered initialization evidence into the exact registration/activation plan.",
+      command: [
+        "npm",
+        "run",
+        "sccp:solana:governance-plan",
+        "--",
+        "--route",
+        routeCandidate,
+        "--expected-route-sha256",
+        "<reviewed-route-sha256>",
+        "--native-trust-anchor",
+        nativeTrustAnchor,
+        "--expected-native-trust-anchor-sha256",
+        "<reviewed-native-trust-anchor-sha256>",
+        "--ordered-initialization-evidence",
+        orderedInitialization,
+        "--expected-ordered-initialization-evidence-sha256",
+        "<reviewed-ordered-initialization-sha256>",
+        "--out",
+        governancePlan,
+      ],
+      requiredInputs: [
+        routeCandidate,
+        nativeTrustAnchor,
+        orderedInitialization,
+      ],
+      produces: [governancePlan],
+    },
+    {
+      id: SOLANA_PRODUCTION_ACTION_ORDER[4],
+      ready: registrationProposalReady,
+      title: "Submit the staged registration proposal",
+      detail:
+        "Submit the registration phase only; the command writes the exact pinned registration result but does not claim Parliament enactment.",
+      command: [
+        "npm",
+        "run",
+        "sccp:solana:governance",
+        "--",
+        "--plan",
+        governancePlan,
+        "--expected-plan-sha256",
+        "<reviewed-governance-plan-sha256>",
+        "--ordered-initialization-evidence",
+        orderedInitialization,
+        "--expected-ordered-initialization-evidence-sha256",
+        "<reviewed-ordered-initialization-sha256>",
+        "--phase",
+        "register",
+        "--submit",
+        "true",
+        "--authority",
+        "<canonical-testu-proposer>",
+        "--torii-url",
+        "<canonical-taira-validator-root>",
+        "--solana-rpc-url",
+        CANONICAL_SOLANA_TESTNET_RPC_URL,
+        "--out",
+        governanceRegistration,
+      ],
+      requiredInputs: [
+        governancePlan,
+        orderedInitialization,
+        "SCCP_TAIRA_GOVERNANCE_PRIVATE_KEY",
+        "canonical-testu-proposer",
+      ],
+      produces: [governanceRegistration],
+    },
+    {
+      id: SOLANA_PRODUCTION_ACTION_ORDER[5],
+      ready: registrationReadbackReady,
+      title: "Enact and read back staged registration",
+      detail:
+        "Have Parliament enact the registration proposal, then require fresh public typed-registry readback of the exact staged route before activation is submitted.",
+      command: [],
+      requiredInputs: [
+        governanceRegistration,
+        "parliament-registration-enactment",
+        "fresh-public-staged-registry-readback",
+      ],
+      produces: ["public-typed-registry-staged-route"],
+    },
+    {
+      id: SOLANA_PRODUCTION_ACTION_ORDER[6],
+      ready: activationProposalReady,
+      title: "Submit the bidirectional activation proposal",
+      detail:
+        "After exact staged readback, submit the separate compare-and-swap activation phase and write the activation result consumed by this gate.",
+      command: [
+        "npm",
+        "run",
+        "sccp:solana:governance",
+        "--",
+        "--plan",
+        governancePlan,
+        "--expected-plan-sha256",
+        "<reviewed-governance-plan-sha256>",
+        "--ordered-initialization-evidence",
+        orderedInitialization,
+        "--expected-ordered-initialization-evidence-sha256",
+        "<reviewed-ordered-initialization-sha256>",
+        "--phase",
+        "activate",
+        "--submit",
+        "true",
+        "--authority",
+        "<canonical-testu-proposer>",
+        "--torii-url",
+        "<canonical-taira-validator-root>",
+        "--solana-rpc-url",
+        CANONICAL_SOLANA_TESTNET_RPC_URL,
+        "--out",
+        governanceActivation,
+      ],
+      requiredInputs: [
+        governancePlan,
+        governanceRegistration,
+        orderedInitialization,
+        "SCCP_TAIRA_GOVERNANCE_PRIVATE_KEY",
+        "fresh-public-staged-registry-readback",
+      ],
+      produces: [governanceActivation],
+    },
+    {
+      id: SOLANA_PRODUCTION_ACTION_ORDER[7],
+      ready: activationReadbackReady,
+      title: "Enact and read back bidirectional activation",
+      detail:
+        "Have Parliament enact the activation proposal, then rerun the gate for a fresh exact public bidirectional typed-registry readback.",
+      command: [],
+      requiredInputs: [
+        governanceActivation,
+        "parliament-activation-enactment",
+        "fresh-public-bidirectional-registry-readback",
+      ],
+      produces: ["public-typed-registry-bidirectional-route"],
+    },
+    {
+      id: SOLANA_PRODUCTION_ACTION_ORDER[8],
+      ready: smokeReady,
+      title: "Complete exact Solana smoke readiness",
+      detail:
+        "Run the public-route and independently approved destination/source prover readiness gate, writing the latest report at the path consumed here.",
+      command: [
+        "npm",
+        "run",
+        "e2e:sccp:solana-smoke-readiness",
+        "--",
+        "--torii-url",
+        "<canonical-taira-validator-root>",
+        "--solana-rpc-url",
+        CANONICAL_SOLANA_TESTNET_RPC_URL,
+        "--output-dir",
+        smokeOutputDir,
+        "--prover-governance-approval",
+        proverGovernanceApproval,
+        "--prover-governance-approval-sha256",
+        "<reviewed-prover-approval-sha256>",
+        "--skip-solana-rpc",
+        "false",
+      ],
+      requiredInputs: [
+        "VITE_WALLETCONNECT_PROJECT_ID",
+        "VITE_SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL",
+        "VITE_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL",
+        proverGovernanceApproval,
+      ],
+      produces: [path.join(smokeOutputDir, "latest.json")],
+    },
+    {
+      id: SOLANA_PRODUCTION_ACTION_ORDER[9],
+      ready: liveCaptureReady,
+      title: "Record the genuine bidirectional live capture",
+      detail:
+        "After real transfers and smoke readiness pass, bind the independently hash-pinned changing-frame/non-silent capture and independently reviewed ordered semantic witness into the final H.264/AAC MP4 and exact VTT.",
+      command: [
+        "npm",
+        "run",
+        "e2e:sccp:solana-video",
+        "--",
+        "--torii-url",
+        "<canonical-taira-validator-root>",
+        "--solana-rpc-url",
+        CANONICAL_SOLANA_TESTNET_RPC_URL,
+        "--live-evidence",
+        "<completed-solana-bidirectional-live-evidence.json>",
+        "--production-gate-snapshot",
+        productionGateSnapshot,
+        "--production-gate-snapshot-sha256",
+        "<pre-live-production-gate-sha256>",
+        "--live-capture-video",
+        "<real-bidirectional-screen-recording.mp4>",
+        "--live-capture-video-sha256",
+        "<reviewed-live-capture-sha256>",
+        "--live-capture-witness",
+        "<reviewed-live-capture-witness.json>",
+        "--live-capture-witness-sha256",
+        "<reviewed-live-capture-witness-sha256>",
+        "--live-capture-review-attestation",
+        "<reviewed-live-capture-review-attestation.json>",
+        "--live-capture-review-attestation-sha256",
+        "<reviewed-live-capture-review-attestation-sha256>",
+        "--prover-governance-approval-sha256",
+        "<reviewed-prover-approval-sha256>",
+        "--output-dir",
+        path.relative(repoRoot, DEFAULT_LIVE_VIDEO_DIR),
+      ],
+      requiredInputs: [
+        "completed-solana-bidirectional-live-evidence",
+        "independently-pinned-real-screen-capture",
+        "independently-reviewed-live-capture-witness",
+        "detached-threshold-ed25519-capture-review-attestation",
+        "approval-pinned-capture-review-policy",
+        productionGateSnapshot,
+      ],
+      produces: [
+        path.relative(repoRoot, DEFAULT_LIVE_VIDEO_TRANSCRIPT_PATH),
+        path.relative(repoRoot, DEFAULT_LIVE_VIDEO_MP4_PATH),
+        path.relative(repoRoot, DEFAULT_LIVE_VIDEO_VTT_PATH),
+      ],
+    },
+  ];
+
+  const actions = [];
+  let priorMissingId = null;
+  for (const stage of stages) {
+    if (stage.ready === true) continue;
+    const blockedBy = priorMissingId ? [priorMissingId] : [];
+    const command = blockedBy.length === 0 ? stage.command : [];
+    actions.push({
+      id: stage.id,
+      title: stage.title,
+      detail: stage.detail,
+      blockedBy,
+      executable: command.length > 0,
+      command,
+      requiredInputs: stage.requiredInputs,
+      produces: stage.produces,
+    });
+    priorMissingId = stage.id;
+  }
+  return actions;
+};
+
+const orderedFreshDeployRole = (role) =>
+  role === "nativeVerifier" ? "native_verifier" : role;
+
+const freshDeployLifecycleTransactionCount = (normalized) =>
+  normalized?.report?.programs?.reduce(
+    (count, program) => count + 2 + (program?.buffer?.writes?.length ?? 0),
+    1,
+  ) ?? 0;
+
+/**
+ * Fail-closed production proof that the three governed programs were freshly
+ * deployed and made immutable through the exact reviewed lifecycle. The
+ * canonical report bytes and their independent pin are necessary but not
+ * sufficient: every lifecycle signature must also replay at finalized RPC.
+ */
+export const checkSolanaFreshDeployEvidence = ({
+  normalizedFreshDeployReport = null,
+  validationError = null,
+  freshDeployReportArtifactSha256 = null,
+  expectedFreshDeployReportSha256 = null,
+  rpcVerification = null,
+  rpcUrl = null,
+  skipSolanaRpc = false,
+  orderedInitializationEvidenceReport = null,
+  governancePlanReport = null,
+  preflightReport = null,
+} = {}) => {
+  const reportSha256 = normalizedFreshDeployReport?.reportSha256 ?? null;
+  const expectedSha256 = trimString(
+    expectedFreshDeployReportSha256,
+  ).toLowerCase();
+  const artifactSha256 = trimString(
+    freshDeployReportArtifactSha256,
+  ).toLowerCase();
+  const problems = [];
+  const addProblem = (id, detail) => problems.push({ id, detail });
+  if (!normalizedFreshDeployReport?.report) {
+    addProblem(
+      "canonical-report-validation",
+      validationError
+        ? "The pinned fresh-deploy report failed exact canonical validation."
+        : "The pinned fresh-deploy report is missing.",
+    );
+  }
+  if (!isNonzeroHex32(expectedSha256)) {
+    addProblem(
+      "independent-report-pin",
+      "An independent canonical fresh-deploy report SHA-256 pin is required.",
+    );
+  }
+  if (
+    !isNonzeroHex32(artifactSha256) ||
+    artifactSha256 !== expectedSha256 ||
+    reportSha256 !== expectedSha256
+  ) {
+    addProblem(
+      "exact-report-byte-binding",
+      "The loaded fresh-deploy report bytes do not match the independent pin and validated report hash.",
+    );
+  }
+  if (skipSolanaRpc === true) {
+    addProblem(
+      "finalized-rpc-skipped",
+      "Fresh-deploy lifecycle signatures require live finalized Solana RPC replay.",
+    );
+  }
+  const expectedTransactionCount = freshDeployLifecycleTransactionCount(
+    normalizedFreshDeployReport,
+  );
+  if (
+    rpcUrl !== CANONICAL_SOLANA_TESTNET_RPC_URL ||
+    rpcVerification?.ready !== true ||
+    rpcVerification?.liveFinalizedRpcReplay !== true ||
+    rpcVerification?.reportSha256 !== reportSha256 ||
+    !Number.isSafeInteger(rpcVerification?.transactionCount) ||
+    rpcVerification.transactionCount !== expectedTransactionCount ||
+    !Array.isArray(rpcVerification?.transactions) ||
+    rpcVerification.transactions.length !== expectedTransactionCount
+  ) {
+    addProblem(
+      "finalized-transaction-replay",
+      "One or more fresh Loader-v3 lifecycle transactions were not replayed exactly from canonical finalized Solana testnet RPC.",
+    );
+  }
+  let normalizedOrdered = null;
+  if (isRecord(orderedInitializationEvidenceReport)) {
+    try {
+      normalizedOrdered = validateSolanaOrderedInitializationEvidence(
+        orderedInitializationEvidenceReport,
+      );
+    } catch {
+      addProblem(
+        "ordered-initialization-validation",
+        "The ordered-initialization evidence cannot bind the fresh deployment report.",
+      );
+    }
+  }
+  if (
+    normalizedOrdered &&
+    normalizedOrdered.freshDeployReportSha256 !== reportSha256
+  ) {
+    addProblem(
+      "ordered-initialization-report-binding",
+      "The ordered-initialization evidence pins different fresh-deploy report bytes.",
+    );
+  }
+  if (normalizedOrdered && normalizedFreshDeployReport?.report) {
+    for (const program of normalizedFreshDeployReport.report.programs) {
+      const finalization =
+        normalizedOrdered.programFinalizations[
+          orderedFreshDeployRole(program.role)
+        ];
+      if (
+        !finalization ||
+        finalization.programAddress !== program.programId ||
+        finalization.programdataAddress !== program.programdataAddress ||
+        finalization.artifactSha256 !== program.artifactSha256 ||
+        finalization.programCodeHash !== program.codeHash ||
+        finalization.programdataDeploymentSlot !==
+          program.deploy.finalizedSlot ||
+        finalization.transactionSignature !==
+          normalizedFreshDeployReport.immutableFinalization.signature ||
+        finalization.finalizedSlot !==
+          normalizedFreshDeployReport.immutableFinalization.finalizedSlot
+      ) {
+        addProblem(
+          `ordered-initialization-${program.role}-binding`,
+          `The ordered-initialization evidence does not bind the exact ${program.role} fresh deployment lifecycle.`,
+        );
+      }
+    }
+  }
+  const governanceFreshDeploySha256 = readFirstString(
+    governancePlanReport,
+    "fresh_deploy_report_sha256",
+    "freshDeployReportSha256",
+  );
+  if (
+    isRecord(governancePlanReport) &&
+    governanceFreshDeploySha256 !== reportSha256
+  ) {
+    addProblem(
+      "governance-report-binding",
+      "The reviewed governance plan does not pin the actual fresh-deploy report bytes.",
+    );
+  }
+  const registrySummary = readFirstRecord(preflightReport, "registrySummary");
+  if (registrySummary && normalizedFreshDeployReport?.report) {
+    for (const program of normalizedFreshDeployReport.report.programs) {
+      const role = program.role;
+      const programdataKey =
+        role === "nativeVerifier"
+          ? "nativeVerifierProgramData"
+          : `${role}ProgramData`;
+      if (
+        registrySummary.programs?.[role] !== program.programId ||
+        registrySummary.accounts?.[programdataKey] !==
+          program.programdataAddress ||
+        registrySummary.programDataSlots?.[role] !==
+          program.deploy.finalizedSlot ||
+        registrySummary.codeHashes?.[role] !== program.codeHash
+      ) {
+        addProblem(
+          `typed-registry-${role}-binding`,
+          `The public typed registry does not bind the exact ${role} fresh deployment.`,
+        );
+      }
+    }
+  }
+
+  const freshDeployReady = problems.length === 0;
+  const ok = freshDeployReady;
+  return makeCheck(
+    "fresh-loader-v3-deployment-evidence",
+    ok,
+    ok
+      ? "The exact pinned three-program Loader-v3 deployment report and every lifecycle transaction match canonical finalized Solana testnet RPC."
+      : "Fresh three-program Loader-v3 deployment provenance is missing, divergent, or was not replayed from canonical finalized Solana testnet RPC.",
+    {
+      reportSha256: isNonzeroHex32(reportSha256) ? reportSha256 : null,
+      expectedReportSha256: isNonzeroHex32(expectedSha256)
+        ? expectedSha256
+        : null,
+      artifactSha256: isNonzeroHex32(artifactSha256) ? artifactSha256 : null,
+      canonicalReportValidated: Boolean(normalizedFreshDeployReport?.report),
+      canonicalRpcUrl: rpcUrl === CANONICAL_SOLANA_TESTNET_RPC_URL,
+      liveFinalizedRpcReplay: rpcVerification?.liveFinalizedRpcReplay === true,
+      expectedTransactionCount,
+      verifiedTransactionCount: Number.isSafeInteger(
+        rpcVerification?.transactionCount,
+      )
+        ? rpcVerification.transactionCount
+        : 0,
+      orderedInitializationBound:
+        normalizedOrdered?.freshDeployReportSha256 === reportSha256,
+      governancePlanBound:
+        governanceFreshDeploySha256.length > 0 &&
+        governanceFreshDeploySha256 === reportSha256,
+      typedRegistryCompared: Boolean(registrySummary),
+      freshDeployReady,
+      skipSolanaRpc: skipSolanaRpc === true,
+      problems,
     },
   );
 };
 
 export const buildSolanaProductionGateReport = ({
   deployDir = null,
+  localSolanaSccpSdkCapability = null,
+  normalizedFreshDeployReport = null,
+  freshDeployReportValidationError = null,
+  freshDeployReportPath = null,
+  expectedFreshDeployReportSha256 = null,
+  freshDeployRpcVerification = null,
+  skipSolanaRpc = false,
   preflightReport = null,
   preflightReportPath = null,
-  requirementsReport = null,
-  requirementsPath = null,
-  postDeployEvidenceReport = null,
-  postDeployEvidencePath = null,
-  proverReadinessReport = null,
-  proverReadinessPath = null,
-  productionMaterialInventoryReport = null,
-  productionMaterialInventoryPath = null,
-  routeManifestReport = null,
-  routeManifestPath = null,
-  publishReadinessReport = null,
-  publishReadinessPath = null,
-  routePublishBlockedReport = null,
-  routePublishBlockedPath = null,
-  routePublicationRequestReport = null,
-  routePublicationRequestPath = null,
-  routeManagerAccessReport = null,
-  routeManagerAccessPath = null,
-  operatorHandoffReport = null,
-  operatorHandoffPath = null,
-  activationPackageReport = null,
-  activationPackagePath = null,
-  laneActivationRequestReport = null,
-  laneActivationRequestPath = null,
-  laneActivationProposalReport = null,
-  laneActivationProposalPath = null,
-  sourceMaterialHandoffReport = null,
-  sourceMaterialHandoffPath = null,
-  handoffVerificationReport = null,
-  handoffVerificationPath = null,
-  sourceBurnReadinessReport = null,
-  sourceBurnReadinessPath = null,
-  sourceBurnSubmissionReport = null,
-  sourceBurnSubmissionPath = null,
-  proofMaterialRequestReport = null,
-  proofMaterialRequestPath = null,
-  proofMaterialBundleReport = null,
-  proofMaterialBundlePath = null,
-  proofMaterialCeremonyPackageReport = null,
-  proofMaterialCeremonyPackagePath = null,
+  proverGovernanceApprovalReport = null,
+  proverGovernanceApprovalPath = null,
+  captureReviewPolicyLoad = null,
+  captureReviewPolicyPath = null,
+  liveCaptureWitnessArtifact = null,
+  liveCaptureWitnessPath = null,
+  liveCaptureReviewAttestationArtifact = null,
+  liveCaptureReviewAttestationPath = null,
+  finalCaptureReviewBoundary = null,
+  liveCaptureVideoPath = null,
+  expectedLiveCaptureVideoSha256 = null,
+  governancePlanReport = null,
+  governancePlanPath = null,
+  governanceRegistrationReport = null,
+  governanceRegistrationPath = null,
+  governanceActivationReport = null,
+  governanceActivationPath = null,
+  orderedInitializationEvidenceReport = null,
+  orderedInitializationEvidencePath = null,
+  governanceEvidence = null,
   smokeReadinessReport = null,
   smokeReadinessPath = null,
-  deploymentVideoTranscript = null,
-  deploymentVideoTranscriptPath = null,
-  deploymentVideoMp4Path = DEFAULT_DEPLOYMENT_VIDEO_MP4_PATH,
-  deploymentVideoVttPath = DEFAULT_DEPLOYMENT_VIDEO_VTT_PATH,
   liveVideoTranscript = null,
   liveVideoTranscriptPath = null,
   liveVideoMp4Path = DEFAULT_LIVE_VIDEO_MP4_PATH,
@@ -8350,9 +10441,62 @@ export const buildSolanaProductionGateReport = ({
   successExecutionPolicy,
   liveVideoAuthoritativeRevalidation,
   expectedLiveEvidencePackageHashes,
-  productionGateReportPath = null,
+  expectedProverGovernanceApprovalSha256 = null,
+  proverGovernanceApprovalValidation = null,
+  proverRuntimeReinspection = null,
   checkedAt = new Date().toISOString(),
 } = {}) => {
+  const localSolanaSccpSdkSupport = checkLocalSolanaSccpSdkCapability({
+    capability: localSolanaSccpSdkCapability,
+  });
+  const preLiveInputSnapshotCheck =
+    checkSolanaProductionGatePreLiveInputSnapshot({
+      snapshot: preLiveInputSnapshot,
+      expectedPaths: {
+        captureReviewPolicy: captureReviewPolicyPath,
+        freshDeployReport: freshDeployReportPath,
+        proverGovernanceApproval: proverGovernanceApprovalPath,
+        governancePlan: governancePlanPath,
+        governanceRegistration: governanceRegistrationPath,
+        governanceActivation: governanceActivationPath,
+        orderedInitializationEvidence: orderedInitializationEvidencePath,
+        smokeReadiness: smokeReadinessPath,
+      },
+    });
+  const requiredPreLiveReportsLoaded =
+    checkSolanaProductionGateRequiredReportsLoaded({
+      reports: {
+        captureReviewPolicy: captureReviewPolicyLoad?.policy ?? null,
+        freshDeployReport: normalizedFreshDeployReport?.report ?? null,
+        proverGovernanceApproval: proverGovernanceApprovalReport,
+        governancePlan: governancePlanReport,
+        governanceRegistration: governanceRegistrationReport,
+        governanceActivation: governanceActivationReport,
+        orderedInitializationEvidence: orderedInitializationEvidenceReport,
+        smokeReadiness: smokeReadinessReport,
+      },
+    });
+  const freshDeployEvidence = checkSolanaFreshDeployEvidence({
+    normalizedFreshDeployReport,
+    validationError: freshDeployReportValidationError,
+    freshDeployReportArtifactSha256:
+      preLiveInputSnapshot?.inputs?.freshDeployReport?.sha256 ?? null,
+    expectedFreshDeployReportSha256,
+    rpcVerification: freshDeployRpcVerification,
+    rpcUrl:
+      successExecutionPolicy?.solanaRpcUrl ??
+      preflightReport?.solana?.rpcUrl ??
+      null,
+    skipSolanaRpc,
+    orderedInitializationEvidenceReport,
+    governancePlanReport,
+    preflightReport,
+  });
+  const captureReviewPolicyTrustAnchor =
+    checkSolanaCaptureReviewPolicyTrustAnchor({
+      policyLoad: captureReviewPolicyLoad,
+      approvalValidation: proverGovernanceApprovalValidation,
+    });
   const publicPreflight = checkPublicPreflightReady({
     preflightReport,
     preflightReportPath,
@@ -8361,272 +10505,49 @@ export const buildSolanaProductionGateReport = ({
     preflightReport,
     preflightReportPath,
   });
-  const publicBridgeSourceProgramdata = checkPublicBridgeSourceProgramdataReady(
-    {
-      preflightReport,
-      preflightReportPath,
-    },
-  );
-  const publicVerifierProgramdata = checkPublicVerifierProgramdataReady({
+  const publicExactProgramdata = checkPublicExactProgramdataReady({
     preflightReport,
     preflightReportPath,
   });
-  const governanceProgramRolePinsFresh = isRecord(
-    productionMaterialInventoryReport,
-  )
-    ? checkGovernanceProgramRolePinsFresh({
-        preflightReport,
-        preflightReportPath,
-        productionMaterialInventoryReport,
-        productionMaterialInventoryPath,
-      })
-    : null;
+  const publicExactRuntimeState = checkPublicExactRuntimeStateReady({
+    preflightReport,
+    preflightReportPath,
+  });
   const publicRoutePublication = summarizePublicSolanaRoutePublication({
     preflightReport,
     preflightReportPath,
   });
-  const productionRequirements = checkProductionRequirementsReady({
-    requirementsReport,
-    requirementsPath,
-  });
-  const productionRequirementsArtifactConsistency = isRecord(requirementsReport)
-    ? checkProductionRequirementsArtifactConsistency({
-        requirementsReport,
-        requirementsPath,
-        postDeployEvidenceReport,
-        postDeployEvidencePath,
-        proverReadinessReport,
-        proverReadinessPath,
-        productionMaterialInventoryReport,
-        productionMaterialInventoryPath,
-      })
-    : null;
-  const destinationProofAdmission = checkDestinationProofAdmissionReady({
-    requirementsReport,
-    requirementsPath,
-  });
-  const publishReadiness = checkPublishReadinessReady({
-    publishReadinessReport,
-    publishReadinessPath,
-  });
-  const routePublicationRequest = isRecord(routePublicationRequestReport)
-    ? checkRoutePublicationRequestReady({
-        routePublicationRequestReport,
-        routePublicationRequestPath,
-      })
-    : null;
-  const routePublicationRequestArtifactConsistency = isRecord(
-    routePublicationRequestReport,
-  )
-    ? checkRoutePublicationRequestArtifactConsistency({
-        routePublicationRequestReport,
-        routePublicationRequestPath,
-        routeManifestReport,
-        routeManifestPath,
-        publishReadinessReport,
-        publishReadinessPath,
-        proofMaterialBundleReport,
-        proofMaterialBundlePath,
-      })
-    : null;
-  const routePublishBlockedArtifactConsistency = isRecord(
-    routePublishBlockedReport,
-  )
-    ? checkRoutePublishBlockedArtifactConsistency({
-        routePublishBlockedReport,
-        routePublishBlockedPath,
-        routeManifestPath,
-        publishReadinessReport,
-        publishReadinessPath,
-        requirementsReport,
-        requirementsPath,
-      })
-    : null;
-  const routeManagerAccess = checkRouteManagerAccessReady({
-    routeManagerAccessReport,
-    routeManagerAccessPath,
-  });
-  const routeManagerAccessArtifactConsistency = isRecord(
-    routeManagerAccessReport,
-  )
-    ? checkRouteManagerAccessArtifactConsistency({
-        routeManagerAccessReport,
-        routeManagerAccessPath,
-        routePublicationRequestReport,
-        routePublicationRequestPath,
-        publishReadinessReport,
-        publishReadinessPath,
-        requirementsReport,
-        requirementsPath,
-        proofMaterialBundleReport,
-        proofMaterialBundlePath,
-      })
-    : null;
-  const operatorHandoff = checkOperatorHandoffReady({
-    operatorHandoffReport,
-    operatorHandoffPath,
-  });
-  const operatorHandoffArtifactConsistency = isRecord(operatorHandoffReport)
-    ? checkOperatorHandoffArtifactConsistency({
-        operatorHandoffReport,
-        operatorHandoffPath,
-        proofMaterialBundleReport,
-        proofMaterialBundlePath,
-        proofMaterialCeremonyPackageReport,
-        proofMaterialCeremonyPackagePath,
-        routePublicationRequestReport,
-        routePublicationRequestPath,
-        routeManagerAccessReport,
-        routeManagerAccessPath,
-        laneActivationProposalReport,
-        laneActivationProposalPath,
-        smokeReadinessReport,
-        smokeReadinessPath,
-      })
-    : null;
-  const activationPackage = isRecord(activationPackageReport)
-    ? checkActivationPackageReady({
-        activationPackageReport,
-        activationPackagePath,
-      })
-    : null;
-  const laneActivationProposal = isRecord(laneActivationProposalReport)
-    ? checkLaneActivationProposalReady({
-        laneActivationProposalReport,
-        laneActivationProposalPath,
-      })
-    : null;
-  const laneActivationProposalArtifactConsistency =
-    isRecord(laneActivationProposalReport) &&
-    isRecord(laneActivationRequestReport)
-      ? checkLaneActivationProposalArtifactConsistency({
-          laneActivationProposalReport,
-          laneActivationProposalPath,
-          laneActivationRequestReport,
-          laneActivationRequestPath,
-        })
-      : null;
-  const handoffVerification = checkSourceMaterialHandoffVerified({
-    handoffVerificationReport,
-    handoffVerificationPath,
-  });
-  const sourceMaterialHandoffArtifactConsistency =
-    isRecord(sourceMaterialHandoffReport) && isRecord(handoffVerificationReport)
-      ? checkSourceMaterialHandoffArtifactConsistency({
-          sourceMaterialHandoffReport,
-          sourceMaterialHandoffPath,
-          handoffVerificationReport,
-          handoffVerificationPath,
-        })
-      : null;
-  const sourceBurnProofRequest = checkSourceBurnProofRequestReady({
-    sourceBurnSubmissionReport,
-    sourceBurnSubmissionPath,
-  });
-  const sourceBurnArtifactConsistency =
-    isRecord(sourceBurnReadinessReport) && isRecord(sourceBurnSubmissionReport)
-      ? checkSourceBurnArtifactConsistency({
-          sourceBurnReadinessReport,
-          sourceBurnReadinessPath,
-          sourceBurnSubmissionReport,
-          sourceBurnSubmissionPath,
-        })
-      : null;
-  const proofMaterialBundle = checkProofMaterialBundleReady({
-    proofMaterialBundleReport,
-    proofMaterialBundlePath,
-  });
-  const proofMaterialBundleArtifactConsistency =
-    isRecord(proofMaterialBundleReport) && isRecord(proofMaterialRequestReport)
-      ? checkProofMaterialBundleArtifactConsistency({
-          proofMaterialBundleReport,
-          proofMaterialBundlePath,
-          proofMaterialRequestReport,
-          proofMaterialRequestPath,
-        })
-      : null;
-  const proofMaterialCeremonyPackage = isRecord(
-    proofMaterialCeremonyPackageReport,
-  )
-    ? checkProofMaterialCeremonyPackageReady({
-        proofMaterialCeremonyPackageReport,
-        proofMaterialCeremonyPackagePath,
-      })
-    : null;
-  const proofMaterialCeremonyArtifactConsistency = isRecord(
-    proofMaterialCeremonyPackageReport,
-  )
-    ? checkProofMaterialCeremonyArtifactConsistency({
-        proofMaterialCeremonyPackageReport,
-        proofMaterialCeremonyPackagePath,
-        proofMaterialBundleReport,
-        proofMaterialBundlePath,
-        sourceMaterialHandoffReport,
-        sourceMaterialHandoffPath,
-        handoffVerificationReport,
-        handoffVerificationPath,
-        sourceBurnSubmissionReport,
-        sourceBurnSubmissionPath,
-      })
-    : null;
-  const activationArtifactConsistency = isRecord(activationPackageReport)
-    ? checkActivationArtifactConsistency({
-        activationPackageReport,
-        activationPackagePath,
-        proofMaterialBundleReport,
-        proofMaterialBundlePath,
-        proofMaterialCeremonyPackageReport,
-        proofMaterialCeremonyPackagePath,
-        routePublicationRequestReport,
-        routePublicationRequestPath,
-        routeManagerAccessReport,
-        routeManagerAccessPath,
-        laneActivationProposalReport,
-        laneActivationProposalPath,
-        operatorHandoffReport,
-        operatorHandoffPath,
-        smokeReadinessReport,
-        smokeReadinessPath,
-      })
-    : null;
+  const resolvedGovernanceEvidence = governanceEvidence ?? {
+    ready: false,
+    checks: [
+      makeCheck(
+        "governance-live-evidence-provided",
+        false,
+        "Production-gate report assembly requires completed GET-only live governance evidence verification.",
+      ),
+    ],
+  };
   const smokeReadiness = checkSmokeReadinessReady({
     smokeReadinessReport,
     smokeReadinessPath,
+    expectedProverGovernanceApprovalSha256,
+    proverGovernanceApprovalValidation,
+    proverRuntimeReinspection,
   });
-  const smokeReadinessArtifactConsistency = isRecord(smokeReadinessReport)
-    ? checkSmokeReadinessArtifactConsistency({
-        smokeReadinessReport,
-        smokeReadinessPath,
-        preflightReport,
-        preflightReportPath,
-        proofMaterialBundleReport,
-        proofMaterialBundlePath,
-      })
-    : null;
-  const deploymentVideo = checkDeploymentVideoPresent({
-    deploymentVideoTranscript,
-    deploymentVideoTranscriptPath,
-    deploymentVideoMp4Path,
-    deploymentVideoVttPath,
-    artifactFacts,
-  });
-  const deploymentVideoArtifactConsistency =
-    isRecord(deploymentVideoTranscript) && isRecord(activationPackageReport)
-      ? checkDeploymentVideoArtifactConsistency({
-          deploymentVideoTranscript,
-          deploymentVideoTranscriptPath,
-          activationPackageReport,
-          activationPackagePath,
-          sourceMaterialHandoffReport,
-          sourceMaterialHandoffPath,
-          handoffVerificationReport,
-          handoffVerificationPath,
-          sourceBurnReadinessReport,
-          sourceBurnReadinessPath,
-          sourceBurnSubmissionReport,
-          sourceBurnSubmissionPath,
-        })
-      : null;
+  const smokeReadinessArtifactConsistency =
+    checkSmokeReadinessArtifactConsistency({
+      smokeReadinessReport,
+      smokeReadinessPath,
+      preflightReport,
+      preflightReportPath,
+      governancePlanReport,
+      governancePlanPath,
+      orderedInitializationEvidenceReport,
+      orderedInitializationEvidencePath,
+      orderedInitializationEvidenceArtifactSha256:
+        preLiveInputSnapshot?.inputs?.orderedInitializationEvidence?.sha256 ??
+        null,
+    });
   const liveVideo = checkLiveBidirectionalVideo({
     liveVideoTranscript,
     liveVideoTranscriptPath,
@@ -8640,100 +10561,101 @@ export const buildSolanaProductionGateReport = ({
     preLiveInputSnapshot,
     successExecutionPolicy,
     authoritativeRevalidation: liveVideoAuthoritativeRevalidation,
-    activationPackageReport,
-    operatorHandoffReport,
-    expectedLiveEvidencePackageHashes,
-  });
-  const deploymentVideoStatus = checkDeploymentVideoHonestStatus({
-    deploymentVideoTranscript,
-    publicPreflightReady: publicPreflight.status === "pass",
-    productionRequirementsReady: productionRequirements.status === "pass",
-    publishReadinessReady: publishReadiness.status === "pass",
-    liveVideoReady:
-      smokeReadiness.status === "pass" && liveVideo.status === "pass",
+    expectedLiveEvidencePackageHashes: expectedLiveEvidencePackageHashes ?? {
+      governancePlanSha256: governancePlanReport?.plan_sha256 ?? null,
+      governanceRegistrationSha256:
+        preLiveInputSnapshot?.inputs?.governanceRegistration?.sha256 ?? null,
+      governanceActivationSha256:
+        preLiveInputSnapshot?.inputs?.governanceActivation?.sha256 ?? null,
+      publicRegistrySha256:
+        preflightReport?.registrySummary?.registrySha256 ?? null,
+    },
+    liveCaptureWitnessArtifact,
+    liveCaptureReviewAttestationArtifact,
+    finalCaptureReviewBoundary,
+    liveCaptureVideoPath,
+    expectedLiveCaptureVideoSha256,
   });
   const checks = [
+    localSolanaSccpSdkSupport,
+    preLiveInputSnapshotCheck,
+    requiredPreLiveReportsLoaded,
+    captureReviewPolicyTrustAnchor,
+    freshDeployEvidence,
     publicPreflight,
     publicSolanaLane,
-    publicVerifierProgramdata,
-    publicBridgeSourceProgramdata,
-    ...(governanceProgramRolePinsFresh ? [governanceProgramRolePinsFresh] : []),
-    productionRequirements,
-    ...(productionRequirementsArtifactConsistency
-      ? [productionRequirementsArtifactConsistency]
-      : []),
-    destinationProofAdmission,
-    publishReadiness,
-    ...(routePublicationRequest ? [routePublicationRequest] : []),
-    ...(routePublicationRequestArtifactConsistency
-      ? [routePublicationRequestArtifactConsistency]
-      : []),
-    ...(routePublishBlockedArtifactConsistency
-      ? [routePublishBlockedArtifactConsistency]
-      : []),
-    routeManagerAccess,
-    ...(routeManagerAccessArtifactConsistency
-      ? [routeManagerAccessArtifactConsistency]
-      : []),
-    operatorHandoff,
-    ...(operatorHandoffArtifactConsistency
-      ? [operatorHandoffArtifactConsistency]
-      : []),
-    ...(activationPackage ? [activationPackage] : []),
-    ...(laneActivationProposal ? [laneActivationProposal] : []),
-    ...(laneActivationProposalArtifactConsistency
-      ? [laneActivationProposalArtifactConsistency]
-      : []),
-    ...(activationArtifactConsistency ? [activationArtifactConsistency] : []),
-    handoffVerification,
-    ...(sourceMaterialHandoffArtifactConsistency
-      ? [sourceMaterialHandoffArtifactConsistency]
-      : []),
-    sourceBurnProofRequest,
-    ...(sourceBurnArtifactConsistency ? [sourceBurnArtifactConsistency] : []),
-    ...(proofMaterialCeremonyPackage ? [proofMaterialCeremonyPackage] : []),
-    ...(proofMaterialCeremonyArtifactConsistency
-      ? [proofMaterialCeremonyArtifactConsistency]
-      : []),
-    proofMaterialBundle,
-    ...(proofMaterialBundleArtifactConsistency
-      ? [proofMaterialBundleArtifactConsistency]
-      : []),
+    publicExactProgramdata,
+    publicExactRuntimeState,
+    ...resolvedGovernanceEvidence.checks,
     smokeReadiness,
-    ...(smokeReadinessArtifactConsistency
-      ? [smokeReadinessArtifactConsistency]
-      : []),
-    deploymentVideo,
-    ...(deploymentVideoArtifactConsistency
-      ? [deploymentVideoArtifactConsistency]
-      : []),
-    deploymentVideoStatus,
+    smokeReadinessArtifactConsistency,
     liveVideo,
   ];
   const failed = failedChecks(checks);
   const failedCheckIds = failed.map((check) => check.id);
   const blockerIds = Array.from(new Set(failedCheckIds));
   const ready = checks.every((check) => check.status === "pass");
-  const completionAudit = buildCompletionAudit({
-    checks,
-    deploymentVideoTranscript,
-  });
-  const completionAuditReady = completionAudit.every(
-    (item) => item.status === "proven",
+  const completionAudit = checks.map((check) => ({
+    id: check.id,
+    status: check.status === "pass" ? "proven" : "blocked",
+    evidence: check.evidence ?? null,
+  }));
+  const completionAuditReady = ready;
+  let orderedInitializationArtifactReady = false;
+  try {
+    validateSolanaOrderedInitializationEvidence(
+      orderedInitializationEvidenceReport,
+    );
+    orderedInitializationArtifactReady = true;
+  } catch {
+    // The action DAG must fail closed when no exact initializer artifact is
+    // available. Governance validation may also fail only because its plan is
+    // not built yet, so validate the chronology artifact independently here.
+  }
+  const governanceCheckById = new Map(
+    resolvedGovernanceEvidence.checks.map((check) => [check.id, check]),
   );
-  const smokeReadinessAction =
-    solanaSmokeReadinessNextRequiredAction(smokeReadiness);
+  const governancePlanReady =
+    governanceCheckById.get("governance-plan-reviewed")?.status === "pass";
+  const routeCandidateInputsPresent =
+    typeof deployDir === "string" &&
+    existsSync(
+      path.join(
+        deployDir,
+        path.basename(DEFAULT_GOVERNED_ROUTE_CANDIDATE_PATH),
+      ),
+    ) &&
+    existsSync(
+      path.join(deployDir, path.basename(DEFAULT_NATIVE_TRUST_ANCHOR_PATH)),
+    );
+  const registrationProposalReady =
+    governanceCheckById.get("governance-register-evidence")?.status === "pass";
+  const activationProposalReady =
+    governanceCheckById.get("governance-activate-evidence")?.status === "pass";
+  const activationReadbackReady =
+    governanceCheckById.get("governance-enactment-readback")?.status === "pass";
+  const registrationReadbackReady =
+    activationProposalReady ||
+    activationReadbackReady ||
+    (preflightReport?.registryState?.routePresent === true &&
+      ["staged", "bidirectional"].includes(
+        preflightReport.registryState.activation,
+      ));
   const nextActionDetails = ready
     ? []
-    : buildProductionGateActionDetails({
-        checks,
-        activationPackageReport,
-        operatorHandoffReport,
-        smokeReadinessReport,
-        productionGateReportPath,
-        smokeReadinessPath,
-        activationPackagePath,
-        operatorHandoffPath,
+    : buildSolanaProductionNextActionDag({
+        deployDir,
+        freshDeployReady:
+          freshDeployEvidence.evidence?.freshDeployReady === true,
+        exactInitializationReady: orderedInitializationArtifactReady,
+        routeCandidateReady: governancePlanReady || routeCandidateInputsPresent,
+        governancePlanReady,
+        registrationProposalReady,
+        registrationReadbackReady,
+        activationProposalReady,
+        activationReadbackReady,
+        smokeReady: smokeReadiness.status === "pass",
+        liveCaptureReady: liveVideo.status === "pass",
       });
   const nextActions = nextActionDetails
     .map((action) => action?.id)
@@ -8746,10 +10668,46 @@ export const buildSolanaProductionGateReport = ({
     checks,
     failedCheckIds,
     blockerIds,
-    publicSolanaCapability:
-      publicPreflight.evidence?.publicSolanaCapability ?? null,
-    publicSolanaLane: publicSolanaLane.evidence ?? null,
+    publicSolanaCapability: {
+      ready: publicPreflight.status === "pass",
+      requiredCheckCount: SOLANA_PUBLIC_PREFLIGHT_REQUIRED_CHECK_IDS.length,
+      missingRequiredCheckCount: Array.isArray(
+        publicPreflight.evidence?.missingRequiredCheckIds,
+      )
+        ? publicPreflight.evidence.missingRequiredCheckIds.length
+        : SOLANA_PUBLIC_PREFLIGHT_REQUIRED_CHECK_IDS.length,
+    },
+    publicSolanaLane: {
+      ready: publicSolanaLane.status === "pass",
+      present: publicSolanaLane.evidence?.present === true,
+      problemCount: Array.isArray(publicSolanaLane.evidence?.problems)
+        ? publicSolanaLane.evidence.problems.length
+        : 0,
+    },
     routePublication: publicRoutePublication,
+    governanceEvidence: {
+      ready: resolvedGovernanceEvidence.ready,
+      planSha256: publicHex32OrNull(governancePlanReport?.plan_sha256),
+      registrationArtifactSha256:
+        preLiveInputSnapshot?.inputs?.governanceRegistration?.sha256 ?? null,
+      activationArtifactSha256:
+        preLiveInputSnapshot?.inputs?.governanceActivation?.sha256 ?? null,
+      orderedInitializationEvidenceArtifactSha256:
+        preLiveInputSnapshot?.inputs?.orderedInitializationEvidence?.sha256 ??
+        null,
+      publicRegistrySha256: publicHex32OrNull(
+        preflightReport?.registrySummary?.registrySha256,
+      ),
+    },
+    freshDeployEvidence: freshDeployEvidence.evidence,
+    captureReviewPolicy: {
+      ready: captureReviewPolicyTrustAnchor.status === "pass",
+      sha256: captureReviewPolicyLoad?.artifactSha256 ?? null,
+      threshold: captureReviewPolicyLoad?.normalized?.threshold ?? null,
+      reviewerCount:
+        captureReviewPolicyLoad?.normalized?.reviewers?.length ?? 0,
+    },
+    localSolanaSccpSdkCapability: localSolanaSccpSdkCapability ?? null,
     preLiveInputSnapshot,
     preLiveInputSnapshotSha256:
       preLiveInputSnapshot?.preLiveInputSnapshotSha256 ?? null,
@@ -8759,46 +10717,38 @@ export const buildSolanaProductionGateReport = ({
     completionAuditReady,
     completionAudit,
     artifacts: {
-      deployDir,
-      preflightReportPath,
-      requirementsPath,
-      postDeployEvidencePath,
-      proverReadinessPath,
-      productionMaterialInventoryPath,
-      routeManifestPath,
-      publishReadinessPath,
-      routePublishBlockedPath,
-      routePublicationRequestPath,
-      routeManagerAccessPath,
-      operatorHandoffPath,
-      activationPackagePath,
-      laneActivationRequestPath,
-      laneActivationProposalPath,
-      sourceMaterialHandoffPath,
-      handoffVerificationPath,
-      sourceBurnReadinessPath,
-      sourceBurnSubmissionPath,
-      proofMaterialRequestPath,
-      proofMaterialBundlePath,
-      proofMaterialCeremonyPackagePath,
-      smokeReadinessPath,
-      deploymentVideoTranscriptPath,
-      liveVideoTranscriptPath,
-      blockedLiveVideoTranscriptPath,
-      blockedLiveVideoMp4Path,
-      blockedLiveVideoVttPath,
+      deployDir: deployDir ? "[output-directory]" : null,
+      preflightReportPath: publicReportPathMarker(preflightReportPath),
+      freshDeployReportPath: publicReportPathMarker(freshDeployReportPath),
+      proverGovernanceApprovalPath: publicReportPathMarker(
+        proverGovernanceApprovalPath,
+      ),
+      captureReviewPolicyPath: publicReportPathMarker(captureReviewPolicyPath),
+      governancePlanPath: publicReportPathMarker(governancePlanPath),
+      governanceRegistrationPath: publicReportPathMarker(
+        governanceRegistrationPath,
+      ),
+      governanceActivationPath: publicReportPathMarker(
+        governanceActivationPath,
+      ),
+      orderedInitializationEvidencePath: publicReportPathMarker(
+        orderedInitializationEvidencePath,
+      ),
+      smokeReadinessPath: publicReportPathMarker(smokeReadinessPath),
+      liveVideoTranscriptPath: publicReportPathMarker(liveVideoTranscriptPath),
+      liveCaptureWitnessPath: publicReportPathMarker(liveCaptureWitnessPath),
+      liveCaptureReviewAttestationPath: publicReportPathMarker(
+        liveCaptureReviewAttestationPath,
+      ),
+      blockedLiveVideoTranscriptPath: publicReportPathMarker(
+        blockedLiveVideoTranscriptPath,
+      ),
+      blockedLiveVideoMp4Path: publicReportPathMarker(blockedLiveVideoMp4Path),
+      blockedLiveVideoVttPath: publicReportPathMarker(blockedLiveVideoVttPath),
     },
     nextRequiredActions: ready
       ? []
-      : [
-          "Activate the public TAIRA Solana SCCP lane with immutable verifier and trust-anchor evidence.",
-          "Publish a production-ready public TAIRA taira_sol_xor manifest.",
-          "Replace fail-closed Solana admission with governed-zk-verifier-v1 proof admission.",
-          "Publish governed Solana source proof packages and post-deploy live evidence.",
-          "Run publish-readiness with a real route-manager authority and runtime-only signing key.",
-          smokeReadinessAction,
-          "Record a real bidirectional TAIRA <-> Solana SCCP MP4 after public preflight passes.",
-        ].filter(Boolean),
+      : nextActionDetails.map((action) => action.detail),
     nextActions,
     nextActionIds: nextActions,
     nextActionDetails,
@@ -8815,40 +10765,31 @@ export const parseArgs = (argv) =>
       "fetch-timeout-ms",
       "fetch-attempts",
       "preflight-report",
-      "requirements",
-      "post-deploy-evidence",
-      "prover-readiness",
-      "production-material-inventory",
-      "route-manifest",
-      "publish-readiness",
-      "route-publish-blocked",
-      "route-publication-request",
-      "route-publication-request-sha256",
-      "route-manager-access-request",
-      "route-manager-access-request-sha256",
-      "operator-handoff",
-      "operator-handoff-sha256",
-      "activation-package",
-      "activation-package-sha256",
-      "lane-activation-request",
-      "lane-activation-request-sha256",
-      "lane-activation-proposal",
-      "lane-activation-proposal-sha256",
-      "source-material-handoff",
-      "handoff-verification",
-      "source-burn-readiness",
-      "source-burn-submission",
-      "proof-material-request",
-      "proof-material-bundle",
-      "proof-material-ceremony-package",
+      "fresh-deploy-report",
+      "fresh-deploy-report-sha256",
+      "governance-plan",
+      "governance-plan-sha256",
+      "governance-register-result",
+      "governance-register-result-sha256",
+      "governance-activate-result",
+      "governance-activate-result-sha256",
+      "ordered-initialization-evidence",
+      "ordered-initialization-evidence-sha256",
       "smoke-readiness",
-      "deployment-video-transcript",
-      "deployment-video-mp4",
-      "deployment-video-vtt",
+      "prover-governance-approval",
+      "prover-governance-approval-sha256",
+      "capture-review-policy",
+      "capture-review-policy-sha256",
       "expected-pre-live-input-snapshot-sha256",
       "live-video-transcript",
       "live-video-mp4",
       "live-video-vtt",
+      "live-capture-video",
+      "live-capture-video-sha256",
+      "live-capture-witness",
+      "live-capture-witness-sha256",
+      "live-capture-review-attestation",
+      "live-capture-review-attestation-sha256",
       "blocked-live-video-transcript",
       "blocked-live-video-mp4",
       "blocked-live-video-vtt",
@@ -8868,41 +10809,33 @@ Options:
   --fetch-timeout-ms MS                   Per-request fetch timeout for fresh public reads
   --fetch-attempts N                      Per-request retry attempts for fresh public reads
   --preflight-report PATH                 Diagnostic-only public preflight override; can never complete the gate
-  --requirements PATH                     Production requirements report
-  --post-deploy-evidence PATH             Solana post-deploy live readback evidence
-  --prover-readiness PATH                 Solana prover-readiness report
-  --production-material-inventory PATH    Solana production material inventory report
-  --route-manifest PATH                   Local Solana route manifest artifact
-  --publish-readiness PATH                Route publish-readiness report
-  --route-publish-blocked PATH            Blocked route publish attempt report
-  --route-publication-request PATH        Route-manager publication request handoff report
-  --route-publication-request-sha256 HASH Exact publication-request byte pin
-  --route-manager-access-request PATH     Route-manager access/signing handoff report
-  --route-manager-access-request-sha256 HASH Exact access-request byte pin
-  --operator-handoff PATH                 Consolidated Solana operator handoff report
-  --operator-handoff-sha256 HASH          Exact operator-handoff byte pin
-  --activation-package PATH               TAIRA Solana activation package report
-  --activation-package-sha256 HASH        Exact activation-package byte pin
-  --lane-activation-request PATH          Public Solana lane activation request package
-  --lane-activation-request-sha256 HASH   Exact lane-request byte pin
-  --lane-activation-proposal PATH         Public Solana lane activation proposal package
-  --lane-activation-proposal-sha256 HASH  Exact lane-proposal byte pin
-  --source-material-handoff PATH          Source-material handoff package
-  --handoff-verification PATH             Source-material handoff verification report
-  --source-burn-readiness PATH            Source-burn readiness report
-  --source-burn-submission PATH           Source-burn submission with canonical source-proof request
-  --proof-material-request PATH           Proof-material request package
-  --proof-material-bundle PATH            Proof-material bundle manifest
-  --proof-material-ceremony-package PATH  Proof-material ceremony package report
+  --fresh-deploy-report PATH              Canonical completed three-program Loader-v3 deployment report
+  --fresh-deploy-report-sha256 HASH       Independent exact fresh-deploy report-byte pin
+  --governance-plan PATH                  Independently reviewed exact route governance plan
+  --governance-plan-sha256 HASH           Canonical reviewed plan hash
+  --governance-register-result PATH       Staged-registration proposal/enactment evidence
+  --governance-register-result-sha256 HASH Exact registration-result byte pin
+  --governance-activate-result PATH       Bidirectional-activation proposal/enactment evidence
+  --governance-activate-result-sha256 HASH Exact activation-result byte pin
+  --ordered-initialization-evidence PATH  Finalized program/account transaction chronology
+  --ordered-initialization-evidence-sha256 HASH Exact chronology-evidence byte pin
   --smoke-readiness PATH                  Solana live smoke-readiness report
-  --deployment-video-transcript PATH      Deployment video transcript JSON
-  --deployment-video-mp4 PATH             Deployment MP4 path
-  --deployment-video-vtt PATH             Deployment subtitle VTT path
+  --prover-governance-approval PATH       Canonical public exact prover approval descriptor
+  --prover-governance-approval-sha256 HASH
+                                           Independent public hash of the canonical exact prover approval
+  --capture-review-policy PATH             Canonical pre-capture Ed25519 reviewer policy
+  --capture-review-policy-sha256 HASH      Independent exact-byte policy pin; must match approval v2
   --expected-pre-live-input-snapshot-sha256 HASH
                                            Require the exact prior pre-live input snapshot
   --live-video-transcript PATH            Completed bidirectional live-video transcript JSON
   --live-video-mp4 PATH                   Completed bidirectional live MP4 path
   --live-video-vtt PATH                   Completed bidirectional live subtitle VTT path
+  --live-capture-video PATH               Exact independently reviewed raw screen capture
+  --live-capture-video-sha256 HASH        Independent exact raw-capture byte pin
+  --live-capture-witness PATH             Exact reviewed semantic witness used by the live MP4
+  --live-capture-witness-sha256 HASH      Independent exact witness-byte pin
+  --live-capture-review-attestation PATH  Detached threshold-Ed25519 review attestation
+  --live-capture-review-attestation-sha256 HASH Exact detached-attestation byte pin
   --blocked-live-video-transcript PATH    Blocked live-video transcript JSON for diagnostics
   --blocked-live-video-mp4 PATH           Blocked live-video diagnostic MP4
   --blocked-live-video-vtt PATH           Blocked live-video diagnostic subtitle VTT
@@ -8915,34 +10848,22 @@ Options:
 };
 
 export const SOLANA_PRODUCTION_GATE_PRE_LIVE_INPUT_SNAPSHOT_SCHEMA =
-  "iroha-demo-sccp-solana-production-gate-pre-live-input-snapshot/v1";
+  "iroha-demo-sccp-solana-production-gate-pre-live-input-snapshot/v3";
 
 export const SOLANA_PRODUCTION_GATE_PRE_LIVE_INPUT_OPTION_KEYS = Object.freeze({
-  requirements: "requirements",
-  postDeployEvidence: "postDeployEvidence",
-  proverReadiness: "proverReadiness",
-  productionMaterialInventory: "productionMaterialInventory",
-  routeManifest: "routeManifest",
-  publishReadiness: "publishReadiness",
-  routePublishBlocked: "routePublishBlocked",
-  routePublicationRequest: "routePublicationRequest",
-  routeManagerAccess: "routeManagerAccess",
-  operatorHandoff: "operatorHandoff",
-  activationPackage: "activationPackage",
-  laneActivationRequest: "laneActivationRequest",
-  laneActivationProposal: "laneActivationProposal",
-  sourceMaterialHandoff: "sourceMaterialHandoff",
-  handoffVerification: "handoffVerification",
-  sourceBurnReadiness: "sourceBurnReadiness",
-  sourceBurnSubmission: "sourceBurnSubmission",
-  proofMaterialRequest: "proofMaterialRequest",
-  proofMaterialBundle: "proofMaterialBundle",
-  proofMaterialCeremonyPackage: "proofMaterialCeremonyPackage",
+  captureReviewPolicy: "captureReviewPolicy",
+  freshDeployReport: "freshDeployReport",
+  proverGovernanceApproval: "proverGovernanceApproval",
+  governancePlan: "governancePlan",
+  governanceRegistration: "governanceRegistration",
+  governanceActivation: "governanceActivation",
+  orderedInitializationEvidence: "orderedInitializationEvidence",
   smokeReadiness: "smokeReadiness",
-  deploymentVideoTranscript: "deploymentVideoTranscript",
-  deploymentVideoMp4: "deploymentVideoMp4",
-  deploymentVideoVtt: "deploymentVideoVtt",
 });
+
+export const SOLANA_PRODUCTION_GATE_REQUIRED_PRE_LIVE_INPUT_IDS = Object.freeze(
+  Object.keys(SOLANA_PRODUCTION_GATE_PRE_LIVE_INPUT_OPTION_KEYS),
+);
 
 const canonicalPreLiveInputSnapshotBody = (inputs) => ({
   schema: SOLANA_PRODUCTION_GATE_PRE_LIVE_INPUT_SNAPSHOT_SCHEMA,
@@ -9017,6 +10938,80 @@ export const validateSolanaProductionGatePreLiveInputSnapshot = (snapshot) => {
   return snapshot;
 };
 
+export const checkSolanaProductionGatePreLiveInputSnapshot = ({
+  snapshot,
+  expectedPaths = {},
+} = {}) => {
+  let validationError = null;
+  try {
+    validateSolanaProductionGatePreLiveInputSnapshot(snapshot);
+  } catch (error) {
+    validationError = error instanceof Error ? error.message : String(error);
+  }
+  const inputs = validationError === null ? snapshot.inputs : {};
+  const missingRequiredInputIds =
+    validationError === null
+      ? SOLANA_PRODUCTION_GATE_REQUIRED_PRE_LIVE_INPUT_IDS.filter(
+          (id) => inputs[id]?.present !== true,
+        )
+      : [...SOLANA_PRODUCTION_GATE_REQUIRED_PRE_LIVE_INPUT_IDS];
+  const pathMismatches =
+    validationError === null
+      ? Object.keys(SOLANA_PRODUCTION_GATE_PRE_LIVE_INPUT_OPTION_KEYS).flatMap(
+          (id) => {
+            const expectedPath = expectedPaths[id];
+            const observedPath = inputs[id]?.path ?? null;
+            if (typeof expectedPath !== "string" || !expectedPath.trim()) {
+              return [{ id, expectedPath: null, observedPath }];
+            }
+            const normalizedExpectedPath = path.resolve(expectedPath);
+            return observedPath === normalizedExpectedPath
+              ? []
+              : [{ id, expectedPath: normalizedExpectedPath, observedPath }];
+          },
+        )
+      : [];
+  const ok =
+    validationError === null &&
+    missingRequiredInputIds.length === 0 &&
+    pathMismatches.length === 0;
+  return makeCheck(
+    "pre-live-input-snapshot-valid",
+    ok,
+    ok
+      ? "The Solana production gate is bound to a complete, canonical snapshot of every success-critical pre-live artifact."
+      : "The Solana production gate is missing a valid, path-bound snapshot of one or more success-critical pre-live artifacts.",
+    {
+      snapshotSha256: snapshot?.preLiveInputSnapshotSha256 ?? null,
+      validationError,
+      missingRequiredInputIds,
+      pathMismatches,
+      optionalInputIds: [],
+    },
+  );
+};
+
+export const checkSolanaProductionGateRequiredReportsLoaded = ({
+  reports = {},
+} = {}) => {
+  const requiredReportIds =
+    SOLANA_PRODUCTION_GATE_REQUIRED_PRE_LIVE_INPUT_IDS.filter(
+      (id) => id !== "deploymentVideoMp4" && id !== "deploymentVideoVtt",
+    );
+  const missingReportIds = requiredReportIds.filter(
+    (id) => !isRecord(reports[id]),
+  );
+  const ok = missingReportIds.length === 0;
+  return makeCheck(
+    "pre-live-input-reports-loaded",
+    ok,
+    ok
+      ? "Every success-critical pre-live JSON artifact was loaded as a JSON object."
+      : "One or more success-critical pre-live JSON artifacts are missing or are not JSON objects.",
+    { requiredReportIds, missingReportIds },
+  );
+};
+
 const recordPreLiveInput = ({ snapshotInputs, id, file, bytes = null }) => {
   if (!snapshotInputs || !id) return;
   const resolved = path.resolve(file);
@@ -9039,6 +11034,23 @@ const readJsonIfExists = async (
   if (!file) {
     return null;
   }
+  const normalizedExpected =
+    expectedSha256 === null || expectedSha256 === undefined
+      ? null
+      : String(expectedSha256).toLowerCase();
+  if (normalizedExpected === null && requirePin) {
+    throw new Error(
+      "Solana production-gate generated handoff is missing its exact SHA-256 pin.",
+    );
+  }
+  if (
+    normalizedExpected !== null &&
+    !/^0x[0-9a-f]{64}$/u.test(normalizedExpected)
+  ) {
+    throw new Error(
+      "Solana production-gate expected JSON SHA-256 must be a canonical 0x-prefixed hash.",
+    );
+  }
   const resolved = normalizePath(file);
   let bytes;
   try {
@@ -9053,6 +11065,11 @@ const readJsonIfExists = async (
         id: snapshotId,
         file: resolved,
       });
+      if (normalizedExpected !== null) {
+        throw new Error(
+          `Pinned Solana production-gate JSON input is missing: ${resolved}.`,
+        );
+      }
       return null;
     }
     throw error;
@@ -9064,161 +11081,702 @@ const readJsonIfExists = async (
     file: resolved,
     bytes,
   });
-  if ((expectedSha256 === null || expectedSha256 === undefined) && requirePin) {
-    throw new Error(
-      "Solana production-gate generated handoff exists without its exact SHA-256 pin.",
-    );
-  }
-  const normalizedExpected =
-    expectedSha256 === null || expectedSha256 === undefined
-      ? null
-      : String(expectedSha256).toLowerCase();
-  if (
-    normalizedExpected !== null &&
-    !/^0x[0-9a-f]{64}$/u.test(normalizedExpected)
-  ) {
-    throw new Error(
-      "Solana production-gate expected JSON SHA-256 must be a canonical 0x-prefixed hash.",
-    );
-  }
   if (normalizedExpected !== null && actual !== normalizedExpected) {
     throw new Error(
       `Pinned Solana production-gate JSON input SHA-256 mismatch: expected ${normalizedExpected}, got ${actual}.`,
     );
   }
   try {
-    return JSON.parse(bytes.toString("utf8"));
+    const text = new TextDecoder("utf-8", {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(bytes);
+    const parsed = parseSolanaGovernanceDuplicateFreeJsonText(
+      text,
+      "Solana production-gate JSON input",
+    );
+    if (!isRecord(parsed)) {
+      throw new Error(
+        "Solana production-gate JSON input must contain one JSON object.",
+      );
+    }
+    return parsed;
   } catch {
     throw new Error(
-      "Pinned Solana production-gate JSON input is invalid JSON.",
+      "Pinned Solana production-gate JSON input is invalid or is not a JSON object.",
     );
+  }
+};
+
+const loadPinnedCaptureReviewPolicy = async ({
+  file,
+  expectedSha256,
+  approvalPinnedSha256,
+  snapshotInputs = null,
+  snapshotId = null,
+}) => {
+  const resolved = normalizePath(file);
+  let bytes;
+  try {
+    bytes = await readStableRegularFile(resolved, {
+      label: "Canonical Solana live capture review policy",
+      maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
+    });
+  } catch (error) {
+    recordPreLiveInput({
+      snapshotInputs,
+      id: snapshotId,
+      file: resolved,
+    });
+    return {
+      policy: null,
+      normalized: null,
+      artifactSha256: null,
+      artifactSize: 0,
+      error:
+        error?.code === "ENOENT"
+          ? "Capture review policy is missing."
+          : "Capture review policy could not be loaded from stable regular-file bytes.",
+    };
+  }
+  recordPreLiveInput({
+    snapshotInputs,
+    id: snapshotId,
+    file: resolved,
+    bytes,
+  });
+  const artifactSha256 = `0x${createHash("sha256")
+    .update(bytes)
+    .digest("hex")}`;
+  try {
+    const normalizedExpected = String(expectedSha256 ?? "").toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/u.test(normalizedExpected)) {
+      throw new Error(
+        "Capture review policy requires an independent exact-byte SHA-256 pin.",
+      );
+    }
+    if (artifactSha256 !== normalizedExpected) {
+      throw new Error(
+        "Capture review policy bytes do not match the independently supplied SHA-256.",
+      );
+    }
+    const policy = parseSolanaGovernanceCanonicalJsonBytes(
+      bytes,
+      "Canonical Solana live capture review policy",
+    );
+    if (!isRecord(policy)) {
+      throw new Error("Capture review policy must contain one JSON object.");
+    }
+    const canonicalBytes = Buffer.from(
+      `${canonicalSccpJson(policy)}\n`,
+      "utf8",
+    );
+    if (!canonicalBytes.equals(bytes)) {
+      throw new Error(
+        "Capture review policy must use exact compact canonical SCCP JSON bytes.",
+      );
+    }
+    const normalized = normalizeSolanaLiveCaptureReviewPolicy(policy, {
+      actualPolicySha256: artifactSha256,
+      expectedPolicySha256: approvalPinnedSha256,
+    });
+    return {
+      policy,
+      normalized,
+      artifactSha256,
+      artifactSize: bytes.length,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      policy: null,
+      normalized: null,
+      artifactSha256,
+      artifactSize: bytes.length,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
+export const checkSolanaCaptureReviewPolicyTrustAnchor = ({
+  policyLoad,
+  approvalValidation,
+} = {}) => {
+  const approvedPolicySha256 =
+    approvalValidation?.pins?.captureReviewPolicySha256;
+  const ok =
+    approvalValidation?.ready === true &&
+    /^0x[0-9a-f]{64}$/u.test(approvedPolicySha256 ?? "") &&
+    policyLoad?.normalized?.policySha256 === approvedPolicySha256 &&
+    policyLoad?.artifactSha256 === approvedPolicySha256 &&
+    policyLoad?.error === null;
+  return makeCheck(
+    "capture-review-policy-trust-anchor",
+    ok,
+    ok
+      ? "Exact canonical capture-review policy bytes match the independently pinned prover-approval v2 trust anchor."
+      : "Capture-review policy bytes, Ed25519 reviewer threshold, or prover-approval v2 trust anchor are missing or inconsistent.",
+    {
+      ready: ok,
+      approvalReady: approvalValidation?.ready === true,
+      policySha256: policyLoad?.artifactSha256 ?? null,
+      approvedPolicySha256: approvedPolicySha256 ?? null,
+      reviewerCount: policyLoad?.normalized?.reviewers?.length ?? 0,
+      threshold: policyLoad?.normalized?.threshold ?? null,
+      error: policyLoad?.error ?? null,
+    },
+  );
+};
+
+const reloadPinnedCaptureReviewTrustBoundary = async ({
+  snapshot,
+  proverGovernanceApprovalPath,
+  expectedProverGovernanceApprovalSha256,
+  captureReviewPolicyPath,
+  expectedCaptureReviewPolicySha256,
+}) => {
+  const approvalEntry = snapshot?.inputs?.proverGovernanceApproval;
+  const policyEntry = snapshot?.inputs?.captureReviewPolicy;
+  const approvalBytes = await readStableRegularFile(
+    proverGovernanceApprovalPath,
+    {
+      label: "Fresh final-boundary Solana prover-governance approval",
+      maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
+    },
+  );
+  const approvalSha256 = `0x${createHash("sha256")
+    .update(approvalBytes)
+    .digest("hex")}`;
+  if (
+    approvalBytes.length !== approvalEntry?.size ||
+    approvalSha256 !== approvalEntry?.sha256
+  ) {
+    throw new Error(
+      "Prover-governance approval changed after the pre-live snapshot.",
+    );
+  }
+  const approvalRecord = parseSolanaGovernanceCanonicalJsonBytes(
+    approvalBytes,
+    "Fresh final-boundary Solana prover-governance approval",
+  );
+  if (
+    !Buffer.from(
+      `${canonicalSolanaExactProverApprovalJson(approvalRecord)}\n`,
+      "utf8",
+    ).equals(approvalBytes)
+  ) {
+    throw new Error(
+      "Fresh final-boundary prover-governance approval is not compact canonical JSON.",
+    );
+  }
+  const approvalValidation = buildExactSolanaProductionProverApprovalValidation(
+    {
+      approvalRecord,
+      approvalPath: proverGovernanceApprovalPath,
+      approvalSha256,
+      expectedApprovalSha256: expectedProverGovernanceApprovalSha256,
+    },
+  );
+  if (!approvalValidation.ready) {
+    throw new Error(
+      "Fresh final-boundary prover-governance approval v2 validation failed.",
+    );
+  }
+  const policyLoad = await loadPinnedCaptureReviewPolicy({
+    file: captureReviewPolicyPath,
+    expectedSha256: expectedCaptureReviewPolicySha256,
+    approvalPinnedSha256: approvalValidation.pins.captureReviewPolicySha256,
+  });
+  if (
+    policyLoad.error !== null ||
+    policyLoad.artifactSha256 !== policyEntry?.sha256 ||
+    policyLoad.artifactSize !== policyEntry?.size
+  ) {
+    throw new Error(
+      policyLoad.error ??
+        "Capture-review policy changed after the pre-live snapshot.",
+    );
+  }
+  return { approvalValidation, policyLoad };
+};
+
+const loadPinnedPostLiveJsonArtifact = async ({
+  file,
+  expectedSha256,
+  label,
+}) => {
+  const resolved =
+    typeof file === "string" && file.trim() ? path.resolve(file) : null;
+  const normalizedExpected = String(expectedSha256 ?? "").toLowerCase();
+  if (!resolved || !/^0x[0-9a-f]{64}$/u.test(normalizedExpected)) {
+    return {
+      path: resolved,
+      value: null,
+      size: 0,
+      sha256: null,
+      error: `${label} path and independent SHA-256 are required.`,
+    };
+  }
+  try {
+    const bytes = await readStableRegularFile(resolved, {
+      label,
+      maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
+    });
+    const sha256 = `0x${createHash("sha256").update(bytes).digest("hex")}`;
+    if (sha256 !== normalizedExpected) {
+      throw new Error(`${label} bytes do not match the independent pin.`);
+    }
+    const value = parseSolanaGovernanceCanonicalJsonBytes(bytes, label);
+    if (!isRecord(value)) {
+      throw new Error(`${label} must contain one canonical JSON object.`);
+    }
+    const canonicalBytes = Buffer.from(`${canonicalSccpJson(value)}\n`, "utf8");
+    if (!canonicalBytes.equals(bytes)) {
+      throw new Error(
+        `${label} must use exact compact canonical SCCP JSON plus one LF.`,
+      );
+    }
+    return { path: resolved, value, size: bytes.length, sha256, error: null };
+  } catch (error) {
+    return {
+      path: resolved,
+      value: null,
+      size: 0,
+      sha256: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
+const loadPinnedFreshDeployReport = async ({
+  file,
+  expectedSha256,
+  snapshotInputs,
+  snapshotId,
+  validator = validateSolanaLoaderV3FreshDeployReport,
+}) => {
+  const resolved = normalizePath(file);
+  let bytes;
+  try {
+    bytes = await readStableRegularFile(resolved, {
+      label: "Canonical Solana fresh-deploy report",
+      maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
+    });
+  } catch (error) {
+    recordPreLiveInput({
+      snapshotInputs,
+      id: snapshotId,
+      file: resolved,
+    });
+    return {
+      normalized: null,
+      error:
+        error?.code === "ENOENT"
+          ? "Fresh deployment report is missing."
+          : "Fresh deployment report could not be loaded as stable regular-file bytes.",
+    };
+  }
+  recordPreLiveInput({
+    snapshotInputs,
+    id: snapshotId,
+    file: resolved,
+    bytes,
+  });
+  try {
+    return {
+      normalized: validator({
+        reportBytes: bytes,
+        expectedReportSha256: expectedSha256,
+      }),
+      error: null,
+    };
+  } catch {
+    return {
+      normalized: null,
+      error:
+        "Fresh deployment report failed exact canonical validation or its independent byte pin differs.",
+    };
   }
 };
 
 const MAX_SOLANA_EVIDENCE_MP4_BYTES = 2 * 1024 * 1024 * 1024;
+const SOLANA_MEDIA_PROBE_TIMEOUT_MS = 30_000;
+const SOLANA_MEDIA_ESSENCE_TIMEOUT_MS = 5 * 60_000;
+const SOLANA_MEDIA_PROBE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+const SOLANA_LIVE_CAPTURE_MIN_DURATION_SECONDS = 40;
+const SOLANA_LIVE_CAPTURE_MAX_DURATION_SECONDS = 60 * 60;
+const SOLANA_LIVE_CAPTURE_MIN_WIDTH = 640;
+const SOLANA_LIVE_CAPTURE_MIN_HEIGHT = 360;
+const SOLANA_LIVE_CAPTURE_MIN_SAMPLED_FRAMES = 10;
+const SOLANA_LIVE_CAPTURE_MIN_UNIQUE_FRAMES = 4;
+const SOLANA_LIVE_CAPTURE_MIN_AUDIO_MAX_VOLUME_DB = -45;
 
-const recordStableFilePreLiveInput = async ({
-  snapshotInputs,
-  id,
-  file,
-  maxBytes,
+export const assertSolanaProductionGateOutputIsDisjoint = async ({
+  outputPath,
+  inputPaths,
 }) => {
-  const resolved = path.resolve(file);
-  let pathStat;
-  let handle = null;
-  try {
-    pathStat = await lstat(resolved);
-    if (pathStat.isSymbolicLink() || !pathStat.isFile()) {
-      throw new Error(
-        `Solana production-gate pre-live input ${id} must be a regular non-symlink file.`,
-      );
-    }
-    handle = await open(
-      resolved,
-      fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
+  const resolvedOutput = normalizePath(outputPath);
+  const resolvedInputs = [
+    ...new Set(
+      (Array.isArray(inputPaths) ? inputPaths : [])
+        .filter((file) => typeof file === "string" && file.trim())
+        .map((file) => normalizePath(file)),
+    ),
+  ];
+  if (resolvedInputs.includes(resolvedOutput)) {
+    throw new Error(
+      `Solana production-gate output collides with an input artifact path: ${resolvedOutput}`,
     );
-    const before = await handle.stat();
-    if (
-      !before.isFile() ||
-      before.dev !== pathStat.dev ||
-      before.ino !== pathStat.ino ||
-      before.nlink !== 1 ||
-      before.size <= 0 ||
-      before.size > maxBytes
-    ) {
-      throw new Error(
-        `Solana production-gate pre-live input ${id} is empty, linked, or too large.`,
-      );
-    }
-    const digest = createHash("sha256");
-    const chunk = Buffer.allocUnsafe(1024 * 1024);
-    let offset = 0;
-    while (offset < before.size) {
-      const { bytesRead } = await handle.read(
-        chunk,
-        0,
-        Math.min(chunk.length, before.size - offset),
-        offset,
-      );
-      if (bytesRead <= 0) {
-        throw new Error(
-          `Solana production-gate pre-live input ${id} ended early.`,
-        );
-      }
-      digest.update(chunk.subarray(0, bytesRead));
-      offset += bytesRead;
-    }
-    const after = await handle.stat();
-    if (
-      before.dev !== after.dev ||
-      before.ino !== after.ino ||
-      before.size !== after.size ||
-      before.mtimeMs !== after.mtimeMs ||
-      offset !== before.size
-    ) {
-      throw new Error(
-        `Solana production-gate pre-live input ${id} changed while hashing.`,
-      );
-    }
-    snapshotInputs[id] = {
-      id,
-      path: resolved,
-      present: true,
-      size: before.size,
-      sha256: `0x${digest.digest("hex")}`,
-    };
+  }
+  let outputInfo;
+  try {
+    outputInfo = await lstat(resolvedOutput);
   } catch (error) {
-    if (error?.code === "ENOENT") {
-      snapshotInputs[id] = {
-        id,
-        path: resolved,
-        present: false,
-        size: 0,
-        sha256: null,
-      };
-      return;
-    }
+    if (error?.code === "ENOENT") return;
     throw error;
-  } finally {
-    await handle?.close().catch(() => {});
+  }
+  if (outputInfo.isSymbolicLink()) {
+    throw new Error(
+      `Solana production-gate output must not be a symbolic link: ${resolvedOutput}`,
+    );
+  }
+  for (const inputPath of resolvedInputs) {
+    let inputInfo;
+    try {
+      inputInfo = await lstat(inputPath);
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+    if (outputInfo.dev === inputInfo.dev && outputInfo.ino === inputInfo.ino) {
+      throw new Error(
+        `Solana production-gate output aliases an input artifact inode: ${resolvedOutput} -> ${inputPath}`,
+      );
+    }
   }
 };
 
-const probeMp4Media = (file) =>
-  withStableRegularFileDescriptorsSync(
+const hashStableDescriptor = (fd) => {
+  const info = fstatSync(fd);
+  const digest = createHash("sha256");
+  const chunk = Buffer.allocUnsafe(1024 * 1024);
+  let offset = 0;
+  while (offset < info.size) {
+    const bytesRead = readSync(
+      fd,
+      chunk,
+      0,
+      Math.min(chunk.length, info.size - offset),
+      offset,
+    );
+    if (bytesRead <= 0) {
+      throw new Error("Solana production-gate media input ended early.");
+    }
+    digest.update(chunk.subarray(0, bytesRead));
+    offset += bytesRead;
+  }
+  return {
+    size: info.size,
+    sha256: `0x${digest.digest("hex")}`,
+  };
+};
+
+const parseMediaFrameHashes = (output) =>
+  String(output ?? "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .map((line) => line.split(",").at(-1)?.trim().toLowerCase() ?? "")
+    .filter((value) => /^[0-9a-f]{32,64}$/u.test(value));
+
+const parseMediaAudioMaxVolumeDb = (output) => {
+  const matches = [
+    ...String(output ?? "").matchAll(/max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB/giu),
+  ];
+  const value = Number(matches.at(-1)?.[1]);
+  return Number.isFinite(value) ? value : null;
+};
+
+const parseDecodedEssenceSha256 = (output, streamType) => {
+  const match = new RegExp(`^0,${streamType},SHA256=([0-9a-f]{64})$`, "u").exec(
+    String(output ?? "").trim(),
+  );
+  return match ? `0x${match[1]}` : null;
+};
+
+const normalizedStreamTimeline = (stream) => {
+  const timeBase = String(stream?.time_base ?? "");
+  const startTime = String(stream?.start_time ?? "");
+  const duration = String(stream?.duration ?? "");
+  const frameCountText = String(
+    stream?.nb_read_frames ?? stream?.nb_frames ?? "",
+  );
+  const frameCount = Number(frameCountText);
+  const ready =
+    /^\d+\/[1-9]\d*$/u.test(timeBase) &&
+    /^-?\d+(?:\.\d+)?$/u.test(startTime) &&
+    /^\d+(?:\.\d+)?$/u.test(duration) &&
+    Number.isSafeInteger(frameCount) &&
+    frameCount > 0;
+  return {
+    ready,
+    timeBase: ready ? timeBase : null,
+    startTime: ready ? startTime : null,
+    duration: ready ? duration : null,
+    frameCount: ready ? frameCount : null,
+  };
+};
+
+export const buildSolanaLiveCaptureContentAnalysis = ({
+  parsed,
+  frameHashes,
+  audioFrameHashes,
+  audioMaxVolumeDb,
+  videoEssenceSha256 = null,
+  audioEssenceSha256 = null,
+  frameError = null,
+  audioError = null,
+  videoEssenceError = null,
+  audioEssenceError = null,
+  semanticWitnessAnalysis = null,
+  requireSemanticWitness = false,
+  expectedSubtitleCount = null,
+}) => {
+  const streams = Array.isArray(parsed?.streams) ? parsed.streams : [];
+  const videoStreams = streams.filter(
+    (stream) => stream?.codec_type === "video",
+  );
+  const audioStreams = streams.filter(
+    (stream) => stream?.codec_type === "audio",
+  );
+  const subtitleStreams = streams.filter(
+    (stream) => stream?.codec_type === "subtitle",
+  );
+  const unexpectedStreams = streams.filter(
+    (stream) => !["video", "audio", "subtitle"].includes(stream?.codec_type),
+  );
+  const video = videoStreams[0] ?? null;
+  const audio = audioStreams[0] ?? null;
+  const videoTimeline = normalizedStreamTimeline(video);
+  const audioTimeline = normalizedStreamTimeline(audio);
+  const durationSeconds = Number(parsed?.format?.duration);
+  const width = Number(video?.width);
+  const height = Number(video?.height);
+  const normalizedHashes = Array.isArray(frameHashes) ? frameHashes : [];
+  const normalizedAudioHashes = Array.isArray(audioFrameHashes)
+    ? audioFrameHashes
+    : [];
+  const uniqueFrameCount = new Set(normalizedHashes).size;
+  const blockers = [];
+  if (!video) {
+    blockers.push("capture-video-stream");
+  } else if (video.codec_name !== "h264") {
+    blockers.push("capture-video-codec-h264");
+  }
+  if (videoStreams.length !== 1) {
+    blockers.push("capture-video-stream-shape");
+  }
+  if (
+    !video ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width < SOLANA_LIVE_CAPTURE_MIN_WIDTH ||
+    height < SOLANA_LIVE_CAPTURE_MIN_HEIGHT
+  ) {
+    blockers.push("capture-video-resolution");
+  }
+  if (!audio) {
+    blockers.push("capture-audio-stream");
+  } else if (audio.codec_name !== "aac") {
+    blockers.push("capture-audio-codec-aac");
+  }
+  if (audioStreams.length !== 1) {
+    blockers.push("capture-audio-stream-shape");
+  }
+  if (
+    Number.isSafeInteger(expectedSubtitleCount) &&
+    (subtitleStreams.length !== expectedSubtitleCount ||
+      (expectedSubtitleCount === 1 &&
+        subtitleStreams[0]?.codec_name !== "mov_text"))
+  ) {
+    blockers.push("capture-subtitle-stream-shape");
+  }
+  if (unexpectedStreams.length > 0) {
+    blockers.push("capture-unexpected-streams");
+  }
+  if (
+    Number.isSafeInteger(expectedSubtitleCount) &&
+    (!videoTimeline.ready || !audioTimeline.ready)
+  ) {
+    blockers.push("capture-stream-timeline");
+  }
+  if (
+    !Number.isFinite(durationSeconds) ||
+    durationSeconds < SOLANA_LIVE_CAPTURE_MIN_DURATION_SECONDS ||
+    durationSeconds > SOLANA_LIVE_CAPTURE_MAX_DURATION_SECONDS
+  ) {
+    blockers.push("capture-duration");
+  }
+  if (normalizedHashes.length < SOLANA_LIVE_CAPTURE_MIN_SAMPLED_FRAMES) {
+    blockers.push("capture-frame-samples");
+  }
+  if (uniqueFrameCount < SOLANA_LIVE_CAPTURE_MIN_UNIQUE_FRAMES) {
+    blockers.push("capture-frame-variation");
+  }
+  if (normalizedAudioHashes.length === 0) {
+    blockers.push("capture-audio-samples");
+  }
+  if (
+    !Number.isFinite(audioMaxVolumeDb) ||
+    audioMaxVolumeDb < SOLANA_LIVE_CAPTURE_MIN_AUDIO_MAX_VOLUME_DB
+  ) {
+    blockers.push("capture-non-silent-audio");
+  }
+  if (frameError) blockers.push("capture-frame-analysis");
+  if (audioError) blockers.push("capture-audio-analysis");
+  if (!isHex32(videoEssenceSha256) || videoEssenceError) {
+    blockers.push("capture-full-video-essence");
+  }
+  if (!isHex32(audioEssenceSha256) || audioEssenceError) {
+    blockers.push("capture-full-audio-essence");
+  }
+  if (
+    requireSemanticWitness &&
+    (semanticWitnessAnalysis?.ready !== true ||
+      semanticWitnessAnalysis?.semanticallyBound !== true)
+  ) {
+    blockers.push("capture-semantic-witness");
+  }
+  if (
+    requireSemanticWitness &&
+    (semanticWitnessAnalysis?.reviewAuthentication?.ready !== true ||
+      semanticWitnessAnalysis?.reviewAuthentication?.authenticated !== true)
+  ) {
+    blockers.push("capture-review-authentication");
+  }
+  return {
+    ready: blockers.length === 0,
+    verifiedRealCapture: blockers.length === 0,
+    durationSeconds: Number.isFinite(durationSeconds) ? durationSeconds : null,
+    width: Number.isFinite(width) ? width : null,
+    height: Number.isFinite(height) ? height : null,
+    sampledFrameCount: normalizedHashes.length,
+    uniqueFrameCount,
+    sampledFrameSha256:
+      normalizedHashes.length > 0
+        ? `0x${createHash("sha256")
+            .update(normalizedHashes.join("\n"), "utf8")
+            .digest("hex")}`
+        : null,
+    audioSampleCount: normalizedAudioHashes.length,
+    audioSampleSha256:
+      normalizedAudioHashes.length > 0
+        ? `0x${createHash("sha256")
+            .update(normalizedAudioHashes.join("\n"), "utf8")
+            .digest("hex")}`
+        : null,
+    videoEssenceSha256: isHex32(videoEssenceSha256) ? videoEssenceSha256 : null,
+    audioEssenceSha256: isHex32(audioEssenceSha256) ? audioEssenceSha256 : null,
+    audioMaxVolumeDb: Number.isFinite(audioMaxVolumeDb)
+      ? audioMaxVolumeDb
+      : null,
+    semanticWitnessAnalysis,
+    streamShape: {
+      videoCount: videoStreams.length,
+      audioCount: audioStreams.length,
+      subtitleCount: subtitleStreams.length,
+      expectedSubtitleCount: Number.isSafeInteger(expectedSubtitleCount)
+        ? expectedSubtitleCount
+        : null,
+      subtitleCodec: subtitleStreams[0]?.codec_name ?? null,
+      unexpectedCount: unexpectedStreams.length,
+    },
+    streamTimeline: {
+      video: videoTimeline,
+      audio: audioTimeline,
+    },
+    blockers,
+  };
+};
+
+const probeMp4Media = (
+  file,
+  {
+    timeoutMs = SOLANA_MEDIA_PROBE_TIMEOUT_MS,
+    semanticWitnessContext = null,
+  } = {},
+) => {
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > SOLANA_MEDIA_PROBE_TIMEOUT_MS
+  ) {
+    throw new Error(
+      `Solana production-gate media probe timeout must be between 1 and ${SOLANA_MEDIA_PROBE_TIMEOUT_MS} milliseconds.`,
+    );
+  }
+  return withStableRegularFileDescriptorsSync(
     file,
-    ([probeFd, subtitleFd], resolved) => {
-      const descriptorPath =
-        process.platform === "win32" ? resolved : "/dev/fd/3";
-      const childStdio = (fd) =>
-        process.platform === "win32"
-          ? ["ignore", "pipe", "pipe"]
-          : ["ignore", "pipe", "pipe", fd];
+    (
+      [
+        probeFd,
+        subtitleFd,
+        hashFd,
+        frameFd,
+        audioFd,
+        videoEssenceFd,
+        audioEssenceFd,
+        ...semanticFrameFds
+      ],
+      resolved,
+    ) => {
+      if (process.platform === "win32") {
+        throw new Error(
+          `Solana production-gate MP4 semantic verification cannot bind an inherited seekable descriptor on Windows: ${resolved}`,
+        );
+      }
+      const descriptorPath = "/dev/fd/3";
+      const childStdio = (fd) => ["ignore", "pipe", "pipe", fd];
       const result = spawnSync(
         "ffprobe",
         [
           "-v",
           "error",
+          "-count_frames",
+          "-protocol_whitelist",
+          "file,pipe",
           "-show_entries",
           "format=format_name,duration",
           "-show_entries",
-          "stream=index,codec_type,codec_name,width,height",
+          "stream=index,codec_type,codec_name,width,height,time_base,start_time,duration,nb_frames,nb_read_frames",
           "-of",
           "json",
           descriptorPath,
         ],
-        { encoding: "utf8", stdio: childStdio(probeFd) },
+        {
+          encoding: "utf8",
+          stdio: childStdio(probeFd),
+          timeout: timeoutMs,
+          maxBuffer: SOLANA_MEDIA_PROBE_MAX_BUFFER_BYTES,
+        },
       );
+      const artifact = hashStableDescriptor(hashFd);
       if (result.error) {
         return {
-          probed: false,
-          error: result.error.message,
+          ...artifact,
+          media: {
+            probed: false,
+            error: result.error.message,
+          },
         };
       }
       if (result.status !== 0) {
         return {
-          probed: false,
-          error: result.stderr || "ffprobe failed",
+          ...artifact,
+          media: {
+            probed: false,
+            error: result.stderr || "ffprobe failed",
+          },
         };
       }
       try {
@@ -9230,6 +11788,8 @@ const probeMp4Media = (file) =>
           [
             "-v",
             "error",
+            "-protocol_whitelist",
+            "file,pipe",
             "-i",
             descriptorPath,
             "-map",
@@ -9238,99 +11798,484 @@ const probeMp4Media = (file) =>
             "webvtt",
             "pipe:1",
           ],
-          { encoding: "utf8", stdio: childStdio(subtitleFd) },
-        );
-        const embeddedCueTexts =
-          subtitleExtraction.status === 0
-            ? parseWebVttCueTexts(subtitleExtraction.stdout || "")
-            : [];
-        return {
-          probed: true,
-          formatName,
-          duration: parsed.format?.duration ?? null,
-          formatOk: /(^|,)mov|mp4|m4a|3gp|3g2|mj2(,|$)/u.test(formatName),
-          hasVideo: streams.some((stream) => stream.codec_type === "video"),
-          hasAudio: streams.some((stream) => stream.codec_type === "audio"),
-          hasEmbeddedSubtitle: streams.some(
-            (stream) => stream.codec_type === "subtitle",
-          ),
-          embeddedSubtitle: {
-            extracted:
-              subtitleExtraction.status === 0 && embeddedCueTexts.length > 0,
-            cueCount: embeddedCueTexts.length,
-            cueTextSha256:
-              embeddedCueTexts.length > 0
-                ? cueTextHash(embeddedCueTexts)
-                : null,
-            firstCue: embeddedCueTexts[0] ?? null,
-            lastCue: embeddedCueTexts.at(-1) ?? null,
-            error:
-              subtitleExtraction.status === 0
-                ? null
-                : subtitleExtraction.stderr ||
-                  "ffmpeg subtitle extraction failed",
+          {
+            encoding: "utf8",
+            stdio: childStdio(subtitleFd),
+            timeout: timeoutMs,
+            maxBuffer: SOLANA_MEDIA_PROBE_MAX_BUFFER_BYTES,
           },
-          streams: streams.map((stream) => ({
-            index: stream.index,
-            codecType: stream.codec_type,
-            codecName: stream.codec_name,
-            width: stream.width ?? null,
-            height: stream.height ?? null,
-          })),
+        );
+        const embeddedCues =
+          subtitleExtraction.status === 0
+            ? parseWebVttCues(subtitleExtraction.stdout || "")
+            : [];
+        const embeddedCueTexts = embeddedCues.map((cue) => cue.text);
+        const frameAnalysis = spawnSync(
+          "ffmpeg",
+          [
+            "-v",
+            "error",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-i",
+            descriptorPath,
+            "-an",
+            "-vf",
+            "fps=1,scale=160:-2",
+            "-f",
+            "framemd5",
+            "pipe:1",
+          ],
+          {
+            encoding: "utf8",
+            stdio: childStdio(frameFd),
+            timeout: timeoutMs,
+            maxBuffer: SOLANA_MEDIA_PROBE_MAX_BUFFER_BYTES,
+          },
+        );
+        const audioAnalysis = spawnSync(
+          "ffmpeg",
+          [
+            "-hide_banner",
+            "-nostats",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-i",
+            descriptorPath,
+            "-map",
+            "0:a:0",
+            "-af",
+            "volumedetect",
+            "-f",
+            "framemd5",
+            "pipe:1",
+          ],
+          {
+            encoding: "utf8",
+            stdio: childStdio(audioFd),
+            timeout: timeoutMs,
+            maxBuffer: SOLANA_MEDIA_PROBE_MAX_BUFFER_BYTES,
+          },
+        );
+        const videoEssenceAnalysis = spawnSync(
+          "ffmpeg",
+          [
+            "-v",
+            "error",
+            "-bitexact",
+            "-xerror",
+            "-max_error_rate",
+            "0",
+            "-abort_on",
+            "empty_output_stream",
+            "-err_detect",
+            "explode",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-i",
+            descriptorPath,
+            "-map",
+            "0:v:0",
+            "-c:v",
+            "rawvideo",
+            "-fps_mode:v",
+            "passthrough",
+            "-an",
+            "-f",
+            "streamhash",
+            "-hash",
+            "sha256",
+            "pipe:1",
+          ],
+          {
+            encoding: "utf8",
+            stdio: childStdio(videoEssenceFd),
+            timeout: SOLANA_MEDIA_ESSENCE_TIMEOUT_MS,
+            maxBuffer: 1024,
+          },
+        );
+        const audioEssenceAnalysis = spawnSync(
+          "ffmpeg",
+          [
+            "-v",
+            "error",
+            "-bitexact",
+            "-xerror",
+            "-max_error_rate",
+            "0",
+            "-abort_on",
+            "empty_output_stream",
+            "-err_detect",
+            "explode",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-i",
+            descriptorPath,
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_f32le",
+            "-vn",
+            "-f",
+            "streamhash",
+            "-hash",
+            "sha256",
+            "pipe:1",
+          ],
+          {
+            encoding: "utf8",
+            stdio: childStdio(audioEssenceFd),
+            timeout: SOLANA_MEDIA_ESSENCE_TIMEOUT_MS,
+            maxBuffer: 1024,
+          },
+        );
+        let semanticWitnessAnalysis = null;
+        if (isRecord(semanticWitnessContext)) {
+          try {
+            const normalizedWitness = normalizeSolanaLiveCaptureWitness(
+              semanticWitnessContext.witness,
+              {
+                liveEvidence: semanticWitnessContext.liveEvidence,
+                preLiveInputSnapshotSha256:
+                  semanticWitnessContext.preLiveInputSnapshotSha256,
+                expectedCaptureSha256:
+                  semanticWitnessContext.expectedCaptureSha256,
+                reviewPolicySha256:
+                  semanticWitnessContext.reviewPolicy?.policySha256,
+                durationSeconds: Number(parsed?.format?.duration),
+              },
+            );
+            const captureReviewAuthentication =
+              verifySolanaLiveCaptureReviewAttestation({
+                attestation: semanticWitnessContext.reviewAttestation,
+                witness: normalizedWitness,
+                witnessArtifactSha256:
+                  semanticWitnessContext.witnessArtifactSha256,
+                reviewPolicy: semanticWitnessContext.reviewPolicy,
+              });
+            const semanticFrameFd = semanticFrameFds[0];
+            const semanticSamples = normalizedWitness.markers.map((marker) => ({
+              id: marker.id,
+              atMilliseconds: marker.atMilliseconds,
+              dwellFrames:
+                SOLANA_LIVE_CAPTURE_WITNESS_DWELL_OFFSETS_MILLISECONDS.map(
+                  (offsetMilliseconds) => {
+                    if (!Number.isInteger(semanticFrameFd)) {
+                      throw new Error(
+                        `Stable final-MP4 witness descriptor for ${marker.id} is missing.`,
+                      );
+                    }
+                    const frame = spawnSync(
+                      "ffmpeg",
+                      [
+                        "-v",
+                        "error",
+                        "-protocol_whitelist",
+                        "file,pipe",
+                        "-ss",
+                        (
+                          (marker.atMilliseconds + offsetMilliseconds) /
+                          1000
+                        ).toFixed(3),
+                        "-i",
+                        descriptorPath,
+                        "-map",
+                        "0:v:0",
+                        "-frames:v",
+                        "1",
+                        "-vf",
+                        `scale=${SOLANA_LIVE_CAPTURE_WITNESS_FRAME_WIDTH}:${SOLANA_LIVE_CAPTURE_WITNESS_FRAME_HEIGHT}:force_original_aspect_ratio=decrease,pad=${SOLANA_LIVE_CAPTURE_WITNESS_FRAME_WIDTH}:${SOLANA_LIVE_CAPTURE_WITNESS_FRAME_HEIGHT}:(ow-iw)/2:(oh-ih)/2,format=gray`,
+                        "-f",
+                        "rawvideo",
+                        "pipe:1",
+                      ],
+                      {
+                        encoding: null,
+                        stdio: childStdio(semanticFrameFd),
+                        timeout: timeoutMs,
+                        maxBuffer:
+                          SOLANA_LIVE_CAPTURE_WITNESS_FRAME_WIDTH *
+                          SOLANA_LIVE_CAPTURE_WITNESS_FRAME_HEIGHT *
+                          2,
+                      },
+                    );
+                    if (frame.status !== 0) {
+                      throw new Error(
+                        `ffmpeg final-MP4 witness extraction failed for ${marker.id}.`,
+                      );
+                    }
+                    const grayscaleBytes = new Uint8Array(
+                      frame.stdout.buffer,
+                      frame.stdout.byteOffset,
+                      frame.stdout.byteLength,
+                    );
+                    return {
+                      offsetMilliseconds,
+                      normalizedFrameSha256: `0x${createHash("sha256")
+                        .update(grayscaleBytes)
+                        .digest("hex")}`,
+                      decodedPayload: decodeSolanaLiveCaptureWitnessQr({
+                        grayscaleBytes,
+                      }),
+                    };
+                  },
+                ),
+            }));
+            semanticWitnessAnalysis = analyzeSolanaLiveCaptureWitnessFrames({
+              witness: normalizedWitness,
+              samples: semanticSamples,
+            });
+            semanticWitnessAnalysis.reviewAuthentication =
+              captureReviewAuthentication;
+          } catch (error) {
+            semanticWitnessAnalysis = {
+              schema: "iroha-demo-sccp-solana-live-capture-witness-analysis/v1",
+              ready: false,
+              semanticallyBound: false,
+              blockers: ["capture-semantic-witness-validation"],
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+        }
+        const contentAnalysis = buildSolanaLiveCaptureContentAnalysis({
+          parsed,
+          frameHashes:
+            frameAnalysis.status === 0
+              ? parseMediaFrameHashes(frameAnalysis.stdout)
+              : [],
+          audioFrameHashes:
+            audioAnalysis.status === 0
+              ? parseMediaFrameHashes(audioAnalysis.stdout)
+              : [],
+          audioMaxVolumeDb:
+            audioAnalysis.status === 0
+              ? parseMediaAudioMaxVolumeDb(audioAnalysis.stderr)
+              : null,
+          videoEssenceSha256:
+            videoEssenceAnalysis.status === 0
+              ? parseDecodedEssenceSha256(videoEssenceAnalysis.stdout, "v")
+              : null,
+          audioEssenceSha256:
+            audioEssenceAnalysis.status === 0
+              ? parseDecodedEssenceSha256(audioEssenceAnalysis.stdout, "a")
+              : null,
+          frameError:
+            frameAnalysis.status === 0
+              ? null
+              : frameAnalysis.error?.message ||
+                frameAnalysis.stderr ||
+                "ffmpeg frame analysis failed",
+          audioError:
+            audioAnalysis.status === 0
+              ? null
+              : audioAnalysis.error?.message ||
+                audioAnalysis.stderr ||
+                "ffmpeg audio analysis failed",
+          videoEssenceError:
+            videoEssenceAnalysis.status === 0 &&
+            parseDecodedEssenceSha256(videoEssenceAnalysis.stdout, "v")
+              ? null
+              : videoEssenceAnalysis.error?.message ||
+                videoEssenceAnalysis.stderr ||
+                "ffmpeg full video essence hashing failed",
+          audioEssenceError:
+            audioEssenceAnalysis.status === 0 &&
+            parseDecodedEssenceSha256(audioEssenceAnalysis.stdout, "a")
+              ? null
+              : audioEssenceAnalysis.error?.message ||
+                audioEssenceAnalysis.stderr ||
+                "ffmpeg full audio essence hashing failed",
+          semanticWitnessAnalysis,
+          requireSemanticWitness: isRecord(semanticWitnessContext),
+          expectedSubtitleCount:
+            semanticWitnessContext?.expectedSubtitleCount ?? null,
+        });
+        return {
+          ...artifact,
+          media: {
+            probed: true,
+            formatName,
+            duration: parsed.format?.duration ?? null,
+            formatOk: /(^|,)mov|mp4|m4a|3gp|3g2|mj2(,|$)/u.test(formatName),
+            hasVideo: streams.some((stream) => stream.codec_type === "video"),
+            hasAudio: streams.some((stream) => stream.codec_type === "audio"),
+            hasEmbeddedSubtitle: streams.some(
+              (stream) => stream.codec_type === "subtitle",
+            ),
+            embeddedSubtitle: {
+              extracted:
+                subtitleExtraction.status === 0 && embeddedCueTexts.length > 0,
+              cueCount: embeddedCueTexts.length,
+              cueTextSha256:
+                embeddedCueTexts.length > 0
+                  ? cueTextHash(embeddedCueTexts)
+                  : null,
+              cueTimelineSha256:
+                embeddedCues.length > 0 ? cueTimelineHash(embeddedCues) : null,
+              firstCue: embeddedCueTexts[0] ?? null,
+              lastCue: embeddedCueTexts.at(-1) ?? null,
+              error:
+                subtitleExtraction.status === 0
+                  ? null
+                  : subtitleExtraction.error?.message ||
+                    subtitleExtraction.stderr ||
+                    "ffmpeg subtitle extraction failed",
+            },
+            contentAnalysis,
+            streams: streams.map((stream) => ({
+              index: stream.index,
+              codecType: stream.codec_type,
+              codecName: stream.codec_name,
+              width: stream.width ?? null,
+              height: stream.height ?? null,
+            })),
+          },
         };
       } catch (error) {
         return {
-          probed: false,
-          error: error instanceof Error ? error.message : String(error),
+          ...artifact,
+          media: {
+            probed: false,
+            error: error instanceof Error ? error.message : String(error),
+          },
         };
       }
     },
     {
       label: "Solana production-gate MP4 input",
       maxBytes: MAX_SOLANA_EVIDENCE_MP4_BYTES,
-      descriptorCount: 2,
+      descriptorCount: isRecord(semanticWitnessContext) ? 8 : 7,
     },
   );
+};
 
-export const collectArtifactFacts = async (pathsToCheck) => {
+const recordArtifactPreLiveInput = ({
+  snapshotInputs,
+  id,
+  file,
+  size,
+  sha256,
+}) => {
+  if (!snapshotInputs || !id) return;
+  if (
+    !Number.isSafeInteger(size) ||
+    size <= 0 ||
+    !/^0x[0-9a-f]{64}$/u.test(String(sha256 ?? ""))
+  ) {
+    throw new Error(
+      `Solana production-gate pre-live media input ${id} is empty or has an invalid digest.`,
+    );
+  }
+  snapshotInputs[id] = {
+    id,
+    path: path.resolve(file),
+    present: true,
+    size,
+    sha256,
+  };
+};
+
+export const collectArtifactFacts = async (
+  pathsToCheck,
+  {
+    snapshotInputs = null,
+    snapshotInputIdsByPath = new Map(),
+    semanticWitnessContextsByPath = new Map(),
+    mediaProbeTimeoutMs = SOLANA_MEDIA_PROBE_TIMEOUT_MS,
+  } = {},
+) => {
   const facts = {};
   for (const file of pathsToCheck) {
     if (!file) {
       continue;
     }
     const resolved = normalizePath(file);
+    const snapshotId = snapshotInputIdsByPath.get(resolved) ?? null;
     try {
       const info = await lstat(resolved);
-      const fact = {
-        path: resolved,
-        exists: info.isFile() && !info.isSymbolicLink(),
-        size: info.size,
-        symbolicLink: info.isSymbolicLink(),
-      };
-      if (fact.exists && resolved.endsWith(".mp4")) {
-        fact.media = probeMp4Media(resolved);
+      if (!info.isFile() || info.isSymbolicLink()) {
+        if (snapshotId) {
+          throw new Error(
+            `Solana production-gate pre-live media input ${snapshotId} must be a regular non-symlink file.`,
+          );
+        }
+        facts[resolved] = {
+          path: resolved,
+          exists: false,
+          size: info.size,
+          symbolicLink: info.isSymbolicLink(),
+        };
+        continue;
       }
-      if (fact.exists && resolved.endsWith(".vtt")) {
-        const text = (
-          await readStableRegularFile(resolved, {
-            label: "Solana production-gate WebVTT input",
-            maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
-          })
-        ).toString("utf8");
-        const cueTexts = parseWebVttCueTexts(text);
-        fact.vtt = {
-          webvtt: /^WEBVTT(?:\s|$)/u.test(text),
-          cueCount: cueTexts.length,
-          cueTextSha256: cueTextHash(cueTexts),
-          firstCue: cueTexts[0] ?? null,
-          lastCue: cueTexts.at(-1) ?? null,
-          cueTexts,
+      let fact;
+      if (resolved.endsWith(".mp4")) {
+        const inspection = probeMp4Media(resolved, {
+          timeoutMs: mediaProbeTimeoutMs,
+          semanticWitnessContext:
+            semanticWitnessContextsByPath.get(resolved) ?? null,
+        });
+        fact = {
+          path: resolved,
+          exists: true,
+          size: inspection.size,
+          sha256: inspection.sha256,
+          symbolicLink: false,
+          device: info.dev,
+          inode: info.ino,
+          media: inspection.media,
+        };
+      } else if (resolved.endsWith(".vtt")) {
+        const bytes = await readStableRegularFile(resolved, {
+          label: "Solana production-gate WebVTT input",
+          maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
+        });
+        const sha256 = `0x${createHash("sha256").update(bytes).digest("hex")}`;
+        const text = bytes.toString("utf8");
+        const cues = parseWebVttCues(text);
+        const cueTexts = cues.map((cue) => cue.text);
+        fact = {
+          path: resolved,
+          exists: true,
+          size: bytes.length,
+          sha256,
+          symbolicLink: false,
+          vtt: {
+            webvtt: /^WEBVTT(?:\s|$)/u.test(text),
+            cueCount: cueTexts.length,
+            cueTextSha256: cueTextHash(cueTexts),
+            cueTimelineSha256: cueTimelineHash(cues),
+            firstCue: cueTexts[0] ?? null,
+            lastCue: cueTexts.at(-1) ?? null,
+            cueTexts,
+          },
+        };
+      } else {
+        fact = {
+          path: resolved,
+          exists: true,
+          size: info.size,
+          symbolicLink: false,
         };
       }
-      facts[resolved] = {
-        ...fact,
-      };
-    } catch {
+      if (snapshotId) {
+        recordArtifactPreLiveInput({
+          snapshotInputs,
+          id: snapshotId,
+          file: resolved,
+          size: fact.size,
+          sha256: fact.sha256,
+        });
+      }
+      facts[resolved] = fact;
+    } catch (error) {
+      if (snapshotId) {
+        if (error?.code !== "ENOENT") throw error;
+        recordPreLiveInput({
+          snapshotInputs,
+          id: snapshotId,
+          file: resolved,
+        });
+      }
       facts[resolved] = {
         path: resolved,
         exists: false,
@@ -9341,42 +12286,17 @@ export const collectArtifactFacts = async (pathsToCheck) => {
   return facts;
 };
 
-const collectVideoPaths = ({
-  deploymentVideoTranscript,
-  deploymentVideoMp4Path,
-  deploymentVideoVttPath,
-  liveVideoTranscript,
-  liveVideoMp4Path,
-  liveVideoVttPath,
-  blockedLiveVideoMp4Path,
-  blockedLiveVideoVttPath,
-}) => {
-  const deploymentPaths = videoArtifactPaths({
-    transcript: deploymentVideoTranscript,
-    fallbackMp4Path: deploymentVideoMp4Path,
-    fallbackVttPath: deploymentVideoVttPath,
-  });
-  const livePaths = videoArtifactPaths({
-    transcript: liveVideoTranscript,
-    fallbackMp4Path: liveVideoMp4Path,
-    fallbackVttPath: liveVideoVttPath,
-  });
-  return [
-    deploymentPaths.mp4,
-    deploymentPaths.vtt,
-    livePaths.mp4,
-    livePaths.vtt,
-    blockedLiveVideoMp4Path,
-    blockedLiveVideoVttPath,
-  ];
-};
-
 export const runSccpSolanaProductionGate = async (options = {}) => {
   const outputDir = path.resolve(options.outputDir || DEFAULT_OUTPUT_DIR);
+  const expectedProverGovernanceApprovalSha256 =
+    options.proverGovernanceApprovalSha256 ??
+    process.env[SOLANA_EXACT_PROVER_APPROVAL_SHA256_ENV];
   const deployDir = resolveDeployArtifactDir({
     deployDir: options.deployDir,
     outputDir: options.outputDir,
   });
+  const localSolanaSccpSdkCapability =
+    await inspectLocalSolanaSccpSdkCapability();
   const requirementsPath = deployArtifactPath({
     explicit: options.requirements,
     deployDir,
@@ -9402,45 +12322,42 @@ export const runSccpSolanaProductionGate = async (options = {}) => {
     deployDir,
     defaultPath: DEFAULT_ROUTE_MANIFEST_PATH,
   });
-  const publishReadinessPath = deployArtifactPath({
-    explicit: options.publishReadiness,
+  const governancePlanPath = deployArtifactPath({
+    explicit: options.governancePlan,
     deployDir,
-    defaultPath: DEFAULT_PUBLISH_READINESS_PATH,
+    defaultPath: DEFAULT_GOVERNANCE_PLAN_PATH,
   });
-  const routePublishBlockedPath = deployArtifactPath({
-    explicit: options.routePublishBlocked,
+  const governanceRegistrationPath = deployArtifactPath({
+    explicit: options.governanceRegistration,
     deployDir,
-    defaultPath: DEFAULT_ROUTE_PUBLISH_BLOCKED_PATH,
+    defaultPath: DEFAULT_GOVERNANCE_REGISTER_RESULT_PATH,
   });
-  const routePublicationRequestPath = deployArtifactPath({
-    explicit: options.routePublicationRequest,
+  const governanceActivationPath = deployArtifactPath({
+    explicit: options.governanceActivation,
     deployDir,
-    defaultPath: DEFAULT_ROUTE_PUBLICATION_REQUEST_PATH,
+    defaultPath: DEFAULT_GOVERNANCE_ACTIVATE_RESULT_PATH,
   });
-  const routeManagerAccessPath = deployArtifactPath({
-    explicit: options.routeManagerAccess,
+  const orderedInitializationEvidencePath = deployArtifactPath({
+    explicit: options.orderedInitializationEvidence,
     deployDir,
-    defaultPath: DEFAULT_ROUTE_MANAGER_ACCESS_REQUEST_PATH,
+    defaultPath: DEFAULT_ORDERED_INITIALIZATION_EVIDENCE_PATH,
   });
-  const operatorHandoffPath = deployArtifactPath({
-    explicit: options.operatorHandoff,
+  const freshDeployReportPath = deployArtifactPath({
+    explicit: options.freshDeployReport,
     deployDir,
-    defaultPath: DEFAULT_OPERATOR_HANDOFF_PATH,
+    defaultPath: DEFAULT_FRESH_DEPLOY_REPORT_PATH,
   });
-  const activationPackagePath = deployArtifactPath({
-    explicit: options.activationPackage,
+  const proverGovernanceApprovalPath = deployArtifactPath({
+    explicit:
+      options.proverGovernanceApproval ||
+      process.env[SOLANA_EXACT_PROVER_APPROVAL_FILE_ENV],
     deployDir,
-    defaultPath: DEFAULT_ACTIVATION_PACKAGE_PATH,
+    defaultPath: DEFAULT_PROVER_GOVERNANCE_APPROVAL_PATH,
   });
-  const laneActivationRequestPath = deployArtifactPath({
-    explicit: options.laneActivationRequest,
+  const captureReviewPolicyPath = deployArtifactPath({
+    explicit: options.captureReviewPolicy,
     deployDir,
-    defaultPath: DEFAULT_LANE_ACTIVATION_REQUEST_PATH,
-  });
-  const laneActivationProposalPath = deployArtifactPath({
-    explicit: options.laneActivationProposal,
-    deployDir,
-    defaultPath: DEFAULT_LANE_ACTIVATION_PROPOSAL_PATH,
+    defaultPath: DEFAULT_CAPTURE_REVIEW_POLICY_PATH,
   });
   const sourceMaterialHandoffPath = deployArtifactPath({
     explicit: options.sourceMaterialHandoff,
@@ -9507,6 +12424,21 @@ export const runSccpSolanaProductionGate = async (options = {}) => {
   const liveVideoVttPath = path.resolve(
     options.liveVideoVtt || DEFAULT_LIVE_VIDEO_VTT_PATH,
   );
+  const liveCaptureVideoPath =
+    typeof options.liveCaptureVideo === "string" &&
+    options.liveCaptureVideo.trim()
+      ? path.resolve(options.liveCaptureVideo)
+      : null;
+  const liveCaptureWitnessPath =
+    typeof options.liveCaptureWitness === "string" &&
+    options.liveCaptureWitness.trim()
+      ? path.resolve(options.liveCaptureWitness)
+      : null;
+  const liveCaptureReviewAttestationPath =
+    typeof options.liveCaptureReviewAttestation === "string" &&
+    options.liveCaptureReviewAttestation.trim()
+      ? path.resolve(options.liveCaptureReviewAttestation)
+      : null;
   const blockedLiveVideoTranscriptPath = path.resolve(
     options.blockedLiveVideoTranscript ||
       (deployDir
@@ -9537,17 +12469,6 @@ export const runSccpSolanaProductionGate = async (options = {}) => {
           )
         : DEFAULT_BLOCKED_LIVE_VIDEO_VTT_PATH),
   );
-  const generatedHandoffPinsReady = [
-    options.routePublicationRequestSha256,
-    options.routeManagerAccessSha256,
-    options.operatorHandoffSha256,
-    options.activationPackageSha256,
-    options.laneActivationRequestSha256,
-    options.laneActivationProposalSha256,
-  ].every((value) =>
-    /^0x[0-9a-f]{64}$/u.test(String(value ?? "").toLowerCase()),
-  );
-
   const preflightReportOverride = Boolean(options.preflightReport);
   let freshPreflightCompleted = false;
   let preflightReportPath = options.preflightReport
@@ -9575,164 +12496,203 @@ export const runSccpSolanaProductionGate = async (options = {}) => {
     snapshotInputs: preLiveInputSnapshotEntries,
     snapshotId: id,
   });
-  const requirementsReport = await readJsonIfExists(
-    requirementsPath,
-    null,
-    snapshotJson("requirements"),
-  );
-  const postDeployEvidenceReport = await readJsonIfExists(
-    postDeployEvidencePath,
-    null,
-    snapshotJson("postDeployEvidence"),
-  );
-  const proverReadinessReport = await readJsonIfExists(
-    proverReadinessPath,
-    null,
-    snapshotJson("proverReadiness"),
-  );
-  const productionMaterialInventoryReport = await readJsonIfExists(
-    productionMaterialInventoryPath,
-    null,
-    snapshotJson("productionMaterialInventory"),
-  );
-  const routeManifestReport = await readJsonIfExists(
-    routeManifestPath,
-    null,
-    snapshotJson("routeManifest"),
-  );
-  const publishReadinessReport = await readJsonIfExists(
-    publishReadinessPath,
-    null,
-    snapshotJson("publishReadiness"),
-  );
-  const routePublishBlockedReport = await readJsonIfExists(
-    routePublishBlockedPath,
-    null,
-    snapshotJson("routePublishBlocked"),
-  );
-  const routePublicationRequestReport = await readJsonIfExists(
-    routePublicationRequestPath,
-    options.routePublicationRequestSha256,
+  // First-release completion has no local-manifest or route-manager evidence
+  // aliases. Public typed-registry readback and the exact Parliament artifacts
+  // below are the only route truth consumed by the gate.
+  const requirementsReport = null;
+  const postDeployEvidenceReport = null;
+  const proverReadinessReport = null;
+  const productionMaterialInventoryReport = null;
+  const routeManifestReport = null;
+  const freshDeployLoad = await loadPinnedFreshDeployReport({
+    file: freshDeployReportPath,
+    expectedSha256: options.freshDeployReportSha256,
+    validator:
+      options.freshDeployReportValidator ??
+      validateSolanaLoaderV3FreshDeployReport,
+    ...snapshotJson("freshDeployReport"),
+  });
+  const normalizedFreshDeployReport = freshDeployLoad.normalized;
+  const proverGovernanceApprovalReport = await readJsonIfExists(
+    proverGovernanceApprovalPath,
+    expectedProverGovernanceApprovalSha256,
     {
-      requirePin: generatedHandoffPinsReady,
-      ...snapshotJson("routePublicationRequest"),
+      requirePin: expectedProverGovernanceApprovalSha256 !== undefined,
+      ...snapshotJson("proverGovernanceApproval"),
     },
   );
-  const routeManagerAccessReport = await readJsonIfExists(
-    routeManagerAccessPath,
-    options.routeManagerAccessSha256,
+  const proverGovernanceApprovalArtifact =
+    preLiveInputSnapshotEntries.proverGovernanceApproval ?? null;
+  let canonicalProverGovernanceApproval = null;
+  if (isRecord(proverGovernanceApprovalReport)) {
+    const canonicalBytes = Buffer.from(
+      `${canonicalSolanaExactProverApprovalJson(
+        proverGovernanceApprovalReport,
+      )}\n`,
+      "utf8",
+    );
+    const canonicalSha256 = `0x${createHash("sha256")
+      .update(canonicalBytes)
+      .digest("hex")}`;
+    if (
+      canonicalBytes.length === proverGovernanceApprovalArtifact?.size &&
+      canonicalSha256 === proverGovernanceApprovalArtifact?.sha256
+    ) {
+      canonicalProverGovernanceApproval = proverGovernanceApprovalReport;
+    }
+  }
+  const proverGovernanceApprovalValidation =
+    buildExactSolanaProductionProverApprovalValidation({
+      approvalRecord: canonicalProverGovernanceApproval,
+      approvalPath: proverGovernanceApprovalPath,
+      approvalSha256: proverGovernanceApprovalArtifact?.sha256 ?? null,
+      expectedApprovalSha256: expectedProverGovernanceApprovalSha256 ?? null,
+    });
+  const captureReviewPolicyLoad = await loadPinnedCaptureReviewPolicy({
+    file: captureReviewPolicyPath,
+    expectedSha256: options.captureReviewPolicySha256,
+    approvalPinnedSha256:
+      proverGovernanceApprovalValidation.pins?.captureReviewPolicySha256,
+    ...snapshotJson("captureReviewPolicy"),
+  });
+  const governancePlanReport = await readJsonIfExists(
+    governancePlanPath,
+    null,
+    snapshotJson("governancePlan"),
+  );
+  const governanceRegistrationReport = await readJsonIfExists(
+    governanceRegistrationPath,
+    options.governanceRegistrationSha256,
     {
-      requirePin: generatedHandoffPinsReady,
-      ...snapshotJson("routeManagerAccess"),
+      requirePin: options.governanceRegistrationSha256 !== undefined,
+      ...snapshotJson("governanceRegistration"),
     },
   );
-  const operatorHandoffReport = await readJsonIfExists(
-    operatorHandoffPath,
-    options.operatorHandoffSha256,
+  const governanceActivationReport = await readJsonIfExists(
+    governanceActivationPath,
+    options.governanceActivationSha256,
     {
-      requirePin: generatedHandoffPinsReady,
-      ...snapshotJson("operatorHandoff"),
+      requirePin: options.governanceActivationSha256 !== undefined,
+      ...snapshotJson("governanceActivation"),
     },
   );
-  const activationPackageReport = await readJsonIfExists(
-    activationPackagePath,
-    options.activationPackageSha256,
+  const orderedInitializationEvidenceReport = await readJsonIfExists(
+    orderedInitializationEvidencePath,
+    options.orderedInitializationEvidenceSha256,
     {
-      requirePin: generatedHandoffPinsReady,
-      ...snapshotJson("activationPackage"),
+      requirePin: options.orderedInitializationEvidenceSha256 !== undefined,
+      ...snapshotJson("orderedInitializationEvidence"),
     },
   );
-  const laneActivationRequestReport = await readJsonIfExists(
-    laneActivationRequestPath,
-    options.laneActivationRequestSha256,
-    {
-      requirePin: generatedHandoffPinsReady,
-      ...snapshotJson("laneActivationRequest"),
-    },
-  );
-  const laneActivationProposalReport = await readJsonIfExists(
-    laneActivationProposalPath,
-    options.laneActivationProposalSha256,
-    {
-      requirePin: generatedHandoffPinsReady,
-      ...snapshotJson("laneActivationProposal"),
-    },
-  );
-  const sourceMaterialHandoffReport = await readJsonIfExists(
-    sourceMaterialHandoffPath,
-    null,
-    snapshotJson("sourceMaterialHandoff"),
-  );
-  const handoffVerificationReport = await readJsonIfExists(
-    handoffVerificationPath,
-    null,
-    snapshotJson("handoffVerification"),
-  );
-  const sourceBurnReadinessReport = await readJsonIfExists(
-    sourceBurnReadinessPath,
-    null,
-    snapshotJson("sourceBurnReadiness"),
-  );
-  const sourceBurnSubmissionReport = await readJsonIfExists(
-    sourceBurnSubmissionPath,
-    null,
-    snapshotJson("sourceBurnSubmission"),
-  );
-  const proofMaterialRequestReport = await readJsonIfExists(
-    proofMaterialRequestPath,
-    null,
-    snapshotJson("proofMaterialRequest"),
-  );
-  const proofMaterialBundleReport = await readJsonIfExists(
-    proofMaterialBundlePath,
-    null,
-    snapshotJson("proofMaterialBundle"),
-  );
-  const proofMaterialCeremonyPackageReport = await readJsonIfExists(
-    proofMaterialCeremonyPackagePath,
-    null,
-    snapshotJson("proofMaterialCeremonyPackage"),
-  );
+  const sourceMaterialHandoffReport = null;
+  const handoffVerificationReport = null;
+  const sourceBurnReadinessReport = null;
+  const sourceBurnSubmissionReport = null;
+  const proofMaterialRequestReport = null;
+  const proofMaterialBundleReport = null;
+  const proofMaterialCeremonyPackageReport = null;
   const smokeReadinessReport = await readJsonIfExists(
     smokeReadinessPath,
     null,
     snapshotJson("smokeReadiness"),
   );
-  const deploymentVideoTranscript = await readJsonIfExists(
-    deploymentVideoTranscriptPath,
-    null,
-    snapshotJson("deploymentVideoTranscript"),
-  );
+  const proverRuntimeReinspection = reinspectSolanaSmokeProverArtifacts({
+    smokeReadinessReport,
+    expectedProverGovernanceApprovalSha256,
+    proverGovernanceApprovalValidation,
+  });
+  const deploymentVideoTranscript = null;
   const liveVideoTranscript = await readJsonIfExists(liveVideoTranscriptPath);
+  const liveCaptureWitnessArtifact = await loadPinnedPostLiveJsonArtifact({
+    file: liveCaptureWitnessPath,
+    expectedSha256: options.liveCaptureWitnessSha256,
+    label: "Pinned final-boundary Solana live capture witness",
+  });
+  const liveCaptureReviewAttestationArtifact =
+    await loadPinnedPostLiveJsonArtifact({
+      file: liveCaptureReviewAttestationPath,
+      expectedSha256: options.liveCaptureReviewAttestationSha256,
+      label: "Pinned final-boundary Solana capture-review attestation",
+    });
   const blockedLiveVideoTranscript = await readJsonIfExists(
     blockedLiveVideoTranscriptPath,
   );
+  const livePaths = videoArtifactPaths({
+    transcript: liveVideoTranscript,
+    fallbackMp4Path: liveVideoMp4Path,
+    fallbackVttPath: liveVideoVttPath,
+  });
+  const liveVideoSourceCapture = readFirstRecord(
+    liveVideoTranscript,
+    "sourceCapture",
+    "source_capture",
+  );
+  const liveVideoSuccessPolicy = readFirstRecord(
+    liveVideoTranscript,
+    "successEvidencePolicy",
+    "success_evidence_policy",
+  );
+  const liveVideoProductionGatePolicy = readFirstRecord(
+    liveVideoSuccessPolicy,
+    "productionGate",
+    "production_gate",
+  );
+  const normalizedExpectedLiveCaptureVideoSha256 = String(
+    options.liveCaptureVideoSha256 ?? "",
+  ).toLowerCase();
+  const liveVideoSemanticWitnessContext = isRecord(liveVideoTranscript)
+    ? {
+        witness: liveCaptureWitnessArtifact.value,
+        witnessArtifactSha256: liveCaptureWitnessArtifact.sha256,
+        reviewAttestation: liveCaptureReviewAttestationArtifact.value,
+        reviewPolicy: captureReviewPolicyLoad.normalized,
+        liveEvidence: readFirstRecord(
+          liveVideoTranscript,
+          "liveEvidence",
+          "live_evidence",
+        ),
+        preLiveInputSnapshotSha256: readFirstString(
+          liveVideoProductionGatePolicy,
+          "preLiveInputSnapshotSha256",
+          "pre_live_input_snapshot_sha256",
+        ),
+        expectedCaptureSha256: normalizedExpectedLiveCaptureVideoSha256,
+      }
+    : null;
+  const finalVideoSemanticWitnessContext = isRecord(
+    liveVideoSemanticWitnessContext,
+  )
+    ? { ...liveVideoSemanticWitnessContext, expectedSubtitleCount: 1 }
+    : null;
+  const rawCaptureSemanticWitnessContext = isRecord(
+    liveVideoSemanticWitnessContext,
+  )
+    ? { ...liveVideoSemanticWitnessContext, expectedSubtitleCount: 0 }
+    : null;
   const artifactFacts = await collectArtifactFacts(
-    collectVideoPaths({
-      deploymentVideoTranscript,
-      deploymentVideoMp4Path,
-      deploymentVideoVttPath,
-      liveVideoTranscript,
-      liveVideoMp4Path,
-      liveVideoVttPath,
+    [
+      liveCaptureVideoPath,
+      livePaths.mp4,
+      livePaths.vtt,
       blockedLiveVideoMp4Path,
       blockedLiveVideoVttPath,
-    }),
+    ],
+    {
+      semanticWitnessContextsByPath: isRecord(liveVideoSemanticWitnessContext)
+        ? new Map([
+            [normalizePath(livePaths.mp4), finalVideoSemanticWitnessContext],
+            ...(liveCaptureVideoPath
+              ? [
+                  [
+                    normalizePath(liveCaptureVideoPath),
+                    rawCaptureSemanticWitnessContext,
+                  ],
+                ]
+              : []),
+          ])
+        : new Map(),
+    },
   );
-  await Promise.all([
-    recordStableFilePreLiveInput({
-      snapshotInputs: preLiveInputSnapshotEntries,
-      id: "deploymentVideoMp4",
-      file: deploymentVideoMp4Path,
-      maxBytes: MAX_SOLANA_EVIDENCE_MP4_BYTES,
-    }),
-    recordStableFilePreLiveInput({
-      snapshotInputs: preLiveInputSnapshotEntries,
-      id: "deploymentVideoVtt",
-      file: deploymentVideoVttPath,
-      maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
-    }),
-  ]);
   const preLiveInputSnapshot = buildSolanaProductionGatePreLiveInputSnapshot(
     preLiveInputSnapshotEntries,
   );
@@ -9747,6 +12707,235 @@ export const runSccpSolanaProductionGate = async (options = {}) => {
     );
   }
 
+  let finalCaptureReviewBoundary = {
+    ready: false,
+    policyLoad: captureReviewPolicyLoad,
+    authentication: null,
+    error: "Final capture-review boundary has not been authenticated.",
+  };
+  try {
+    const reopenedSourceCaptureFact = liveCaptureVideoPath
+      ? artifactFact(artifactFacts, liveCaptureVideoPath)
+      : null;
+    if (
+      !/^0x[0-9a-f]{64}$/u.test(normalizedExpectedLiveCaptureVideoSha256) ||
+      reopenedSourceCaptureFact?.exists !== true ||
+      reopenedSourceCaptureFact.sha256 !==
+        normalizedExpectedLiveCaptureVideoSha256 ||
+      reopenedSourceCaptureFact.sha256 !==
+        readFirstString(liveVideoSourceCapture, "sha256")
+    ) {
+      throw new Error(
+        "The final boundary could not reopen the independently pinned source capture bytes.",
+      );
+    }
+    const freshTrust = await reloadPinnedCaptureReviewTrustBoundary({
+      snapshot: preLiveInputSnapshot,
+      proverGovernanceApprovalPath,
+      expectedProverGovernanceApprovalSha256,
+      captureReviewPolicyPath,
+      expectedCaptureReviewPolicySha256: options.captureReviewPolicySha256,
+    });
+    const freshWitnessArtifact = await loadPinnedPostLiveJsonArtifact({
+      file: liveCaptureWitnessPath,
+      expectedSha256: options.liveCaptureWitnessSha256,
+      label: "Fresh final-boundary Solana live capture witness",
+    });
+    const freshAttestationArtifact = await loadPinnedPostLiveJsonArtifact({
+      file: liveCaptureReviewAttestationPath,
+      expectedSha256: options.liveCaptureReviewAttestationSha256,
+      label: "Fresh final-boundary Solana capture-review attestation",
+    });
+    for (const [label, initial, fresh] of [
+      ["capture witness", liveCaptureWitnessArtifact, freshWitnessArtifact],
+      [
+        "capture-review attestation",
+        liveCaptureReviewAttestationArtifact,
+        freshAttestationArtifact,
+      ],
+    ]) {
+      if (
+        fresh.error !== null ||
+        fresh.sha256 !== initial.sha256 ||
+        fresh.size !== initial.size ||
+        canonicalSccpJson(fresh.value) !== canonicalSccpJson(initial.value)
+      ) {
+        throw new Error(`The pinned ${label} changed before final readiness.`);
+      }
+    }
+    const normalizedWitness = normalizeSolanaLiveCaptureWitness(
+      freshWitnessArtifact.value,
+      {
+        liveEvidence: liveVideoSemanticWitnessContext?.liveEvidence,
+        preLiveInputSnapshotSha256:
+          preLiveInputSnapshot.preLiveInputSnapshotSha256,
+        expectedCaptureSha256: reopenedSourceCaptureFact.sha256,
+        reviewPolicySha256: freshTrust.policyLoad.artifactSha256,
+      },
+    );
+    const authentication = verifySolanaLiveCaptureReviewAttestation({
+      attestation: freshAttestationArtifact.value,
+      witness: normalizedWitness,
+      witnessArtifactSha256: freshWitnessArtifact.sha256,
+      reviewPolicy: freshTrust.policyLoad.normalized,
+    });
+    const freshSemanticContext = {
+      witness: freshWitnessArtifact.value,
+      witnessArtifactSha256: freshWitnessArtifact.sha256,
+      reviewAttestation: freshAttestationArtifact.value,
+      reviewPolicy: freshTrust.policyLoad.normalized,
+      liveEvidence: liveVideoSemanticWitnessContext?.liveEvidence,
+      preLiveInputSnapshotSha256:
+        preLiveInputSnapshot.preLiveInputSnapshotSha256,
+      expectedCaptureSha256: reopenedSourceCaptureFact.sha256,
+    };
+    const freshMediaFacts = await collectArtifactFacts(
+      [liveCaptureVideoPath, livePaths.mp4],
+      {
+        semanticWitnessContextsByPath: new Map([
+          [
+            normalizePath(liveCaptureVideoPath),
+            { ...freshSemanticContext, expectedSubtitleCount: 0 },
+          ],
+          [
+            normalizePath(livePaths.mp4),
+            { ...freshSemanticContext, expectedSubtitleCount: 1 },
+          ],
+        ]),
+      },
+    );
+    for (const file of [liveCaptureVideoPath, livePaths.mp4]) {
+      const initial = artifactFact(artifactFacts, file);
+      const fresh = artifactFact(freshMediaFacts, file);
+      const stable =
+        initial.exists === true &&
+        fresh.exists === true &&
+        initial.size === fresh.size &&
+        initial.sha256 === fresh.sha256 &&
+        initial.device === fresh.device &&
+        initial.inode === fresh.inode &&
+        canonicalSccpJson(initial.media) === canonicalSccpJson(fresh.media);
+      if (!stable) {
+        throw new Error(
+          "The pinned source capture or final MP4 changed before final readiness.",
+        );
+      }
+      artifactFacts[normalizePath(file)] = fresh;
+    }
+    finalCaptureReviewBoundary = {
+      ready: true,
+      policyLoad: freshTrust.policyLoad,
+      authentication,
+      stableArtifactReinspection: true,
+      stableMediaReinspection: true,
+      error: null,
+    };
+  } catch (error) {
+    finalCaptureReviewBoundary = {
+      ready: false,
+      policyLoad: captureReviewPolicyLoad,
+      authentication: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  let freshDeployRpcVerification = {
+    ready: false,
+    liveFinalizedRpcReplay: false,
+    transactions: [],
+    error: "Canonical fresh-deploy report is unavailable.",
+  };
+  if (normalizedFreshDeployReport) {
+    try {
+      if (options.skipSolanaRpc === true) {
+        throw new Error(
+          "Fresh-deploy lifecycle signatures require live finalized Solana RPC verification.",
+        );
+      }
+      const rpcUrl = options.solanaRpcUrl || CANONICAL_SOLANA_TESTNET_RPC_URL;
+      const connection =
+        options.solanaConnection ?? new Connection(rpcUrl, "finalized");
+      const verifier =
+        options.freshDeployTransactionVerifier ??
+        verifySolanaLoaderV3FreshDeployReportTransactions;
+      const verification = await verifier(
+        connection,
+        normalizedFreshDeployReport,
+      );
+      freshDeployRpcVerification = {
+        ...verification,
+        liveFinalizedRpcReplay: verification?.ready === true,
+      };
+    } catch (error) {
+      freshDeployRpcVerification = {
+        ready: false,
+        liveFinalizedRpcReplay: false,
+        transactions: [],
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  let orderedInitializationRpcVerification = {
+    ready: false,
+    transactions: [],
+    error: "Ordered-initialization evidence is unavailable.",
+  };
+  try {
+    if (options.skipSolanaRpc === true) {
+      throw new Error(
+        "Ordered-initialization signatures require live finalized Solana RPC verification.",
+      );
+    }
+    const normalizedOrderedInitialization =
+      validateSolanaOrderedInitializationEvidence(
+        orderedInitializationEvidenceReport,
+      );
+    const timeoutCandidate = Number(options.fetchTimeoutMs);
+    orderedInitializationRpcVerification =
+      await verifySolanaOrderedInitializationTransactions(
+        normalizedOrderedInitialization,
+        {
+          registrySummary: preflightReport?.registrySummary,
+          timeoutMs:
+            Number.isSafeInteger(timeoutCandidate) && timeoutCandidate > 0
+              ? timeoutCandidate
+              : 20_000,
+        },
+      );
+  } catch (error) {
+    orderedInitializationRpcVerification = {
+      ready: false,
+      transactions: [],
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const governanceEvidence = await buildSolanaGovernanceEvidenceChecks({
+    governancePlan: governancePlanReport,
+    expectedPlanSha256: options.governancePlanSha256,
+    registrationResult: governanceRegistrationReport,
+    registrationArtifactSha256:
+      preLiveInputSnapshot.inputs.governanceRegistration?.sha256,
+    expectedRegistrationArtifactSha256: options.governanceRegistrationSha256,
+    activationResult: governanceActivationReport,
+    activationArtifactSha256:
+      preLiveInputSnapshot.inputs.governanceActivation?.sha256,
+    expectedActivationArtifactSha256: options.governanceActivationSha256,
+    orderedInitializationEvidence: orderedInitializationEvidenceReport,
+    orderedInitializationArtifactSha256:
+      preLiveInputSnapshot.inputs.orderedInitializationEvidence?.sha256,
+    expectedOrderedInitializationArtifactSha256:
+      options.orderedInitializationEvidenceSha256,
+    orderedInitializationRpcVerification,
+    preflightReport,
+    fetchTimeoutMs:
+      Number.isSafeInteger(Number(options.fetchTimeoutMs)) &&
+      Number(options.fetchTimeoutMs) > 0
+        ? Number(options.fetchTimeoutMs)
+        : 20_000,
+  });
+
   const successExecutionPolicy =
     buildSolanaProductionGateSuccessExecutionPolicy({
       toriiUrl: options.toriiUrl,
@@ -9755,8 +12944,10 @@ export const runSccpSolanaProductionGate = async (options = {}) => {
       preflightReportOverride,
       freshPreflightCompleted,
       preflightReport,
-      publishReadinessReport,
-      generatedHandoffPinsReady,
+      governancePlan: governancePlanReport,
+      governanceRegistration: governanceRegistrationReport,
+      governanceActivation: governanceActivationReport,
+      governanceEvidenceReady: governanceEvidence.ready,
     });
   let liveVideoAuthoritativeRevalidation = {
     ready: false,
@@ -9785,19 +12976,15 @@ export const runSccpSolanaProductionGate = async (options = {}) => {
       const packageHashProblems = solanaLiveEvidencePackageHashProblems({
         liveEvidence: normalizedLiveEvidence,
         diagnostics: {
-          activationPackage: {
-            activationPackageHash: readFirstString(
-              activationPackageReport,
-              "activationPackageHash",
-              "activation_package_hash",
-            ),
-          },
-          operatorHandoff: {
-            handoffHash: readFirstString(
-              operatorHandoffReport,
-              "handoffHash",
-              "handoff_hash",
-            ),
+          governanceEvidence: {
+            planSha256: governancePlanReport?.plan_sha256 ?? null,
+            registrationArtifactSha256:
+              preLiveInputSnapshot.inputs.governanceRegistration?.sha256 ??
+              null,
+            activationArtifactSha256:
+              preLiveInputSnapshot.inputs.governanceActivation?.sha256 ?? null,
+            publicRegistrySha256:
+              preflightReport?.registrySummary?.registrySha256 ?? null,
           },
         },
       });
@@ -9832,10 +13019,40 @@ export const runSccpSolanaProductionGate = async (options = {}) => {
   }
 
   const reportPath = path.join(outputDir, REPORT_FILE);
+  await assertSolanaProductionGateOutputIsDisjoint({
+    outputPath: reportPath,
+    inputPaths: [
+      preflightReportPath,
+      freshDeployReportPath,
+      liveCaptureWitnessPath,
+      liveCaptureReviewAttestationPath,
+      liveVideoTranscriptPath,
+      blockedLiveVideoTranscriptPath,
+      ...Object.values(preLiveInputSnapshot.inputs).map((input) => input.path),
+      ...Object.keys(artifactFacts),
+    ],
+  });
   const report = buildSolanaProductionGateReport({
     deployDir,
+    normalizedFreshDeployReport,
+    freshDeployReportValidationError: freshDeployLoad.error,
+    freshDeployReportPath,
+    expectedFreshDeployReportSha256: options.freshDeployReportSha256,
+    freshDeployRpcVerification,
+    skipSolanaRpc: options.skipSolanaRpc,
     preflightReport,
     preflightReportPath,
+    proverGovernanceApprovalReport,
+    proverGovernanceApprovalPath,
+    captureReviewPolicyLoad,
+    captureReviewPolicyPath,
+    liveCaptureWitnessArtifact,
+    liveCaptureWitnessPath,
+    liveCaptureReviewAttestationArtifact,
+    liveCaptureReviewAttestationPath,
+    finalCaptureReviewBoundary,
+    liveCaptureVideoPath,
+    expectedLiveCaptureVideoSha256: normalizedExpectedLiveCaptureVideoSha256,
     requirementsReport,
     requirementsPath,
     postDeployEvidenceReport,
@@ -9846,22 +13063,21 @@ export const runSccpSolanaProductionGate = async (options = {}) => {
     productionMaterialInventoryPath,
     routeManifestReport,
     routeManifestPath,
-    publishReadinessReport,
-    publishReadinessPath,
-    routePublishBlockedReport,
-    routePublishBlockedPath,
-    routePublicationRequestReport,
-    routePublicationRequestPath,
-    routeManagerAccessReport,
-    routeManagerAccessPath,
-    operatorHandoffReport,
-    operatorHandoffPath,
-    activationPackageReport,
-    activationPackagePath,
-    laneActivationRequestReport,
-    laneActivationRequestPath,
-    laneActivationProposalReport,
-    laneActivationProposalPath,
+    governancePlanReport,
+    governancePlanPath,
+    governancePlanSha256: options.governancePlanSha256,
+    governanceRegistrationReport,
+    governanceRegistrationPath,
+    governanceRegistrationSha256: options.governanceRegistrationSha256,
+    governanceActivationReport,
+    governanceActivationPath,
+    governanceActivationSha256: options.governanceActivationSha256,
+    orderedInitializationEvidenceReport,
+    orderedInitializationEvidencePath,
+    orderedInitializationEvidenceSha256:
+      options.orderedInitializationEvidenceSha256,
+    orderedInitializationRpcVerification,
+    governanceEvidence,
     sourceMaterialHandoffReport,
     sourceMaterialHandoffPath,
     handoffVerificationReport,
@@ -9891,10 +13107,14 @@ export const runSccpSolanaProductionGate = async (options = {}) => {
     blockedLiveVideoMp4Path,
     blockedLiveVideoVttPath,
     artifactFacts,
+    localSolanaSccpSdkCapability,
     preLiveInputSnapshot,
     successExecutionPolicy,
     liveVideoAuthoritativeRevalidation,
-    productionGateReportPath: reportPath,
+    expectedProverGovernanceApprovalSha256:
+      expectedProverGovernanceApprovalSha256,
+    proverGovernanceApprovalValidation,
+    proverRuntimeReinspection,
   });
   await writeAtomicJsonFile(reportPath, report);
   const reportBytes = await readStableRegularFile(reportPath, {
@@ -9923,25 +13143,22 @@ const main = async () => {
     fetchTimeoutMs: args["fetch-timeout-ms"],
     fetchAttempts: args["fetch-attempts"],
     preflightReport: args["preflight-report"],
+    freshDeployReport: args["fresh-deploy-report"],
+    freshDeployReportSha256: args["fresh-deploy-report-sha256"],
     requirements: args.requirements,
     postDeployEvidence: args["post-deploy-evidence"],
     proverReadiness: args["prover-readiness"],
     productionMaterialInventory: args["production-material-inventory"],
     routeManifest: args["route-manifest"],
-    publishReadiness: args["publish-readiness"],
-    routePublishBlocked: args["route-publish-blocked"],
-    routePublicationRequest: args["route-publication-request"],
-    routePublicationRequestSha256: args["route-publication-request-sha256"],
-    routeManagerAccess: args["route-manager-access-request"],
-    routeManagerAccessSha256: args["route-manager-access-request-sha256"],
-    operatorHandoff: args["operator-handoff"],
-    operatorHandoffSha256: args["operator-handoff-sha256"],
-    activationPackage: args["activation-package"],
-    activationPackageSha256: args["activation-package-sha256"],
-    laneActivationRequest: args["lane-activation-request"],
-    laneActivationRequestSha256: args["lane-activation-request-sha256"],
-    laneActivationProposal: args["lane-activation-proposal"],
-    laneActivationProposalSha256: args["lane-activation-proposal-sha256"],
+    governancePlan: args["governance-plan"],
+    governancePlanSha256: args["governance-plan-sha256"],
+    governanceRegistration: args["governance-register-result"],
+    governanceRegistrationSha256: args["governance-register-result-sha256"],
+    governanceActivation: args["governance-activate-result"],
+    governanceActivationSha256: args["governance-activate-result-sha256"],
+    orderedInitializationEvidence: args["ordered-initialization-evidence"],
+    orderedInitializationEvidenceSha256:
+      args["ordered-initialization-evidence-sha256"],
     sourceMaterialHandoff: args["source-material-handoff"],
     handoffVerification: args["handoff-verification"],
     sourceBurnReadiness: args["source-burn-readiness"],
@@ -9950,6 +13167,14 @@ const main = async () => {
     proofMaterialBundle: args["proof-material-bundle"],
     proofMaterialCeremonyPackage: args["proof-material-ceremony-package"],
     smokeReadiness: args["smoke-readiness"],
+    proverGovernanceApproval:
+      args["prover-governance-approval"] ||
+      process.env[SOLANA_EXACT_PROVER_APPROVAL_FILE_ENV],
+    proverGovernanceApprovalSha256:
+      args["prover-governance-approval-sha256"] ||
+      process.env[SOLANA_EXACT_PROVER_APPROVAL_SHA256_ENV],
+    captureReviewPolicy: args["capture-review-policy"],
+    captureReviewPolicySha256: args["capture-review-policy-sha256"],
     deploymentVideoTranscript: args["deployment-video-transcript"],
     deploymentVideoMp4: args["deployment-video-mp4"],
     deploymentVideoVtt: args["deployment-video-vtt"],
@@ -9958,6 +13183,13 @@ const main = async () => {
     liveVideoTranscript: args["live-video-transcript"],
     liveVideoMp4: args["live-video-mp4"],
     liveVideoVtt: args["live-video-vtt"],
+    liveCaptureVideo: args["live-capture-video"],
+    liveCaptureVideoSha256: args["live-capture-video-sha256"],
+    liveCaptureWitness: args["live-capture-witness"],
+    liveCaptureWitnessSha256: args["live-capture-witness-sha256"],
+    liveCaptureReviewAttestation: args["live-capture-review-attestation"],
+    liveCaptureReviewAttestationSha256:
+      args["live-capture-review-attestation-sha256"],
     blockedLiveVideoTranscript: args["blocked-live-video-transcript"],
     blockedLiveVideoMp4: args["blocked-live-video-mp4"],
     blockedLiveVideoVtt: args["blocked-live-video-vtt"],

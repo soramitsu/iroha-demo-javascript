@@ -146,6 +146,7 @@ const fixture = () => {
     validationScope: SOLANA_LOADER_V3_SBF_VALIDATION_SCOPE,
     exactClusterAdmission: false,
     productionEligible: true,
+    sbpfVersion: "V3",
     validatorId: SOLANA_LOADER_V3_SBF_VALIDATOR_ID,
     validatorVersion: SOLANA_LOADER_V3_SBF_VALIDATOR_VERSION,
     policySha256: SOLANA_LOADER_V3_SBF_VALIDATION_POLICY_SHA256,

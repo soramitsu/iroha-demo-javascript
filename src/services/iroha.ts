@@ -45,6 +45,7 @@ import type {
   SoraCloudStatusResponseView,
   SccpCapabilitiesResponse,
   SccpProofManifestSetResponse,
+  SccpSoraOutboundMaterialResponse,
   SccpRecentMessagesResponse,
   SigningAlgorithmOption,
   ToriiHealth,
@@ -464,6 +465,11 @@ export const getSccpProofManifests = (
   input: Parameters<IrohaBridge["getSccpProofManifests"]>[0],
 ): Promise<SccpProofManifestSetResponse> =>
   bridge().getSccpProofManifests(input);
+
+export const getSccpSoraOutboundMaterial = (
+  input: Parameters<IrohaBridge["getSccpSoraOutboundMaterial"]>[0],
+): Promise<SccpSoraOutboundMaterialResponse> =>
+  bridge().getSccpSoraOutboundMaterial(input);
 
 export const listSccpRecentMessages = (
   input: Parameters<IrohaBridge["listSccpRecentMessages"]>[0],

@@ -14,7 +14,7 @@ import {
 import {
   validateBscMainnetNativeEvmProverBundle,
   validateBscTestnetNativeEvmProverBundle,
-} from "@iroha/iroha-js/sccp";
+} from "../../src/legacy/sccpLegacySdk.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");

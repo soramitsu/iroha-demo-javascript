@@ -26,7 +26,16 @@ const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
-const ELF = Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00]);
+const fakeSbpfV3Elf = (marker) => {
+  const bytes = Buffer.alloc(64);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00]).copy(bytes);
+  bytes.writeUInt32LE(3, 48);
+  bytes[63] = marker;
+  return bytes;
+};
+const ELF = fakeSbpfV3Elf(0);
+const artifactBytesFor = (program) =>
+  fakeSbpfV3Elf(program === "bridge" ? 1 : program === "source" ? 2 : 3);
 
 const fakeCargoSource = `#!/usr/bin/env node
 import { existsSync, lstatSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -54,13 +63,18 @@ if (manifestIndex < 0 || outputIndex < 0) process.exit(82);
 const archIndex = args.indexOf("--arch");
 const toolsIndex = args.indexOf("--tools-version");
 const separatorIndex = args.indexOf("--");
-if (archIndex < 0 || args[archIndex + 1] !== "v0") process.exit(84);
+if (archIndex < 0 || args[archIndex + 1] !== "v3") process.exit(84);
 if (toolsIndex < 0 || args[toolsIndex + 1] !== "v1.54") process.exit(85);
 if (separatorIndex < 0 || args[separatorIndex + 1] !== "--locked") process.exit(86);
 const manifest = args[manifestIndex + 1];
 const output = args[outputIndex + 1];
 if (process.cwd() !== path.dirname(manifest)) process.exit(87);
 const native = manifest.includes("sccp-native-recursive-verifier");
+const featureIndex = args.indexOf("--features");
+const feature = featureIndex < 0 ? null : args[featureIndex + 1];
+if (!native && !args.includes("--no-default-features")) process.exit(89);
+if (!native && !["destination-program", "source-program"].includes(feature)) process.exit(90);
+if (native && (args.includes("--no-default-features") || feature !== null)) process.exit(91);
 const artifact = native ? "sccp_native_recursive_verifier.so" : "sccp_taira_xor.so";
 const keypair = native ? "sccp_native_recursive_verifier-keypair.json" : "sccp_taira_xor-keypair.json";
 const sentinel = path.join(output, keypair);
@@ -78,14 +92,31 @@ if (behavior === "mutate-sentinel") {
 if (behavior === "mutate-lock") {
   writeFileSync(path.join(path.dirname(manifest), "Cargo.lock"), "drifted lock");
 }
+const fakeSbpfElf = (role, eFlags = 3) => {
+  const bytes = Buffer.alloc(64);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00]).copy(bytes);
+  bytes.writeUInt32LE(eFlags, 48);
+  bytes[63] = role;
+  return bytes;
+};
 if (behavior === "bad-elf") {
   writeFileSync(path.join(output, artifact), "not an elf");
+} else if (behavior === "v0-elf") {
+  writeFileSync(path.join(output, artifact), fakeSbpfElf(1, 0));
 } else if (behavior === "artifact-symlink") {
   const target = path.join(output, "artifact-target.so");
-  writeFileSync(target, Buffer.from([0x7f, 0x45, 0x4c, 0x46, 1]));
+  writeFileSync(target, fakeSbpfElf(1));
   symlinkSync(target, path.join(output, artifact));
 } else {
-  writeFileSync(path.join(output, artifact), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]));
+  const role =
+    behavior === "same-artifact"
+      ? 1
+      : native
+        ? 3
+        : feature === "source-program"
+          ? 2
+          : 1;
+  writeFileSync(path.join(output, artifact), fakeSbpfElf(role));
 }
 `;
 
@@ -139,22 +170,90 @@ describe("signer-free Solana SBF program build", () => {
 
   const setBehavior = (behavior) => writeFile(behaviorPath, behavior);
 
-  it("builds both exact artifacts without creating a regular keypair path", async () => {
+  it("builds three distinct exact role artifacts without creating a regular keypair path", async () => {
     const results = await buildSolanaSbfPrograms(buildOptions());
 
-    expect(results).toHaveLength(2);
-    expect(results.map(({ program }) => program)).toEqual(["bridge", "native"]);
+    expect(results).toHaveLength(3);
+    expect(results.map(({ program }) => program)).toEqual([
+      "bridge",
+      "source",
+      "native",
+    ]);
     for (const result of results) {
       expect(result.signerMaterialWritten).toBe(false);
       expect(result.sha256).toMatch(/^0x[0-9a-f]{64}$/u);
-      expect(await readFile(result.artifactPath)).toEqual(ELF);
+      expect(result.codeHash).toMatch(/^0x[0-9a-f]{64}$/u);
+      expect(await readFile(result.artifactPath)).toEqual(
+        artifactBytesFor(result.program),
+      );
     }
+    expect(new Set(results.map(({ sha256 }) => sha256)).size).toBe(3);
+    expect(new Set(results.map(({ codeHash }) => codeHash)).size).toBe(3);
     expect(await regularKeypairPaths(outputRoot)).toEqual([]);
     expect(await readdir(scratchParent)).toEqual([]);
   });
 
+  it.each(["bridge", "all"])(
+    "rejects identical artifacts from a multi-role %s build",
+    async (selection) => {
+      await setBehavior("same-artifact");
+      await expect(
+        buildSolanaSbfPrograms(buildOptions({ selection })),
+      ).rejects.toThrow(
+        /distinct artifact SHA-256 and executable code hashes/u,
+      );
+      expect(await regularKeypairPaths(outputRoot)).toEqual([]);
+      expect(await readdir(scratchParent)).toEqual([]);
+    },
+  );
+
+  it.each([
+    {
+      absent: ["source"],
+      existing: ["bridge"],
+      selection: "bridge",
+    },
+    {
+      absent: ["source"],
+      existing: ["bridge", "native"],
+      selection: "all",
+    },
+  ])(
+    "leaves every $selection destination unchanged or absent when staged roles collide",
+    async ({ absent, existing, selection }) => {
+      const sentinels = new Map();
+      for (const program of existing) {
+        const destination = path.join(
+          outputRoot,
+          SOLANA_SBF_PROGRAMS[program].outputPath,
+        );
+        const sentinel = Buffer.from(`preexisting-${program}-artifact`);
+        await mkdir(path.dirname(destination), { recursive: true });
+        await writeFile(destination, sentinel);
+        sentinels.set(destination, sentinel);
+      }
+      await setBehavior("same-artifact");
+
+      await expect(
+        buildSolanaSbfPrograms(buildOptions({ selection })),
+      ).rejects.toThrow(
+        /distinct artifact SHA-256 and executable code hashes/u,
+      );
+
+      for (const [destination, sentinel] of sentinels) {
+        expect(await readFile(destination)).toEqual(sentinel);
+      }
+      for (const program of absent) {
+        await expect(
+          lstat(path.join(outputRoot, SOLANA_SBF_PROGRAMS[program].outputPath)),
+        ).rejects.toMatchObject({ code: "ENOENT" });
+      }
+      expect(await readdir(scratchParent)).toEqual([]);
+    },
+  );
+
   it("builds each program independently at its canonical artifact-only path", async () => {
-    for (const program of ["bridge", "native"]) {
+    for (const program of ["bridge", "source", "native"]) {
       const result = await buildSolanaSbfProgram({
         ...buildOptions(),
         program,
@@ -164,6 +263,20 @@ describe("signer-free Solana SBF program build", () => {
         path.join(canonicalOutputRoot, SOLANA_SBF_PROGRAMS[program].outputPath),
       );
     }
+  });
+
+  it("maps bridge selection to both role-gated ELFs and all to all three programs", () => {
+    expect(normalizeSolanaSbfBuildSelection("bridge")).toEqual([
+      "bridge",
+      "source",
+    ]);
+    expect(normalizeSolanaSbfBuildSelection("source")).toEqual(["source"]);
+    expect(normalizeSolanaSbfBuildSelection("native")).toEqual(["native"]);
+    expect(normalizeSolanaSbfBuildSelection("all")).toEqual([
+      "bridge",
+      "source",
+      "native",
+    ]);
   });
 
   it("does not read, overwrite, or remove a legacy keypair outside the artifact-only path", async () => {
@@ -207,7 +320,7 @@ describe("signer-free Solana SBF program build", () => {
     ).rejects.toThrow(/modified the signer-blocking directory/u);
   });
 
-  it.each(["bad-elf", "artifact-symlink"])(
+  it.each(["bad-elf", "v0-elf", "artifact-symlink"])(
     "rejects a %s cargo output before installing it",
     async (behavior) => {
       await setBehavior(behavior);
@@ -216,7 +329,7 @@ describe("signer-free Solana SBF program build", () => {
           ...buildOptions(),
           program: "bridge",
         }),
-      ).rejects.toThrow(/ELF program artifact|regular file/u);
+      ).rejects.toThrow(/ELF program artifact|SBPF V3|regular file/u);
       await expect(
         lstat(path.join(outputRoot, SOLANA_SBF_PROGRAMS.bridge.outputPath)),
       ).rejects.toMatchObject({ code: "ENOENT" });
@@ -397,7 +510,7 @@ describe("signer-free Solana SBF program build", () => {
     "rejects non-canonical build selection %j",
     (selection) => {
       expect(() => normalizeSolanaSbfBuildSelection(selection)).toThrow(
-        "must be bridge, native, or all",
+        "must be bridge, source, native, or all",
       );
     },
   );

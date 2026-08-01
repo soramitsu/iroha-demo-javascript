@@ -6,9 +6,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SCCP_SOLANA_KNOWN_ANSWER_GOVERNANCE_APPROVAL_FILE_ENV,
   SCCP_SOLANA_KNOWN_ANSWER_GOVERNANCE_APPROVAL_SHA256_ENV,
+  bindSolanaProverModuleToApproval,
   buildValidatedSolanaProverSidecarBody,
   loadSolanaProverKnownAnswerMaterial,
 } from "../scripts/build-sccp-solana-prover-sidecars.mjs";
+import {
+  buildExactSolanaProductionProverApprovalValidation,
+  canonicalSolanaExactProverApprovalJson,
+} from "../scripts/e2e/sccp-solana-exact-prover-governance.mjs";
 import {
   SOLANA_PROVER_KNOWN_ANSWER_VERIFICATION_RECEIPT_SCHEMA,
   buildSolanaProverKnownAnswerVectorCandidate,
@@ -25,9 +30,22 @@ const destinationResult = () => ({
   request: { routeId: "taira_sol_xor" },
   submission: { proofBytes: `0x${"ab".repeat(64)}` },
 });
+const sourceResult = () => ({
+  messageBundle: {
+    finality_proof: `0x${"bc".repeat(64)}`,
+    routeId: "taira_sol_xor",
+  },
+  settlement: { routeId: "taira_sol_xor", amount: "1000000000" },
+});
+const resultFor = (direction) =>
+  direction === "destination" ? destinationResult() : sourceResult();
 
-const approvalRecord = ({ destinationVectorHash, overrides = {} }) => ({
-  schema: "iroha-demo-sccp-solana-production-governance-approval/v1",
+const approvalRecord = ({
+  destinationVectorHash = hash("destination-known-answer-vector"),
+  sourceVectorHash = hash("source-known-answer-vector"),
+  overrides = {},
+}) => ({
+  schema: "iroha-sccp-solana-production-prover-approval/v2",
   routeId: "taira_sol_xor",
   assetKey: "xor",
   solanaNetwork: "solana-testnet",
@@ -35,46 +53,21 @@ const approvalRecord = ({ destinationVectorHash, overrides = {} }) => ({
   approved: true,
   approvalId: "test-independent-approval",
   pins: {
-    sourceVerifierMaterialHash: hash("source-verifier-material"),
-    sourceAdapterEngineDeploymentHash: hash("source-adapter-deployment"),
-    offlineFullTomlSha256: hash("offline-full-toml"),
+    captureReviewPolicySha256: hash("capture-review-policy"),
+    governancePlanCanonicalSha256: hash("exact-governance-plan"),
+    orderedInitializationEvidenceSha256: hash(
+      "ordered-initialization-evidence",
+    ),
     destinationProverModuleHash: hash("destination-module"),
-    destinationProverSidecarHash: hash("destination-sidecar"),
     destinationProverKnownAnswerVectorHash: destinationVectorHash,
     sourceProverModuleHash: hash("source-module"),
-    sourceProverSidecarHash: hash("source-sidecar"),
-    sourceProverKnownAnswerVectorHash: hash("source-known-answer-vector"),
-    destinationProofAdmissionHash: hash("destination-proof-admission"),
-    outerVerifierProgramId: "EhZuSakeo5UvHse5jqqpcRWs1emAMUKNBvqYSp3xuRuf",
-    outerVerifierProgramdataAddress:
-      "ER83Raefo1T5oVZfB1j5krDzc6TmwA3tMEP5U79VJWWW",
-    outerVerifierProgramdataSlot: "420442735",
-    outerVerifierArtifactSha256: hash("outer-verifier-artifact"),
-    outerVerifierCodeHash: hash("outer-verifier-code"),
-    destinationBridgeProgramId: "J72TNLJweK8veYwbtHhtFdx4sk885Xx3QNZfL15zdHjD",
-    destinationBridgeProgramdataAddress:
-      "9ey7piM5hZap475XPFyMvfybLjZvA5QydwF6MAvDCRQp",
-    destinationBridgeProgramdataSlot: "420442737",
-    destinationBridgeArtifactSha256: hash("destination-bridge-artifact"),
-    destinationBridgeCodeHash: hash("destination-bridge-code"),
-    sourceBridgeProgramId: "H6VxqBzD7ckUiDw9dvL57YaBmNgEFJXRYoUT8W8CFzr2",
-    sourceBridgeProgramdataAddress:
-      "2ALmgF4o71uEXBXeQ56h2jeUb1VJrw5zvEo1QKjeZzP2",
-    sourceBridgeProgramdataSlot: "420442738",
-    sourceBridgeArtifactSha256: hash("source-bridge-artifact"),
-    sourceBridgeCodeHash: hash("source-bridge-code"),
-    nativeVerifierProgramId: "ComputeBudget111111111111111111111111111111",
-    nativeVerifierProgramdataAddress:
-      "H81ZEb7C5TXLJeKoqytidAMVeNuvBAA6cB6QQ1WjQLRA",
-    nativeVerifierProgramdataSlot: "420442736",
-    nativeVerifierArtifactSha256: hash("native-verifier-artifact"),
-    nativeVerifierCodeHash: hash("native-verifier-code"),
-    nativeVerifierKeyHash: hash("native-verifier-key"),
+    sourceProverKnownAnswerVectorHash: sourceVectorHash,
   },
   ...overrides,
 });
 
 const buildFixture = ({
+  direction = "destination",
   canonicalVector = true,
   approvalOverrides = {},
   vectorMutation = null,
@@ -95,8 +88,8 @@ const buildFixture = ({
     verificationReceiptHash: hash("provisional-verification-receipt"),
   };
   const provisionalVector = buildSolanaProverKnownAnswerVectorCandidate({
-    direction: "destination",
-    result: destinationResult(),
+    direction,
+    result: resultFor(direction),
     artifactEvidence: provisionalArtifactEvidence,
   });
   const verificationReceipt = {
@@ -124,8 +117,8 @@ const buildFixture = ({
     verificationReceiptHash: hashBytes(verificationReceiptBytes),
   };
   const vector = buildSolanaProverKnownAnswerVectorCandidate({
-    direction: "destination",
-    result: destinationResult(),
+    direction,
+    result: resultFor(direction),
     artifactEvidence,
   });
   vectorMutation?.(vector);
@@ -136,25 +129,29 @@ const buildFixture = ({
       : `${JSON.stringify(vector, null, 2)}\n`,
   );
   const approval = approvalRecord({
-    destinationVectorHash: solanaProverKnownAnswerVectorHash(vector),
+    ...(direction === "destination"
+      ? { destinationVectorHash: solanaProverKnownAnswerVectorHash(vector) }
+      : { sourceVectorHash: solanaProverKnownAnswerVectorHash(vector) }),
     overrides: approvalOverrides,
   });
-  const approvalBytes = Buffer.from(`${JSON.stringify(approval, null, 2)}\n`);
+  const approvalBytes = Buffer.from(
+    `${canonicalSolanaExactProverApprovalJson(approval)}\n`,
+  );
   writeFileSync(approvalFile, approvalBytes);
+  const prefix = `SCCP_SOLANA_${direction.toUpperCase()}_KNOWN_ANSWER`;
   const env = {
     [SCCP_SOLANA_KNOWN_ANSWER_GOVERNANCE_APPROVAL_FILE_ENV]: approvalFile,
     [SCCP_SOLANA_KNOWN_ANSWER_GOVERNANCE_APPROVAL_SHA256_ENV]:
       hashBytes(approvalBytes),
-    SCCP_SOLANA_DESTINATION_KNOWN_ANSWER_VECTOR_FILE: vectorFile,
-    SCCP_SOLANA_DESTINATION_KNOWN_ANSWER_VERIFIER_KEY_FILE: verifierKeyFile,
-    SCCP_SOLANA_DESTINATION_KNOWN_ANSWER_VERIFIER_ARTIFACT_FILE:
-      verifierArtifactFile,
-    SCCP_SOLANA_DESTINATION_KNOWN_ANSWER_VERIFICATION_RECEIPT_FILE:
-      verificationReceiptFile,
+    [`${prefix}_VECTOR_FILE`]: vectorFile,
+    [`${prefix}_VERIFIER_KEY_FILE`]: verifierKeyFile,
+    [`${prefix}_VERIFIER_ARTIFACT_FILE`]: verifierArtifactFile,
+    [`${prefix}_VERIFICATION_RECEIPT_FILE`]: verificationReceiptFile,
   };
   return {
     root,
     env,
+    approval,
     vector,
     artifactEvidence,
     files: {
@@ -167,7 +164,64 @@ const buildFixture = ({
   };
 };
 
+const rewriteApproval = (
+  fixture,
+  mutate,
+  { canonical = true, updateIndependentPin = true } = {},
+) => {
+  const approval = JSON.parse(readFileSync(fixture.files.approvalFile, "utf8"));
+  mutate(approval);
+  const bytes = Buffer.from(
+    canonical
+      ? `${canonicalSolanaExactProverApprovalJson(approval)}\n`
+      : `${JSON.stringify(approval, null, 2)}\n`,
+  );
+  writeFileSync(fixture.files.approvalFile, bytes);
+  if (updateIndependentPin) {
+    fixture.env[SCCP_SOLANA_KNOWN_ANSWER_GOVERNANCE_APPROVAL_SHA256_ENV] =
+      hashBytes(bytes);
+  }
+};
+
 describe("Solana prover sidecar governance material loading", () => {
+  it("production-rejects a freshly re-pinned v1 prover approval", () => {
+    const approval = approvalRecord({});
+    approval.schema = "iroha-sccp-solana-production-prover-approval/v1";
+    const approvalBytes = Buffer.from(
+      `${canonicalSolanaExactProverApprovalJson(approval)}\n`,
+    );
+    const approvalSha256 = hashBytes(approvalBytes);
+    const validation = buildExactSolanaProductionProverApprovalValidation({
+      approvalRecord: approval,
+      approvalPath: "/tmp/legacy-v1-prover-approval.json",
+      approvalSha256,
+      expectedApprovalSha256: approvalSha256,
+    });
+
+    expect(validation.ready).toBe(false);
+    expect(validation.blockerIds).toContain(
+      "solana-exact-prover-approval-schema",
+    );
+  });
+
+  it("never echoes malformed approval values or unknown field names in validation evidence", () => {
+    const secret = "audit-secret-must-not-serialize";
+    const malformed = approvalRecord({});
+    malformed.schema = secret;
+    malformed.approvalId = secret;
+    malformed.pins.destinationProverModuleHash = secret;
+    malformed[secret] = { password: secret };
+    const validation = buildExactSolanaProductionProverApprovalValidation({
+      approvalRecord: malformed,
+      approvalPath: `/tmp/${secret}.json`,
+      approvalSha256: hash("malformed-approval"),
+      expectedApprovalSha256: hash("malformed-approval"),
+    });
+    expect(validation.ready).toBe(false);
+    expect(JSON.stringify(validation)).not.toContain(secret);
+    expect(validation.approvalPath).toBe("[public-path-supplied]");
+  });
+
   it("loads only canonical vectors covered by an independently hash-pinned approval", async () => {
     const fixture = buildFixture();
     try {
@@ -201,10 +255,16 @@ describe("Solana prover sidecar governance material loading", () => {
       });
       expect(summary).toMatchObject({ ready: true, invoked: true, errors: [] });
 
-      const sidecar = buildValidatedSolanaProverSidecarBody({
+      const moduleHash = hash("destination-module");
+      const moduleBinding = bindSolanaProverModuleToApproval({
+        direction: "destination",
+        moduleHash,
+        knownAnswerMaterial: material,
+      }).moduleBinding;
+      const sidecarInput = {
         direction: "destination",
         moduleUrl: "/sccp-solana/test-prover.js",
-        moduleHash: hash("module"),
+        moduleHash,
         proveExport: "proveSolanaSccpDestination",
         selfTestExport: "solanaSccpDestinationProverSelfTest",
         selfTest: {
@@ -219,20 +279,103 @@ describe("Solana prover sidecar governance material loading", () => {
           direction: "destination",
           sourceDomain: 0,
           targetDomain: 3,
-          proofBackend: "solana-program-v1",
-          requiredProofBackend: "solana-program-v1",
+          proofBackend: "solana-groth16-bn254-v1",
+          requiredProofBackend: "solana-groth16-bn254-v1",
           destinationVerifierPlan: "SolanaProgramNativeRecursive",
           verifierTarget: "SolanaProgram",
           missingArtifactIds: [],
         },
         knownAnswer: summary,
+      };
+      const unboundSidecar =
+        buildValidatedSolanaProverSidecarBody(sidecarInput);
+      expect(unboundSidecar.productionProofsReady).toBe(false);
+      const sidecar = buildValidatedSolanaProverSidecarBody({
+        ...sidecarInput,
+        approvalValidation: material.approvalValidation,
+        moduleBinding,
       });
       expect(sidecar).toMatchObject({
         productionProofsReady: true,
         knownAnswer: { ready: true, vector: fixture.vector },
+        governanceApprovalBinding: {
+          ready: true,
+          governancePlanCanonicalSha256: hash("exact-governance-plan"),
+          orderedInitializationEvidenceSha256: hash(
+            "ordered-initialization-evidence",
+          ),
+          approvedModuleHash: moduleHash,
+        },
       });
       expect(sidecar).not.toHaveProperty("knownAnswerProbe");
       expect(sidecar).not.toHaveProperty("known_answer_probe");
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("binds executed prover module bytes to the exact governance approval", async () => {
+    const fixture = buildFixture();
+    try {
+      const material = await loadSolanaProverKnownAnswerMaterial({
+        direction: "destination",
+        env: fixture.env,
+      });
+      expect(
+        bindSolanaProverModuleToApproval({
+          direction: "destination",
+          moduleHash: hash("destination-module"),
+          knownAnswerMaterial: material,
+        }),
+      ).toMatchObject({
+        errors: [],
+        moduleBinding: { ready: true },
+      });
+      expect(
+        bindSolanaProverModuleToApproval({
+          direction: "destination",
+          moduleHash: hash("attacker-module"),
+          knownAnswerMaterial: material,
+        }),
+      ).toMatchObject({
+        moduleBinding: { ready: false },
+        errors: [
+          "Solana destination prover module bytes do not match the exact governance approval pin.",
+        ],
+      });
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("applies the same approval, artifact, and module binding to the source prover", async () => {
+    const fixture = buildFixture({ direction: "source" });
+    try {
+      const material = await loadSolanaProverKnownAnswerMaterial({
+        direction: "source",
+        env: fixture.env,
+      });
+      const moduleBinding = bindSolanaProverModuleToApproval({
+        direction: "source",
+        moduleHash: hash("source-module"),
+        knownAnswerMaterial: material,
+      });
+      expect(moduleBinding).toMatchObject({
+        errors: [],
+        moduleBinding: { ready: true },
+      });
+      const summary = await invokeSolanaProverKnownAnswer({
+        direction: "source",
+        prove: async () => sourceResult(),
+        ...moduleBinding,
+        preflightErrors: moduleBinding.errors,
+      });
+      expect(summary).toMatchObject({
+        ready: true,
+        invoked: true,
+        direction: "source",
+        errors: [],
+      });
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }
@@ -326,6 +469,123 @@ describe("Solana prover sidecar governance material loading", () => {
       expect(summary.ready).toBe(false);
       expect(summary.invoked).toBe(false);
       expect(prove).not.toHaveBeenCalled();
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      "a retired outer-verifier pin is present",
+      (approval) =>
+        (approval.pins.outerVerifierProgramId =
+          "EhZuSakeo5UvHse5jqqpcRWs1emAMUKNBvqYSp3xuRuf"),
+    ],
+    [
+      "destination and source prover modules alias the same bytes",
+      (approval) =>
+        (approval.pins.sourceProverModuleHash =
+          approval.pins.destinationProverModuleHash),
+    ],
+    [
+      "the exact governance-plan binding is absent",
+      (approval) => delete approval.pins.governancePlanCanonicalSha256,
+    ],
+    [
+      "a retired program-role pin is present",
+      (approval) =>
+        (approval.pins.destinationProgramId =
+          "J72TNLJweK8veYwbtHhtFdx4sk885Xx3QNZfL15zdHjD"),
+    ],
+    [
+      "an unconsumed legacy material pin is present",
+      (approval) =>
+        (approval.pins.offlineFullTomlSha256 = hash("syntax-only-claim")),
+    ],
+  ])("rejects exact three-program approval when %s", async (_label, mutate) => {
+    const fixture = buildFixture();
+    try {
+      rewriteApproval(fixture, mutate);
+      const material = await loadSolanaProverKnownAnswerMaterial({
+        direction: "destination",
+        env: fixture.env,
+      });
+      expect(material.approvalValidation.ready).toBe(false);
+      expect(material.errors.length).toBeGreaterThan(0);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("never serializes unknown or secret-bearing self-test output", async () => {
+    const fixture = buildFixture();
+    try {
+      const material = await loadSolanaProverKnownAnswerMaterial({
+        direction: "destination",
+        env: fixture.env,
+      });
+      const summary = await invokeSolanaProverKnownAnswer({
+        direction: "destination",
+        prove: async () => destinationResult(),
+        ...material,
+        preflightErrors: material.errors,
+      });
+      const moduleHash = hash("destination-module");
+      const sidecar = buildValidatedSolanaProverSidecarBody({
+        direction: "destination",
+        moduleUrl: "/sccp-solana/test-prover.js",
+        moduleHash,
+        proveExport: "proveSolanaSccpDestination",
+        selfTestExport: "solanaSccpDestinationProverSelfTest",
+        selfTest: {
+          ready: true,
+          linked: true,
+          productionProofsReady: true,
+          production_proofs_ready: true,
+          routeId: "taira_sol_xor",
+          assetKey: "xor",
+          solanaNetwork: "solana-testnet",
+          genesisHash: "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY",
+          direction: "destination",
+          sourceDomain: 0,
+          targetDomain: 3,
+          proofBackend: "solana-groth16-bn254-v1",
+          requiredProofBackend: "solana-groth16-bn254-v1",
+          destinationVerifierPlan: "SolanaProgramNativeRecursive",
+          verifierTarget: "SolanaProgram",
+          missingArtifactIds: [],
+          privateKey: "must-never-be-serialized",
+          selfAttested: true,
+        },
+        knownAnswer: summary,
+        approvalValidation: material.approvalValidation,
+        moduleBinding: bindSolanaProverModuleToApproval({
+          direction: "destination",
+          moduleHash,
+          knownAnswerMaterial: material,
+        }).moduleBinding,
+      });
+      expect(sidecar.productionProofsReady).toBe(false);
+      expect(JSON.stringify(sidecar)).not.toContain("must-never-be-serialized");
+      expect(sidecar.selfTest).not.toHaveProperty("privateKey");
+      expect(sidecar.selfTest).not.toHaveProperty("selfAttested");
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects non-canonical approval bytes even when their independent hash matches", async () => {
+    const fixture = buildFixture();
+    try {
+      rewriteApproval(fixture, () => {}, { canonical: false });
+      const material = await loadSolanaProverKnownAnswerMaterial({
+        direction: "destination",
+        env: fixture.env,
+      });
+      expect(material.approvalValidation.ready).toBe(false);
+      expect(material.errors).toContain(
+        "Solana exact prover governance approval must be canonical UTF-8 JSON with sorted object keys, no insignificant whitespace, and one trailing newline.",
+      );
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }

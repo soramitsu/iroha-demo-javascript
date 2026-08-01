@@ -79,11 +79,11 @@ describe("Solana prover governance-pinned deterministic known-answer vectors", (
   it.each([
     [
       "destination",
-      "0xdd0aea23db40b501d65f5f8a66f830fb6bebaff92a30a2f85ac3dcc8abf1c3ba",
+      "0x4f98d37f39fdd4477188662e9354f775812e99fd73f8cd1a6d545348be5ea2d1",
     ],
     [
       "source",
-      "0xfe60e2ff9b5ff8a0d540480b3f6a596beec26cccfbd82b02e4450a03ad288246",
+      "0x75a08218fd21565e0896b8d1ba71cd73e42cfc05683c65d48d425c63f302a560",
     ],
   ])(
     "builds a canonical production-shaped %s fixture",
@@ -104,13 +104,13 @@ describe("Solana prover governance-pinned deterministic known-answer vectors", (
         expect(invocation.args[1]).toMatchObject({
           routeId: "taira_sol_xor",
           solanaNetwork: "solana-testnet",
-          proofBackend: "solana-program-v1",
+          proofBackend: "solana-groth16-bn254-v1",
           publicInputs: { targetDomain: 3 },
         });
       } else {
         expect(invocation.args).toHaveLength(1);
         expect(invocation.args[0]).toMatchObject({
-          sourceProofBackend: "sccp-solana-recursive-testnet-v1",
+          sourceProofBackend: "solana-groth16-bn254-v1",
           sourceBridgeAddress: "4ZKKGz983uec9Bcx6YA9nZ5tcAKCPi514tFyHuFGjcLq",
           nonce: "13",
           amountBaseUnits: "1000000000",
@@ -125,8 +125,8 @@ describe("Solana prover governance-pinned deterministic known-answer vectors", (
                 ]),
                 instructions: [
                   expect.objectContaining({
-                    programIdIndex: 7,
-                    accounts: [0, 1, 2, 3, 5, 4, 6],
+                    programIdIndex: 8,
+                    accounts: [0, 1, 5, 2, 3, 4, 6, 7],
                   }),
                 ],
               },
@@ -176,13 +176,13 @@ describe("Solana prover governance-pinned deterministic known-answer vectors", (
   it.each([
     [
       "destination",
-      "0x709f6e12d780aff3954d3481a863f6b9803a235914afb4811b830f19f1645ddb",
+      "0x49e450f947eeb812355e0ee77f16223eeec30a61a4acadc77579dd6a700ae750",
       "0x102545685f527cec9027dba47f174ccfb8baeee687a2b2de048d559f9a7394f4",
       "0xda1898d93c0dae7cc92cf99363c874359da1a34fa9eb0e3a67af919c885bf762",
     ],
     [
       "source",
-      "0x1e02dca08f255363c061da98795423a07fbcae870a1ce6ff850713a18f033219",
+      "0xfdcbc421b980e6bbdfa5381b1dd92def4af5d78b8635a03c3bc60f76a9cb6ed8",
       "0x89b7a79aaf4c4cf34725a4ffc60eca91976deebef5f140deea847a8a4d4a8c49",
       "0x4762c4335d8d1a997e7adb71e6c0b2e2291e59c4af377e2643621fe4441511bd",
     ],
@@ -475,7 +475,7 @@ describe("Solana prover governance-pinned deterministic known-answer vectors", (
     expect(summary.errors).toEqual(
       expect.arrayContaining([
         'Known-answer vector direction must be "source".',
-        expect.stringContaining("proofBackend"),
+        expect.stringContaining("sourceDomain"),
       ]),
     );
     expect(prove).not.toHaveBeenCalled();

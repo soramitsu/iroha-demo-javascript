@@ -88,6 +88,7 @@ const sbfEvidenceFor = (target) => ({
   productionEligible: true,
   validatorId: SOLANA_LOADER_V3_SBF_VALIDATOR_ID,
   validatorVersion: SOLANA_LOADER_V3_SBF_VALIDATOR_VERSION,
+  sbpfVersion: "V3",
   policySha256: SOLANA_LOADER_V3_SBF_VALIDATION_POLICY_SHA256,
   artifactSha256: solanaSha256(target),
   codeHash: solanaBlake2b256(target),
@@ -1036,6 +1037,44 @@ describe("strict independent runtime upgrade plan", () => {
 });
 
 describe("actual signed packet boundary selection", () => {
+  it("caps large-artifact candidates before signed transaction serialization", () => {
+    const source = fixture();
+    const serialize = Transaction.prototype.serialize;
+    let largestAttemptedBody = 0;
+    const serializeSpy = vi
+      .spyOn(Transaction.prototype, "serialize")
+      .mockImplementation(function (...args) {
+        const data = this.instructions[0]?.data;
+        if (data?.readUInt32LE(0) === 1) {
+          largestAttemptedBody = Math.max(
+            largestAttemptedBody,
+            data.length - 16,
+          );
+        }
+        return serialize.apply(this, args);
+      });
+    try {
+      const selected = selectLargestLoaderV3WriteChunk({
+        remainingBytes: Buffer.alloc(200_000, 9),
+        offset: 0,
+        bufferAddress: keypair(54).publicKey,
+        authorityAddress: source.authority.publicKey,
+        payerSigner: source.payer,
+        authoritySigner: source.authority,
+        latestBlockhash: {
+          blockhash: keypair(55).publicKey.toBase58(),
+          lastValidBlockHeight: 1000,
+        },
+      });
+      expect(selected.packetLength).toBeLessThanOrEqual(
+        SOLANA_PACKET_DATA_SIZE,
+      );
+      expect(largestAttemptedBody).toBeLessThanOrEqual(SOLANA_PACKET_DATA_SIZE);
+    } finally {
+      serializeSpy.mockRestore();
+    }
+  });
+
   it("chooses the largest body that really serializes at or below 1232", () => {
     const source = fixture();
     const remaining = Buffer.alloc(4000, 9);

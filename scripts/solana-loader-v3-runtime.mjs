@@ -54,14 +54,16 @@ export const SOLANA_LOADER_V3_SBF_VALIDATOR_VERSION = "0.21.0";
 export const SOLANA_LOADER_V3_SBF_VALIDATION_SCOPE =
   "local-solana-sbpf-structural-preflight";
 export const SOLANA_LOADER_V3_SBF_VALIDATION_POLICY =
-  "solana-loader-v3-sbf-validation-policy/v2:authenticated-release-x86_64-linux-helper+Executable::from_elf(SBPFVersion::V0,reject_broken_elfs=true)+RequisiteVerifier::verify;local-structural-preflight-only;exact-cluster-rollback-sentinel-required";
+  "solana-loader-v3-fresh-sbf-validation-policy/v1:authenticated-release-x86_64-linux-helper+Executable::from_elf(SBPFVersion::V3,reject_broken_elfs=true)+RequisiteVerifier::verify;e_flags=3;enabled_sbpf_versions=V3..=V3;production-fresh-immutable-deploy;exact-cluster-rollback-sentinel-required";
 export const SOLANA_LOADER_V3_SBF_VALIDATION_POLICY_SHA256 = `0x${createHash(
   "sha256",
 )
   .update(SOLANA_LOADER_V3_SBF_VALIDATION_POLICY, "utf8")
   .digest("hex")}`;
 export const SOLANA_LOADER_V3_REQUIRED_SBF_VALIDATION_CHECKS = Object.freeze([
-  "agave-solana-sbpf-executable-from-elf-v0",
+  "agave-solana-sbpf-executable-from-elf-v3",
+  "solana-sbpf-elf-e-flags-v3",
+  "solana-sbpf-enabled-versions-v3-only",
   "agave-solana-sbpf-reject-broken-elfs",
   "agave-solana-sbpf-requisite-verifier",
   "authenticated-helper-binary-sha256",
@@ -160,6 +162,7 @@ const SBF_EVIDENCE_KEYS = new Set([
   "productionEligible",
   "validatorId",
   "validatorVersion",
+  "sbpfVersion",
   "policySha256",
   "artifactSha256",
   "codeHash",
@@ -286,6 +289,7 @@ export const canonicalSolanaLoaderV3SbfValidationEvidenceBytes = (evidence) => {
       productionEligible: evidence.productionEligible,
       validatorId: evidence.validatorId,
       validatorVersion: evidence.validatorVersion,
+      sbpfVersion: evidence.sbpfVersion,
       policySha256: evidence.policySha256,
       artifactSha256: evidence.artifactSha256,
       codeHash: evidence.codeHash,
@@ -1000,7 +1004,10 @@ export const selectLargestLoaderV3WriteChunk = ({
     throw new Error("Loader-v3 writes must use the canonical packet limit.");
   }
   let low = 1;
-  let high = remaining.length;
+  // No serialized transaction can carry a write body larger than the entire
+  // packet. Capping the search also prevents large artifacts from spending a
+  // finalized blockhash lifetime serializing obviously impossible candidates.
+  let high = Math.min(remaining.length, maxPacketBytes);
   let selected = null;
   while (low <= high) {
     const length = Math.floor((low + high) / 2);
@@ -1787,6 +1794,7 @@ const validateTargetSbfExecutable = async ({
     evidence.productionEligible !== true ||
     evidence.validatorId !== normalized.sbfValidatorId ||
     evidence.validatorVersion !== normalized.sbfValidatorVersion ||
+    evidence.sbpfVersion !== "V3" ||
     evidence.policySha256 !== normalized.sbfValidationPolicySha256 ||
     evidence.artifactSha256 !== normalized.targetSha256 ||
     evidence.codeHash !== normalized.targetCodeHash ||
@@ -1825,6 +1833,7 @@ const validateTargetSbfExecutable = async ({
     productionEligible: true,
     validatorId: evidence.validatorId,
     validatorVersion: evidence.validatorVersion,
+    sbpfVersion: evidence.sbpfVersion,
     policySha256: evidence.policySha256,
     evidenceSha256: normalized.sbfValidationEvidenceSha256,
     artifactSha256: evidence.artifactSha256,

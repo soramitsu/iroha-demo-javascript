@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { sha256 } from "@noble/hashes/sha256";
 import {
   loadBscSccpProveFn,
   loadBscSccpSourceProveFn,
@@ -19,10 +18,49 @@ import {
   type TronSccpProverModule,
 } from "@/utils/sccpProverLink";
 
-const sha256Hex = (value: string): string =>
-  `0x${Array.from(sha256(new TextEncoder().encode(value)))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")}`;
+const solanaSemanticProofProfile: Parameters<
+  typeof loadSolanaSccpProveFn
+>[0]["semanticProofProfile"] = {
+  profile: "sora_taira_finality_inclusion_groth16_bn254",
+  commitments: {
+    version: 1,
+    circuit_commitment: "C1".repeat(32),
+    witness_generator_commitment: "C2".repeat(32),
+    public_signal_schema_hash: "C3".repeat(32),
+  },
+};
+
+const solanaProductionSelfTest = (direction: "destination" | "source") => ({
+  ready: true,
+  linked: true,
+  productionProofsReady: true,
+  production_proofs_ready: true,
+  routeId: "taira_sol_xor",
+  route_id: "taira_sol_xor",
+  assetKey: "xor",
+  asset_key: "xor",
+  network: "solana-testnet",
+  solanaNetwork: "solana-testnet",
+  solana_network: "solana-testnet",
+  genesisHash: "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY",
+  genesis_hash: "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY",
+  direction,
+  sourceDomain: direction === "destination" ? 0 : 3,
+  source_domain: direction === "destination" ? 0 : 3,
+  targetDomain: direction === "destination" ? 3 : 0,
+  target_domain: direction === "destination" ? 3 : 0,
+  proofBackend: "solana-groth16-bn254-v1",
+  proof_backend: "solana-groth16-bn254-v1",
+  requiredProofBackend: "solana-groth16-bn254-v1",
+  required_proof_backend: "solana-groth16-bn254-v1",
+  missingArtifactIds: [],
+  missing_artifact_ids: [],
+});
+
+const solanaDestinationSelfTest = () => ({
+  ...solanaProductionSelfTest("destination"),
+  semantic_proof_profile: structuredClone(solanaSemanticProofProfile),
+});
 
 describe("SCCP TRON prover linker", () => {
   it("prefers supported module export names before worker globals", () => {
@@ -483,78 +521,101 @@ describe("SCCP TRON prover linker", () => {
     expect(importer).toHaveBeenCalledWith("/sccp-bsc-source-prover.js");
   });
 
-  it("verifies Solana destination prover module bytes before importing", async () => {
-    const moduleBytes = "export const proveSolanaSccpDestination = () => ({});";
+  it("loads an explicit Solana destination prover after its self-test matches the typed route", async () => {
     const proveSolanaSccpDestination = vi.fn();
+    const solanaSccpDestinationProverSelfTest = vi
+      .fn()
+      .mockResolvedValue(solanaDestinationSelfTest());
     const importer = vi
       .fn<(moduleUrl: string) => Promise<SolanaSccpProverModule>>()
-      .mockResolvedValue({ proveSolanaSccpDestination });
-    const moduleBytesFetcher = vi.fn().mockResolvedValue(moduleBytes);
+      .mockResolvedValue({
+        proveSolanaSccpDestination,
+        solanaSccpDestinationProverSelfTest,
+      });
 
     await expect(
       loadSolanaSccpProveFn({
         globalScope: {},
         moduleUrl: " /sccp-solana/destination-prover.js ",
-        moduleHash: sha256Hex(moduleBytes),
-        moduleBytesFetcher,
+        semanticProofProfile: solanaSemanticProofProfile,
         importer,
       }),
     ).resolves.toBe(proveSolanaSccpDestination);
-    expect(moduleBytesFetcher).toHaveBeenCalledWith(
-      "/sccp-solana/destination-prover.js",
-    );
-    expect(importer).toHaveBeenCalledTimes(1);
-    const immutableImportUrl = importer.mock.calls[0]?.[0] ?? "";
-    expect(immutableImportUrl).toMatch(/^data:text\/javascript;base64,/u);
-    expect(
-      Buffer.from(immutableImportUrl.split(",", 2)[1] ?? "", "base64").toString(
-        "utf8",
-      ),
-    ).toBe(moduleBytes);
-    expect(immutableImportUrl).not.toContain("/sccp-solana/");
+    expect(importer).toHaveBeenCalledWith("/sccp-solana/destination-prover.js");
+    expect(solanaSccpDestinationProverSelfTest).toHaveBeenCalledOnce();
   });
 
-  it("executes the exact verified Solana bytes without re-importing the network URL", async () => {
-    const marker = `verified-${Date.now()}-${Math.random()}`;
-    const moduleBytes = `export const proveSolanaSccpDestination = () => ${JSON.stringify(marker)};`;
-    const moduleBytesFetcher = vi.fn().mockResolvedValue(moduleBytes);
+  it("rejects a Solana destination prover whose self-test commitments do not match", async () => {
+    const mismatched = {
+      ...solanaDestinationSelfTest(),
+      semantic_proof_profile: {
+        ...solanaSemanticProofProfile,
+        commitments: {
+          ...solanaSemanticProofProfile.commitments,
+          circuit_commitment: "D1".repeat(32),
+        },
+      },
+    };
+    const importer = vi
+      .fn<(moduleUrl: string) => Promise<SolanaSccpProverModule>>()
+      .mockResolvedValue({
+        proveSolanaSccpDestination: vi.fn(),
+        solanaSccpDestinationProverSelfTest: vi
+          .fn()
+          .mockResolvedValue(mismatched),
+      });
 
-    const prove = await loadSolanaSccpProveFn({
-      globalScope: { irohaSccpSolanaProve: vi.fn() },
-      moduleUrl: "https://prover.example.invalid/destination.js",
-      moduleHash: sha256Hex(moduleBytes),
-      moduleBytesFetcher,
-    });
-
-    expect(prove).toBeTypeOf("function");
-    expect(await prove?.({} as never)).toBe(marker);
-    expect(moduleBytesFetcher).toHaveBeenCalledTimes(1);
-    expect(moduleBytesFetcher).toHaveBeenCalledWith(
-      "https://prover.example.invalid/destination.js",
-    );
+    await expect(
+      loadSolanaSccpProveFn({
+        globalScope: {},
+        moduleUrl: "https://prover.example.invalid/destination.js",
+        semanticProofProfile: solanaSemanticProofProfile,
+        importer,
+      }),
+    ).rejects.toThrow(/do not match the typed route outbound proof policy/u);
   });
 
-  it("requires both governed Solana module URLs and hashes", async () => {
+  it("rejects a Solana destination prover that is not production-ready", async () => {
+    const selfTest = {
+      ...solanaDestinationSelfTest(),
+      productionProofsReady: false,
+      production_proofs_ready: false,
+    };
+    const importer = vi
+      .fn<(moduleUrl: string) => Promise<SolanaSccpProverModule>>()
+      .mockResolvedValue({
+        proveSolanaSccpDestination: vi.fn(),
+        solanaSccpDestinationProverSelfTest: vi
+          .fn()
+          .mockResolvedValue(selfTest),
+      });
+
+    await expect(
+      loadSolanaSccpProveFn({
+        globalScope: {},
+        moduleUrl: "/sccp-solana/destination-prover.js",
+        semanticProofProfile: solanaSemanticProofProfile,
+        importer,
+      }),
+    ).rejects.toThrow(/must be production-ready/u);
+  });
+
+  it("requires explicit Solana destination and source module URLs", async () => {
     const importer = vi.fn();
-    const moduleBytesFetcher = vi.fn();
 
     await expect(
       loadSolanaSccpProveFn({
         globalScope: { irohaSccpSolanaProve: vi.fn() },
-        moduleHash: `0x${"11".repeat(32)}`,
+        semanticProofProfile: solanaSemanticProofProfile,
         importer,
-        moduleBytesFetcher,
       }),
     ).rejects.toThrow(/destination prover module URL is required/u);
     await expect(
       loadSolanaSccpSourceProveFn({
         globalScope: { solanaSccpSourceProve: vi.fn() },
-        moduleUrl: "/sccp-solana/source-prover.js",
         importer,
-        moduleBytesFetcher,
       }),
-    ).rejects.toThrow(/source prover module hash is required/u);
-    expect(moduleBytesFetcher).not.toHaveBeenCalled();
+    ).rejects.toThrow(/source prover module URL is required/u);
     expect(importer).not.toHaveBeenCalled();
   });
 
@@ -609,27 +670,47 @@ describe("SCCP TRON prover linker", () => {
     }
   });
 
-  it("rejects Solana source prover module hash mismatches before importing", async () => {
+  it("imports the explicit Solana source prover module URL directly", async () => {
+    const proveSolanaSccpSource = vi.fn();
+    const solanaSccpSourceProverSelfTest = vi
+      .fn()
+      .mockResolvedValue(solanaProductionSelfTest("source"));
     const importer = vi
       .fn<(moduleUrl: string) => Promise<SolanaSccpProverModule>>()
-      .mockResolvedValue({ proveSolanaSccpSource: vi.fn() });
-    const moduleBytesFetcher = vi
-      .fn()
-      .mockResolvedValue("export const proveSolanaSccpSource = () => ({});");
+      .mockResolvedValue({
+        proveSolanaSccpSource,
+        solanaSccpSourceProverSelfTest,
+      });
+
+    await expect(
+      loadSolanaSccpSourceProveFn({
+        globalScope: {},
+        moduleUrl: " /sccp-solana/source-prover.js ",
+        importer,
+      }),
+    ).resolves.toBe(proveSolanaSccpSource);
+    expect(importer).toHaveBeenCalledWith("/sccp-solana/source-prover.js");
+    expect(solanaSccpSourceProverSelfTest).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a Solana source prover without an exact production self-test", async () => {
+    const importer = vi
+      .fn<(moduleUrl: string) => Promise<SolanaSccpProverModule>>()
+      .mockResolvedValue({
+        proveSolanaSccpSource: vi.fn(),
+        solanaSccpSourceProverSelfTest: vi.fn().mockResolvedValue({
+          ...solanaProductionSelfTest("source"),
+          genesis_hash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+        }),
+      });
 
     await expect(
       loadSolanaSccpSourceProveFn({
         globalScope: {},
         moduleUrl: "/sccp-solana/source-prover.js",
-        moduleHash: `0x${"00".repeat(32)}`,
-        moduleBytesFetcher,
         importer,
       }),
-    ).rejects.toThrow(/SCCP prover module hash mismatch/u);
-    expect(moduleBytesFetcher).toHaveBeenCalledWith(
-      "/sccp-solana/source-prover.js",
-    );
-    expect(importer).not.toHaveBeenCalled();
+    ).rejects.toThrow(/must agree exactly|must be production-ready/u);
   });
 
   it("does not import an empty TRON source prover URL", async () => {

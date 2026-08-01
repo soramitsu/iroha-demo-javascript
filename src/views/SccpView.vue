@@ -429,7 +429,7 @@ import {
   sccpPayloadHash,
   tairaXorTonToTairaTransferMessageId,
   buildTairaXorTonToTairaTransferPayload,
-} from "@iroha/iroha-js/sccp";
+} from "@/legacy/sccpLegacySdk";
 import { beginCell } from "@ton/core";
 import { CHAIN, toUserFriendlyAddress } from "@tonconnect/sdk";
 import { useSessionStore } from "@/stores/session";
@@ -445,6 +445,7 @@ import {
   broadcastSolanaTransaction,
   broadcastTronTransaction,
   buildSolanaTransaction,
+  callSolanaRpc,
   callEvmRpc,
   callEvmContract,
   getEvmBalance,
@@ -493,7 +494,6 @@ import {
   bindBscSourceDataForProof,
   bindBscToTairaSourceProofPackage,
   bindTonToTairaSourceProofPackage,
-  bindFinalizedTairaXorSolanaFinalizeTransaction,
   readBscSourceProverMaterialBinding,
   readTonSourceProverMaterialBinding,
   bindUnsignedTronSmartContractTransaction,
@@ -512,9 +512,6 @@ import {
   buildTairaXorTonOutboundBurnRecordRequest,
   buildTairaXorSolanaBurnTransactionRequest,
   createSolanaSourceBurnNonce,
-  buildTairaXorSolanaFinalizeProofBinding,
-  buildTairaXorSolanaFinalizeTransactionRequest,
-  buildTairaXorSolanaMessageProofJobQueryMaterial,
   buildTairaXorSolanaOutboundBurnRecordRequest,
   buildTairaXorOutboundBurnRecordRequest,
   buildTairaXorTokenBalanceRequest,
@@ -590,12 +587,17 @@ import {
 import type {
   BscSccpProofPackage,
   BscSccpProofPackageInput,
-  SolanaSccpProofPackage,
-  SolanaSccpProofPackageInput,
   TronSccpProofPackage,
   TronSccpProofPackageInput,
 } from "@/utils/sccpProofPackage";
 import { buildBscSccpProofPackage } from "@/utils/sccpProofPackage";
+import {
+  bindFinalizedSolanaDestinationTransactionV1,
+  buildSolanaDestinationTransactionPlanV1,
+  prepareSolanaDestinationProverInputV1,
+  type SolanaDestinationProofResultV1,
+  type SolanaDestinationProverInputV1,
+} from "@/utils/sccpSolanaDestination";
 
 const session = useSessionStore();
 const { t, n } = useAppI18n();
@@ -1977,7 +1979,9 @@ type SccpProofWorkerRequest =
     }
   | {
       kind: "prove-solana-proof-package";
-      input: SolanaSccpProofPackageInput;
+      input: {
+        proverInput: SolanaDestinationProverInputV1;
+      };
     }
   | {
       kind: "build-tron-proof-package" | "prove-tron-proof-package";
@@ -2038,10 +2042,13 @@ type SccpOperationContext = {
   solanaRecipient: string;
   tairaRecipient: string;
   manifest: Record<string, unknown>;
+  soraOutboundMaterial: Record<string, unknown> | null;
+  expectedRegistryRevision: string;
   tronGatewayEndpoint: string;
   bscRpcEndpoint: string;
   solanaRpcEndpoint: string;
   manifestFingerprint: string;
+  soraOutboundMaterialFingerprint: string;
   messageId?: string;
   tronTxId?: string;
   bscTxId?: string;
@@ -2357,10 +2364,10 @@ const runSolanaSourceProofWorker = (
     input,
   });
 
-const runSolanaDestinationProofWorker = (
-  input: SolanaSccpProofPackageInput,
-): Promise<SolanaSccpProofPackage> =>
-  runSccpProofWorker<SolanaSccpProofPackage>({
+const runSolanaDestinationProofWorker = (input: {
+  proverInput: SolanaDestinationProverInputV1;
+}): Promise<SolanaDestinationProofResultV1> =>
+  runSccpProofWorker<SolanaDestinationProofResultV1>({
     kind: "prove-solana-proof-package",
     input,
   });
@@ -2531,6 +2538,28 @@ const createSccpOperationContext = (
   const activeSolanaRoute = isSolanaRoute.value;
   const activeBscRoute = isBscRoute.value;
   const activeTonRoute = isTonRoute.value;
+  const currentSoraOutboundMaterial = activeSolanaRoute
+    ? (bridge.soraOutboundMaterial.value as unknown as Record<
+        string,
+        unknown
+      > | null)
+    : null;
+  if (activeSolanaRoute && !currentSoraOutboundMaterial) {
+    throw new Error(
+      "The exact route-scoped SORA outbound material has not been loaded.",
+    );
+  }
+  const expectedRegistryRevision = activeSolanaRoute
+    ? readCapabilityString(bridge.capabilities.value, "registry_revision")
+    : "";
+  if (activeSolanaRoute && !expectedRegistryRevision) {
+    throw new Error(
+      "SCCP capabilities must expose the current registry revision before a Solana transfer can be prepared.",
+    );
+  }
+  const soraOutboundMaterialSnapshot = currentSoraOutboundMaterial
+    ? cloneSccpManifestSnapshot(currentSoraOutboundMaterial)
+    : null;
   return {
     direction: direction.value,
     toriiUrl: session.connection.toriiUrl,
@@ -2571,6 +2600,8 @@ const createSccpOperationContext = (
         : solanaRecipient.value.trim(),
     tairaRecipient: tairaRecipient.value.trim(),
     manifest: manifestSnapshot,
+    soraOutboundMaterial: soraOutboundMaterialSnapshot,
+    expectedRegistryRevision,
     tronGatewayEndpoint:
       activeSolanaRoute || activeBscRoute || activeTonRoute
         ? ""
@@ -2582,6 +2613,9 @@ const createSccpOperationContext = (
       ? readSccpSolanaRpcEndpoint(manifestSnapshot, SCCP_SOLANA_NETWORK.key)
       : "",
     manifestFingerprint: fingerprintSccpManifest(manifestSnapshot),
+    soraOutboundMaterialFingerprint: soraOutboundMaterialSnapshot
+      ? fingerprintSccpManifest(soraOutboundMaterialSnapshot)
+      : "",
     ...ids,
   };
 };
@@ -2605,6 +2639,12 @@ const assertSccpOperationContextCurrent = (
       : contextIsSolana
         ? bridge.readiness.value.solanaManifest
         : bridge.readiness.value.tronManifest;
+  const currentSoraOutboundMaterial = contextIsSolana
+    ? (bridge.soraOutboundMaterial.value as unknown as Record<
+        string,
+        unknown
+      > | null)
+    : null;
   if (
     !routeReadyForDirection(context.direction) ||
     !currentManifest ||
@@ -2656,6 +2696,10 @@ const assertSccpOperationContextCurrent = (
       context.solanaRpcEndpoint !==
         readSccpSolanaRpcEndpoint(currentManifest, SCCP_SOLANA_NETWORK.key)) ||
     context.manifestFingerprint !== fingerprintSccpManifest(currentManifest) ||
+    (contextIsSolana &&
+      (!currentSoraOutboundMaterial ||
+        context.soraOutboundMaterialFingerprint !==
+          fingerprintSccpManifest(currentSoraOutboundMaterial))) ||
     (context.messageId !== undefined &&
       context.messageId !== messageId.value.trim().toLowerCase()) ||
     (context.tronTxId !== undefined &&
@@ -2683,12 +2727,14 @@ const loadTairaMessageProofJob = async (
     messageId: context.messageId ?? messageId.value,
   };
   let cachedRequest: SccpMessageProofJobRequest | null = null;
+  let cachedMessageBundle: Record<string, unknown> | null = null;
   const buildRequest = async () => {
     if (cachedRequest) {
       return cachedRequest;
     }
     const messageBundle = await getSccpMessageProofBundle(baseRequest);
     assertSccpOperationContextCurrent(context);
+    cachedMessageBundle = messageBundle;
     cachedRequest = {
       ...baseRequest,
       ...(context.direction === "taira-to-bsc"
@@ -2706,12 +2752,7 @@ const loadTairaMessageProofJob = async (
               tonNetwork: SCCP_TON_NETWORK.key,
             })
           : context.direction === "taira-to-solana"
-            ? buildTairaXorSolanaMessageProofJobQueryMaterial({
-                manifest: context.manifest,
-                messageBundle,
-                messageId: baseRequest.messageId,
-                solanaNetwork: SCCP_SOLANA_NETWORK.key,
-              })
+            ? {}
             : buildTairaXorMessageProofJobQueryMaterial({
                 manifest: context.manifest,
                 messageBundle,
@@ -2720,6 +2761,22 @@ const loadTairaMessageProofJob = async (
               })),
     } as SccpMessageProofJobRequest;
     return cachedRequest;
+  };
+  const bindExactSolanaData = (
+    proofRequest: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    if (context.direction !== "taira-to-solana") {
+      return proofRequest;
+    }
+    if (!cachedMessageBundle) {
+      throw new Error(
+        "The exact Solana SCCP message bundle was not loaded with its proof request.",
+      );
+    }
+    return {
+      proofRequest,
+      messageBundle: cachedMessageBundle,
+    };
   };
   if (!input.pollForIndexing) {
     assertSccpOperationContextCurrent(context);
@@ -2743,7 +2800,7 @@ const loadTairaMessageProofJob = async (
           messageId: baseRequest.messageId,
         },
       );
-      return job;
+      return bindExactSolanaData(job);
     } catch (error) {
       finishProofTiming(
         "sccp-proof-job-indexing",
@@ -2781,7 +2838,7 @@ const loadTairaMessageProofJob = async (
           attempts: attempt + 1,
         },
       );
-      return job;
+      return bindExactSolanaData(job);
     } catch (error) {
       lastError = error;
       if (
@@ -3615,68 +3672,94 @@ const finalizeTairaMessageToSolana = async (
     destinationToken = refreshedDestinationToken;
   }
   markPhase(2, "active", "Generating browser Solana destination proof");
-  const binding = buildTairaXorSolanaFinalizeProofBinding({
+  const proofRequest = job.proofRequest;
+  const messageBundle = job.messageBundle;
+  if (
+    typeof proofRequest !== "object" ||
+    proofRequest === null ||
+    Array.isArray(proofRequest) ||
+    typeof messageBundle !== "object" ||
+    messageBundle === null ||
+    Array.isArray(messageBundle)
+  ) {
+    throw new Error(
+      "Torii must return the exact SCCP proof request and message bundle for Solana finalization.",
+    );
+  }
+  const proverInput = prepareSolanaDestinationProverInputV1({
     manifest: context.manifest,
-    job,
+    proofRequest,
+    messageBundle,
     messageId: context.messageId ?? messageId.value,
-    ownerAddress: context.solanaAddress,
+    recipientAddress: context.solanaRecipient,
     destinationTokenAddress: destinationToken.associatedTokenAddress,
-    solanaRecipient: context.solanaRecipient,
-    amountDecimal: context.amountDecimal,
-    solanaNetwork: SCCP_SOLANA_NETWORK.key,
   });
   assertSccpOperationContextCurrent(context);
-  const proofPackage = await runSolanaDestinationProofWorker(
-    binding as unknown as SolanaSccpProofPackageInput,
-  );
-  assertSccpOperationContextCurrent(context);
-  const finalizeRequest = buildTairaXorSolanaFinalizeTransactionRequest({
-    manifest: context.manifest,
-    job,
-    proofPackage: proofPackage as unknown as Record<string, unknown>,
-    ownerAddress: context.solanaAddress,
-    destinationTokenAddress: destinationToken.associatedTokenAddress,
-    tairaSender: context.accountId,
-    solanaRecipient: context.solanaRecipient,
-    amountDecimal: context.amountDecimal,
-    messageId: context.messageId ?? messageId.value,
-    solanaNetwork: SCCP_SOLANA_NETWORK.key,
+  const proofResult = await runSolanaDestinationProofWorker({
+    proverInput,
   });
-  messageId.value = finalizeRequest.messageId;
+  assertSccpOperationContextCurrent(context);
+  const transactionPlan = buildSolanaDestinationTransactionPlanV1({
+    manifest: context.manifest,
+    payerAddress: context.solanaAddress,
+    proverInput,
+    proofResult,
+  });
+  messageId.value = proverInput.message_id_hex;
   markPhase(
     2,
     "complete",
-    "Browser proof and Solana verifier instruction are ready",
+    "Browser proof and staged Solana verifier plan are ready",
   );
   markPhase(3, "active", "Requesting Solana wallet approval");
-  assertSccpOperationContextCurrent(context);
-  const transactionB64 = await buildSolanaTransaction(
-    finalizeRequest.transaction,
-  );
-  assertSccpOperationContextCurrent(context);
-  const signature = await signAndBroadcastExactSolanaTransaction(
-    context,
-    transactionB64,
-  );
+  const signatures: string[] = [];
+  let finalSignatureStatus: Record<string, unknown> | null = null;
+  for (const [index, transaction] of transactionPlan.transactions.entries()) {
+    assertSccpOperationContextCurrent(context);
+    const transactionB64 = await buildSolanaTransaction({
+      endpoint: context.solanaRpcEndpoint,
+      feePayer: context.solanaAddress,
+      instructions: transaction.instructions,
+    });
+    assertSccpOperationContextCurrent(context);
+    const signature = await signAndBroadcastExactSolanaTransaction(
+      context,
+      transactionB64,
+    );
+    signatures.push(signature);
+    const transactionLabel =
+      transaction.phase === "initialize-proof"
+        ? "Solana proof initialization"
+        : transaction.phase === "append-proof"
+          ? `Solana proof append ${index}`
+          : "Solana proof seal and XOR finalization";
+    const link = {
+      label: t(transactionLabel),
+      href: buildSolanaExplorerTransactionUrl(signature),
+    };
+    transactionLinks.value = [
+      ...transactionLinks.value.filter((entry) => entry.href !== link.href),
+      link,
+    ];
+    markPhase(3, "active", `Waiting for ${transactionLabel}`);
+    const finalizedStatus = await waitForSolanaTransactionSuccess(
+      context,
+      signature,
+      transactionLabel,
+    );
+    if (transaction.phase === "seal-and-finalize") {
+      finalSignatureStatus = finalizedStatus;
+    }
+  }
+  const signature = signatures.at(-1);
+  if (!signature) {
+    throw new Error("The Solana destination transaction plan was empty.");
+  }
   const solanaContext = {
     ...context,
     solanaTxId: signature,
   };
   tronTxId.value = signature;
-  const finalizeLink = {
-    label: t("Solana finalize transaction"),
-    href: buildSolanaExplorerTransactionUrl(signature),
-  };
-  transactionLinks.value = [
-    ...transactionLinks.value.filter((link) => link.href !== finalizeLink.href),
-    finalizeLink,
-  ];
-  markPhase(3, "active", "Waiting for Solana finalize confirmation");
-  const signatureStatus = await waitForSolanaTransactionSuccess(
-    solanaContext,
-    signature,
-    "Solana finalize transaction",
-  );
   assertSccpOperationContextCurrent(solanaContext);
   const finalizedTransaction = await getSolanaTransaction({
     endpoint: solanaContext.solanaRpcEndpoint,
@@ -3696,13 +3779,37 @@ const finalizeTairaMessageToSolana = async (
       "Solana finalize transaction finality could not be independently reconfirmed.",
     );
   }
-  bindFinalizedTairaXorSolanaFinalizeTransaction({
-    request: finalizeRequest,
+  if (!finalSignatureStatus) {
+    throw new Error(
+      "Solana finalize signature status was not retained for exact readback.",
+    );
+  }
+  const finalizedSlot = finalizedTransaction.slot;
+  if (!Number.isSafeInteger(finalizedSlot) || Number(finalizedSlot) <= 0) {
+    throw new Error(
+      "Solana finalize transaction did not expose a canonical finalized slot.",
+    );
+  }
+  const receiptAccount = await callSolanaRpc({
+    endpoint: solanaContext.solanaRpcEndpoint,
+    method: "getAccountInfo",
+    params: [
+      transactionPlan.receiptAddress,
+      {
+        commitment: "finalized",
+        encoding: "base64",
+        minContextSlot: Number(finalizedSlot),
+        withContext: true,
+      },
+    ],
+  });
+  bindFinalizedSolanaDestinationTransactionV1({
+    plan: transactionPlan,
     transaction: finalizedTransaction,
-    signatureStatus,
+    signatureStatus: finalSignatureStatus,
     finality: independentFinality,
+    receiptAccount: receiptAccount as Record<string, unknown>,
     txId: signature,
-    tokenMintAddress: mintAddress,
   });
   assertSccpOperationContextCurrent(solanaContext);
   proofReady.value = true;
@@ -3854,10 +3961,7 @@ const finalizeSolanaBurnToTaira = async (
   const response = await submitSccpBridgeMessage({
     toriiUrl: context.toriiUrl,
     accountId: context.accountId,
-    messageBundle: buildSccpMessageBundleSubmitPayload(
-      boundProofPackage.messageBundle,
-    ),
-    settlement: boundProofPackage.settlement,
+    nativeProofB64: boundProofPackage.nativeProofB64,
   });
   const tairaTxHash = String(
     response.tx_hash_hex ?? response.txHashHex ?? response.hash ?? "",
@@ -4176,15 +4280,22 @@ const finalizeTairaMessageToTon = async (
     "complete",
     `TON proof payload split into ${chunkPlan.chunkCount} bounded chunks`,
   );
-  const uploadMessages = chunkPlan.uploadMessages.map((upload) => ({
-    chunkIndex: upload.index,
-    message: {
-      address: verifierWalletAddress,
-      amount: SCCP_TON_CHUNK_UPLOAD_MESSAGE_VALUE_NANO,
-      payload: sccpBytesToBase64(upload.payloadBocBytes),
-    },
-    payloadSizeBytes: upload.payloadBocBytes.length,
-  }));
+  type TonChunkUploadMessage = {
+    chunkIndex: number;
+    message: { address: string; amount: string; payload: string };
+    payloadSizeBytes: number;
+  };
+  const uploadMessages: TonChunkUploadMessage[] = chunkPlan.uploadMessages.map(
+    (upload: { index: number; payloadBocBytes: Uint8Array }) => ({
+      chunkIndex: upload.index,
+      message: {
+        address: verifierWalletAddress,
+        amount: SCCP_TON_CHUNK_UPLOAD_MESSAGE_VALUE_NANO,
+        payload: sccpBytesToBase64(upload.payloadBocBytes),
+      },
+      payloadSizeBytes: upload.payloadBocBytes.length,
+    }),
+  );
   const walletMaxMessages = await ton.resolveMaxMessages();
   const uploadBatchSize = Math.max(
     1,
@@ -4194,7 +4305,7 @@ const finalizeTairaMessageToTon = async (
       uploadMessages.length,
     ),
   );
-  const uploadBatches = chunkSccpTonUploadMessages(
+  const uploadBatches = chunkSccpTonUploadMessages<TonChunkUploadMessage>(
     uploadMessages,
     uploadBatchSize,
     SCCP_TON_UPLOAD_APPROVAL_MAX_PAYLOAD_BYTES,
@@ -4800,6 +4911,9 @@ const prepareBridge = async () => {
             : direction.value === "taira-to-solana"
               ? buildTairaXorSolanaOutboundBurnRecordRequest({
                   manifest: operationContext.manifest,
+                  soraOutboundMaterial: operationContext.soraOutboundMaterial,
+                  expectedRegistryRevision:
+                    operationContext.expectedRegistryRevision,
                   tairaSender: operationContext.accountId,
                   solanaRecipient: operationContext.solanaRecipient,
                   amountDecimal: operationContext.amountDecimal,

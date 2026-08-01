@@ -4,7 +4,7 @@ const SOLANA_NETWORK = "solana-testnet";
 const SOLANA_GENESIS_HASH = "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY";
 const SOURCE_DOMAIN = 3;
 const TARGET_DOMAIN = 0;
-const PROOF_BACKEND = "sccp-solana-recursive-testnet-v1";
+const PROOF_BACKEND = "solana-groth16-bn254-v1";
 const FAIL_CLOSED_REASON =
   "Solana SCCP source prover package is intentionally fail-closed until governed proof artifacts are published.";
 

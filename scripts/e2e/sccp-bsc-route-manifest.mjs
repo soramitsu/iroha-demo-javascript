@@ -10,7 +10,7 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 import {
   validateBscMainnetNativeEvmProverBundle,
   validateBscTestnetNativeEvmProverBundle,
-} from "@iroha/iroha-js/sccp";
+} from "../../src/legacy/sccpLegacySdk.js";
 import { writeJsonReportFile } from "./sccp-bsc-report-output.mjs";
 import {
   assertBscBurnRecordProductionArtifact,

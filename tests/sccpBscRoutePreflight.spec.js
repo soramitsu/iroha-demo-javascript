@@ -10,7 +10,7 @@ import {
   SCCP_EVM_GROTH16_BN254_PROOF_BACKEND_V1,
   SCCP_NATIVE_EVM_PROVER_BUNDLE_SCHEMA_V1,
   validateBscTestnetNativeEvmProverBundle,
-} from "@iroha/iroha-js/sccp";
+} from "@/legacy/sccpLegacySdk";
 import {
   BSC_TAIRA_CHAIN_ID,
   BSC_TAIRA_NETWORK_PREFIX,

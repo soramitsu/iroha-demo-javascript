@@ -20,8 +20,8 @@ import {
   validateSolanaProverKnownAnswerResult,
 } from "../scripts/sccp-solana-prover-known-answer.mjs";
 
-const SOLANA_DESTINATION_PROOF_BACKEND = "solana-program-v1";
-const SOLANA_SOURCE_PROOF_BACKEND = "sccp-solana-recursive-testnet-v1";
+const SOLANA_DESTINATION_PROOF_BACKEND = "solana-groth16-bn254-v1";
+const SOLANA_SOURCE_PROOF_BACKEND = "solana-groth16-bn254-v1";
 const SOLANA_GENESIS_HASH = "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY";
 const SOLANA_DESTINATION_VERIFIER_PLAN = "SolanaProgramNativeRecursive";
 const SOLANA_VERIFIER_TARGET = "SolanaProgram";
@@ -110,6 +110,22 @@ const buildSidecar = (
   proofProbe = productionProofProbe(direction),
 ) => {
   const destination = direction === "destination";
+  const approvalHash =
+    proofProbe?.governance?.approvalHash ?? hash("missing-proof-approval");
+  const modulePinKey = `${direction}ProverModuleHash`;
+  const vectorPinKey = `${direction}ProverKnownAnswerVectorHash`;
+  const approvalValidation = {
+    ready: true,
+    approvalId: "independently-reviewed-test-approval",
+    approvalSha256: approvalHash,
+    expectedApprovalSha256: approvalHash,
+    pins: {
+      governancePlanCanonicalSha256: hash("exact-governance-plan"),
+      orderedInitializationEvidenceSha256: hash("ordered-init-evidence"),
+      [modulePinKey]: MODULE_HASH,
+      [vectorPinKey]: proofProbe?.vectorHash ?? hash("missing-proof-vector"),
+    },
+  };
   return buildValidatedSolanaProverSidecarBody({
     direction,
     moduleUrl: destination
@@ -124,6 +140,13 @@ const buildSidecar = (
       : "solanaSccpSourceProverSelfTest",
     selfTest,
     knownAnswer: proofProbe,
+    approvalValidation,
+    moduleBinding: {
+      ready: true,
+      pinKey: modulePinKey,
+      moduleHash: MODULE_HASH,
+      approvedHash: MODULE_HASH,
+    },
     checkedAt: "2026-07-09T00:00:00.000Z",
   });
 };
@@ -353,7 +376,6 @@ describe("Solana SCCP prover sidecar self-test hardening", () => {
           productionProofsReady: true,
           production_proofs_ready: true,
           missingArtifactIds: [],
-          missing_artifact_ids: [],
         },
         knownAnswer: {
           ready: true,
@@ -450,12 +472,12 @@ describe("Solana SCCP prover sidecar self-test hardening", () => {
     }
   });
 
-  it("rejects mixed destination and source proof profiles", () => {
+  it("rejects noncanonical proof backends for both directions", () => {
     const destinationUsingSource = productionSelfTest("destination");
-    destinationUsingSource.proofBackend = SOLANA_SOURCE_PROOF_BACKEND;
-    destinationUsingSource.proof_backend = SOLANA_SOURCE_PROOF_BACKEND;
-    destinationUsingSource.requiredProofBackend = SOLANA_SOURCE_PROOF_BACKEND;
-    destinationUsingSource.required_proof_backend = SOLANA_SOURCE_PROOF_BACKEND;
+    destinationUsingSource.proofBackend = "stark-fri-v1";
+    destinationUsingSource.proof_backend = "stark-fri-v1";
+    destinationUsingSource.requiredProofBackend = "stark-fri-v1";
+    destinationUsingSource.required_proof_backend = "stark-fri-v1";
     expect(
       validateSolanaProverSelfTestForSidecar({
         direction: "destination",
@@ -469,12 +491,10 @@ describe("Solana SCCP prover sidecar self-test hardening", () => {
     });
 
     const sourceUsingDestination = productionSelfTest("source");
-    sourceUsingDestination.proofBackend = SOLANA_DESTINATION_PROOF_BACKEND;
-    sourceUsingDestination.proof_backend = SOLANA_DESTINATION_PROOF_BACKEND;
-    sourceUsingDestination.requiredProofBackend =
-      SOLANA_DESTINATION_PROOF_BACKEND;
-    sourceUsingDestination.required_proof_backend =
-      SOLANA_DESTINATION_PROOF_BACKEND;
+    sourceUsingDestination.proofBackend = "stark-fri-v1";
+    sourceUsingDestination.proof_backend = "stark-fri-v1";
+    sourceUsingDestination.requiredProofBackend = "stark-fri-v1";
+    sourceUsingDestination.required_proof_backend = "stark-fri-v1";
     expect(
       validateSolanaProverSelfTestForSidecar({
         direction: "source",
