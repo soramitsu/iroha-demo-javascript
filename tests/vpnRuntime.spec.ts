@@ -168,12 +168,10 @@ describe("VpnRuntime", () => {
     });
     createVpnQuoteMock.mockReset().mockResolvedValue({
       quoteId: "11".repeat(32),
-      txInstructions: [
-        {
-          wireId: "OpenVpnLeaseEscrow",
-          payloadHex: "abcd",
-        },
-      ],
+      openLeaseInstruction: {
+        wireId: "OpenVpnLeaseEscrow",
+        payloadHex: "abcd",
+      },
     });
     quoteAndSignTransactionMock.mockReset().mockResolvedValue({
       signedTransaction: Buffer.from("signed-vpn-payment"),

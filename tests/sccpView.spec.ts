@@ -12,6 +12,7 @@ import {
   canonicalTairaSccpMessageBundleBytes,
   deriveSccpSolanaDestinationHashesV1,
   deriveSccpSolanaNativeVerifierConfigHashV1,
+  SCCP_SOLANA_SORA_OUTBOUND_EXECUTION_SEMANTICS_V1,
   sccpCommitmentLeafHash,
   sccpPayloadHash as exactSdkSccpPayloadHash,
 } from "@iroha/iroha-js/sccp";
@@ -85,6 +86,8 @@ import {
 } from "@/utils/sccpSolanaCanonical";
 
 const VALID_TRON_ADDRESS = "TGkWdpawVNfeset3P6uTBbLaPY7nZVZvXY";
+const SORA_OUTBOUND_CONTRACT_ADDRESS =
+  "irohac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9gg4yxgjw";
 const fixtureBscAddress = (label: string): string =>
   canonicalEip55EvmAddress(
     `0x${Array.from(sha256(new TextEncoder().encode(label)), (byte) =>
@@ -361,6 +364,7 @@ const sampleSccpSoraOutboundMaterial = () => {
     contract_artifact_b64: Buffer.from(SOLANA_SORA_OUTBOUND_ARTIFACT).toString(
       "base64",
     ),
+    contract_address: SORA_OUTBOUND_CONTRACT_ADDRESS,
     contract_code_hash: `0x${"22".repeat(32)}`,
     verifying_key_version: 7,
   };
@@ -839,7 +843,8 @@ const SOLANA_SORA_OUTBOUND_ARTIFACT = Uint8Array.from(
 );
 const solanaSoraOutboundExecutionPolicy = () => ({
   version: 1,
-  semantics: "ivm_proved_record_sccp_message_v1",
+  semantics: SCCP_SOLANA_SORA_OUTBOUND_EXECUTION_SEMANTICS_V1,
+  contract_address: SORA_OUTBOUND_CONTRACT_ADDRESS,
   contract_artifact_sha256: Buffer.from(sha256(SOLANA_SORA_OUTBOUND_ARTIFACT))
     .toString("hex")
     .toUpperCase(),

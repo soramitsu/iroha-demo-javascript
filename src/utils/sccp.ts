@@ -5,6 +5,7 @@ import { keccak_256 } from "@noble/hashes/sha3";
 import { beginCell } from "@ton/core";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { AccountAddress } from "@iroha/iroha-js/address";
+import { parseCanonicalContractAddress } from "@iroha/iroha-js/smart-contract-deployment";
 import {
   buildTairaXorBscSccpRecordDescriptor,
   buildTairaXorBscSccpBurnRecordZkIvmRequest,
@@ -162,7 +163,7 @@ export const SCCP_XOR_ASSET_KEY = SCCP_TAIRA_XOR_ASSET_KEY_V1;
 export const SCCP_TAIRA_XOR_ASSET_DEFINITION_ID =
   "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 export const SCCP_SORA_OUTBOUND_EXECUTION_SEMANTICS_V1 =
-  "ivm_proved_record_sccp_message_v1";
+  "ivm_proved_burn_and_record_sccp_message_v1";
 export const SCCP_MAX_SORA_OUTBOUND_GAS_LIMIT_V1 = 1_000_000_000;
 export const SCCP_TRON_TOKEN_SYMBOL = "TairaXOR";
 export const SCCP_BSC_TOKEN_SYMBOL = "TairaXOR";
@@ -940,6 +941,9 @@ export type ExactTairaXorBurnRecordMaterial = Omit<
   TairaXorBurnRecordMaterial,
   "artifactSha256" | "gasLimit" | "vkRef"
 > & {
+  destinationBindingHash: string;
+  routeConfigurationHash: string;
+  contractAddress: string;
   artifactSha256: string;
   gasLimit: number;
   vkRef: {
@@ -4079,6 +4083,7 @@ export const requireSccpSolanaSoraOutboundMaterial = (
       "settlement_asset_definition_id",
       "policy",
       "contract_artifact_b64",
+      "contract_address",
       "contract_code_hash",
       "verifying_key_version",
     ],
@@ -4170,7 +4175,14 @@ export const requireSccpSolanaSoraOutboundMaterial = (
 
   const policy = requireExactSccpMaterialRecord(
     material.policy,
-    ["version", "semantics", "contract_artifact_sha256", "vk_ref", "gas_limit"],
+    [
+      "version",
+      "semantics",
+      "contract_artifact_sha256",
+      "contract_address",
+      "vk_ref",
+      "gas_limit",
+    ],
     "SCCP SORA outbound material.policy",
   );
   requireExactSccpMaterialInteger(
@@ -4284,6 +4296,19 @@ export const requireSccpSolanaSoraOutboundMaterial = (
       "SCCP SORA outbound material artifact bytes do not match the governed policy SHA-256.",
     );
   }
+  const contractAddress = parseCanonicalContractAddress(
+    String(material.contract_address ?? ""),
+    "SCCP SORA outbound material.contract_address",
+  ).literal;
+  const policyContractAddress = parseCanonicalContractAddress(
+    String(policy.contract_address ?? ""),
+    "SCCP SORA outbound material.policy.contract_address",
+  ).literal;
+  if (policyContractAddress !== contractAddress) {
+    throw new Error(
+      "SCCP SORA outbound material policy contract address does not match the unique deployed contract address.",
+    );
+  }
 
   const routeManifest = cloneSccpJsonRouteManifest(
     requireRecord(governedRoute, "governed taira_sol_xor route"),
@@ -4299,7 +4324,14 @@ export const requireSccpSolanaSoraOutboundMaterial = (
   }
   const governedPolicy = requireExactSccpMaterialRecord(
     routeManifest.sora_outbound_execution_policy,
-    ["version", "semantics", "contract_artifact_sha256", "vk_ref", "gas_limit"],
+    [
+      "version",
+      "semantics",
+      "contract_artifact_sha256",
+      "contract_address",
+      "vk_ref",
+      "gas_limit",
+    ],
     "governed taira_sol_xor sora_outbound_execution_policy",
   );
   const governedVkRef = requireExactSccpMaterialRecord(
@@ -4312,6 +4344,8 @@ export const requireSccpSolanaSoraOutboundMaterial = (
     governedPolicy.semantics !== policy.semantics ||
     governedPolicy.contract_artifact_sha256 !==
       policy.contract_artifact_sha256 ||
+    governedPolicy.contract_address !== contractAddress ||
+    policyContractAddress !== contractAddress ||
     governedPolicy.gas_limit !== policy.gas_limit ||
     governedVkRef.backend !== vkRef.backend ||
     governedVkRef.name !== vkRef.name ||
@@ -4325,7 +4359,10 @@ export const requireSccpSolanaSoraOutboundMaterial = (
 
   return {
     settlementAssetDefinitionId: SCCP_TAIRA_XOR_ASSET_DEFINITION_ID,
+    destinationBindingHash,
+    routeConfigurationHash,
     contractArtifactB64: material.contract_artifact_b64,
+    contractAddress,
     artifactSha256: `0x${artifactSha256.toLowerCase()}`,
     vkRef,
     gasLimit,

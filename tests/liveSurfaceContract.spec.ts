@@ -55,4 +55,47 @@ describe("current live surface contract", () => {
     expect(transferSource).not.toContain("positiveBalanceMatches");
     expect(transferSource).not.toContain("containsMatches");
   });
+
+  it("fails closed on consensus-retired generic confidential mutations", () => {
+    const source = preloadSource();
+    const transferStart = source.indexOf("async transferAsset(input)");
+    const transferEnd = source.indexOf(
+      "setIrohaConnectContext(input)",
+      transferStart,
+    );
+    const transferSource = source.slice(transferStart, transferEnd);
+    const endpointGuard = transferSource.indexOf(
+      "assertWriteConnectionMatchesEndpoint({",
+    );
+    const retirementGuard = transferSource.indexOf(
+      "rejectRetiredGenericConfidentialMutation();",
+    );
+    const signingMaterial = transferSource.indexOf(
+      "await resolveSigningMaterial({",
+    );
+
+    expect(source).not.toContain("buildShieldInstruction");
+    expect(source).not.toContain("buildZkTransferInstruction");
+    expect(source).not.toContain("buildUnshieldInstruction");
+    expect(source).toContain("reviewed protocol-bound Kagemusha V4");
+    expect(endpointGuard).toBeGreaterThanOrEqual(0);
+    expect(retirementGuard).toBeGreaterThan(endpointGuard);
+    expect(signingMaterial).toBeGreaterThan(retirementGuard);
+
+    const contextStart = source.indexOf(
+      "async getConfidentialTransferExecutionContext()",
+    );
+    const contextEnd = source.indexOf(
+      "getConfidentialAssetBalance({",
+      contextStart,
+    );
+    const contextSource = source.slice(contextStart, contextEnd);
+    expect(contextSource).toContain(
+      "return rejectRetiredGenericConfidentialMutation();",
+    );
+    expect(contextSource).not.toContain(
+      "fetchConfidentialAssetPolicyForAccount",
+    );
+    expect(contextSource).not.toContain("resolveConfidentialTransferMaterials");
+  });
 });

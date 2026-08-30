@@ -39,14 +39,24 @@ import {
   readStableRegularFileSync,
   writeAtomicJsonFile,
 } from "./sccp-solana-report-io.mjs";
+import { resolveCompatibleIrohaSdkRoot } from "../iroha-sdk-compat.mjs";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",
 );
+const irohaSdkNodeRegister = path.join(
+  repoRoot,
+  "scripts/iroha-sdk-node-register.mjs",
+);
 
-const proverChildEnvironment = () => {
-  const env = { LANG: "C", LC_ALL: "C", TZ: "UTC" };
+const proverChildEnvironment = (selectedIrohaSdkRoot) => {
+  const env = {
+    LANG: "C",
+    LC_ALL: "C",
+    TZ: "UTC",
+    IROHA_JS_NODE_SELECTED_SDK_ROOT: selectedIrohaSdkRoot,
+  };
   for (const key of ["SystemRoot", "WINDIR"]) {
     if (typeof process.env[key] === "string") {
       env[key] = process.env[key];
@@ -1187,9 +1197,15 @@ export const runLocalProverSelfTest = ({
         "Solana prover execution was skipped until its public approval and sidecar validate.",
     };
   }
+  const selectedIrohaSdkRoot = resolveCompatibleIrohaSdkRoot({
+    projectRoot: repoRoot,
+    log: () => {},
+  });
   const result = spawnSync(
     process.execPath,
     [
+      "--import",
+      irohaSdkNodeRegister,
       "--input-type=module",
       "-e",
       `
@@ -1224,7 +1240,7 @@ try {
     ],
     {
       encoding: "utf8",
-      env: proverChildEnvironment(),
+      env: proverChildEnvironment(selectedIrohaSdkRoot),
       input: JSON.stringify({
         moduleBase64: moduleBytes.toString("base64"),
         knownAnswer: sidecarRead.sidecar?.knownAnswer ?? null,

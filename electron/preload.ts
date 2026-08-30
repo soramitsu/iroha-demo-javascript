@@ -33,10 +33,7 @@ import {
   buildEndKaigiInstruction,
   buildJoinKaigiInstruction,
   buildRegisterAccountInstruction,
-  buildShieldInstruction,
   buildTransferAssetInstruction,
-  buildUnshieldInstruction,
-  buildZkTransferInstruction,
   buildTransactionPayload,
   buildIvmProvedTransactionPayload,
   compileKotodamaProgram,
@@ -380,6 +377,14 @@ const MAX_SCCP_PROVER_V8_HEAP_MB = 32768;
 const trimString = (value: unknown): string => String(value ?? "").trim();
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const RETIRED_GENERIC_CONFIDENTIAL_MUTATION_ERROR =
+  "Generic confidential mutations are unavailable until a reviewed protocol-bound Kagemusha V4 request builder is installed.";
+
+const rejectRetiredGenericConfidentialMutation = (_input?: unknown): never => {
+  void _input;
+  throw new Error(RETIRED_GENERIC_CONFIDENTIAL_MUTATION_ERROR);
+};
 
 const readRuntimeConfigEnv = (name: string): string =>
   trimString(process.env[name]);
@@ -12559,7 +12564,7 @@ const submitConfidentialSelfConsolidation = async (input: {
     networkPrefix: input.networkPrefix,
     authority: input.accountId,
     instructions: [
-      buildZkTransferInstruction({
+      rejectRetiredGenericConfidentialMutation({
         assetDefinitionId: materials.resolvedAssetId,
         inputs: proofEnvelope.nullifiers,
         outputs: proofEnvelope.outputCommitments,
@@ -14611,6 +14616,9 @@ const api: IrohaBridge = {
           ? "confidentialTransfers"
           : "assetTransfers",
     });
+    if (input.shielded || input.unshield) {
+      rejectRetiredGenericConfidentialMutation();
+    }
     const assetDefinitionId = normalizeFirstReleaseAssetDefinitionId(
       input.assetDefinitionId,
     );
@@ -14864,7 +14872,7 @@ const api: IrohaBridge = {
         networkPrefix,
         authority: accountId,
         instructions: [
-          buildUnshieldInstruction({
+          rejectRetiredGenericConfidentialMutation({
             assetDefinitionId: refreshedMaterials.resolvedAssetId,
             destinationAccountId,
             publicAmount: normalizedAmount,
@@ -14999,7 +15007,7 @@ const api: IrohaBridge = {
           networkPrefix,
           authority: accountId,
           instructions: [
-            buildShieldInstruction({
+            rejectRetiredGenericConfidentialMutation({
               assetDefinitionId: resolvedAssetId,
               fromAccountId: accountId,
               amount: normalizedAmount,
@@ -15234,7 +15242,7 @@ const api: IrohaBridge = {
         networkPrefix,
         authority: accountId,
         instructions: [
-          buildZkTransferInstruction({
+          rejectRetiredGenericConfidentialMutation({
             assetDefinitionId: materials.resolvedAssetId,
             inputs: proofEnvelope.nullifiers,
             outputs: proofEnvelope.outputCommitments,
@@ -15396,38 +15404,8 @@ const api: IrohaBridge = {
       return policy;
     }
   },
-  async getConfidentialTransferExecutionContext({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    accountId,
-    privateKeyHex,
-    assetDefinitionId,
-  }) {
-    const { policy, resolvedAssetDefinitionId } =
-      await fetchConfidentialAssetPolicyForAccount({
-        toriiUrl,
-        accountId,
-        assetDefinitionId,
-      });
-    const materials = await resolveConfidentialTransferMaterials({
-      toriiUrl,
-      chainId,
-      networkPrefix,
-      accountId,
-      privateKeyHex,
-      assetDefinitionId: resolvedAssetDefinitionId,
-    });
-    const verifyingKeyContext = readConfidentialVerifyingKeyContext(
-      materials.verifyingKey,
-    );
-    return {
-      resolvedAssetId: resolvedAssetDefinitionId,
-      effectiveMode:
-        trimString(policy.effective_mode) || trimString(policy.current_mode),
-      backend: verifyingKeyContext.backend,
-      circuitId: verifyingKeyContext.circuitId,
-    };
+  async getConfidentialTransferExecutionContext() {
+    return rejectRetiredGenericConfidentialMutation();
   },
   getConfidentialAssetBalance({
     toriiUrl,

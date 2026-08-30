@@ -11,10 +11,12 @@ import { describe, expect, it } from "vitest";
 import {
   deriveSccpSolanaDestinationHashesV1,
   deriveSccpSolanaNativeVerifierConfigHashV1,
+  SCCP_SOLANA_SORA_OUTBOUND_EXECUTION_SEMANTICS_V1,
   sccpLaneIdHash,
   type SccpTransferPayloadV1,
 } from "@iroha/iroha-js/sccp";
 import { AccountAddress } from "@iroha/iroha-js/address";
+import { deriveContractAddress } from "@iroha/iroha-js/smart-contract-deployment";
 import {
   SCCP_SOLANA_TO_TAIRA_LANE_V1,
   SCCP_TAIRA_TO_SOLANA_LANE_V1,
@@ -41,17 +43,20 @@ const upperHex = (byte: number, length: number): string =>
 const upperBytes = (bytes: Uint8Array): string =>
   Buffer.from(bytes).toString("hex").toUpperCase();
 const expectedRegistryRevision = `0x${"10".repeat(32)}`;
+const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 
-const g1 = (x = 1, y = 2) => ({
-  x: upperHex(x, 32),
-  y: upperHex(y, 32),
+const g1 = () => ({
+  x: "1".padStart(64, "0"),
+  y: "2".padStart(64, "0"),
 });
 
-const g2 = (seed = 3) => ({
-  x_c0: upperHex(seed, 32),
-  x_c1: upperHex(seed + 1, 32),
-  y_c0: upperHex(seed + 2, 32),
-  y_c1: upperHex(seed + 3, 32),
+// Canonical BN254 G2 generator coordinates. Repeated-byte placeholders are
+// not valid curve points and must never stand in for verifier material.
+const g2 = () => ({
+  x_c0: "1800DEEF121F1E76426A00665E5C4479674322D4F75EDADD46DEBD5CD992F6ED",
+  x_c1: "198E9393920D483A7260BFB731FB5D25F1AA493335A9E71297E485B7AEF312C2",
+  y_c0: "12C85EA5DB8C6DEB4AAB71808DCB408FE3D1E7690C43D37B4CE6CC0166FA7DAA",
+  y_c1: "090689D0585FF075EC9E99AD690C3395BC4B313370B38EF355ACDADCD122975B",
 });
 
 const verifyingKey = () => {
@@ -122,10 +127,11 @@ const soraOutboundArtifact = Uint8Array.from(
 
 const soraOutboundExecutionPolicy = () => ({
   version: 1,
-  semantics: "ivm_proved_record_sccp_message_v1",
+  semantics: SCCP_SOLANA_SORA_OUTBOUND_EXECUTION_SEMANTICS_V1,
   contract_artifact_sha256: Buffer.from(sha256(soraOutboundArtifact))
     .toString("hex")
     .toUpperCase(),
+  contract_address: outboundContractAddress,
   vk_ref: {
     backend: "stark/fri/v1",
     name: "ivm-execution-v1",
@@ -138,6 +144,13 @@ const soraOutboundExecutionPolicy = () => ({
 const custodyAccount = AccountAddress.fromAccount({
   publicKey: Uint8Array.from([0x58, ...Array(31).fill(0x66)]),
 }).toI105(369);
+const outboundContractAddress = deriveContractAddress({
+  chainId: TAIRA_CHAIN_ID,
+  chainDiscriminant: 369,
+  authority: custodyAccount,
+  deployNonce: 7,
+  dataspaceId: 0,
+});
 
 const governedRoute = (): Record<string, unknown> => {
   const key = verifyingKey();
@@ -256,6 +269,7 @@ const soraOutboundMaterial = (
     settlement_asset_definition_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
     policy: soraOutboundExecutionPolicy(),
     contract_artifact_b64: Buffer.from(soraOutboundArtifact).toString("base64"),
+    contract_address: outboundContractAddress,
     contract_code_hash: `0x${"22".repeat(32)}`,
     verifying_key_version: 7,
   };
@@ -313,13 +327,13 @@ describe("strict first-release Solana SCCP renderer bindings", () => {
     expect(readGovernedSolanaRoutePinsV1(governedRoute())).toMatchObject({
       revision: 1,
       destinationBindingHash:
-        "0x0d70512f4dc00564c372f34d0f4fbbe5312bd3fa2841971abf260d275b4829b4",
+        "0x19819920a58061f61ac26505463c291fc5f85c79b7fc49dbb573732f7af8a812",
       routeConfigurationHash:
-        "0x4846b07a268cb51df63bb7fc50e80c61f0f30f724b591fdaabfb3fec0447bbe5",
+        "0xd48b260a65d3f75f8ddb0caaaf5cbb1926caf9663638ca75183cc2339f27b66b",
       sourceEmitterIdentityHash:
-        "0x74112bdc373c4129e973ff429cba79eb0f79d20932ffb297414245cdcc8d810c",
+        "0x47f425637f86916bd80686bc6378358b50be07ed66dbcea90028a827d1f72a7e",
       sourceIdentityHash:
-        "0x1b81174c77ef73ae8f38c4ea55c0f0dadc68814445bb872e79e21e61c9dbad47",
+        "0x4687ec8e689faae78bb8972f05f53286651dea53d9d7c1065b4adc849e5af43b",
     });
   });
 

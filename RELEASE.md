@@ -109,9 +109,9 @@ The native compatibility gate also executes the current rules-bound
 validation-fee proposal known-answer tests. The frozen rules fixture includes
 the exact seed-8 bond-escrow and seed-9 slash-receiver I105 account literals;
 its policy fingerprint is
-`85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90`
+`4ec93301681c32cc0d44c55939f6020a0c1a1aaa5ad24ff2723a7561873fbbf7`
 and its payout-lifecycle fingerprint is
-`fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b`.
+`baa786c7b6a595ecea019be7ba98c8be1eba3b141ef1527af11cd121889674b5`.
 Runtime custody accounts are never copied from that test fixture: they must
 match the exact `bond_escrow_account` and `slash_receiver_account` carried by
 the live capabilities and retained proposal rules, and both must equal the

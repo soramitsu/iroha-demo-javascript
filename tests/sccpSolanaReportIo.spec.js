@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -19,6 +20,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { resolveCompatibleIrohaSdkRoot } from "../scripts/iroha-sdk-compat.mjs";
 import { parseArgs as parseLiveVideoArgs } from "../scripts/e2e/sccp-solana-live-video.mjs";
 import { parseArgs as parseProductionGateArgs } from "../scripts/e2e/sccp-solana-production-gate.mjs";
 import { parseArgs as parsePreflightArgs } from "../scripts/e2e/sccp-solana-route-preflight.mjs";
@@ -40,6 +42,28 @@ import {
 } from "../scripts/e2e/sccp-solana-report-io.mjs";
 
 const repoRoot = path.resolve(".");
+const explicitlySelectedIrohaSdkRoot = String(
+  process.env.IROHA_JS_SDK_ROOT ?? "",
+).trim();
+const selectedIrohaSdkRoot = realpathSync(
+  explicitlySelectedIrohaSdkRoot ||
+    resolveCompatibleIrohaSdkRoot({
+      projectRoot: repoRoot,
+      log: () => {},
+    }),
+);
+const irohaSdkNodeRegister = path.join(
+  repoRoot,
+  "scripts/iroha-sdk-node-register.mjs",
+);
+const spawnSelectedIrohaSdkNode = (args, options = {}) =>
+  spawnSync(process.execPath, ["--import", irohaSdkNodeRegister, ...args], {
+    ...options,
+    env: {
+      ...(options.env ?? process.env),
+      IROHA_JS_NODE_SELECTED_SDK_ROOT: selectedIrohaSdkRoot,
+    },
+  });
 const cleanup = [];
 
 afterEach(async () => {
@@ -457,8 +481,7 @@ describe.each(CLI_CONTRACTS)("$name strict CLI", (contract) => {
   it("documents every accepted option and keeps --help no-write", () => {
     const root = tempDirSync();
     const output = path.join(root, "must-not-exist");
-    const result = spawnSync(
-      process.execPath,
+    const result = spawnSelectedIrohaSdkNode(
       [
         path.join(repoRoot, contract.script),
         `--${contract.valueFlag}`,

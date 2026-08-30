@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -13,6 +14,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import { describe, expect, it, vi } from "vitest";
+import { resolveCompatibleIrohaSdkRoot } from "../scripts/iroha-sdk-compat.mjs";
 import {
   SOLANA_LOADER_V3_SET_AUTHORITY_NONE_DATA_HEX,
   SOLANA_PROGRAM_FINALIZATION_SCHEMA,
@@ -29,6 +31,27 @@ import {
 } from "../scripts/sccp-solana-deploy.mjs";
 
 const LOADER_ID = "BPFLoaderUpgradeab1e11111111111111111111111";
+const explicitlySelectedIrohaSdkRoot = String(
+  process.env.IROHA_JS_SDK_ROOT ?? "",
+).trim();
+const selectedIrohaSdkRoot = realpathSync(
+  explicitlySelectedIrohaSdkRoot ||
+    resolveCompatibleIrohaSdkRoot({
+      projectRoot: process.cwd(),
+      log: () => {},
+    }),
+);
+const irohaSdkNodeRegister = path.resolve(
+  "scripts/iroha-sdk-node-register.mjs",
+);
+const spawnSelectedIrohaSdkNode = (args, options = {}) =>
+  spawnSync(process.execPath, ["--import", irohaSdkNodeRegister, ...args], {
+    ...options,
+    env: {
+      ...(options.env ?? process.env),
+      IROHA_JS_NODE_SELECTED_SDK_ROOT: selectedIrohaSdkRoot,
+    },
+  });
 const roleSpecs = [
   {
     role: "outerVerifier",
@@ -1070,8 +1093,7 @@ describe("Solana program finalization runtime orchestration", () => {
 
 describe("Solana program finalization CLI safety", () => {
   const runCli = (...args) =>
-    spawnSync(
-      process.execPath,
+    spawnSelectedIrohaSdkNode(
       ["scripts/sccp-solana-deploy.mjs", "finalize-programs", ...args],
       { cwd: process.cwd(), encoding: "utf8" },
     );
@@ -1138,8 +1160,7 @@ describe("Solana program finalization CLI safety", () => {
     );
     const sentinel = "DO_NOT_LOAD_FINALIZATION_SIGNER";
     try {
-      const result = spawnSync(
-        process.execPath,
+      const result = spawnSelectedIrohaSdkNode(
         [
           "scripts/sccp-solana-deploy.mjs",
           "finalize-programs",

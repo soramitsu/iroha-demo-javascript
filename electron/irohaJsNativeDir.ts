@@ -32,9 +32,9 @@ const REQUIRED_NATIVE_EXPORTS = [
 const REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION = 21;
 export const REQUIRED_SECURE_PRIVATE_FILE_ABI_VERSION = 1;
 const REQUIRED_VALIDATION_FEE_POLICY_FINGERPRINT =
-  "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90";
+  "4ec93301681c32cc0d44c55939f6020a0c1a1aaa5ad24ff2723a7561873fbbf7";
 const REQUIRED_VALIDATION_FEE_PAYOUT_FINGERPRINT =
-  "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b";
+  "baa786c7b6a595ecea019be7ba98c8be1eba3b141ef1527af11cd121889674b5";
 const REQUIRED_VALIDATION_FEE_PLAIN_RULES_JSON = JSON.stringify({
   voting_asset_id: "5dHF5UNffENuEg9mhjYwY1jcZ1K5",
   bond_escrow_account: "sorauﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K",
@@ -60,7 +60,7 @@ const REQUIRED_VALIDATION_FEE_POLICY_JSON = JSON.stringify({
   genesis_hash: "12".repeat(32),
   policy_version: "1",
   previous_policy_hash: null,
-  ds_asset_id: "6REzUFWXnmqZyzE6chiczVVuW4m5",
+  ds_asset_id: "7ZepsJTHCVLKsrFFNZGSRGZgvBhv",
   ds_scale: 2,
   fee: "0.1",
   treasury_account_id: "sorauﾛ1PaQｽGh1ｴ6pAﾜnqｸfJuｿMﾑVqﾏvQﾐﾚｼｾﾋaﾈｳﾊc1ｺﾊ1GGM2D",
@@ -75,11 +75,11 @@ const REQUIRED_VALIDATION_FEE_POLICY_JSON = JSON.stringify({
 });
 const REQUIRED_VALIDATION_FEE_PAYOUT_BINDING_JSON = JSON.stringify({
   contract_address:
-    "tairac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9ggff82m7",
+    "irohac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9gg4yxgjw",
   code_hash: "34".repeat(32),
   entrypoint: "autonomous_validation_fee_tick",
-  treasury_account_id: "sorauﾛ1PﾏYfvYvｽhｽqVﾎ7nｱﾏUAｺﾗTaGeﾘhxWCrﾊｾﾋﾏkﾚQvR5TU4J",
-  sbd_asset_id: "6REzUFWXnmqZyzE6chiczVVuW4m5",
+  treasury_account_id: "sorauﾛ1PZﾗidｱJJHofｸXNｵｿcﾐﾃgﾀﾔzBYﾜcﾈｦfｶxKfﾁｼ1pG871VMK",
+  sbd_asset_id: "7ZepsJTHCVLKsrFFNZGSRGZgvBhv",
   xor_asset_id: "5dHF5UNffENuEg9mhjYwY1jcZ1K5",
   pool_vault_account_id:
     "sorauﾛ1PTYｷEヱｿsYbe7ｾｵﾆﾐﾓﾕiﾋｵYヱfﾍuGFTmｺiSaHxgﾅｼ3BYUD1",

@@ -948,8 +948,11 @@ export interface SccpSoraOutboundMaterialResponse {
   settlement_asset_definition_id: string;
   policy: {
     version: 1;
-    semantics: "ivm_proved_record_sccp_message_v1";
+    semantics:
+      | "ivm_proved_record_sccp_message_v1"
+      | "ivm_proved_burn_and_record_sccp_message_v1";
     contract_artifact_sha256: string;
+    contract_address: string;
     vk_ref: {
       backend: string;
       name: string;
@@ -959,6 +962,7 @@ export interface SccpSoraOutboundMaterialResponse {
     gas_limit: number;
   };
   contract_artifact_b64: string;
+  contract_address: string;
   contract_code_hash: string;
   verifying_key_version: number;
 }

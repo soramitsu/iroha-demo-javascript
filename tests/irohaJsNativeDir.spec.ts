@@ -57,7 +57,7 @@ const compatibleNativeModule = () => ({
     void _payoutLifecycleProposalId;
     assertCurrentPlainElectorateCustody(_plainElectorateRules);
     return Buffer.from(
-      "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90",
+      "4ec93301681c32cc0d44c55939f6020a0c1a1aaa5ad24ff2723a7561873fbbf7",
       "hex",
     );
   },
@@ -68,7 +68,7 @@ const compatibleNativeModule = () => ({
     void _payoutBinding;
     assertCurrentPlainElectorateCustody(_plainElectorateRules);
     return Buffer.from(
-      "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b",
+      "baa786c7b6a595ecea019be7ba98c8be1eba3b141ef1527af11cd121889674b5",
       "hex",
     );
   },

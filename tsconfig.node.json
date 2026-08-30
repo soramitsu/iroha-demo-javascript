@@ -42,6 +42,9 @@
       "@iroha/iroha-js/canonical-request": [
         "node_modules/.cache/iroha-sdk-compat/active/canonical-request.d.ts"
       ],
+      "@iroha/iroha-js/smart-contract-deployment": [
+        "node_modules/.cache/iroha-sdk-compat/active/smart-contract-deployment.d.ts"
+      ],
       "@iroha/iroha-js/crypto": [
         "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
       ],

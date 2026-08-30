@@ -13,6 +13,7 @@ import {
   canonicalTairaSccpMessageBundleBytes,
   deriveSccpSolanaDestinationHashesV1,
   deriveSccpSolanaNativeVerifierConfigHashV1,
+  SCCP_SOLANA_SORA_OUTBOUND_EXECUTION_SEMANTICS_V1,
   sccpCommitmentLeafHash,
   sccpMessageId,
   sccpPayloadHash,
@@ -99,6 +100,8 @@ const network = (name: "sora_taira" | "solana_testnet") => ({
 const custodyAccount = AccountAddress.fromAccount({
   publicKey: Uint8Array.from([0x58, ...Array(31).fill(0x66)]),
 }).toI105(369);
+const SORA_OUTBOUND_CONTRACT_ADDRESS =
+  "irohac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9gg4yxgjw";
 
 const semanticProfile = () => ({
   profile: "sora_taira_finality_inclusion_groth16_bn254",
@@ -125,7 +128,8 @@ const finalityAnchor = () => ({
 
 const soraOutboundExecutionPolicy = () => ({
   version: 1,
-  semantics: "ivm_proved_record_sccp_message_v1",
+  semantics: SCCP_SOLANA_SORA_OUTBOUND_EXECUTION_SEMANTICS_V1,
+  contract_address: SORA_OUTBOUND_CONTRACT_ADDRESS,
   contract_artifact_sha256: "B1".repeat(32),
   vk_ref: {
     backend: "stark/fri/v1",

@@ -32,6 +32,7 @@ const containsExports = (path, exports) => {
       source.includes(`export function ${name}`) ||
       source.includes(`export class ${name}`) ||
       source.includes(`export const ${name}`) ||
+      source.includes(`export { ${name} }`) ||
       source.includes(`${name},`),
   );
 };
@@ -41,6 +42,12 @@ export const hasCurrentIrohaSdkApi = (sdkRoot) =>
   existsSync(join(sdkRoot, "index.d.ts")) &&
   existsSync(join(sdkRoot, "dist", "canonicalRequest.js")) &&
   existsSync(join(sdkRoot, "canonical-request.d.ts")) &&
+  containsExports(join(sdkRoot, "dist", "smartContractDeployment.js"), [
+    "parseCanonicalContractAddress",
+  ]) &&
+  containsExports(join(sdkRoot, "smart-contract-deployment.d.ts"), [
+    "parseCanonicalContractAddress",
+  ]) &&
   existsSync(join(sdkRoot, "dist", "sccp.js"));
 
 export const buildIrohaSdkAliases = (sdkRoot) => {
@@ -61,6 +68,10 @@ export const buildIrohaSdkAliases = (sdkRoot) => {
     {
       find: "@iroha/iroha-js/canonical-request",
       replacement: resolve(dist, "canonicalRequest.js"),
+    },
+    {
+      find: "@iroha/iroha-js/smart-contract-deployment",
+      replacement: resolve(dist, "smartContractDeployment.js"),
     },
     {
       find: "@iroha/iroha-js/sccp",

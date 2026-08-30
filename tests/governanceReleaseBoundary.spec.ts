@@ -27,6 +27,8 @@ describe("v2.0.1 governance release boundary", () => {
     };
     const chains = source("src/constants/chains.ts");
     const sdkCompatibility = source("scripts/iroha-sdk-compat.mjs");
+    const browserTsconfig = source("tsconfig.json");
+    const nodeTsconfig = source("tsconfig.node.json");
     const releaseSource = source("scripts/iroha-js-release-source.mjs");
     const releaseWorkflow = source(".github/workflows/release.yml");
     const electronBuilder = source("electron-builder.yml");
@@ -52,6 +54,22 @@ describe("v2.0.1 governance release boundary", () => {
     expect(sdkCompatibility).toContain(
       '"computeValidationFeePolicyProposalFingerprintV1"',
     );
+    expect(sdkCompatibility).toContain(
+      'find: "@iroha/iroha-js/smart-contract-deployment"',
+    );
+    expect(sdkCompatibility).toContain(
+      'containsExports(join(sdkRoot, "dist", "smartContractDeployment.js"), [',
+    );
+    expect(sdkCompatibility).toContain(
+      'containsExports(join(sdkRoot, "smart-contract-deployment.d.ts"), [',
+    );
+    expect(sdkCompatibility).toContain("source.includes(`export { ${name} }`)");
+    for (const tsconfig of [browserTsconfig, nodeTsconfig]) {
+      expect(tsconfig).toContain('"@iroha/iroha-js/smart-contract-deployment"');
+      expect(tsconfig).toContain(
+        '"node_modules/.cache/iroha-sdk-compat/active/smart-contract-deployment.d.ts"',
+      );
+    }
     expect(packageJson.scripts["install:release"]).toBe(
       "node scripts/install-iroha-js-release.mjs",
     );
@@ -175,8 +193,8 @@ describe("v2.0.1 governance release boundary", () => {
       expect(releaseWorkflow).toContain(`"${secureStorageExport}"`);
     }
     for (const fingerprint of [
-      "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90",
-      "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b",
+      "4ec93301681c32cc0d44c55939f6020a0c1a1aaa5ad24ff2723a7561873fbbf7",
+      "baa786c7b6a595ecea019be7ba98c8be1eba3b141ef1527af11cd121889674b5",
     ]) {
       expect(releaseWorkflow).toContain(fingerprint);
       expect(postinstallNativeCheck).toContain(fingerprint);

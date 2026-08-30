@@ -2,6 +2,7 @@
 /* global BigInt */
 
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import {
   chmod,
   link,
@@ -20,6 +21,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolveCompatibleIrohaSdkRoot } from "../scripts/iroha-sdk-compat.mjs";
 import {
   DEFAULT_SOLANA_LOADER_V3_FRESH_DEPLOY_RPC_URL,
   SOLANA_LOADER_V3_FRESH_DEPLOY_CONTEXT_SCHEMA,
@@ -61,6 +63,20 @@ const repoRoot = path.resolve(
 const operatorScript = path.join(
   repoRoot,
   "scripts/solana-loader-v3-fresh-deploy-operator.mjs",
+);
+const explicitlySelectedIrohaSdkRoot = String(
+  process.env.IROHA_JS_SDK_ROOT ?? "",
+).trim();
+const selectedIrohaSdkRoot = realpathSync(
+  explicitlySelectedIrohaSdkRoot ||
+    resolveCompatibleIrohaSdkRoot({
+      projectRoot: repoRoot,
+      log: () => {},
+    }),
+);
+const irohaSdkNodeRegister = path.join(
+  repoRoot,
+  "scripts/iroha-sdk-node-register.mjs",
 );
 const LOADER = new PublicKey(SOLANA_UPGRADEABLE_LOADER_ID);
 const FEATURE_OWNER = new PublicKey(SOLANA_FEATURE_PROGRAM_ID);
@@ -1262,11 +1278,20 @@ describe("Solana Loader-v3 fresh-deploy production operator", () => {
     const root = await makeRoot("spawn-cli");
     const { spawn } = await import("node:child_process");
     const result = await new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, [operatorScript, "--help", "x"], {
-        cwd: root,
-        env: { ...process.env, HOME: root, TMPDIR: root },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const child = spawn(
+        process.execPath,
+        ["--import", irohaSdkNodeRegister, operatorScript, "--help", "x"],
+        {
+          cwd: root,
+          env: {
+            ...process.env,
+            HOME: root,
+            TMPDIR: root,
+            IROHA_JS_NODE_SELECTED_SDK_ROOT: selectedIrohaSdkRoot,
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
       let stdout = "";
       let stderr = "";
       child.stdout.setEncoding("utf8");

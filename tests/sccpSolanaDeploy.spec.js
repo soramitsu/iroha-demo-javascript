@@ -8,6 +8,7 @@ import {
   existsSync,
   linkSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -24,6 +25,7 @@ import {
   Transaction,
 } from "@solana/web3.js";
 import { AccountAddress } from "@iroha/iroha-js/address";
+import { resolveCompatibleIrohaSdkRoot } from "../scripts/iroha-sdk-compat.mjs";
 import { solanaRouteManifestCanonicalSha256 } from "../scripts/e2e/sccp-solana-route-preflight.mjs";
 import {
   assertProductionSolanaManifest,
@@ -270,6 +272,32 @@ const blake2bHex32 = (bytes) =>
 
 const packageJson = () => JSON.parse(readFileSync("package.json", "utf8"));
 
+const explicitlySelectedIrohaSdkRoot = String(
+  process.env.IROHA_JS_SDK_ROOT ?? "",
+).trim();
+const selectedIrohaSdkRoot = realpathSync(
+  explicitlySelectedIrohaSdkRoot ||
+    resolveCompatibleIrohaSdkRoot({
+      projectRoot: process.cwd(),
+      log: () => {},
+    }),
+);
+const irohaSdkNodeRegister = path.resolve(
+  "scripts/iroha-sdk-node-register.mjs",
+);
+const spawnSelectedIrohaSdkNode = (executable, args, options = {}) => {
+  if (executable !== process.execPath) {
+    throw new Error("The selected Iroha SDK child must use process.execPath.");
+  }
+  return spawnSync(executable, ["--import", irohaSdkNodeRegister, ...args], {
+    ...options,
+    env: {
+      ...(options.env ?? process.env),
+      IROHA_JS_NODE_SELECTED_SDK_ROOT: selectedIrohaSdkRoot,
+    },
+  });
+};
+
 const dryRunFinishSubmissionMode = Object.freeze({
   mode: "dry-run",
   explicitlySelected: true,
@@ -444,7 +472,7 @@ describe("file-backed Solana key material production boundary", () => {
 
 describe("Solana program deployment CLI contract", () => {
   it("removes the retired shared/four-role mutation surface from the exact first-release workflow", () => {
-    const result = spawnSync(
+    const result = spawnSelectedIrohaSdkNode(
       process.execPath,
       ["scripts/sccp-solana-deploy.mjs", "--help"],
       {
@@ -506,7 +534,7 @@ describe("Solana program deployment CLI contract", () => {
     "route-canary",
     "destination-canary",
   ])("fails the retired %s orchestration closed before mutation", (command) => {
-    const result = spawnSync(
+    const result = spawnSelectedIrohaSdkNode(
       process.execPath,
       ["scripts/sccp-solana-deploy.mjs", command],
       {
@@ -1212,7 +1240,7 @@ describe("Solana runtime-only signer boundary", () => {
       "final-deploy",
       "finalize-solana-programs",
     ]) {
-      const result = spawnSync(
+      const result = spawnSelectedIrohaSdkNode(
         process.execPath,
         ["scripts/sccp-solana-deploy.mjs", command],
         { cwd: process.cwd(), encoding: "utf8" },
@@ -1293,7 +1321,7 @@ describe("Solana runtime-only signer boundary", () => {
   it("does not create output or echo a supplied signer path when mutation is attempted", () => {
     const outputDir = mkdtempSync(path.join(tmpdir(), "sccp-runtime-signer-"));
     const secretPath = path.join(outputDir, "operator-secret-keypair.json");
-    const result = spawnSync(
+    const result = spawnSelectedIrohaSdkNode(
       process.execPath,
       [
         "scripts/sccp-solana-deploy.mjs",
@@ -1327,7 +1355,7 @@ describe("Solana runtime-only signer boundary", () => {
     );
     const env = { ...process.env };
     delete env[DEFAULT_SOLANA_RUNTIME_SIGNER_ENV];
-    const result = spawnSync(
+    const result = spawnSelectedIrohaSdkNode(
       process.execPath,
       ["scripts/sccp-solana-deploy.mjs", "fund", "--output-dir", outputDir],
       { cwd: process.cwd(), encoding: "utf8", env },
@@ -1505,7 +1533,7 @@ describe("Solana route publication mutation boundary", () => {
       path.join(tmpdir(), "sccp-solana-cli-governance-"),
     );
     const paths = solanaDeployArtifactPaths({ "output-dir": outputDir });
-    const result = spawnSync(
+    const result = spawnSelectedIrohaSdkNode(
       process.execPath,
       [
         "scripts/sccp-solana-deploy.mjs",
@@ -1573,7 +1601,7 @@ describe("Solana route publication mutation boundary", () => {
       path.join(tmpdir(), "sccp-solana-preflight-override-"),
     );
     const paths = solanaDeployArtifactPaths({ "output-dir": outputDir });
-    const result = spawnSync(
+    const result = spawnSelectedIrohaSdkNode(
       process.execPath,
       [
         "scripts/sccp-solana-deploy.mjs",
@@ -1607,7 +1635,7 @@ describe("Solana route publication mutation boundary", () => {
       path.join(tmpdir(), "sccp-solana-skip-rpc-publish-"),
     );
     const paths = solanaDeployArtifactPaths({ "output-dir": outputDir });
-    const result = spawnSync(
+    const result = spawnSelectedIrohaSdkNode(
       process.execPath,
       [
         "scripts/sccp-solana-deploy.mjs",
@@ -1638,7 +1666,7 @@ describe("Solana route publication mutation boundary", () => {
       path.join(tmpdir(), "sccp-solana-missing-route-manifest-"),
     );
     const paths = solanaDeployArtifactPaths({ "output-dir": outputDir });
-    const result = spawnSync(
+    const result = spawnSelectedIrohaSdkNode(
       process.execPath,
       [
         "scripts/sccp-solana-deploy.mjs",
@@ -1678,7 +1706,7 @@ describe("Solana route publication mutation boundary", () => {
         },
       })}\n`,
     );
-    const result = spawnSync(
+    const result = spawnSelectedIrohaSdkNode(
       process.execPath,
       [
         "scripts/sccp-solana-deploy.mjs",
@@ -1963,7 +1991,7 @@ describe("Solana route publication mutation boundary", () => {
   });
 
   it("removes the unguarded legacy governance proposal mutation command", () => {
-    const result = spawnSync(
+    const result = spawnSelectedIrohaSdkNode(
       process.execPath,
       ["scripts/sccp-solana-deploy.mjs", "propose"],
       { cwd: process.cwd(), encoding: "utf8" },
@@ -17776,7 +17804,7 @@ offline_full_toml_sha256 = "${hex32("9c")}"
     expect(packageJson().scripts["sccp:solana:finish-production"]).toBe(
       "node scripts/sccp-solana-deploy.mjs finish-production",
     );
-    const help = spawnSync(
+    const help = spawnSelectedIrohaSdkNode(
       process.execPath,
       ["scripts/sccp-solana-deploy.mjs", "finish-production", "--help"],
       { cwd: process.cwd(), encoding: "utf8" },
@@ -17906,7 +17934,7 @@ offline_full_toml_sha256 = "${hex32("9c")}"
           root,
           `absent-${submitArgs.join("-") || "missing"}`,
         );
-        const result = spawnSync(
+        const result = spawnSelectedIrohaSdkNode(
           process.execPath,
           [
             "scripts/sccp-solana-deploy.mjs",
@@ -17962,7 +17990,7 @@ offline_full_toml_sha256 = "${hex32("9c")}"
         ["private-key-env", "SCCP_RETIRED_PRIVATE_KEY"],
       ]) {
         const outputDir = path.join(root, option);
-        const result = spawnSync(
+        const result = spawnSelectedIrohaSdkNode(
           process.execPath,
           [
             "scripts/sccp-solana-deploy.mjs",
@@ -18052,7 +18080,7 @@ offline_full_toml_sha256 = "${hex32("9c")}"
     try {
       for (const testCase of cases) {
         const outputDir = path.join(root, testCase.name);
-        const result = spawnSync(
+        const result = spawnSelectedIrohaSdkNode(
           process.execPath,
           [
             "scripts/sccp-solana-deploy.mjs",

@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import {
   chmod,
   lstat,
@@ -16,6 +17,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { resolveCompatibleIrohaSdkRoot } from "../scripts/iroha-sdk-compat.mjs";
 import { parseSolanaLocalSbfRuntimeArgs } from "../scripts/e2e/sccp-solana-local-sbf-runtime.mjs";
 import {
   parseSolanaExactInitializerArgs,
@@ -35,15 +37,36 @@ const scripts = Object.freeze({
   initialize: path.join(repoRoot, "scripts/sccp-solana-exact-initialize.mjs"),
   runtime: path.join(repoRoot, "scripts/e2e/sccp-solana-local-sbf-runtime.mjs"),
 });
+const explicitlySelectedIrohaSdkRoot = String(
+  process.env.IROHA_JS_SDK_ROOT ?? "",
+).trim();
+const selectedIrohaSdkRoot = realpathSync(
+  explicitlySelectedIrohaSdkRoot ||
+    resolveCompatibleIrohaSdkRoot({
+      projectRoot: repoRoot,
+      log: () => {},
+    }),
+);
+const irohaSdkNodeRegister = path.join(
+  repoRoot,
+  "scripts/iroha-sdk-node-register.mjs",
+);
 const hash = `0x${"51".repeat(32)}`;
 
 const runNode = (script, args, env) =>
   new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script, ...args], {
-      cwd: repoRoot,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const child = spawn(
+      process.execPath,
+      ["--import", irohaSdkNodeRegister, script, ...args],
+      {
+        cwd: repoRoot,
+        env: {
+          ...env,
+          IROHA_JS_NODE_SELECTED_SDK_ROOT: selectedIrohaSdkRoot,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");

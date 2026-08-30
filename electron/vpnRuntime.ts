@@ -791,7 +791,9 @@ export class VpnRuntime {
         {
           chainId,
           authority: accountId,
-          instructions: normalizeVpnTxInstructions(quote.txInstructions),
+          instructions: normalizeVpnTxInstructions([
+            quote.openLeaseInstruction,
+          ]),
           feePayment: buildAuthorityFeePaymentIntent(),
           privateKey,
           privateKeyAlgorithm: signingAlgorithm,
