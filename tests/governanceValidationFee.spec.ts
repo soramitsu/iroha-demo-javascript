@@ -17,11 +17,14 @@ import {
 import {
   CBSI_CORE_API_BASE_URL_ENV,
   CBSI_SBD_ASSET_DEFINITION_ID,
+  CBSI_XOR_ASSET_DEFINITION_ID,
   fetchGovernanceValidationFeePolicy as fetchGovernanceValidationFeePolicyWithoutDurableGuard,
   GOVERNANCE_VALIDATION_FEE_CONFIG_ENV,
   readCbsiCoreApiBaseUrl,
   readGovernanceValidationFeeConfig,
   TAIRA_CHAIN_ID,
+  VALIDATION_FEE_PAYOUT_CONTRACT_ADDRESS,
+  VALIDATION_FEE_PAYOUT_CONTRACT_SUBJECT_ACCOUNT_ID,
 } from "../electron/governanceValidationFee";
 import {
   GovernanceValidationFeeFinalityStore,
@@ -39,7 +42,7 @@ const policyHash = irohaHash("99");
 const genesisHash = irohaHash("11");
 const checkpointContext = irohaHash("33");
 const lifecycleSeal = irohaHash("ab");
-const treasury = "sorau-treasury";
+const treasury = VALIDATION_FEE_PAYOUT_CONTRACT_SUBJECT_ACCOUNT_ID;
 const vault = "sorau-vault";
 const recipients = [
   "sorau-validator-1",
@@ -123,12 +126,11 @@ const enabledConfigJson = () => ({
       payoutLifecycleSealHash: lifecycleSeal,
     },
     payout: {
-      contractAddress:
-        "tairac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9ggff82m7",
+      contractAddress: VALIDATION_FEE_PAYOUT_CONTRACT_ADDRESS,
       codeHash: plainHash("aa"),
       entrypoint: "autonomous_validation_fee_tick",
       sbdAssetDefinitionId: CBSI_SBD_ASSET_DEFINITION_ID,
-      xorAssetDefinitionId: "62Fk4FPcMuLvW5QjDGNF2a4jAmjM",
+      xorAssetDefinitionId: CBSI_XOR_ASSET_DEFINITION_ID,
       treasuryAccountId: treasury,
       vaultAccountId: vault,
       batchSbdMinorUnits: "1000",
@@ -426,6 +428,26 @@ describe("governance validation-fee runtime config", () => {
     expect(() =>
       readGovernanceValidationFeeConfig(JSON.stringify(wrongPlainRules)),
     ).toThrow(/exact first-release PLAIN/);
+
+    const retiredContractAddress = enabledConfigJson();
+    retiredContractAddress.expected.payout.contractAddress =
+      "tairac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9ggff82m7";
+    expect(() =>
+      readGovernanceValidationFeeConfig(JSON.stringify(retiredContractAddress)),
+    ).toThrow(/first-release payout contract/);
+
+    const wrongContractSubject = enabledConfigJson();
+    wrongContractSubject.expected.payout.treasuryAccountId = "sorau-treasury";
+    expect(() =>
+      readGovernanceValidationFeeConfig(JSON.stringify(wrongContractSubject)),
+    ).toThrow(/first-release payout contract/);
+
+    const genericXorFixture = enabledConfigJson();
+    genericXorFixture.expected.payout.xorAssetDefinitionId =
+      "62Fk4FPcMuLvW5QjDGNF2a4jAmjM";
+    expect(() =>
+      readGovernanceValidationFeeConfig(JSON.stringify(genericXorFixture)),
+    ).toThrow(/first-release payout contract/);
 
     const maximumWidthTally = enabledConfigJson();
     const maximumU128 = ((1n << 128n) - 1n).toString();
@@ -794,11 +816,8 @@ describe("governance validation-fee Core projection", () => {
     ).rejects.toThrow(/enact strictly later/);
 
     const mismatched = projection();
-    mismatched.policy.treasury_account_id = "sorau-other-treasury";
-    mismatched.policy.treasury_payout_binding.treasury_account_id =
-      "sorau-other-treasury";
-    mismatched.policy.treasury_payout_binding.contract_subject_account_id =
-      "sorau-other-treasury";
+    mismatched.policy.treasury_payout_binding.pool_vault_account_id =
+      "sorau-other-vault";
     await expect(
       fetchGovernanceValidationFeePolicy({
         config,

@@ -36,10 +36,9 @@ const KAIGI_MEETING_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
 const VERIFIER_BACKENDS = new Set<ToriiVerifierBackendLabelV1>([
   "halo2/ipa",
-  "halo2/pasta/kaigi-roster-v1",
+  "halo2/pasta/kaigi-authorization-v1",
   "halo2/pasta/kaigi-usage-v1",
   "halo2/pasta/ivm-execution-v1",
-  "halo2/pasta/kagemusha-topup-shield-merkle16-axiom-poseidon-v3",
   "halo2/pasta/confidential-transfer-2x2-merkle16-axiom-poseidon-v3",
   "halo2/pasta/confidential-unshield-full-merkle16-axiom-poseidon-v3",
   "halo2/pasta/confidential-unshield-change-merkle16-axiom-poseidon-v4",

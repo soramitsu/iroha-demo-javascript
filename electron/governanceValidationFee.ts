@@ -10,6 +10,11 @@ export const CBSI_CORE_API_BASE_URL_ENV = "CBSI_CORE_API_BASE_URL";
 
 export const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 export const CBSI_SBD_ASSET_DEFINITION_ID = "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
+export const CBSI_XOR_ASSET_DEFINITION_ID = "5dHF5UNffENuEg9mhjYwY1jcZ1K5";
+export const VALIDATION_FEE_PAYOUT_CONTRACT_ADDRESS =
+  "irohac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9gg4yxgjw";
+export const VALIDATION_FEE_PAYOUT_CONTRACT_SUBJECT_ACCOUNT_ID =
+  "sorauﾛ1PZﾗidｱJJHofｸXNｵｿcﾐﾃgﾀﾔzBYﾜcﾈｦfｶxKfﾁｼ1pG871VMK";
 export const VALIDATION_FEE_ACTIVATION_DELAY_BLOCKS = 120_960;
 const VALIDATION_FEE_PLAIN_MIN_TURNOUT = "1";
 const VALIDATION_FEE_PLAIN_APPROVAL_THRESHOLD_NUMERATOR = "1";
@@ -27,8 +32,9 @@ const U64_MAX = (1n << 64n) - 1n;
 const MAX_VALIDATION_FEE_CONFIG_BYTES = 1024 * 1024;
 const MAX_VALIDATION_FEE_CORE_RESPONSE_BYTES = 4 * 1024 * 1024;
 const NONZERO_LOWER_HASH_32 = /^[0-9a-f]{64}$/u;
-const CONTRACT_ADDRESS =
-  /^(?:sorac|tairac|c[0-9a-f]+)1[023456789acdefghjklmnpqrstuvwxyz]{20,128}$/u;
+
+const isReviewedPayoutContractAddress = (value: string): boolean =>
+  value === VALIDATION_FEE_PAYOUT_CONTRACT_ADDRESS;
 
 type ValidationFeeProposalKind =
   | "ValidationFeePolicyV1"
@@ -694,9 +700,12 @@ function parseConfigPayout(
     `${label}.contractAddress`,
   );
   if (
-    !CONTRACT_ADDRESS.test(contractAddress) ||
+    !isReviewedPayoutContractAddress(contractAddress) ||
     raw.entrypoint !== PAYOUT_ENTRYPOINT ||
     raw.sbdAssetDefinitionId !== CBSI_SBD_ASSET_DEFINITION_ID ||
+    raw.xorAssetDefinitionId !== CBSI_XOR_ASSET_DEFINITION_ID ||
+    raw.treasuryAccountId !==
+      VALIDATION_FEE_PAYOUT_CONTRACT_SUBJECT_ACCOUNT_ID ||
     raw.batchSbdMinorUnits !== "1000" ||
     raw.sbdScale !== 2 ||
     raw.xorOutputMin !== "4" ||
@@ -907,9 +916,14 @@ function parseProjectionPayout(
     "projection payout contract",
   );
   if (
-    !CONTRACT_ADDRESS.test(contractAddress) ||
+    !isReviewedPayoutContractAddress(contractAddress) ||
     raw.entrypoint !== PAYOUT_ENTRYPOINT ||
     raw.sbd_asset_id !== CBSI_SBD_ASSET_DEFINITION_ID ||
+    raw.xor_asset_id !== CBSI_XOR_ASSET_DEFINITION_ID ||
+    raw.contract_subject_account_id !==
+      VALIDATION_FEE_PAYOUT_CONTRACT_SUBJECT_ACCOUNT_ID ||
+    raw.treasury_account_id !==
+      VALIDATION_FEE_PAYOUT_CONTRACT_SUBJECT_ACCOUNT_ID ||
     raw.batch_sbd !== "10" ||
     raw.min_xor_out !== "4" ||
     raw.max_xor_out !== "100" ||

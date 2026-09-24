@@ -58,4 +58,32 @@ describe("current live surface contract", () => {
     expect(transferSource).not.toContain("positiveBalanceMatches");
     expect(transferSource).not.toContain("containsMatches");
   });
+
+  it("exposes only transparent transfers and read-only confidential balances", () => {
+    const source = preloadSource();
+    const transferStart = source.indexOf("async transferAsset(rendererInput)");
+    const transferEnd = source.indexOf(
+      "setIrohaConnectContext(input)",
+      transferStart,
+    );
+    const transferSource = source.slice(transferStart, transferEnd);
+    const endpointGuard = transferSource.indexOf(
+      "assertWriteConnectionMatchesEndpoint({",
+    );
+    const signingMaterial = transferSource.indexOf(
+      "await resolveSigningMaterial({",
+    );
+
+    expect(transferStart).toBeGreaterThanOrEqual(0);
+    expect(source).not.toContain("buildShieldInstruction");
+    expect(source).not.toContain("buildZkTransferInstruction");
+    expect(source).not.toContain("buildUnshieldInstruction");
+    expect(source).not.toContain("getConfidentialTransferExecutionContext");
+    expect(source).not.toContain("resolveConfidentialTransferMaterials");
+    expect(transferSource).not.toContain("input.shielded");
+    expect(transferSource).not.toContain("input.unshield");
+    expect(endpointGuard).toBeGreaterThanOrEqual(0);
+    expect(signingMaterial).toBeGreaterThan(endpointGuard);
+    expect(source).toContain("getConfidentialAssetBalance(input) {");
+  });
 });
