@@ -16,9 +16,19 @@ import {
 } from "@/i18n/messages";
 import { isHistoricalTechnicalToken } from "@/i18n/ancientTranslations";
 import { QUIET_SAKURA_TRANSLATION_KEYS } from "@/i18n/quietSakuraTranslations";
-import { useLocaleStore } from "@/stores/locale";
+import {
+  LOCALE_SCHEMA,
+  LOCALE_STORAGE_KEY,
+  LOCALE_VERSION,
+  useLocaleStore,
+} from "@/stores/locale";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { SUBSCRIPTION_I18N_KEYS } from "@/utils/subscriptions";
+
+const isDormantFirstReleaseSource = (filePath: string): boolean =>
+  /(?:^|[\\/])(?:views[\\/]SccpView\.vue|composables[\\/]use(?:Bsc|Sccp|Solana|Ton|Tron)\w*\.ts|types[\\/]sccpDormant\.ts)$/iu.test(
+    filePath,
+  );
 
 const collectTranslationKeys = (): string[] => {
   const sourceRoot = path.resolve(process.cwd(), "src");
@@ -34,6 +44,9 @@ const collectTranslationKeys = (): string[] => {
         continue;
       }
       if (!sourceExtensions.has(path.extname(filePath))) {
+        continue;
+      }
+      if (isDormantFirstReleaseSource(filePath)) {
         continue;
       }
       if (filePath.includes(`${path.sep}i18n${path.sep}`)) {
@@ -72,6 +85,9 @@ const collectHardcodedPlaceholders = (): Array<{
         continue;
       }
       if (path.extname(filePath) !== ".vue") {
+        continue;
+      }
+      if (isDormantFirstReleaseSource(filePath)) {
         continue;
       }
       const content = fs.readFileSync(filePath, "utf8");
@@ -150,12 +166,9 @@ describe("i18n messages", () => {
         "Canonical I105 account IDs are compact literals and may look like 6cmz..., not i105:.",
       ),
     ).toContain("testu...");
-    expect(
-      translate(
-        "ko-KR",
-        "referendumId is required before submitting a ballot.",
-      ),
-    ).toContain("referendumId");
+    expect(translate("ko-KR", "Private ballot protocol")).toBe(
+      "Private ballot protocol",
+    );
   });
 
   it("overrides broken TAIRA chrome strings in manual locale tables", () => {
@@ -442,6 +455,13 @@ describe("i18n messages", () => {
 });
 
 describe("locale store", () => {
+  const savedLocale = (locale: string) =>
+    JSON.stringify({
+      schema: LOCALE_SCHEMA,
+      version: LOCALE_VERSION,
+      locale,
+    });
+
   beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
@@ -450,7 +470,7 @@ describe("locale store", () => {
   });
 
   it("hydrates locale from storage and applies html lang attribute", () => {
-    localStorage.setItem("iroha-demo:locale", "ja-JP");
+    localStorage.setItem(LOCALE_STORAGE_KEY, savedLocale("ja-JP"));
 
     const store = useLocaleStore();
     store.hydrate();
@@ -460,8 +480,8 @@ describe("locale store", () => {
     expect(document.documentElement.getAttribute("dir")).toBe("ltr");
   });
 
-  it("falls back to default locale when storage is invalid", () => {
-    localStorage.setItem("iroha-demo:locale", "xx-YY");
+  it("rejects the former raw-string format without migrating its value", () => {
+    localStorage.setItem(LOCALE_STORAGE_KEY, "ja-JP");
 
     const store = useLocaleStore();
     store.hydrate();
@@ -469,6 +489,50 @@ describe("locale store", () => {
     expect(store.current).toBe(DEFAULT_LOCALE);
     expect(document.documentElement.getAttribute("lang")).toBe(DEFAULT_LOCALE);
     expect(document.documentElement.getAttribute("dir")).toBe("ltr");
+    expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe(
+      savedLocale(DEFAULT_LOCALE),
+    );
+  });
+
+  it.each([
+    [
+      "unknown field",
+      { schema: LOCALE_SCHEMA, version: 1, locale: "ja-JP", extra: true },
+    ],
+    ["missing field", { schema: LOCALE_SCHEMA, version: 1 }],
+    ["wrong schema", { schema: "legacy-locale", version: 1, locale: "ja-JP" }],
+    ["wrong version", { schema: LOCALE_SCHEMA, version: 2, locale: "ja-JP" }],
+    ["unknown value", { schema: LOCALE_SCHEMA, version: 1, locale: "xx-YY" }],
+  ])("rejects an exact-schema violation: %s", (_label, payload) => {
+    localStorage.setItem(LOCALE_STORAGE_KEY, JSON.stringify(payload));
+
+    const store = useLocaleStore();
+    store.hydrate();
+
+    expect(store.current).toBe(DEFAULT_LOCALE);
+    expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe(
+      savedLocale(DEFAULT_LOCALE),
+    );
+  });
+
+  it("rejects duplicate fields and oversized payloads", () => {
+    localStorage.setItem(
+      LOCALE_STORAGE_KEY,
+      `{"schema":"${LOCALE_SCHEMA}","version":1,"locale":"ja-JP","locale":"de-DE"}`,
+    );
+
+    let store = useLocaleStore();
+    store.hydrate();
+    expect(store.current).toBe(DEFAULT_LOCALE);
+
+    setActivePinia(createPinia());
+    localStorage.setItem(LOCALE_STORAGE_KEY, " ".repeat(1_025));
+    store = useLocaleStore();
+    store.hydrate();
+    expect(store.current).toBe(DEFAULT_LOCALE);
+    expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe(
+      savedLocale(DEFAULT_LOCALE),
+    );
   });
 
   it("applies rtl direction for hebrew locale", () => {
@@ -487,6 +551,17 @@ describe("locale store", () => {
     expect(store.current).toBe("ur-PK");
     expect(document.documentElement.getAttribute("lang")).toBe("ur-PK");
     expect(document.documentElement.getAttribute("dir")).toBe("rtl");
+  });
+
+  it("rejects unsupported runtime locales before persisting", () => {
+    const store = useLocaleStore();
+    store.hydrate();
+    const before = localStorage.getItem(LOCALE_STORAGE_KEY);
+
+    expect(() => store.setLocale("xx-YY" as never)).toThrow(
+      "Unsupported locale.",
+    );
+    expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe(before);
   });
 
   it("exposes composable helpers bound to the active locale", () => {

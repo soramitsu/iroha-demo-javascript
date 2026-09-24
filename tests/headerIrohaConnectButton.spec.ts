@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import HeaderIrohaConnectButton from "@/components/HeaderIrohaConnectButton.vue";
+import { AccountAddress } from "@iroha/iroha-js/address";
+import { NetworkId } from "@iroha/iroha-js/browser";
+import { createConnectSessionPreview } from "@iroha/iroha-js/connect-browser";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
@@ -18,19 +21,65 @@ import {
   encodeControlConnectFrame,
   encodeServerEventConnectFrame,
   encryptConnectEnvelope,
-  generateWalletConnectKeyPair,
+  generateConnectWalletKeyPair,
   hexToBytes,
   type ConnectPermissions,
 } from "@/utils/soraswapConnectWire";
+import { TAIRA_NETWORK_ID } from "@/utils/firstReleaseNetworkIdentity";
 
 const CONTRACT_CALL_SIGN_SCHEMA =
   "uranai.irohaconnect.contract-call-signature.v1";
 const RAW_DOMAIN = "example:signing:v1";
-const EXAMPLE_ACCOUNT_ID = "testu1connected";
-const SECOND_ACCOUNT_ID = "testu1switched";
-const VALID_CONNECT_SID = Buffer.from(new Uint8Array(32).fill(0xce)).toString(
-  "base64url",
+const EXAMPLE_ACCOUNT_ID = AccountAddress.fromAccount({
+  publicKey: Uint8Array.from(
+    Buffer.from(
+      "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "hex",
+    ),
+  ),
+}).toI105(TAIRA_CHAIN_PRESET.connection.networkPrefix);
+const SECOND_ACCOUNT_ID = AccountAddress.fromAccount({
+  publicKey: Uint8Array.from(
+    Buffer.from(
+      "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+      "hex",
+    ),
+  ),
+}).toI105(TAIRA_CHAIN_PRESET.connection.networkPrefix);
+const CONNECT_APP_KEY_PAIR = generateConnectWalletKeyPair();
+const CONNECT_NONCE = new Uint8Array(16).fill(0x42);
+const CONNECT_NETWORK_ID = NetworkId.parse(TAIRA_NETWORK_ID);
+const CONNECT_PREVIEW = createConnectSessionPreview({
+  networkId: CONNECT_NETWORK_ID,
+  node: TAIRA_CHAIN_PRESET.connection.toriiUrl,
+  nonce: CONNECT_NONCE,
+  appKeyPair: {
+    publicKey: hexToBytes(CONNECT_APP_KEY_PAIR.publicKeyHex),
+    privateKey: hexToBytes(CONNECT_APP_KEY_PAIR.privateKeyHex),
+  },
+});
+const VALID_CONNECT_SID = CONNECT_PREVIEW.sidBase64Url;
+const VALID_WALLET_TOKEN = Buffer.alloc(32, 0xa1).toString("base64url");
+const VALID_RELAY_TOKEN = Buffer.alloc(32, 0xa2).toString("base64url");
+const VALID_CONNECT_WALLET_URI = `${CONNECT_PREVIEW.walletUri}&token=${VALID_WALLET_TOKEN}&relay=${VALID_RELAY_TOKEN}`;
+const FOREIGN_NETWORK_ID = NetworkId.fromBytes(
+  Uint8Array.from({ length: 32 }, (_, index) => (index === 31 ? 0x13 : 0x11)),
 );
+const buildConnectWalletUri = (input: {
+  networkId?: NetworkId;
+  node?: string;
+}) => {
+  const preview = createConnectSessionPreview({
+    networkId: input.networkId ?? CONNECT_NETWORK_ID,
+    node: input.node ?? TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    nonce: CONNECT_NONCE,
+    appKeyPair: {
+      publicKey: hexToBytes(CONNECT_APP_KEY_PAIR.publicKeyHex),
+      privateKey: hexToBytes(CONNECT_APP_KEY_PAIR.privateKeyHex),
+    },
+  });
+  return `${preview.walletUri}&token=${VALID_WALLET_TOKEN}&relay=${VALID_RELAY_TOKEN}`;
+};
 const signIrohaConnectMessageMock = vi.fn();
 const inspectEndpointMock = vi.fn();
 let testIrohaConnectBoundary: IrohaConnectBoundary;
@@ -228,13 +277,16 @@ describe("HeaderIrohaConnectButton", () => {
     vi.unstubAllGlobals();
   });
 
-  const mountComponent = () => {
+  const mountComponent = (
+    connection: Partial<(typeof TAIRA_CHAIN_PRESET)["connection"]> = {},
+  ) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
     session.$patch({
       connection: {
         ...TAIRA_CHAIN_PRESET.connection,
+        ...connection,
       },
       accounts: [
         {
@@ -242,7 +294,6 @@ describe("HeaderIrohaConnectButton", () => {
           domain: "wonderland",
           accountId: EXAMPLE_ACCOUNT_ID,
           publicKeyHex: "ab".repeat(32),
-          privateKeyHex: "",
           hasStoredSecret: true,
           localOnly: false,
         },
@@ -362,14 +413,8 @@ describe("HeaderIrohaConnectButton", () => {
       resources: [RAW_DOMAIN],
     },
   ) => {
-    const relayNode = TAIRA_CHAIN_PRESET.connection.toriiUrl;
-    const walletToken = "wallet-token-1";
-    const appKeyPair = generateWalletConnectKeyPair();
-    await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
-        relayNode,
-      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=${encodeURIComponent(walletToken)}&relay=relay-token-1`,
-    );
+    const walletToken = VALID_WALLET_TOKEN;
+    await scanConnectQr(VALID_CONNECT_WALLET_URI);
 
     expect(FakeWebSocket.instances).toHaveLength(0);
     expect(getOpenDialog()).not.toBeNull();
@@ -398,9 +443,9 @@ describe("HeaderIrohaConnectButton", () => {
         seq: 1,
         control: {
           type: "open",
-          appPublicKeyHex: appKeyPair.publicKeyHex,
+          appPublicKeyHex: CONNECT_APP_KEY_PAIR.publicKeyHex,
           constraints: {
-            chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+            networkId: TAIRA_NETWORK_ID,
           },
           appMeta: null,
           permissions,
@@ -418,8 +463,8 @@ describe("HeaderIrohaConnectButton", () => {
         sid: VALID_CONNECT_SID,
         sidBytesHex: "",
         nonceHex: "",
-        privateKeyHex: appKeyPair.privateKeyHex,
-        publicKeyHex: appKeyPair.publicKeyHex,
+        privateKeyHex: CONNECT_APP_KEY_PAIR.privateKeyHex,
+        publicKeyHex: CONNECT_APP_KEY_PAIR.publicKeyHex,
         walletUri: "",
         appUri: "",
         wsUrl: "",
@@ -448,11 +493,7 @@ describe("HeaderIrohaConnectButton", () => {
 
   it("closes when the first app frame is not Open sequence 1", async () => {
     const wrapper = mountComponent();
-    await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
-        TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      )}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-    );
+    await scanConnectQr(VALID_CONNECT_WALLET_URI);
     getDialogButtonByText(t("Approve connection")).click();
     await flushPromises();
     const socket = FakeWebSocket.instances[0];
@@ -506,17 +547,13 @@ describe("HeaderIrohaConnectButton", () => {
       }),
     );
     mountComponent();
-    await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
-        TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-    );
+    await scanConnectQr(VALID_CONNECT_WALLET_URI);
     getDialogButtonByText(t("Approve connection")).click();
     await flushPromises();
     const socket = FakeWebSocket.instances[0];
     socket.emit("open");
-    const firstAppKey = generateWalletConnectKeyPair();
-    const secondAppKey = generateWalletConnectKeyPair();
+    const firstAppKey = CONNECT_APP_KEY_PAIR;
+    const secondAppKey = generateConnectWalletKeyPair();
     for (const [index, appKey] of [firstAppKey, secondAppKey].entries()) {
       emitBinaryMessage(
         socket,
@@ -528,7 +565,7 @@ describe("HeaderIrohaConnectButton", () => {
             type: "open",
             appPublicKeyHex: appKey.publicKeyHex,
             constraints: {
-              chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+              networkId: TAIRA_NETWORK_ID,
             },
             appMeta: null,
             permissions: {
@@ -558,39 +595,29 @@ describe("HeaderIrohaConnectButton", () => {
 
   it.each([
     {
-      label: "chain",
-      chainId: "different-chain",
-      node: TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
+      label: "NetworkId",
+      uri: buildConnectWalletUri({ networkId: FOREIGN_NETWORK_ID }),
+      connection: {},
+      error: "different NetworkId",
     },
     {
       label: "endpoint",
-      chainId: TAIRA_CHAIN_PRESET.connection.chainId,
-      node: "https://other.example",
-      networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
-    },
-    {
-      label: "network prefix",
-      chainId: TAIRA_CHAIN_PRESET.connection.chainId,
-      node: TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      networkPrefix: 753,
+      uri: buildConnectWalletUri({ node: "https://other.example" }),
+      connection: {},
+      error: "different endpoint",
     },
   ])(
     "rejects a pairing QR for a different $label before opening its relay",
-    async ({ chainId, node, networkPrefix }) => {
-      const wrapper = mountComponent();
-      await scanConnectQr(
-        `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${chainId}&node=${encodeURIComponent(
-          node,
-        )}&network_prefix=${networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-      );
+    async ({ uri, connection, error }) => {
+      const wrapper = mountComponent(connection);
+      await scanConnectQr(uri);
 
       getDialogButtonByText(t("Approve connection")).click();
       await flushPromises();
 
       expect(FakeWebSocket.instances).toHaveLength(0);
       expect(signIrohaConnectMessageMock).not.toHaveBeenCalled();
-      expect(wrapper.text()).toContain("different");
+      expect(wrapper.text()).toContain(error);
     },
   );
 
@@ -607,11 +634,7 @@ describe("HeaderIrohaConnectButton", () => {
         message: "Endpoint identity does not match the active wallet network.",
       },
     });
-    await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
-        TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      )}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-    );
+    await scanConnectQr(VALID_CONNECT_WALLET_URI);
 
     getDialogButtonByText(t("Approve connection")).click();
     await flushPromises();
@@ -622,14 +645,10 @@ describe("HeaderIrohaConnectButton", () => {
     expect(wrapper.text()).toContain("does not match");
   });
 
-  it("rejects a relay open frame for another chain before generating a wallet key or signing", async () => {
+  it("rejects a relay Open frame for another NetworkId before generating a wallet key or signing", async () => {
     const wrapper = mountComponent();
     const randomValuesSpy = vi.spyOn(globalThis.crypto, "getRandomValues");
-    await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
-        TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-    );
+    await scanConnectQr(VALID_CONNECT_WALLET_URI);
 
     getDialogButtonByText(t("Approve connection")).click();
     await flushPromises();
@@ -645,9 +664,9 @@ describe("HeaderIrohaConnectButton", () => {
         seq: 1,
         control: {
           type: "open",
-          appPublicKeyHex: "ab".repeat(32),
+          appPublicKeyHex: CONNECT_APP_KEY_PAIR.publicKeyHex,
           constraints: {
-            chainId: "different-chain",
+            networkId: FOREIGN_NETWORK_ID.toString(),
           },
           appMeta: null,
           permissions: {
@@ -663,7 +682,7 @@ describe("HeaderIrohaConnectButton", () => {
     expect(randomValuesSpy).not.toHaveBeenCalled();
     expect(signIrohaConnectMessageMock).not.toHaveBeenCalled();
     expect(socket.sent).toHaveLength(0);
-    expect(wrapper.text()).toContain("different chain");
+    expect(wrapper.text()).toContain("does not match the scanned session");
     randomValuesSpy.mockRestore();
   });
 
@@ -677,9 +696,7 @@ describe("HeaderIrohaConnectButton", () => {
     scanButton.focus();
     expect(document.activeElement).toBe(scanButton);
 
-    await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-    );
+    await scanConnectQr(VALID_CONNECT_WALLET_URI);
 
     const dialog = getOpenDialog();
     expect(dialog).not.toBeNull();
@@ -1036,7 +1053,6 @@ describe("HeaderIrohaConnectButton", () => {
           domain: "wonderland",
           accountId: SECOND_ACCOUNT_ID,
           publicKeyHex: "cd".repeat(32),
-          privateKeyHex: "",
           hasStoredSecret: true,
           localOnly: false,
         },

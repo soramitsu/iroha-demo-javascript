@@ -11,8 +11,7 @@ import { parseJsonWithoutDuplicateObjectKeys } from "@/utils/json";
 import { isSecretLikeTextValue } from "@/utils/secretLike";
 import { snapshotSccpJsonDataValue } from "@/utils/sccpDataSnapshot";
 
-const LEGACY_STORAGE_KEY = "iroha-demo:sccp:bsc-walletconnect";
-const STORAGE_KEY = `${LEGACY_STORAGE_KEY}:${SCCP_BSC_NETWORK.caipChainId.replace(
+const STORAGE_KEY = `iroha-demo:sccp:bsc-walletconnect:${SCCP_BSC_NETWORK.caipChainId.replace(
   /[^a-z0-9_-]/giu,
   "-",
 )}`;
@@ -471,13 +470,7 @@ export const isFreshBscWalletConnectSessionTimestamp = (
 
 export const readStoredBscWalletConnectSession =
   (): WalletConnectSessionSnapshot | null => {
-    const stored =
-      localStorage.getItem(STORAGE_KEY) ??
-      localStorage.getItem(LEGACY_STORAGE_KEY);
-    const storedKey =
-      localStorage.getItem(STORAGE_KEY) === stored
-        ? STORAGE_KEY
-        : LEGACY_STORAGE_KEY;
+    const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) {
       return null;
     }
@@ -487,15 +480,15 @@ export const readStoredBscWalletConnectSession =
         "Stored BSC WalletConnect session",
       ) as WalletConnectSessionSnapshot | null;
       if (parsed === null) {
-        localStorage.removeItem(storedKey);
+        localStorage.removeItem(STORAGE_KEY);
         return null;
       }
       if (!isStoredWalletConnectSessionRecord(parsed)) {
-        localStorage.removeItem(storedKey);
+        localStorage.removeItem(STORAGE_KEY);
         return null;
       }
       if (!parsed?.address) {
-        localStorage.removeItem(storedKey);
+        localStorage.removeItem(STORAGE_KEY);
         return null;
       }
       if (
@@ -503,12 +496,12 @@ export const readStoredBscWalletConnectSession =
         parsed.namespace !== BSC_WALLETCONNECT_NAMESPACE ||
         parsed.methodVersion !== "eip155-v1"
       ) {
-        localStorage.removeItem(storedKey);
+        localStorage.removeItem(STORAGE_KEY);
         return null;
       }
       const connectedAtMs = Number(parsed.connectedAtMs);
       if (!isFreshBscWalletConnectSessionTimestamp(connectedAtMs)) {
-        localStorage.removeItem(storedKey);
+        localStorage.removeItem(STORAGE_KEY);
         return null;
       }
       const snapshot = bscWalletConnectSessionFromAddress(
@@ -517,10 +510,9 @@ export const readStoredBscWalletConnectSession =
       );
       snapshot.connectedAtMs = connectedAtMs;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-      localStorage.removeItem(LEGACY_STORAGE_KEY);
       return snapshot;
     } catch (_error) {
-      localStorage.removeItem(storedKey);
+      localStorage.removeItem(STORAGE_KEY);
       return null;
     }
   };
@@ -530,12 +522,10 @@ export const writeStoredBscWalletConnectSession = (
 ): void => {
   if (!snapshot) {
     localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(LEGACY_STORAGE_KEY);
     return;
   }
   if (!isFreshBscWalletConnectSessionTimestamp(snapshot.connectedAtMs)) {
     localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(LEGACY_STORAGE_KEY);
     return;
   }
   if (
@@ -544,11 +534,9 @@ export const writeStoredBscWalletConnectSession = (
     snapshot.methodVersion !== "eip155-v1"
   ) {
     localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(LEGACY_STORAGE_KEY);
     return;
   }
   try {
-    localStorage.removeItem(LEGACY_STORAGE_KEY);
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
@@ -562,7 +550,6 @@ export const writeStoredBscWalletConnectSession = (
     );
   } catch (_error) {
     localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(LEGACY_STORAGE_KEY);
   }
 };
 

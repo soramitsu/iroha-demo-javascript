@@ -288,11 +288,6 @@ const endpointFeatureRows = computed(() => {
       supported: features.faucetClaim.supported,
     },
     {
-      key: "confidentialTransfers",
-      label: t("Confidential transfers"),
-      supported: features.confidentialTransfers.supported,
-    },
-    {
       key: "kaigiMeetings",
       label: t("Kaigi meetings"),
       supported: features.kaigiMeetings.supported,
@@ -313,9 +308,9 @@ const endpointFeatureRows = computed(() => {
       supported: features.subscriptionWrites.supported,
     },
     {
-      key: "soraCloudDeploy",
-      label: t("SoraCloud deployment"),
-      supported: features.soraCloudDeploy.supported,
+      key: "soraCloudHfSharedLease",
+      label: t("SoraCloud HF shared lease"),
+      supported: features.soraCloudHfSharedLease.supported,
     },
     {
       key: "vpnSessions",
@@ -326,11 +321,6 @@ const endpointFeatureRows = computed(() => {
       key: "irohaConnectSessions",
       label: t("IrohaConnect sessions"),
       supported: features.irohaConnectSessions.supported,
-    },
-    {
-      key: "zkProofJobs",
-      label: t("ZK proof jobs"),
-      supported: features.zkProofJobs.supported,
     },
   ];
 });

@@ -15,6 +15,9 @@ const disconnectVpnMock = vi.fn();
 const listVpnReceiptsMock = vi.fn();
 const repairVpnMock = vi.fn();
 
+const VPN_ACCOUNT_ID = "testuAliceRealI105AccountId";
+const VPN_SESSION_ID = "77".repeat(16);
+
 vi.mock("@/services/iroha", () => ({
   getVpnAvailability: (input: unknown) => getVpnAvailabilityMock(input),
   getVpnProfile: (input: unknown) => getVpnProfileMock(input),
@@ -62,6 +65,18 @@ const defaultProfile = {
   tunnelAddresses: ["10.208.0.2/32"],
   mtuBytes: 1280,
   displayBillingLabel: "standard · soranet.vpn.standard",
+  operatorAccountId: "operator@wonderland",
+  leaseFee: "25",
+  settlementGraceSecs: 120,
+  flowLabelBits: 24 as const,
+  paddingBudgetMs: 80,
+  relayIdHex: "11".repeat(32),
+  relayMldsa65PublicKeyHex: "22".repeat(1_952),
+  descriptorCommitHex: "33".repeat(32),
+  tlsServerName: "relay.example",
+  relayTlsSpkiSha256Hex: "44".repeat(32),
+  relayCertificateSha256Hex: "55".repeat(32),
+  directorySnapshotDigestHex: "66".repeat(32),
 };
 
 const idleStatus = {
@@ -95,8 +110,8 @@ const idleStatus = {
 };
 
 const canonicalReceipt = {
-  sessionId: "sess_1",
-  accountId: "alice@wonderland",
+  sessionId: VPN_SESSION_ID,
+  accountId: VPN_ACCOUNT_ID,
   exitClass: "standard" as const,
   relayEndpoint: defaultProfile.relayEndpoint,
   meterFamily: defaultProfile.meterFamily,
@@ -107,6 +122,16 @@ const canonicalReceipt = {
   bytesOut: 0,
   status: "disconnected",
   receiptSource: "torii" as const,
+  quoteId: "88".repeat(32),
+  paymentTxHash: "99".repeat(32),
+  feeAssetId: "xor#universal.universal",
+  escrowAccountId: "vpn-escrow@wonderland",
+  operatorAccountId: "operator@wonderland",
+  leaseFee: "25",
+  earnedFee: "10",
+  refundedFee: "15",
+  leaseIdHex: "aa".repeat(32),
+  settleLeaseInstruction: null,
 };
 
 const VpnViewHarness = defineComponent({
@@ -137,7 +162,7 @@ describe("VpnView", () => {
     connectVpnMock.mockReset().mockResolvedValue({
       ...idleStatus,
       state: "connected",
-      sessionId: "sess_1",
+      sessionId: VPN_SESSION_ID,
       exitClass: "standard",
       relayEndpoint: defaultProfile.relayEndpoint,
       connectedAtMs: 1,
@@ -166,7 +191,6 @@ describe("VpnView", () => {
       i105AccountId: string;
       i105DefaultAccountId: string;
       publicKeyHex: string;
-      privateKeyHex: string;
       localOnly: boolean;
     }> | null;
     toriiUrl?: string;
@@ -184,9 +208,8 @@ describe("VpnView", () => {
         : {
             displayName: "Alice",
             domain: "wonderland",
-            accountId: "alice@wonderland",
+            accountId: VPN_ACCOUNT_ID,
             publicKeyHex: "ab".repeat(32),
-            privateKeyHex: "cd".repeat(32),
             localOnly: false,
             ...options?.account,
           };
@@ -281,7 +304,7 @@ describe("VpnView", () => {
     expect(getVpnStatusMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       networkPrefix: 369,
     });
     expect(wrapper.get('header[aria-label="Route header"] h1').text()).toBe(
@@ -351,12 +374,12 @@ describe("VpnView", () => {
       .mockResolvedValueOnce([canonicalReceipt])
       .mockRejectedValueOnce(new Error("receipt route down"));
     const wrapper = await mountView();
-    expect(wrapper.text()).toContain("sess_1");
+    expect(wrapper.text()).toContain(VPN_SESSION_ID);
 
     await wrapper.get("#route-header-actions button").trigger("click");
     await flushPromises();
 
-    expect(wrapper.text()).toContain("sess_1");
+    expect(wrapper.text()).toContain(VPN_SESSION_ID);
     expect(wrapper.get('[data-testid="vpn-receipts-error"]').text()).toBe(
       "receipt route down",
     );
@@ -455,15 +478,17 @@ describe("VpnView", () => {
     expect(connectVpnMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       networkPrefix: 369,
-      privateKeyHex: "cd".repeat(32),
       exitClass: "standard",
     });
+    expect(connectVpnMock.mock.calls[0]?.[0]).not.toHaveProperty(
+      "privateKeyHex",
+    );
     wrapper.unmount();
   });
 
-  it("uses the TAIRA i105 literal for vpn requests when stored ids are stale", async () => {
+  it("fails closed instead of rewriting a stale wrong-network account literal", async () => {
     const wrapper = await mountView({
       account: {
         accountId: "sorauLegacyVisibleAccount1234567890",
@@ -472,32 +497,15 @@ describe("VpnView", () => {
       },
     });
 
-    expect(getVpnStatusMock).toHaveBeenCalledWith({
-      toriiUrl: "https://taira.sora.org",
-      chainId: "chain",
-      accountId: "testuLegacyVisibleAccount1234567890",
-      networkPrefix: 369,
-    });
-    expect(listVpnReceiptsMock).toHaveBeenCalledWith({
-      toriiUrl: "https://taira.sora.org",
-      chainId: "chain",
-      accountId: "testuLegacyVisibleAccount1234567890",
-      networkPrefix: 369,
-    });
+    expect(getVpnStatusMock).toHaveBeenCalledWith(undefined);
+    expect(listVpnReceiptsMock).not.toHaveBeenCalled();
 
     await wrapper
       .get(".vpn-primary-actions [data-ui-primary-action]")
       .trigger("click");
     await flushPromises();
 
-    expect(connectVpnMock).toHaveBeenCalledWith({
-      toriiUrl: "https://taira.sora.org",
-      chainId: "chain",
-      accountId: "testuLegacyVisibleAccount1234567890",
-      networkPrefix: 369,
-      privateKeyHex: "cd".repeat(32),
-      exitClass: "standard",
-    });
+    expect(connectVpnMock).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 
@@ -505,7 +513,7 @@ describe("VpnView", () => {
     getVpnStatusMock.mockResolvedValue({
       ...idleStatus,
       state: "connected",
-      sessionId: "sess_1",
+      sessionId: VPN_SESSION_ID,
       exitClass: "standard",
       relayEndpoint: defaultProfile.relayEndpoint,
       connectedAtMs: 1,
@@ -524,10 +532,12 @@ describe("VpnView", () => {
     expect(disconnectVpnMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       networkPrefix: 369,
-      privateKeyHex: "cd".repeat(32),
     });
+    expect(disconnectVpnMock.mock.calls[0]?.[0]).not.toHaveProperty(
+      "privateKeyHex",
+    );
     wrapper.unmount();
   });
 

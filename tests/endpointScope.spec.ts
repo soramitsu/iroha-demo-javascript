@@ -6,10 +6,13 @@ import {
 } from "@/utils/endpointScope";
 import type { EndpointInspection } from "@/types/endpointInspection";
 
+const TAIRA_GENESIS =
+  "77fb29d14745adccfdc14350e1a6fe6a10265798cc936a1dafa7d2552ac3b9f7";
 const endpoint = {
-  toriiUrl: "https://TAIRA.sora.org/v1/status?ignored=true",
+  toriiUrl: "https://TAIRA.sora.org/v1/status",
   observedChainId: "FC56984B-2BE7-431D-840E-21514D1883F0",
   observedNetworkPrefix: 369,
+  observedGenesisHash: TAIRA_GENESIS,
 };
 
 describe("endpoint-derived storage scope", () => {
@@ -22,10 +25,12 @@ describe("endpoint-derived storage scope", () => {
     expected: {
       chainId: endpoint.observedChainId,
       networkPrefix: endpoint.observedNetworkPrefix,
+      genesisHash: endpoint.observedGenesisHash,
     },
     observed: {
       chainId: endpoint.observedChainId,
       networkPrefix: endpoint.observedNetworkPrefix,
+      genesisHash: endpoint.observedGenesisHash,
     },
     identityStatus,
     accessMode: identityStatus === "matched" ? "read-write" : "read-only",
@@ -35,6 +40,7 @@ describe("endpoint-derived storage scope", () => {
       identity: {
         chainId: endpoint.observedChainId,
         networkPrefix: endpoint.observedNetworkPrefix,
+        genesisHash: endpoint.observedGenesisHash,
       },
       observedAtMs: index + 1,
     })),
@@ -50,15 +56,15 @@ describe("endpoint-derived storage scope", () => {
     },
   });
 
-  it("canonicalizes to endpoint origin plus observed chain and prefix", () => {
+  it("canonicalizes to endpoint origin plus the exact observed network", () => {
     const scope = buildEndpointIdentityScope(endpoint);
 
     expect(scope).toEqual({
       origin: "https://taira.sora.org",
       chainId: endpoint.observedChainId,
       networkPrefix: 369,
-      storageSegment:
-        "v2:https%3A%2F%2Ftaira.sora.org:FC56984B-2BE7-431D-840E-21514D1883F0:369",
+      genesisHash: TAIRA_GENESIS,
+      storageSegment: `v3:https%3A%2F%2Ftaira.sora.org:FC56984B-2BE7-431D-840E-21514D1883F0:369:${TAIRA_GENESIS}`,
     });
   });
 
@@ -84,8 +90,18 @@ describe("endpoint-derived storage scope", () => {
       },
       ["Alice"],
     );
+    const otherGenesis = buildEndpointDerivedStorageKey(
+      "iroha-demo:confidential-wallet",
+      {
+        ...endpoint,
+        observedGenesisHash: "11".repeat(32),
+      },
+      ["Alice"],
+    );
 
-    expect(new Set([official, archived, otherPrefix]).size).toBe(3);
+    expect(new Set([official, archived, otherPrefix, otherGenesis]).size).toBe(
+      4,
+    );
     expect(official).toContain(":Alice");
   });
 
@@ -109,15 +125,33 @@ describe("endpoint-derived storage scope", () => {
         toriiUrl: "https://user:secret@taira.sora.org",
       }),
     ).toThrow("Endpoint URL must not include credentials");
+    expect(() =>
+      buildEndpointIdentityScope({
+        ...endpoint,
+        toriiUrl: "https://taira.sora.org?identity=ambiguous",
+      }),
+    ).toThrow("Endpoint URL must not include a query or fragment");
+    expect(() =>
+      buildEndpointIdentityScope({
+        ...endpoint,
+        observedGenesisHash: TAIRA_GENESIS.toUpperCase(),
+      }),
+    ).toThrow("64 lowercase hexadecimal characters");
   });
 
-  it("trusts only authoritative identity evidence", () => {
+  it("trusts only authoritative identity plus genesis evidence", () => {
     expect(
-      buildTrustedEndpointIdentityScope(inspection(["chain-metadata"])),
+      buildTrustedEndpointIdentityScope(
+        inspection(["chain-metadata", "genesis-fingerprint"]),
+      ),
     ).toMatchObject({
       chainId: endpoint.observedChainId,
       networkPrefix: 369,
+      genesisHash: TAIRA_GENESIS,
     });
+    expect(
+      buildTrustedEndpointIdentityScope(inspection(["chain-metadata"])),
+    ).toBeNull();
     expect(
       buildTrustedEndpointIdentityScope(
         inspection(["response-headers", "response-headers"]),

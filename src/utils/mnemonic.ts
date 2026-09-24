@@ -6,6 +6,7 @@ import {
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 
 export type MnemonicWordCount = 12 | 24;
+export const MAX_MNEMONIC_PHRASE_LENGTH = 512;
 
 const WORD_COUNT_TO_STRENGTH: Record<MnemonicWordCount, 128 | 256> = {
   12: 128,
@@ -18,7 +19,15 @@ const bytesToHex = (bytes: Uint8Array) =>
     .join("")
     .toUpperCase();
 
-const cleanPhrase = (phrase: string) => phrase.trim().replace(/\s+/g, " ");
+const cleanPhrase = (phrase: string) => {
+  if (
+    typeof phrase !== "string" ||
+    phrase.length > MAX_MNEMONIC_PHRASE_LENGTH
+  ) {
+    throw new Error("Invalid recovery phrase");
+  }
+  return phrase.trim().replace(/\s+/g, " ");
+};
 
 export const generateMnemonicWords = (
   wordCount: MnemonicWordCount,

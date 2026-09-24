@@ -4,8 +4,18 @@ import { mount, type VueWrapper } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import App from "@/App.vue";
 import { SESSION_STORAGE_KEY, useSessionStore } from "@/stores/session";
-import { useLocaleStore } from "@/stores/locale";
-import { useThemeStore } from "@/stores/theme";
+import {
+  LOCALE_SCHEMA,
+  LOCALE_STORAGE_KEY,
+  LOCALE_VERSION,
+  useLocaleStore,
+} from "@/stores/locale";
+import {
+  THEME_SCHEMA,
+  THEME_STORAGE_KEY,
+  THEME_VERSION,
+  useThemeStore,
+} from "@/stores/theme";
 import { useEndpointStore } from "@/stores/endpoint";
 import { MINAMOTO_CHAIN_PRESET, TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { translate } from "@/i18n/messages";
@@ -34,6 +44,9 @@ vi.mock("vue-router", async () => {
 const t = (key: string) => translate("en-US", key);
 const wrappers: VueWrapper[] = [];
 let mobileViewportMatches = false;
+
+const persistedPreference = (storageKey: string) =>
+  JSON.parse(localStorage.getItem(storageKey) ?? "null") as unknown;
 
 describe("App shell", () => {
   beforeEach(() => {
@@ -89,7 +102,6 @@ describe("App shell", () => {
             domain: "wonderland",
             accountId: "alice@wonderland",
             publicKeyHex: "ab".repeat(32),
-            privateKeyHex: "cd".repeat(32),
             hasStoredSecret: true,
           },
         ],
@@ -205,8 +217,6 @@ describe("App shell", () => {
       t("SoraCloud"),
       t("VPN"),
       t("Kaigi"),
-      t("Offline"),
-      t("SCCP Bridge"),
     ]);
     expect(
       wrapper.findAll(".sidebar-footer .nav-label").map((node) => node.text()),
@@ -474,21 +484,33 @@ describe("App shell", () => {
     await localeSelect.setValue("ar-SA");
 
     expect(localeStore.current).toBe("ar-SA");
-    expect(localStorage.getItem("iroha-demo:locale")).toBe("ar-SA");
+    expect(persistedPreference(LOCALE_STORAGE_KEY)).toEqual({
+      schema: LOCALE_SCHEMA,
+      version: LOCALE_VERSION,
+      locale: "ar-SA",
+    });
     expect(document.documentElement.getAttribute("lang")).toBe("ar-SA");
     expect(document.documentElement.getAttribute("dir")).toBe("rtl");
 
     await localeSelect.setValue("de-DE");
 
     expect(localeStore.current).toBe("de-DE");
-    expect(localStorage.getItem("iroha-demo:locale")).toBe("de-DE");
+    expect(persistedPreference(LOCALE_STORAGE_KEY)).toEqual({
+      schema: LOCALE_SCHEMA,
+      version: LOCALE_VERSION,
+      locale: "de-DE",
+    });
     expect(document.documentElement.getAttribute("lang")).toBe("de-DE");
     expect(document.documentElement.getAttribute("dir")).toBe("ltr");
 
     for (const locale of ["egy-Egyp", "akk-Xsux"] as const) {
       await localeSelect.setValue(locale);
       expect(localeStore.current).toBe(locale);
-      expect(localStorage.getItem("iroha-demo:locale")).toBe(locale);
+      expect(persistedPreference(LOCALE_STORAGE_KEY)).toEqual({
+        schema: LOCALE_SCHEMA,
+        version: LOCALE_VERSION,
+        locale,
+      });
       expect(document.documentElement.getAttribute("lang")).toBe(locale);
       expect(document.documentElement.getAttribute("dir")).toBe("ltr");
       expect(localeSelect.attributes("aria-label")).toBe(
@@ -515,7 +537,11 @@ describe("App shell", () => {
     await lightButton.trigger("click");
 
     expect(themeStore.current).toBe("light");
-    expect(localStorage.getItem("iroha-demo:theme")).toBe("light");
+    expect(persistedPreference(THEME_STORAGE_KEY)).toEqual({
+      schema: THEME_SCHEMA,
+      version: THEME_VERSION,
+      theme: "light",
+    });
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     expect(lightButton.attributes("aria-pressed")).toBe("true");
     expect(darkButton.attributes("aria-pressed")).toBe("false");
@@ -523,7 +549,11 @@ describe("App shell", () => {
     await darkButton.trigger("click");
 
     expect(themeStore.current).toBe("dark");
-    expect(localStorage.getItem("iroha-demo:theme")).toBe("dark");
+    expect(persistedPreference(THEME_STORAGE_KEY)).toEqual({
+      schema: THEME_SCHEMA,
+      version: THEME_VERSION,
+      theme: "dark",
+    });
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
     expect(lightButton.attributes("aria-pressed")).toBe("false");
     expect(darkButton.attributes("aria-pressed")).toBe("true");
@@ -543,13 +573,21 @@ describe("App shell", () => {
     await toggle.trigger("click");
 
     expect(themeStore.current).toBe("light");
-    expect(localStorage.getItem("iroha-demo:theme")).toBe("light");
+    expect(persistedPreference(THEME_STORAGE_KEY)).toEqual({
+      schema: THEME_SCHEMA,
+      version: THEME_VERSION,
+      theme: "light",
+    });
     expect(toggle.attributes("aria-pressed")).toBe("true");
 
     await toggle.trigger("click");
 
     expect(themeStore.current).toBe("dark");
-    expect(localStorage.getItem("iroha-demo:theme")).toBe("dark");
+    expect(persistedPreference(THEME_STORAGE_KEY)).toEqual({
+      schema: THEME_SCHEMA,
+      version: THEME_VERSION,
+      theme: "dark",
+    });
     expect(toggle.attributes("aria-pressed")).toBe("false");
   });
 

@@ -12,8 +12,7 @@ import {
 import { parseJsonWithoutDuplicateObjectKeys } from "@/utils/json";
 import { isSecretLikeTextValue } from "@/utils/secretLike";
 
-const LEGACY_STORAGE_KEY = "iroha-demo:sccp:solana-walletconnect";
-const STORAGE_KEY = `${LEGACY_STORAGE_KEY}:${SCCP_SOLANA_NETWORK.caipChainId.replace(
+const STORAGE_KEY = `iroha-demo:sccp:solana-walletconnect:${SCCP_SOLANA_NETWORK.caipChainId.replace(
   /[^a-z0-9_-]/giu,
   "-",
 )}`;
@@ -424,9 +423,7 @@ export const readStoredSolanaWalletConnectSession =
     if (typeof window === "undefined" || !window.localStorage) {
       return null;
     }
-    const raw =
-      window.localStorage.getItem(STORAGE_KEY) ??
-      window.localStorage.getItem(LEGACY_STORAGE_KEY);
+    const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) {
       return null;
     }
@@ -455,7 +452,6 @@ export const readStoredSolanaWalletConnectSession =
       return snapshot;
     } catch (_error) {
       window.localStorage.removeItem(STORAGE_KEY);
-      window.localStorage.removeItem(LEGACY_STORAGE_KEY);
       return null;
     }
   };
@@ -466,7 +462,6 @@ export const writeStoredSolanaWalletConnectSession = (
   if (typeof window === "undefined" || !window.localStorage) {
     return;
   }
-  window.localStorage.removeItem(LEGACY_STORAGE_KEY);
   if (!snapshot) {
     window.localStorage.removeItem(STORAGE_KEY);
     return;

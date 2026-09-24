@@ -33,7 +33,7 @@ describe("public governance draft instruction boundary", () => {
     );
   });
 
-  it("routes citizen registration through the decoder and keeps generic enact operator-only", () => {
+  it("routes only citizen registration and reviewed proposals through the decoder", () => {
     const sharedPrepare = between(
       "const prepareGovernanceDecodedAction",
       "const assertGovernanceExactKeys",
@@ -42,17 +42,17 @@ describe("public governance draft instruction boundary", () => {
       "const prepareGovernanceCitizenRegistrationAction",
       "const prepareGovernanceProposalAction",
     );
-    const enact = between(
-      "const prepareGovernanceEnactAction",
+    const proposal = between(
+      "const prepareGovernanceProposalAction",
       "const confirmPreparedGovernanceAction",
     );
 
     expect(sharedPrepare).toContain("decodeGovernanceDraftInstruction(");
     expect(citizen).toContain("return prepareGovernanceDecodedAction({");
     expect(citizen).toContain('expectedVariant: "RegisterCitizen"');
-    expect(enact).toContain("await assertGovernanceWriteCapabilities(input)");
-    expect(enact).toContain("operator-only typed workflows");
-    expect(enact).not.toContain("prepareGovernanceDecodedAction");
-    expect(enact).not.toContain('expectedVariant: "EnactReferendum"');
+    expect(proposal).toContain("return await prepareGovernanceDecodedAction({");
+    expect(proposal).toContain('operation: "propose"');
+    expect(proposal).not.toMatch(/CastPlainBallot|EnactReferendum/u);
+    expect(source).not.toContain("prepareGovernanceEnactAction");
   });
 });

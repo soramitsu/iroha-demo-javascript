@@ -60,7 +60,7 @@
         <input
           ref="connectScanner.fileInputRef"
           type="file"
-          accept="image/*"
+          accept="image/png,image/jpeg,image/webp"
           class="sr-only"
           :aria-label="t('Upload QR image')"
           @change="connectScanner.decodeFile"
@@ -82,9 +82,13 @@
           <span class="kv-label">{{ t("Session ID") }}</span>
           <span class="kv-value">{{ scannedConnectSession.sid }}</span>
         </div>
-        <div v-if="scannedConnectSession.chainId" class="kv monospace">
+        <div class="kv monospace">
           <span class="kv-label">{{ t("Chain ID") }}</span>
-          <span class="kv-value">{{ scannedConnectSession.chainId }}</span>
+          <span class="kv-value">{{ session.connection.chainId }}</span>
+        </div>
+        <div class="kv monospace">
+          <span class="kv-label">NetworkId</span>
+          <span class="kv-value">{{ scannedConnectSession.networkId }}</span>
         </div>
         <div v-if="scannedConnectSession.node" class="kv monospace">
           <span class="kv-label">{{ t("Endpoint") }}</span>
@@ -232,6 +236,7 @@ import {
   base64ToBytes,
   bytesToBase64,
   decodeConnectFrame,
+  readIrohaConnectRelayFrame,
   type ConnectPermissions,
 } from "@/utils/soraswapConnectWire";
 
@@ -300,7 +305,7 @@ const requireMatchingConnectNetwork = async (
     parsed,
     session.connection,
     {
-      requireChainId: true,
+      requireNetworkId: true,
       requireNode: true,
     },
   );
@@ -330,7 +335,12 @@ const pendingConnectionDetails = computed<IrohaConnectDetail[]>(() => {
     { label: t("Session ID"), value: parsed.sid, monospace: true },
     {
       label: t("Chain ID"),
-      value: displayOptional(parsed.chainId),
+      value: session.connection.chainId,
+      monospace: true,
+    },
+    {
+      label: "NetworkId",
+      value: displayOptional(parsed.networkId),
       monospace: true,
     },
     {
@@ -395,7 +405,12 @@ const buildSigningRequestDetails = (
     },
     {
       label: t("Chain ID"),
-      value: parsed.chainId || session.connection.chainId,
+      value: session.connection.chainId,
+      monospace: true,
+    },
+    {
+      label: "NetworkId",
+      value: parsed.networkId,
       monospace: true,
     },
     {
@@ -523,22 +538,6 @@ const waitForConnectSocketOpen = (socket: WebSocket) =>
     );
   });
 
-const connectEventBytes = async (data: MessageEvent["data"]) => {
-  if (data instanceof Uint8Array) {
-    return data;
-  }
-  if (data instanceof ArrayBuffer) {
-    return new Uint8Array(data);
-  }
-  if (ArrayBuffer.isView(data)) {
-    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-  }
-  if (data instanceof Blob) {
-    return new Uint8Array(await data.arrayBuffer());
-  }
-  throw new Error("IrohaConnect relay returned a non-binary frame.");
-};
-
 const queueConnectSigningRequest = (
   socket: WebSocket,
   parsed: ParsedIrohaConnectUri,
@@ -581,7 +580,7 @@ const approveOpenConnectFrame = async (
   socket: WebSocket,
   parsed: ParsedIrohaConnectUri,
   appPublicKeyHex: string,
-  requestedChainId: string,
+  requestedNetworkId: string,
   permissions: ConnectPermissions | null,
 ) => {
   const network = requireCurrentScannedConnection(socket);
@@ -601,9 +600,19 @@ const approveOpenConnectFrame = async (
   if (!accountId) {
     throw new Error("Choose an active wallet before approving IrohaConnect.");
   }
-  validateIrohaConnectNetworkClaim({ chainId: requestedChainId }, network, {
+  if (appPublicKeyHex !== parsed.appPublicKeyHex) {
+    throw new Error(
+      "The IrohaConnect Open frame app key does not match the scanned session.",
+    );
+  }
+  if (requestedNetworkId !== parsed.networkId) {
+    throw new Error(
+      "The IrohaConnect Open frame NetworkId does not match the scanned session.",
+    );
+  }
+  validateIrohaConnectNetworkClaim({ networkId: requestedNetworkId }, network, {
     label: "The IrohaConnect relay request",
-    requireChainId: true,
+    requireNetworkId: true,
   });
   const prepared = await prepareIrohaConnectSession({
     context: {
@@ -614,8 +623,9 @@ const approveOpenConnectFrame = async (
     },
     sid: parsed.sid,
     appPublicKeyHex,
+    nonceBase64Url: parsed.nonceBase64Url,
     relayToken: parsed.relayToken,
-    requestedChainId,
+    requestedNetworkId,
     permissions,
   });
   requireCurrentScannedConnection(socket);
@@ -658,7 +668,7 @@ const handleScannedConnectMessage = async (
 ) => {
   try {
     requireCurrentScannedConnection(socket);
-    const bytes = await connectEventBytes(event.data);
+    const bytes = await readIrohaConnectRelayFrame(event.data);
     requireCurrentScannedConnection(socket);
     const frame = decodeConnectFrame(bytes);
     if (frame.sid !== parsed.sid || frame.direction !== "app_to_wallet") {
@@ -702,7 +712,7 @@ const handleScannedConnectMessage = async (
       socket,
       parsed,
       frame.control.appPublicKeyHex,
-      frame.control.constraints.chainId,
+      frame.control.constraints.networkId,
       frame.control.permissions,
     );
   } catch (error) {
@@ -743,9 +753,7 @@ const approveScannedConnectSession = async (parsed: ParsedIrohaConnectUri) => {
     scannedConnectContextKey = approvalContextKey;
     const validatedSession: ParsedIrohaConnectUri = {
       ...parsed,
-      chainId: network.chainId,
       node: network.toriiUrl,
-      networkPrefix: network.networkPrefix,
     };
     const accountId =
       getPublicAccountId(session.activeAccount, network.networkPrefix) || "";
@@ -763,7 +771,6 @@ const approveScannedConnectSession = async (parsed: ParsedIrohaConnectUri) => {
     const approval = buildIrohaConnectApprovalRequest({
       session: validatedSession,
       accountId,
-      fallbackToriiUrl: network.toriiUrl,
     });
     const socket = new WebSocket(approval.url, approval.protocols);
     approvalSocket = socket;

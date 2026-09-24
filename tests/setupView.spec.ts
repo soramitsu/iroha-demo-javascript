@@ -48,6 +48,7 @@ describe("SetupView", () => {
     deriveAccountAddressMock.mockReturnValue({
       accountId:
         "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
+      networkPrefix: 369,
       i105AccountId:
         "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
       i105DefaultAccountId:
@@ -106,7 +107,6 @@ describe("SetupView", () => {
       session.$patch({
         authority: {
           accountId: "",
-          privateKeyHex: "",
           hasStoredSecret: false,
           ...options.authority,
         },
@@ -126,7 +126,6 @@ describe("SetupView", () => {
             i105DefaultAccountId:
               "sorauロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
             publicKeyHex: "ab".repeat(32),
-            privateKeyHex: "",
             hasStoredSecret: true,
             localOnly: true,
           },
@@ -179,30 +178,21 @@ describe("SetupView", () => {
     expect(wrapper.text()).not.toContain(t("Create on-chain account"));
   });
 
-  it("shows a humanized asset label without echoing the raw literal", async () => {
-    const rawAssetDefinitionId = "norito:abcdefghijklmnopqrstuvwxyz012345";
-    const wrapper = mountView({ assetDefinitionId: rawAssetDefinitionId });
+  it("shows the exact current asset definition as read-only", () => {
+    const assetDefinitionId = "61CtjvNd9T3THAR65GsMVHr82Bjc";
+    const wrapper = mountView({ assetDefinitionId });
 
     const inputs = wrapper.findAll("input");
     expect(
       inputs.some(
         (node) =>
           (node.element as HTMLInputElement).value ===
-          formatAssetDefinitionLabel(rawAssetDefinitionId),
+          formatAssetDefinitionLabel(assetDefinitionId),
       ),
     ).toBe(true);
-    expect(
-      inputs.some(
-        (node) =>
-          (node.element as HTMLInputElement).value === rawAssetDefinitionId,
-      ),
-    ).toBe(false);
-
-    await wrapper.get(".setup-asset-literal summary").trigger("click");
-    await flushPromises();
-
-    const rawInput = wrapper.get('input[data-testid="raw-asset-id-input"]');
-    expect((rawInput.element as HTMLInputElement).value).toBe("");
+    expect(wrapper.find('[data-testid="raw-asset-id-input"]').exists()).toBe(
+      false,
+    );
   });
 
   it("stores generated identities in secure storage without persisting the private key", async () => {
@@ -215,11 +205,12 @@ describe("SetupView", () => {
     expect(storeAccountSecretMock).toHaveBeenCalledWith({
       accountId:
         "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
+      networkPrefix: 369,
       privateKeyHex: "11".repeat(32),
       signingAlgorithm: "ed25519",
     });
     expect(session.activeAccount?.hasStoredSecret).toBe(true);
-    expect(session.activeAccount?.privateKeyHex).toBe("");
+    expect(session.activeAccount).not.toHaveProperty("privateKeyHex");
   });
 
   it("saves generated identities with the same network prefix used for derivation", async () => {
@@ -248,6 +239,7 @@ describe("SetupView", () => {
 
     expect(storeAccountSecretMock).toHaveBeenCalledWith({
       accountId: "n42uSetupStableAccount1234567890",
+      networkPrefix: 42,
       privateKeyHex: "11".repeat(32),
       signingAlgorithm: "ed25519",
     });
@@ -283,6 +275,7 @@ describe("SetupView", () => {
 
     expect(storeAccountSecretMock).toHaveBeenCalledWith({
       accountId: "n42uDeniedSetupAccount1234567890",
+      networkPrefix: 42,
       privateKeyHex: "11".repeat(32),
       signingAlgorithm: "ed25519",
     });
@@ -315,6 +308,7 @@ describe("SetupView", () => {
 
     expect(storeAccountSecretMock).toHaveBeenCalledWith({
       accountId: "testuAuthority",
+      networkPrefix: 369,
       privateKeyHex: "22".repeat(32),
       signingAlgorithm: "ed25519",
     });
@@ -327,7 +321,6 @@ describe("SetupView", () => {
     const wrapper = mountView({
       authority: {
         accountId: "testuAuthority",
-        privateKeyHex: "",
         hasStoredSecret: true,
       },
       activeAccount: {
@@ -345,20 +338,76 @@ describe("SetupView", () => {
     );
     await flushPromises();
 
-    expect(registerAccountMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        authorityAccountId: "testuAuthority",
-        authorityPrivateKeyHex: undefined,
-      }),
+    const registerInput = registerAccountMock.mock.calls[0]?.[0];
+    expect(registerInput).toEqual(
+      expect.objectContaining({ authorityAccountId: "testuAuthority" }),
     );
+    expect(registerInput).not.toHaveProperty("authorityPrivateKeyHex");
   });
+
+  it("rejects non-object registration metadata instead of signing an empty replacement", async () => {
+    const wrapper = mountView({
+      authority: {
+        accountId: "testuAuthority",
+        hasStoredSecret: true,
+      },
+      activeAccount: {
+        accountId:
+          "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
+        publicKeyHex: "ab".repeat(32),
+        hasStoredSecret: true,
+      },
+    });
+
+    await getButtonByText(wrapper, t("Advanced")).trigger("click");
+    await wrapper
+      .get('[data-testid="registration-metadata-input"]')
+      .setValue("[]");
+    await getButtonByText(wrapper, t("Create on-chain account")).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    expect(registerAccountMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '{"nickname":"Alice","nickname":"Mallory"}',
+    JSON.stringify({ nickname: "x".repeat(17_000) }),
+  ])(
+    "rejects ambiguous or oversized registration metadata",
+    async (metadata) => {
+      const wrapper = mountView({
+        authority: {
+          accountId: "testuAuthority",
+          hasStoredSecret: true,
+        },
+        activeAccount: {
+          accountId:
+            "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
+          publicKeyHex: "ab".repeat(32),
+          hasStoredSecret: true,
+        },
+      });
+
+      await getButtonByText(wrapper, t("Advanced")).trigger("click");
+      await wrapper
+        .get('[data-testid="registration-metadata-input"]')
+        .setValue(metadata);
+      await getButtonByText(wrapper, t("Create on-chain account")).trigger(
+        "click",
+      );
+      await flushPromises();
+
+      expect(registerAccountMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not sync adversarial form connection changes when on-chain registration fails", async () => {
     registerAccountMock.mockRejectedValueOnce(new Error("Torii rejected"));
     const wrapper = mountView({
       authority: {
         accountId: "testuAuthority",
-        privateKeyHex: "",
         hasStoredSecret: true,
       },
       activeAccount: {

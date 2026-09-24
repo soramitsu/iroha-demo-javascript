@@ -90,7 +90,7 @@ describe("VPN preload profile guard", () => {
     const invokeAuthenticatedController = vi.fn();
     const invokeLocalController = vi
       .fn()
-      .mockResolvedValue({ state: "remote-delete-pending" });
+      .mockResolvedValue({ state: "remote-expiry-pending" });
 
     await expect(
       runVpnDisconnectWithLocalFallback({
@@ -100,7 +100,7 @@ describe("VPN preload profile guard", () => {
         invokeAuthenticatedController,
         invokeLocalController,
       }),
-    ).resolves.toEqual({ state: "remote-delete-pending" });
+    ).resolves.toEqual({ state: "remote-expiry-pending" });
 
     expect(invokeAuthenticatedController).not.toHaveBeenCalled();
     expect(invokeLocalController).toHaveBeenCalledOnce();
@@ -109,7 +109,7 @@ describe("VPN preload profile guard", () => {
   it("falls back to local disconnect when the authenticated context does not own the active tunnel", async () => {
     const invokeLocalController = vi
       .fn()
-      .mockResolvedValue({ state: "remote-delete-pending" });
+      .mockResolvedValue({ state: "remote-expiry-pending" });
 
     await expect(
       runVpnDisconnectWithLocalFallback({
@@ -121,7 +121,7 @@ describe("VPN preload profile guard", () => {
         }),
         invokeLocalController,
       }),
-    ).resolves.toEqual({ state: "remote-delete-pending" });
+    ).resolves.toEqual({ state: "remote-expiry-pending" });
 
     expect(invokeLocalController).toHaveBeenCalledOnce();
   });

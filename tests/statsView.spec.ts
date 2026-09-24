@@ -177,6 +177,7 @@ describe("StatsView", () => {
     expect(getNetworkStatsMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
       assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      networkPrefix: 369,
     });
   });
 

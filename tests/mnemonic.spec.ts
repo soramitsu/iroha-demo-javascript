@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   generateMnemonicWords,
+  MAX_MNEMONIC_PHRASE_LENGTH,
   mnemonicToPrivateKeyHex,
   normalizeMnemonicPhrase,
 } from "@/utils/mnemonic";
@@ -22,5 +23,12 @@ describe("mnemonic helpers", () => {
     expect(privateKeyHex).toBe(
       "5EB00BBDDCF069084889A8AB9155568165F5C453CCB85E70811AAED6F6DA5FC1",
     );
+  });
+
+  it("bounds recovery input before normalization", () => {
+    expect(normalizeMnemonicPhrase("")).toBe("");
+    expect(() =>
+      normalizeMnemonicPhrase("a".repeat(MAX_MNEMONIC_PHRASE_LENGTH + 1)),
+    ).toThrow("Invalid recovery phrase");
   });
 });

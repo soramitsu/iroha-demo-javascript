@@ -259,23 +259,34 @@ describe("staking utilities", () => {
   it("reads validator operator metadata for fee commission and endpoint", () => {
     expect(
       extractValidatorCommissionBps({
-        commission_bps: "250",
+        commission_bps: 250,
       }),
     ).toBe(250);
     expect(
       extractValidatorCommissionBps({
-        commission_percent: "3.75",
+        commission_bps: "250",
       }),
-    ).toBe(375);
+    ).toBeNull();
     expect(
       extractValidatorCommissionBps({
-        commission_bps: "10001",
+        commission_percent: 3.75,
       }),
     ).toBeNull();
     expect(
       readValidatorEndpoint({
-        p2p_endpoint: " https://validator.example ",
+        endpoint: "https://validator.example",
       }),
     ).toBe("https://validator.example");
+    expect(
+      readValidatorEndpoint({
+        p2p_endpoint: "https://validator.example",
+      }),
+    ).toBe("");
+    expect(
+      readValidatorEndpoint({
+        endpoint: " https://validator.example ",
+      }),
+    ).toBe("");
+    expect(readValidatorEndpoint({ endpoint: 1234 })).toBe("");
   });
 });

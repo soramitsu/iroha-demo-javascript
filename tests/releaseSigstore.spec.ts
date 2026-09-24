@@ -9,6 +9,9 @@ describe("release Sigstore boundary", () => {
   const agentNotes = source("AGENTS.md");
   const workflow = source(".github/workflows/release.yml");
   const releaseGuide = source("RELEASE.md");
+  const nativeGate = source("scripts/postinstallNativeCheck.mjs");
+  const nativeRuntime = source("electron/irohaJsNativeDir.ts");
+  const sourcePreparation = source("scripts/prepare-iroha-release-source.mjs");
 
   it("grants OIDC only to the draft-release job and signs every release blob", () => {
     expect(workflow).toContain("permissions:\n  contents: read");
@@ -47,25 +50,22 @@ describe("release Sigstore boundary", () => {
       'SIGSTORE_CERTIFICATE_IDENTITY: "https://github.com/${{ github.workflow_ref }}"',
     );
 
-    const draftUpload = workflow.indexOf(
-      "- name: Upload draft distributables and checksums",
-    );
     const sign = workflow.indexOf(
       "- name: Sign release artifacts with GitHub OIDC",
     );
     const verify = workflow.indexOf("- name: Verify every Sigstore bundle");
-    const bundleUpload = workflow.indexOf(
-      "- name: Upload Sigstore bundles and verification instructions",
+    const releaseUpload = workflow.indexOf(
+      "- name: Replace draft release with the verified local inventory",
     );
     const inventory = workflow.indexOf(
       "- name: Verify draft release asset inventory",
     );
 
-    expect(draftUpload).toBeGreaterThanOrEqual(0);
-    expect(sign).toBeGreaterThan(draftUpload);
+    expect(sign).toBeGreaterThanOrEqual(0);
     expect(verify).toBeGreaterThan(sign);
-    expect(bundleUpload).toBeGreaterThan(verify);
-    expect(inventory).toBeGreaterThan(bundleUpload);
+    expect(releaseUpload).toBeGreaterThan(verify);
+    expect(inventory).toBeGreaterThan(releaseUpload);
+    expect(workflow).not.toContain("--clobber");
     expect(workflow).not.toContain("--draft=false");
   });
 
@@ -106,13 +106,52 @@ describe("release Sigstore boundary", () => {
       workflow.match(/\.verification\.reason/g)?.length,
     ).toBeGreaterThanOrEqual(4);
     expect(workflow).not.toContain("git apply");
+    expect(workflow).toContain(
+      "HAS_IROHA_RELEASE_SIGNER_KEY: ${{ secrets.IROHA_RELEASE_SIGNER_PUBLIC_KEY_BASE64 != '' }}",
+    );
+    expect(workflow).toContain('"$HAS_IROHA_RELEASE_SIGNER_KEY" != "true"');
+    expect(workflow).toContain(
+      "IROHA_RELEASE_SIGNER_PUBLIC_KEY_BASE64 is required",
+    );
     expect(agentNotes).toContain(
       "release workflow must never patch the checked-out sibling Iroha SDK",
     );
   });
 
+  it("uses one authenticated SDK install and resolver corridor", () => {
+    expect(
+      workflow.match(/- name: Prepare authenticated Iroha release source/gu)
+        ?.length,
+    ).toBe(2);
+    expect(workflow.match(/run: npm run install:release/gu)?.length).toBe(2);
+    expect(workflow.match(/run: npm run verify:iroha-sdk/gu)?.length).toBe(2);
+    expect(workflow).not.toContain("copyFileSync(sourceNode");
+    expect(workflow).not.toContain(
+      "physical SDK package unexpectedly contains a native binary",
+    );
+
+    expect(sourcePreparation).toContain(
+      "decodeCanonicalSignerPublicKey(encodedPublicKey)",
+    );
+    expect(sourcePreparation).toContain(
+      "assertExactReviewedPublicKey(publicListing, secretListing)",
+    );
+    expect(sourcePreparation).toContain("GNUPGHOME: gpgHome");
+    expect(sourcePreparation).toContain("IROHA_ROOT: sourceRoot");
+    expect(sourcePreparation).toContain(
+      '["-C", sourceRoot, "remote", "remove", "origin"]',
+    );
+    expect(sourcePreparation).not.toContain("--recv-keys");
+    expect(sourcePreparation).not.toContain("keyserver");
+    expect(releaseGuide).toContain("`IROHA_RELEASE_SIGNER_PUBLIC_KEY_BASE64`");
+    expect(releaseGuide).toMatch(
+      /The workflow has no manual SDK\/native copy\s+bypass\./u,
+    );
+  });
+
   it("binds the pinned source identities into signed release metadata", () => {
-    expect(workflow).toContain('"sora.wallet.release-source.v2"');
+    expect(workflow).toContain('"sora.wallet.release-source.v3"');
+    expect(workflow).not.toContain('"sora.wallet.release-source.v2"');
     expect(workflow).not.toContain('"sora.wallet.release-source.v1"');
     expect(workflow).toContain("SOURCE-IDENTITY.json");
     expect(workflow).toContain("SOURCE-IDENTITY.json.sigstore.json");
@@ -131,11 +170,52 @@ describe("release Sigstore boundary", () => {
     expect(workflow).toContain("sha256: $iroha_cargo_lock_sha256");
     expect(workflow).toContain("size_bytes: $iroha_cargo_lock_size");
     expect(workflow).toContain("source_tree_clean: true");
+    expect(workflow).toContain("build_provenance_version: 3");
+    expect(workflow).toContain(
+      'build_execution_policy: "trusted-local-cargo-v1"',
+    );
+    for (const requiredExport of [
+      "encodeSignedTransactionVersioned",
+      "decodeTransactionReceiptJson",
+      "validationFeeHijiriQuoteRequestV1",
+      "validationFeeVerifyHijiriQuoteResponseV1",
+      "securePrivateFileWriteAtomic",
+    ]) {
+      expect(workflow).toContain(`"${requiredExport}"`);
+    }
+    expect(workflow).toContain("exact_artifact_count: 9");
+    expect(workflow).toContain(
+      'macos_developer_id_notarization: "required-and-verified"',
+    );
+    expect(workflow).toContain('windows_authenticode: "required-and-verified"');
     expect(workflow).toContain("resources/release/iroha-v4-Cargo.lock");
     expect(
       workflow.match(/-o -name 'SOURCE-IDENTITY\.json'/g)?.length,
     ).toBeGreaterThanOrEqual(2);
     expect(workflow).toContain("--bundle SOURCE-IDENTITY.json.sigstore.json");
+  });
+
+  it("records the exact runtime native-export contract in source identity", () => {
+    const nativeExportsSource = nativeGate.match(
+      /const REQUIRED_NATIVE_EXPORTS = \[(?<body>[\s\S]*?)\n\];/u,
+    )?.groups?.body;
+    const identityExportsSource = workflow.match(
+      /required_exports: \[(?<body>[\s\S]*?)\n\s+\]/u,
+    )?.groups?.body;
+    const runtimeExportsSource = nativeRuntime.match(
+      /const REQUIRED_NATIVE_EXPORTS = \[(?<body>[\s\S]*?)\n\] as const;/u,
+    )?.groups?.body;
+    expect(nativeExportsSource).toBeDefined();
+    expect(identityExportsSource).toBeDefined();
+    expect(runtimeExportsSource).toBeDefined();
+
+    const quotedValues = (value: string | undefined): string[] =>
+      Array.from(value?.matchAll(/"(?<name>[A-Za-z0-9]+)"/gu) ?? [], (match) =>
+        String(match.groups?.name),
+      );
+    const nativeExports = quotedValues(nativeExportsSource);
+    expect(quotedValues(identityExportsSource)).toEqual(nativeExports);
+    expect(quotedValues(runtimeExportsSource)).toEqual(nativeExports);
   });
 
   it("documents verification and does not conflate provenance with OS signing", () => {
@@ -144,7 +224,7 @@ describe("release Sigstore boundary", () => {
     expect(releaseGuide).toContain("SHA256SUMS.txt.sigstore.json");
     expect(releaseGuide).toContain("does **not** provide macOS Developer ID");
     expect(releaseGuide).toContain(
-      "Do not describe those packages as notarized",
+      "The release workflow does not produce unsigned platform packages",
     );
     expect(releaseGuide).toContain(
       'git tag -s -u "$release_signing_key" -a "$release_tag"',
@@ -165,5 +245,33 @@ describe("release Sigstore boundary", () => {
     expect(releaseGuide).toContain(
       "gh release edit v2.0.1 \\\n     --repo soramitsu/iroha-demo-javascript \\\n     --draft=false",
     );
+  });
+
+  it("fails closed on platform signing and exact artifact inventory", () => {
+    expect(workflow).toContain("- name: Require production platform signing");
+    expect(workflow).toContain(
+      "Every release requires complete macOS Developer ID signing and notarization credentials.",
+    );
+    expect(workflow).toContain(
+      "Every release requires complete Windows Authenticode signing credentials.",
+    );
+    expect(workflow).not.toContain("Building unsigned draft artifacts");
+    expect(workflow).toContain("WIN_EXPECTED_CERT_THUMBPRINT=$thumbprint");
+    expect(workflow).toContain(
+      "WIN_CSC_LINK must use canonical unwrapped base64 encoding.",
+    );
+    expect(workflow).toContain(
+      "APPLE_API_KEY_ID must be an exact ten-character key ID.",
+    );
+    expect(workflow).toContain("- name: Verify notarized macOS application");
+    expect(workflow).toContain('xcrun stapler validate "$app_path"');
+    expect(workflow).toContain("- name: Verify signed Windows installer");
+    expect(workflow).toContain("$signature.TimeStamperCertificate");
+    expect(workflow).toContain("collect-release-artifacts.mjs");
+    expect(workflow).toContain("--platform all");
+    expect(workflow).toContain(
+      'test "$(wc -l < artifacts/SHA256SUMS.txt | tr -d \' \')" = "10"',
+    );
+    expect(workflow).toContain("group: release-${{ github.ref }}");
   });
 });

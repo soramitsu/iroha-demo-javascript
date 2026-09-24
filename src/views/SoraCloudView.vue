@@ -10,9 +10,7 @@
       <header class="card-header soracloud-command-header">
         <div>
           <h2>{{ t("Service status") }}</h2>
-          <p class="helper">
-            {{ t("Launch and monitor live services") }}
-          </p>
+          <p class="helper">{{ t("Monitor live SoraCloud services") }}</p>
         </div>
         <div class="soracloud-command-actions">
           <span class="pill positive">{{ activeAccountLabel }}</span>
@@ -66,14 +64,12 @@
       <div v-else-if="cloud.availability === 'error'" class="soracloud-state">
         <p class="wallet-empty-title">{{ t("Could not load SoraCloud.") }}</p>
         <p class="helper">{{ cloud.error }}</p>
-        <div class="soracloud-state-actions">
-          <button type="button" @click="refresh">{{ t("Refresh") }}</button>
-        </div>
+        <button type="button" @click="refresh">{{ t("Refresh") }}</button>
       </div>
 
       <div v-else class="soracloud-state">
         <p class="wallet-empty-title">{{ t("Checking SoraCloud...") }}</p>
-        <p class="helper">{{ session.connection.toriiUrl }}</p>
+        <p class="helper mono">{{ session.connection.toriiUrl }}</p>
       </div>
     </section>
 
@@ -82,324 +78,159 @@
       :label="t('SoraCloud workspace')"
       :options="[
         { value: 'services', label: t('Live services') },
-        { value: 'launch', label: t('Launch instance') },
+        { value: 'lease', label: t('HF shared lease') },
       ]"
     />
 
     <section class="soracloud-console">
-      <section
-        v-if="consoleMode === 'launch'"
-        class="card soracloud-launch-card"
-      >
+      <section v-if="consoleMode === 'lease'" class="card soracloud-lease-card">
         <header class="card-header">
           <div>
-            <h2>{{ t("Launch instance") }}</h2>
+            <h2>{{ t("Hugging Face shared lease") }}</h2>
             <p class="helper">
               {{
-                t("Deploy a Hugging Face model through the live SoraCloud API.")
+                t(
+                  "Inspect the exact shared-lease source, pool, and wallet membership reported by Torii.",
+                )
               }}
             </p>
           </div>
-          <span class="pill muted">{{ t("Hugging Face") }}</span>
+          <span class="pill muted">GET /v1/soracloud/hf/lease/status</span>
         </header>
 
-        <div class="soracloud-stepper" aria-label="SoraCloud launch steps">
-          <button
-            v-for="step in launchSteps"
-            :key="step.id"
-            type="button"
-            :class="{ active: activeStep === step.id }"
-            :disabled="!canUseLauncher"
-            @click="activeStep = step.id"
-          >
-            <span>{{ step.index }}</span>
-            {{ t(step.label) }}
-          </button>
-        </div>
-
-        <form class="soracloud-form" @submit.prevent="launch">
-          <fieldset :disabled="!canUseLauncher || cloud.launching">
-            <div v-if="activeStep === 'model'" class="soracloud-step-panel">
-              <label>
-                <span>{{ t("Hugging Face repo") }}</span>
-                <input
-                  v-model.trim="launchForm.repoId"
-                  type="text"
-                  autocomplete="off"
-                  :placeholder="t('owner/model-name')"
-                  @change="refreshHfStatus"
-                />
-              </label>
-              <label>
-                <span>{{ t("Revision") }}</span>
-                <input
-                  v-model.trim="launchForm.revision"
-                  type="text"
-                  autocomplete="off"
-                  @change="refreshHfStatus"
-                />
-              </label>
-              <label>
-                <span>{{ t("Model name") }}</span>
-                <input
-                  v-model.trim="launchForm.modelName"
-                  type="text"
-                  autocomplete="off"
-                  @input="modelNameTouched = true"
-                />
-              </label>
-              <label>
-                <span>{{ t("Service name") }}</span>
-                <input
-                  v-model.trim="launchForm.serviceName"
-                  type="text"
-                  autocomplete="off"
-                  @input="serviceNameTouched = true"
-                />
-              </label>
-              <p
-                v-if="launchForm.serviceName && !serviceNameValid"
-                class="helper error-text"
-              >
-                {{
-                  t(
-                    "Use 3-64 lowercase letters, numbers, underscores, or hyphens, starting with a letter.",
-                  )
-                }}
-              </p>
-            </div>
-
-            <div
-              v-else-if="activeStep === 'lease'"
-              class="soracloud-step-panel"
-            >
-              <label>
-                <span>{{ t("Storage class") }}</span>
-                <select
-                  v-model="launchForm.storageClass"
-                  @change="refreshHfStatus"
-                >
-                  <option value="warm">{{ t("Warm") }}</option>
-                  <option value="hot">{{ t("Hot") }}</option>
-                  <option value="cold">{{ t("Cold") }}</option>
-                </select>
-              </label>
-              <label>
-                <span>{{ t("Lease duration") }}</span>
-                <select
-                  v-model.number="launchForm.leaseTermHours"
-                  @change="refreshHfStatus"
-                >
-                  <option :value="1">{{ t("1 hour") }}</option>
-                  <option :value="24">{{ t("24 hours") }}</option>
-                  <option :value="168">{{ t("7 days") }}</option>
-                </select>
-              </label>
-              <label>
-                <span>{{ t("Settlement asset") }}</span>
-                <input
-                  v-model.trim="launchForm.leaseAssetDefinitionId"
-                  type="text"
-                  autocomplete="off"
-                />
-                <small class="helper">
-                  {{
-                    t("Use the canonical asset definition ID, not an alias.")
-                  }}
-                  {{ t("If this is empty, claim XOR in Wallet first.") }}
-                </small>
-              </label>
-              <label>
-                <span>{{ t("Base fee nanos") }}</span>
-                <input
-                  v-model.trim="launchForm.baseFeeNanos"
-                  type="text"
-                  inputmode="numeric"
-                  autocomplete="off"
-                />
-              </label>
-            </div>
-
-            <div v-else class="soracloud-step-panel">
-              <div class="soracloud-review-grid">
-                <div class="kv">
-                  <span class="kv-label">{{ t("Endpoint") }}</span>
-                  <span class="kv-value mono">{{
-                    session.connection.toriiUrl
-                  }}</span>
-                </div>
-                <div class="kv">
-                  <span class="kv-label">{{ t("Wallet") }}</span>
-                  <span class="kv-value">{{ activeAccountLabel }}</span>
-                </div>
-                <div class="kv">
-                  <span class="kv-label">{{ t("Repo") }}</span>
-                  <span class="kv-value">{{
-                    launchForm.repoId || t("Required")
-                  }}</span>
-                </div>
-                <div class="kv">
-                  <span class="kv-label">{{ t("Service") }}</span>
-                  <span class="kv-value">{{
-                    launchForm.serviceName || t("Required")
-                  }}</span>
-                </div>
-                <div class="kv">
-                  <span class="kv-label">{{ t("Lease") }}</span>
-                  <span class="kv-value">
-                    {{
-                      t("{count} hours", {
-                        count: n(launchForm.leaseTermHours),
-                      })
-                    }}
-                  </span>
-                </div>
-                <div class="kv">
-                  <span class="kv-label">{{ t("Base fee") }}</span>
-                  <span class="kv-value">
-                    {{ launchForm.baseFeeNanos || t("Required") }}
-                  </span>
-                </div>
-                <div class="kv">
-                  <span class="kv-label">{{ t("HF source status") }}</span>
-                  <span class="kv-value">
-                    {{
-                      cloud.hfStatusLoading
-                        ? t("Checking")
-                        : cloud.hfStatusError
-                          ? t("Unavailable")
-                          : cloud.hfStatus?.found
-                            ? t("Found")
-                            : cloud.hfStatus
-                              ? t("Not found")
-                              : t("Not checked")
-                    }}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </fieldset>
-
-          <p v-if="launcherDisabledReason" class="helper">
-            {{ launcherDisabledReason }}
-          </p>
-          <p v-if="cloud.launchError" class="helper error-text">
-            {{ cloud.launchError }}
-          </p>
-          <p class="transaction-fee-note">
-            <span>{{ t("Fee") }}</span>
-            <strong>{{
-              formatTransactionFee(
-                transactionFeeHintForEndpoint(session.connection.toriiUrl),
-                t,
-              )
-            }}</strong>
-          </p>
-          <div v-if="cloud.launchResult" class="soracloud-launch-result">
-            <span class="pill positive">{{
-              t(
-                cloud.launchResult.settlement_status === "confirmed"
-                  ? "Launch confirmed"
-                  : "Transaction finalized — settlement indexing",
-              )
-            }}</span>
-            <span>{{ cloud.launchResult.service_name }}</span>
-            <span v-if="cloud.launchResult.tx_hash_hex" class="mono">
-              {{ cloud.launchResult.tx_hash_hex }}
-            </span>
-            <span class="mono">
-              {{
-                t("Block {height}", {
-                  height: cloud.launchResult.finality.blockHeight,
-                })
-              }}
-              · {{ cloud.launchResult.finality.blockHash }}
-            </span>
-            <div class="soracloud-settlement-grid">
-              <div class="kv">
-                <span class="kv-label">{{ t("Storage base fee") }}</span>
-                <span class="kv-value mono">{{
-                  cloud.launchResult.storage_base_fee
-                }}</span>
-              </div>
-              <div class="kv">
-                <span class="kv-label">{{ t("Actual storage charge") }}</span>
-                <span class="kv-value mono">{{
-                  cloud.launchResult.actual_storage_charge ??
-                  t("Pending indexing")
-                }}</span>
-              </div>
-              <div class="kv">
-                <span class="kv-label">{{
-                  t("Maximum compute reservation charge")
-                }}</span>
-                <span class="kv-value mono">{{
-                  cloud.launchResult.max_compute_reservation_fee
-                }}</span>
-              </div>
-              <div class="kv">
-                <span class="kv-label">{{
-                  t("Actual compute reservation charge")
-                }}</span>
-                <span class="kv-value mono">{{
-                  cloud.launchResult.actual_compute_charge ??
-                  t("Pending indexing")
-                }}</span>
-              </div>
-            </div>
-            <span
-              v-if="cloud.launchResult.reconciliation_message"
-              class="soracloud-launch-reconciliation"
-            >
-              {{ cloud.launchResult.reconciliation_message }}
-            </span>
-            <button
-              v-if="cloud.launchResult.settlement_status === 'indexing'"
-              type="button"
-              class="secondary"
-              :disabled="cloud.reconciling"
-              @click="reconcileLaunch"
-            >
-              {{ cloud.reconciling ? t("Checking") : t("Refresh") }}
-            </button>
-            <span class="soracloud-launch-fee">
-              {{
-                formatTransactionFee(
-                  cloud.launchResult,
-                  t,
-                  transactionFeeHintForEndpoint(session.connection.toriiUrl),
-                )
-              }}
-            </span>
+        <form class="soracloud-form" @submit.prevent="refreshSharedLeaseStatus">
+          <div class="soracloud-step-panel">
+            <label>
+              <span>{{ t("Hugging Face repo") }}</span>
+              <input
+                v-model.trim="leaseForm.repoId"
+                type="text"
+                autocomplete="off"
+                :placeholder="t('owner/model-name')"
+              />
+            </label>
+            <label>
+              <span>{{ t("Full commit revision") }}</span>
+              <input
+                v-model.trim="leaseForm.revision"
+                type="text"
+                autocomplete="off"
+                :placeholder="HF_REVISION_PLACEHOLDER"
+              />
+            </label>
+            <label>
+              <span>{{ t("Storage class") }}</span>
+              <select v-model="leaseForm.storageClass">
+                <option value="warm">{{ t("Warm") }}</option>
+                <option value="hot">{{ t("Hot") }}</option>
+                <option value="cold">{{ t("Cold") }}</option>
+              </select>
+            </label>
+            <label>
+              <span>{{ t("Lease duration") }}</span>
+              <select v-model.number="leaseForm.leaseTermHours">
+                <option :value="1">{{ t("1 hour") }}</option>
+                <option :value="24">{{ t("24 hours") }}</option>
+                <option :value="168">{{ t("7 days") }}</option>
+              </select>
+            </label>
           </div>
+
+          <p v-if="leaseRouteDisabledReason" class="helper error-text">
+            {{ leaseRouteDisabledReason }}
+          </p>
+          <p v-if="cloud.hfSharedLeaseStatusError" class="helper error-text">
+            {{ cloud.hfSharedLeaseStatusError }}
+          </p>
 
           <div class="soracloud-form-actions">
             <button
-              type="button"
-              class="secondary"
-              :disabled="activeStep === 'model'"
-              @click="previousStep"
-            >
-              {{ t("Back") }}
-            </button>
-            <button
-              v-if="activeStep !== 'review'"
-              type="button"
-              :disabled="!canUseLauncher"
-              @click="nextStep"
-            >
-              {{ t("Next") }}
-            </button>
-            <button
-              v-else
               type="submit"
-              data-ui-primary-action
-              :disabled="launchDisabled || cloud.launching"
+              :disabled="
+                !canCheckSharedLease || cloud.hfSharedLeaseStatusLoading
+              "
             >
-              {{ cloud.launching ? t("Launching") : t("Launch live instance") }}
+              {{
+                cloud.hfSharedLeaseStatusLoading
+                  ? t("Checking")
+                  : t("Check shared lease")
+              }}
             </button>
           </div>
         </form>
+
+        <div class="soracloud-write-disabled" role="status">
+          <p class="wallet-empty-title">
+            {{ t("Lease joining is read-only") }}
+          </p>
+          <p class="helper">
+            {{
+              t(
+                "This release will not post a lease join until the current Iroha SDK exports the exact canonical Norito provenance encoder and signer required by Torii.",
+              )
+            }}
+          </p>
+          <button type="button" disabled>
+            {{ t("Join shared lease unavailable") }}
+          </button>
+        </div>
+
+        <div
+          v-if="cloud.hfSharedLeaseStatus?.found"
+          class="soracloud-review-grid"
+          data-testid="hf-shared-lease-status"
+        >
+          <div class="kv">
+            <span class="kv-label">{{ t("Source") }}</span>
+            <span class="kv-value mono">
+              {{ cloud.hfSharedLeaseStatus.source?.sourceId }}
+            </span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Resolved revision") }}</span>
+            <span class="kv-value mono">
+              {{ cloud.hfSharedLeaseStatus.source?.resolvedRevision }}
+            </span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Pool") }}</span>
+            <span class="kv-value mono">
+              {{ cloud.hfSharedLeaseStatus.pool?.poolId ?? t("No lease pool") }}
+            </span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Storage base fee") }}</span>
+            <span class="kv-value mono">
+              {{ cloud.hfSharedLeaseStatus.storageBaseFee }}
+            </span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Membership") }}</span>
+            <span class="kv-value">
+              {{
+                cloud.hfSharedLeaseStatus.member?.status ?? t("Not a member")
+              }}
+            </span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Service bindings") }}</span>
+            <span class="kv-value">
+              {{
+                cloud.hfSharedLeaseStatus.member?.serviceBindings.join(", ") ||
+                t("None")
+              }}
+            </span>
+          </div>
+        </div>
+
+        <div
+          v-else-if="cloud.hfSharedLeaseStatus"
+          class="soracloud-empty"
+          data-testid="hf-shared-lease-missing"
+        >
+          <p class="wallet-empty-title">{{ t("HF source not found") }}</p>
+          <p class="helper">{{ cloud.hfSharedLeaseStatus.message }}</p>
+        </div>
       </section>
 
       <section v-else class="card soracloud-list-card">
@@ -416,11 +247,11 @@
           </div>
         </header>
 
-        <div v-if="sortedServices.length" class="soracloud-deployment-list">
+        <div v-if="sortedServices.length" class="soracloud-service-list">
           <article
             v-for="service in sortedServices"
             :key="service.id"
-            class="soracloud-deployment-row"
+            class="soracloud-service-row"
           >
             <span
               class="soracloud-status-dot"
@@ -470,17 +301,6 @@
                 : t("Live services will appear after SoraCloud is available.")
             }}
           </p>
-          <p class="helper">
-            {{
-              cloud.availability === "available"
-                ? t(
-                    "Use Launch instance to submit a real Hugging Face deployment.",
-                  )
-                : t(
-                    "Refresh after switching to a SoraCloud-enabled Torii endpoint.",
-                  )
-            }}
-          </p>
         </div>
       </section>
 
@@ -509,7 +329,6 @@
             </span>
           </div>
         </div>
-
         <TechnicalDisclosure :summary="t('Status payload')">
           <pre>{{ diagnosticsPayload }}</pre>
         </TechnicalDisclosure>
@@ -521,6 +340,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
+
 import {
   AppButton,
   RouteHeaderAction,
@@ -533,58 +353,27 @@ import { useSessionStore } from "@/stores/session";
 import { useSoraCloudStore } from "@/stores/soracloud";
 import { getAccountDisplayLabel } from "@/utils/accountId";
 import {
-  deriveSoraCloudModelName,
-  deriveSoraCloudServiceName,
+  buildSoraCloudHfStatusQuery,
   sortSoraCloudServices,
   soraCloudStatusTone,
-  validateSoraCloudLeaseAssetDefinitionId,
-  validateSoraCloudServiceName,
-  type SoraCloudDeploymentStatus,
+  type SoraCloudServiceStatus,
   type SoraCloudStorageClass,
 } from "@/utils/soracloud";
-import {
-  formatTransactionFee,
-  transactionFeeHintForEndpoint,
-} from "@/utils/transactionFee";
-
-type LaunchStep = "model" | "lease" | "review";
 
 const { t, n, d } = useAppI18n();
 const session = useSessionStore();
 const endpointStore = useEndpointStore();
 const cloud = useSoraCloudStore();
-const consoleMode = ref<"services" | "launch">("services");
-
-const launchSteps: Array<{ id: LaunchStep; index: number; label: string }> = [
-  { id: "model", index: 1, label: "Choose model" },
-  { id: "lease", index: 2, label: "Lease and payment" },
-  { id: "review", index: 3, label: "Review and launch" },
-];
-
-const activeStep = ref<LaunchStep>("model");
-const modelNameTouched = ref(false);
-const serviceNameTouched = ref(false);
-const canonicalLeaseAssetDefinitionId = (value: string): string => {
-  const assetDefinitionId = value.trim();
-  return validateSoraCloudLeaseAssetDefinitionId(assetDefinitionId)
-    ? assetDefinitionId
-    : "";
-};
-const launchForm = reactive({
+const consoleMode = ref<"services" | "lease">("services");
+const HF_REVISION_PLACEHOLDER = "0123456789abcdef0123456789abcdef01234567";
+const leaseForm = reactive({
   repoId: "",
-  revision: "main",
-  modelName: "",
-  serviceName: "",
-  apartmentName: "",
+  revision: "",
   storageClass: "warm" as SoraCloudStorageClass,
   leaseTermHours: 24,
-  leaseAssetDefinitionId: canonicalLeaseAssetDefinitionId(
-    session.connection.assetDefinitionId,
-  ),
-  baseFeeNanos: "",
 });
 
-const statusLabels: Record<SoraCloudDeploymentStatus, string> = {
+const statusLabels: Record<SoraCloudServiceStatus, string> = {
   healthy: "Healthy",
   deploying: "Deploying",
   warning: "Needs attention",
@@ -602,13 +391,6 @@ const activeAccountLabel = computed(
       "",
       session.connection.networkPrefix,
     ) || t("Wallet ready"),
-);
-const canUseLauncher = computed(
-  () =>
-    cloud.availability === "available" &&
-    Boolean(activeAccount.value) &&
-    endpointStore.writeAllowed &&
-    endpointStore.inspection?.features.soraCloudDeploy.supported === true,
 );
 const sortedServices = computed(() => sortSoraCloudServices(cloud.services));
 const serviceCount = computed(() => cloud.status?.serviceCount ?? 0);
@@ -640,56 +422,56 @@ const lastRefreshLabel = computed(() =>
       })
     : t("Not refreshed"),
 );
-const serviceNameValid = computed(() =>
-  validateSoraCloudServiceName(launchForm.serviceName),
-);
-const leaseAssetDefinitionValid = computed(() =>
-  validateSoraCloudLeaseAssetDefinitionId(launchForm.leaseAssetDefinitionId),
-);
-const baseFeeValid = computed(
+const leaseRouteSupported = computed(
   () =>
-    /^\d+$/u.test(launchForm.baseFeeNanos.trim()) &&
-    BigInt(launchForm.baseFeeNanos.trim()) > 0n,
+    endpointStore.inspection?.features.soraCloudHfSharedLease.supported ===
+    true,
 );
-const launcherDisabledReason = computed(() => {
-  if (cloud.launchResult?.settlement_status === "indexing") {
-    return cloud.launchResult.reconciliation_message || t("Pending indexing");
+const leaseStatusInput = computed(() => {
+  try {
+    const leaseTermMs = leaseForm.leaseTermHours * 60 * 60 * 1000;
+    buildSoraCloudHfStatusQuery({
+      repoId: leaseForm.repoId,
+      revision: leaseForm.revision,
+      storageClass: leaseForm.storageClass,
+      leaseTermMs,
+      ...(activeAccountId.value ? { accountId: activeAccountId.value } : {}),
+    });
+    return {
+      toriiUrl: session.connection.toriiUrl,
+      repoId: leaseForm.repoId,
+      revision: leaseForm.revision,
+      storageClass: leaseForm.storageClass,
+      leaseTermMs,
+      ...(activeAccountId.value ? { accountId: activeAccountId.value } : {}),
+    };
+  } catch {
+    return null;
   }
+});
+const leaseRouteDisabledReason = computed(() => {
   if (cloud.availability !== "available") {
-    return t("Select a SoraCloud-enabled endpoint before launching.");
+    return t("Select a SoraCloud-enabled endpoint before checking a lease.");
   }
-  if (endpointStore.state === "checking") {
-    return t("Wait for endpoint capability inspection to finish.");
-  }
-  if (!endpointStore.writeAllowed) {
-    return (
-      endpointStore.diagnostic ||
-      t("Writes are blocked until the endpoint identity is verified.")
+  if (!leaseRouteSupported.value) {
+    return t(
+      "This endpoint does not advertise the exact /v1/soracloud/hf/lease contract.",
     );
   }
-  if (endpointStore.inspection?.features.soraCloudDeploy.supported !== true) {
-    return t("This endpoint does not advertise POST /v1/soracloud/hf/deploy.");
-  }
-  if (!activeAccount.value) return t("Create or restore a wallet first.");
-  if (!activeAccount.value.hasStoredSecret) {
-    return t("Save this wallet in the secure vault before launching.");
-  }
-  if (launchForm.leaseAssetDefinitionId && !leaseAssetDefinitionValid.value) {
-    return t("Settlement asset must be a canonical asset definition ID.");
+  if (!leaseStatusInput.value) {
+    return t("Enter an exact repo and full 40-character commit revision.");
   }
   return "";
 });
-const launchDisabled = computed(
-  () =>
-    Boolean(launcherDisabledReason.value) ||
-    !launchForm.repoId.trim() ||
-    !launchForm.modelName.trim() ||
-    !serviceNameValid.value ||
-    !leaseAssetDefinitionValid.value ||
-    !baseFeeValid.value,
+const canCheckSharedLease = computed(
+  () => !leaseRouteDisabledReason.value && leaseStatusInput.value !== null,
 );
 const diagnosticsPayload = computed(() =>
-  JSON.stringify(cloud.status?.raw ?? cloud.status ?? {}, null, 2),
+  JSON.stringify(
+    cloud.hfSharedLeaseStatus?.raw ?? cloud.status?.raw ?? cloud.status ?? {},
+    null,
+    2,
+  ),
 );
 const diagnosticStatusCode = computed(() => {
   if (!cloud.status) return t("Unavailable");
@@ -708,135 +490,26 @@ const refresh = () =>
     accountId: activeAccountId.value,
   });
 
-const currentHfStatusInput = () => {
-  const toriiUrl = session.connection.toriiUrl.trim();
-  const repoId = launchForm.repoId.trim();
-  const leaseTermMs = launchForm.leaseTermHours * 60 * 60 * 1000;
-  if (
-    !toriiUrl ||
-    !repoId ||
-    !Number.isSafeInteger(leaseTermMs) ||
-    leaseTermMs <= 0
-  ) {
-    return null;
-  }
-  return {
-    toriiUrl,
-    repoId,
-    revision: launchForm.revision.trim() || undefined,
-    storageClass: launchForm.storageClass,
-    leaseTermMs,
-    accountId: activeAccountId.value || undefined,
-  };
-};
-
-const refreshHfStatus = async () => {
-  const input = currentHfStatusInput();
-  if (!input) {
-    cloud.clearHfStatus();
+const refreshSharedLeaseStatus = async () => {
+  const input = leaseStatusInput.value;
+  if (!input || !leaseRouteSupported.value) {
+    cloud.clearHfSharedLeaseStatus();
     return;
   }
   try {
-    await cloud.refreshHfStatus(input);
+    await cloud.refreshHfSharedLeaseStatus(input);
   } catch {
-    // The store exposes this read's error without disturbing live services.
+    // The store exposes this independent read error without hiding services.
   }
 };
 
-const nextStep = () => {
-  if (activeStep.value === "model") {
-    activeStep.value = "lease";
-    void refreshHfStatus();
-  } else if (activeStep.value === "lease") {
-    activeStep.value = "review";
-  }
-};
-
-const previousStep = () => {
-  if (activeStep.value === "review") {
-    activeStep.value = "lease";
-  } else if (activeStep.value === "lease") {
-    activeStep.value = "model";
-  }
-};
-
-const launch = async () => {
-  if (launchDisabled.value || !activeAccount.value) return;
-  await cloud.launchHf({
-    toriiUrl: session.connection.toriiUrl,
-    chainId: session.connection.chainId,
-    networkPrefix: session.connection.networkPrefix,
-    accountId: activeAccount.value.accountId,
-    repoId: launchForm.repoId,
-    revision: launchForm.revision || undefined,
-    modelName: launchForm.modelName,
-    serviceName: launchForm.serviceName,
-    apartmentName: launchForm.apartmentName || undefined,
-    storageClass: launchForm.storageClass,
-    leaseTermMs: launchForm.leaseTermHours * 60 * 60 * 1000,
-    leaseAssetDefinitionId: launchForm.leaseAssetDefinitionId,
-    baseFeeNanos: launchForm.baseFeeNanos,
-  });
-};
-
-const reconcileLaunch = async () => {
-  const result = cloud.launchResult;
-  const account = activeAccount.value;
-  if (!result || result.settlement_status !== "indexing" || !account) {
-    return;
-  }
-  try {
-    await cloud.reconcileHfLaunch({
-      toriiUrl: session.connection.toriiUrl,
-      chainId: session.connection.chainId,
-      networkPrefix: session.connection.networkPrefix,
-      accountId: account.accountId,
-      transactionHash: result.tx_hash_hex,
-    });
-  } catch {
-    // The store keeps the finalized transaction visible and exposes the
-    // reconciliation error without allowing a duplicate launch.
-  }
-};
-
-const statusLabel = (status: SoraCloudDeploymentStatus) => statusLabels[status];
-
-watch(
-  () => launchForm.repoId,
-  (repoId) => {
-    if (!modelNameTouched.value) {
-      launchForm.modelName = deriveSoraCloudModelName(repoId);
-    }
-    if (!serviceNameTouched.value) {
-      launchForm.serviceName = deriveSoraCloudServiceName(
-        repoId,
-        activeAccount.value?.accountId,
-      );
-    }
-  },
-);
+const statusLabel = (status: SoraCloudServiceStatus) => statusLabels[status];
 
 watch(
   () => [session.connection.toriiUrl, activeAccountId.value],
   () => {
+    cloud.clearHfSharedLeaseStatus();
     void refresh();
-    void refreshHfStatus();
-  },
-);
-
-watch(
-  () => session.connection.assetDefinitionId,
-  (assetDefinitionId) => {
-    const canonicalAssetDefinitionId =
-      canonicalLeaseAssetDefinitionId(assetDefinitionId);
-    if (
-      canonicalAssetDefinitionId &&
-      !validateSoraCloudLeaseAssetDefinitionId(
-        launchForm.leaseAssetDefinitionId,
-      )
-    ) {
-      launchForm.leaseAssetDefinitionId = canonicalAssetDefinitionId;
-    }
   },
 );
 
@@ -848,7 +521,7 @@ onMounted(() => {
 
 <style scoped>
 .soracloud-command-card,
-.soracloud-launch-card,
+.soracloud-lease-card,
 .soracloud-list-card {
   background: var(--frost-panel-raised);
   -webkit-backdrop-filter: var(--frost-filter-panel);
@@ -857,16 +530,15 @@ onMounted(() => {
 
 .soracloud-kpi-grid,
 .soracloud-state,
-.soracloud-stepper {
+.soracloud-write-disabled {
   background: var(--frost-panel-inset);
   -webkit-backdrop-filter: var(--frost-filter-soft);
   backdrop-filter: var(--frost-filter-soft);
 }
 
-.soracloud-settlement-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
-  gap: 0.65rem;
-  width: 100%;
+.soracloud-write-disabled {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: var(--radius-control);
 }
 </style>

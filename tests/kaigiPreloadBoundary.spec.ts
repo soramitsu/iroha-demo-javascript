@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -13,115 +13,122 @@ const between = (start: string, end: string) => {
 };
 
 describe("Kaigi preload mutation boundary", () => {
-  it("requires the exact configured asset before private Kaigi vault or proof work", () => {
-    expect(preloadSource).not.toContain(
-      'PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID = "xor#universal"',
+  it("does not restore removed private Kaigi SDK APIs through local declarations", () => {
+    expect(existsSync(resolve("src/types/iroha-js-private-kaigi.d.ts"))).toBe(
+      false,
     );
-
-    const create = between("async createKaigiMeeting({", "async getKaigiCall(");
-    const join = between(
-      "async joinKaigiMeeting({",
-      "async watchKaigiCallEvents(",
-    );
-    const end = between("async endKaigiMeeting({", "getSumeragiStatus(config)");
-
-    for (const source of [create, join, end]) {
-      const assetValidation = source.indexOf(
-        "normalizeFirstReleaseAssetDefinitionId(assetDefinitionId)",
-      );
-      expect(assetValidation).toBeGreaterThanOrEqual(0);
-      expect(source.indexOf("resolveSigningMaterial(")).toBeGreaterThan(
-        assetValidation,
-      );
-      expect(source).toContain(
-        "assetDefinitionId: privateKaigiAssetDefinitionId",
-      );
+    for (const removedApi of [
+      "buildKaigiRosterJoinProof",
+      "buildPrivateCreateKaigiTransaction",
+      "buildPrivateJoinKaigiTransaction",
+      "buildPrivateEndKaigiTransaction",
+      "buildPrivateKaigiFeeSpend",
+      "submitTransactionEntrypoint",
+    ]) {
+      expect(preloadSource).not.toMatch(new RegExp(`\\b${removedApi}\\b`, "u"));
     }
+    expect(preloadSource).not.toContain("peerIdentityReveal");
+    expect(preloadSource).not.toContain("rosterRootHex");
   });
 
-  it("discovers a usable relay before vault access, proof generation, or signing", () => {
-    const source = between("async createKaigiMeeting({", "async getKaigiCall(");
-    const relayIndex = source.indexOf("discoverKaigiRelayManifest(");
-    const vaultIndex = source.indexOf("resolveSigningMaterial(");
-    const proofIndex = source.indexOf("buildKaigiRosterJoinProof(");
-    const signIndex = source.indexOf("quoteAndSignInstructionTransaction(");
-
-    expect(relayIndex).toBeGreaterThanOrEqual(0);
-    expect(vaultIndex).toBeGreaterThan(relayIndex);
-    expect(proofIndex).toBeGreaterThan(relayIndex);
-    expect(signIndex).toBeGreaterThan(relayIndex);
-    expect(source).not.toContain("relay_manifest: null");
-    expect(source).not.toContain("relayManifest: null");
-  });
-
-  it("rejects non-exact call ids and malformed live fee/verifier data before vault or proof work", () => {
-    const create = between("async createKaigiMeeting({", "async getKaigiCall(");
-    const join = between(
-      "async joinKaigiMeeting({",
-      "async watchKaigiCallEvents(",
+  it("exposes an exact transparent-only meeting creation contract", () => {
+    const source = between(
+      "async createKaigiMeeting(input)",
+      "async getKaigiCall(input)",
     );
-    const end = between("async endKaigiMeeting({", "getSumeragiStatus(config)");
-
-    for (const source of [create, join, end]) {
-      const callIdValidation = source.indexOf(
-        'normalizeKaigiCallId(callId, "callId")',
-      );
-      const liveContextValidation = source.indexOf(
-        "resolvePrivateKaigiConfidentialXorContext(",
-      );
-      const vaultAccess = source.indexOf("resolveSigningMaterial(");
-      const rosterProof = source.indexOf("buildKaigiRosterJoinProof(");
-
-      expect(callIdValidation).toBeGreaterThanOrEqual(0);
-      expect(liveContextValidation).toBeGreaterThan(callIdValidation);
-      expect(vaultAccess).toBeGreaterThan(liveContextValidation);
-      expect(rosterProof).toBeGreaterThan(liveContextValidation);
-    }
-
-    const resolver = between(
-      "async function resolvePrivateKaigiConfidentialXorContext(",
-      "const quoteAndSignInstructionTransaction",
+    const privacyRead = source.indexOf(
+      "requireFirstReleaseKaigiMeetingPrivacy(",
     );
-    expect(resolver).toContain('"/v1/pipeline/preflight"');
-    expect(resolver).toContain("fetchNexusLifecycle(input.toriiUrl)");
-    expect(resolver).toContain("readPrivateKaigiFeeSchedule(");
-    expect(resolver).toContain("readPrivateKaigiTransferVerifyingKey(");
-    expect(resolver).not.toContain("getConfiguration()");
-    expect(resolver).not.toContain("fees.baseFee");
-    expect(resolver).not.toContain('?? "0"');
-  });
+    const writeBoundary = source.indexOf(
+      "assertWriteConnectionMatchesEndpoint(",
+    );
 
-  it("reloads join privacy, host key, and roster root from the live call before vault access", () => {
-    const join = between(
-      "async joinKaigiMeeting({",
-      "async watchKaigiCallEvents(",
-    );
-    const liveCallRead = join.indexOf("await fetchKaigiMeetingView({");
-    const livePrivacy = join.indexOf(
-      "const resolvedPrivacyMode = liveMeeting.privacyMode",
-    );
-    const privateContext = join.indexOf(
+    expect(privacyRead).toBeGreaterThanOrEqual(0);
+    expect(writeBoundary).toBeGreaterThan(privacyRead);
+    for (const removedPrivateWork of [
       "resolvePrivateKaigiConfidentialXorContext(",
+      "unavailablePrivateKaigiProof(",
+      "buildFundedPrivateKaigiEntrypoint(",
+      "assetDefinitionId",
+    ]) {
+      expect(source).not.toContain(removedPrivateWork);
+    }
+    expect(source).not.toContain("discoverKaigiRelayManifest(");
+    expect(source).toContain(
+      'requireFirstReleaseIpcInput(input, "kaigiCreate")',
     );
-    const vaultAccess = join.indexOf("resolveSigningMaterial(");
-    const signature = join.slice(0, join.indexOf("}) {"));
+  });
 
-    expect(liveCallRead).toBeGreaterThanOrEqual(0);
-    expect(livePrivacy).toBeGreaterThan(liveCallRead);
-    expect(privateContext).toBeGreaterThan(livePrivacy);
-    expect(vaultAccess).toBeGreaterThan(privateContext);
-    expect(join).toContain(
-      "encryptedSignal: encryptKaigiPayload(\n          answerPayload,\n          liveMeeting.hostKaigiPublicKeyBase64Url",
+  it("normalizes exact transparent live records without private mutation branches", () => {
+    const meetingView = between(
+      "const resolveKaigiMeetingView = (",
+      "const ensureObjectResponse = (",
     );
-    expect(join).toContain(
-      'liveMeeting.rosterRootHex,\n          "liveMeeting.rosterRootHex"',
+    const privacyRead = meetingView.indexOf(
+      "requireFirstReleaseKaigiMeetingPrivacy(",
     );
-    expect(join).not.toContain("normalizeKaigiMeetingPrivacy(privacyMode)");
-    expect(signature).not.toContain("hostKaigiPublicKeyBase64Url");
-    expect(signature).not.toContain("privacyMode");
-    expect(signature).not.toContain("rosterRootHex");
-    expect(join).not.toContain(
-      "normalizeKaigiRosterRootHex(\n          rosterRootHex",
+    expect(privacyRead).toBeGreaterThanOrEqual(0);
+    expect(privacyRead).toBeLessThan(
+      meetingView.indexOf("normalizeFirstReleaseKaigiCallMetadata("),
     );
+
+    const join = between(
+      "async joinKaigiMeeting(input)",
+      "async watchKaigiCallEvents(input, onEvent)",
+    );
+    const joinLiveRead = join.indexOf("await fetchKaigiMeetingView({");
+    expect(joinLiveRead).toBeGreaterThanOrEqual(0);
+    expect(join.indexOf("resolveSigningMaterial(")).toBeGreaterThan(
+      joinLiveRead,
+    );
+
+    const end = between(
+      "async endKaigiMeeting(input)",
+      "getSumeragiStatus(config)",
+    );
+    const endLiveRead = end.indexOf("await fetchFirstReleaseKaigiCall(");
+    expect(endLiveRead).toBeGreaterThanOrEqual(0);
+    const endPrivacyRead = end.indexOf(
+      "requireFirstReleaseKaigiMeetingPrivacy(",
+    );
+    expect(endPrivacyRead).toBeGreaterThan(endLiveRead);
+    expect(end.indexOf("resolveSigningMaterial(")).toBeGreaterThan(
+      endPrivacyRead,
+    );
+
+    for (const source of [meetingView, join, end]) {
+      for (const removedPrivateWork of [
+        "rejectUnavailablePrivateKaigi(",
+        "resolvePrivateKaigiConfidentialXorContext(",
+        "unavailablePrivateKaigiProof(",
+        "buildFundedPrivateKaigiEntrypoint(",
+        "assetDefinitionId",
+      ]) {
+        expect(source).not.toContain(removedPrivateWork);
+      }
+    }
+  });
+
+  it("signs the exact current timestamp-and-limit Kaigi signal request", () => {
+    const source = between(
+      "async pollKaigiMeetingSignals(input)",
+      "async endKaigiMeeting(input)",
+    );
+    expect(source).toContain("fetchFirstReleaseKaigiSignals({");
+    expect(source).toContain("resolveSigningMaterial({");
+    expect(source).toContain("resolveFirstReleaseTransactionNetworkId({");
+    expect(source).toContain("chainId,");
+    expect(source).toContain("afterTimestampMs:");
+    expect(source).toContain(
+      "const pageLimit = requireFirstReleasePagination(",
+    );
+    expect(source).toContain("maximumLimit: 500");
+    expect(source).toContain("limit: pageLimit");
+    expect(source).toContain(
+      "Kaigi call signals returned more items than requested.",
+    );
+    expect(source).toContain('requireFirstReleaseIpcInput(input, "kaigiPoll")');
+    expect(source).not.toContain("catch (_error)");
+    expect(source).not.toContain("offset");
   });
 });

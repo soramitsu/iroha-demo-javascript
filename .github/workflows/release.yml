@@ -16,10 +16,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   IROHA_JS_NATIVE_BUILD_PROFILE: "release"
   IROHA_JS_NATIVE_SOURCE_GIT_REVISION: "1bcb05eb208d8bda1610789d827a7ed97e66e56c"
-  NODE_VERSION: "20"
+  NODE_VERSION: "24"
   REVIEWED_IROHA_REF: "1bcb05eb208d8bda1610789d827a7ed97e66e56c"
   REVIEWED_IROHA_PARENT: "03b2bff298cabe1c1355d78379acb4a099e6d627"
   REVIEWED_IROHA_TREE: "801349ba2350640643179c83821c43d8548ba021"
@@ -34,6 +38,7 @@ env:
   SORANET_VPN_PACKET_TUNNEL_BUNDLE_ID: ${{ vars.SORANET_VPN_PACKET_TUNNEL_BUNDLE_ID }}
   SORANET_VPN_APP_GROUP_ID: ${{ vars.SORANET_VPN_APP_GROUP_ID }}
   SORANET_VPN_MANAGER_DESCRIPTION: ${{ vars.SORANET_VPN_MANAGER_DESCRIPTION }}
+  HAS_IROHA_RELEASE_SIGNER_KEY: ${{ secrets.IROHA_RELEASE_SIGNER_PUBLIC_KEY_BASE64 != '' }}
   HAS_MAC_SIGNING: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 != '' && secrets.MAC_CERTIFICATE_PASSWORD != '' && secrets.APPLE_DEVELOPMENT_TEAM != '' && secrets.APPLE_API_KEY_P8_BASE64 != '' && secrets.APPLE_API_KEY_ID != '' && secrets.APPLE_API_ISSUER != '' }}
   HAS_WIN_SIGNING: ${{ secrets.WIN_CSC_LINK != '' && secrets.WIN_CSC_KEY_PASSWORD != '' }}
 
@@ -80,6 +85,10 @@ jobs:
           fi
           if [[ "$IROHA_REF" != "$REVIEWED_IROHA_REF" ]]; then
             echo "::error::IROHA_REF must equal the reviewed signed v4 source $REVIEWED_IROHA_REF; got $IROHA_REF."
+            exit 1
+          fi
+          if [[ "$HAS_IROHA_RELEASE_SIGNER_KEY" != "true" ]]; then
+            echo "::error::IROHA_RELEASE_SIGNER_PUBLIC_KEY_BASE64 is required and must contain the canonical base64 encoding of the reviewed public OpenPGP key."
             exit 1
           fi
 
@@ -212,6 +221,7 @@ jobs:
         with:
           path: iroha-demo-javascript
           ref: ${{ env.APP_REF }}
+          persist-credentials: false
 
       - name: Checkout Iroha SDK
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -220,6 +230,7 @@ jobs:
           path: iroha
           ref: ${{ env.IROHA_REF }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Verify checked-out source identities
         shell: bash
@@ -239,6 +250,13 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: iroha-demo-javascript/package-lock.json
+
+      - name: Prepare authenticated Iroha release source
+        env:
+          IROHA_RELEASE_SIGNER_PUBLIC_KEY_BASE64: ${{ secrets.IROHA_RELEASE_SIGNER_PUBLIC_KEY_BASE64 }}
+        run: >-
+          node iroha-demo-javascript/scripts/prepare-iroha-release-source.mjs
+          --iroha-root iroha
 
       - name: Set up Rust
         run: |
@@ -265,10 +283,11 @@ jobs:
           test -z "$(git -C iroha status --porcelain=v1 --untracked-files=all)"
 
       - name: Build reviewed Iroha native binding
-        working-directory: iroha/javascript/iroha_js
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/iroha-js-native-target
-        run: npm run build:native
+        run: >-
+          node iroha-demo-javascript/scripts/build-iroha-native.mjs
+          --sdk-root iroha/javascript/iroha_js
 
       - name: Verify reviewed native build closure
         shell: bash
@@ -302,59 +321,13 @@ jobs:
           }
           NODE
 
-      - name: Install dependencies
+      - name: Install exact reviewed release dependencies
         working-directory: iroha-demo-javascript
-        run: npm ci --ignore-scripts --install-links --no-audit --no-fund
+        run: npm run install:release
 
-      - name: Install and verify reviewed native binding
-        shell: bash
+      - name: Verify exact reviewed release dependency selection
         working-directory: iroha-demo-javascript
-        run: |
-          node --input-type=module <<'NODE'
-          import { constants, copyFileSync, existsSync, lstatSync, readFileSync } from "node:fs";
-          import { join } from "node:path";
-          import {
-            resolveNativeBuildRequirement,
-            resolveNativeProvenanceRequirement,
-          } from "./scripts/postinstallNativeCheck.mjs";
-          const installedSdkPath = join("node_modules", "@iroha", "iroha-js");
-          const installedSdk = lstatSync(installedSdkPath);
-          if (!installedSdk.isDirectory() || installedSdk.isSymbolicLink()) {
-            throw new Error("@iroha/iroha-js must be a physical package installed with --install-links");
-          }
-          const sourceNative = join("..", "iroha", "javascript", "iroha_js", "native");
-          const installedNative = join(installedSdkPath, "native");
-          const installedNativeStat = lstatSync(installedNative);
-          if (!installedNativeStat.isDirectory() || installedNativeStat.isSymbolicLink()) {
-            throw new Error("installed @iroha/iroha-js native path must be a physical directory");
-          }
-          const sourceNode = join(sourceNative, "iroha_js_host.node");
-          const sourceManifest = join(sourceNative, "iroha_js_host.checksums.json");
-          const installedNode = join(installedNative, "iroha_js_host.node");
-          const installedManifest = join(installedNative, "iroha_js_host.checksums.json");
-          for (const artifact of [sourceNode, sourceManifest, installedManifest]) {
-            const stat = lstatSync(artifact);
-            if (!stat.isFile() || stat.isSymbolicLink()) {
-              throw new Error(`${artifact} must be a regular file`);
-            }
-          }
-          if (existsSync(installedNode)) {
-            throw new Error("physical SDK package unexpectedly contains a native binary");
-          }
-          if (!readFileSync(sourceManifest).equals(readFileSync(installedManifest))) {
-            throw new Error("installed native manifest differs from the reviewed sibling manifest");
-          }
-          copyFileSync(sourceNode, installedNode, constants.COPYFILE_EXCL);
-          const requirement = resolveNativeBuildRequirement(
-            installedSdkPath,
-            undefined,
-            undefined,
-            resolveNativeProvenanceRequirement(process.env),
-          );
-          if (requirement.shouldBuild) {
-            throw new Error(`installed native binding failed verification: ${requirement.reason}`);
-          }
-          NODE
+        run: npm run verify:iroha-sdk
 
       - name: Verify
         working-directory: iroha-demo-javascript
@@ -386,6 +359,7 @@ jobs:
         with:
           path: iroha-demo-javascript
           ref: ${{ env.APP_REF }}
+          persist-credentials: false
 
       - name: Checkout Iroha SDK
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -394,6 +368,7 @@ jobs:
           path: iroha
           ref: ${{ env.IROHA_REF }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Verify checked-out source identities
         shell: bash
@@ -413,6 +388,13 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: iroha-demo-javascript/package-lock.json
+
+      - name: Prepare authenticated Iroha release source
+        env:
+          IROHA_RELEASE_SIGNER_PUBLIC_KEY_BASE64: ${{ secrets.IROHA_RELEASE_SIGNER_PUBLIC_KEY_BASE64 }}
+        run: >-
+          node iroha-demo-javascript/scripts/prepare-iroha-release-source.mjs
+          --iroha-root iroha
 
       - name: Set up Rust
         shell: bash
@@ -440,10 +422,11 @@ jobs:
           test -z "$(git -C iroha status --porcelain=v1 --untracked-files=all)"
 
       - name: Build reviewed Iroha native binding
-        working-directory: iroha/javascript/iroha_js
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/iroha-js-native-target
-        run: npm run build:native
+        run: >-
+          node iroha-demo-javascript/scripts/build-iroha-native.mjs
+          --sdk-root iroha/javascript/iroha_js
 
       - name: Verify reviewed native build closure
         shell: bash
@@ -493,26 +476,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y libopenjp2-tools rpm
 
-      - name: Report macOS signing mode
-        if: matrix.platform == 'mac'
+      - name: Require production platform signing
+        if: matrix.platform == 'mac' || matrix.platform == 'win'
         shell: bash
         run: |
-          if [[ "$HAS_MAC_SIGNING" == "true" ]]; then
-            echo "Building signed and notarized macOS artifacts."
-          else
-            echo "::warning::macOS signing/notarization secrets are missing. Building unsigned draft artifacts."
-            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+          if [[ "${{ matrix.platform }}" == "mac" && "$HAS_MAC_SIGNING" != "true" ]]; then
+            echo "::error::Every release requires complete macOS Developer ID signing and notarization credentials."
+            exit 1
           fi
-
-      - name: Report Windows signing mode
-        if: matrix.platform == 'win'
-        shell: bash
-        run: |
-          if [[ "$HAS_WIN_SIGNING" == "true" ]]; then
-            echo "Building signed Windows artifacts."
-          else
-            echo "::warning::Windows signing secrets are missing. Building unsigned draft artifacts."
-            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+          if [[ "${{ matrix.platform }}" == "win" && "$HAS_WIN_SIGNING" != "true" ]]; then
+            echo "::error::Every release requires complete Windows Authenticode signing credentials."
+            exit 1
           fi
 
       - name: Prepare Windows signing certificate
@@ -523,9 +497,51 @@ jobs:
           WIN_CSC_KEY_PASSWORD_SECRET: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: |
           $certPath = Join-Path $env:RUNNER_TEMP "windows-codesign.pfx"
-          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WIN_CSC_LINK_SECRET))
+          if (Test-Path -LiteralPath $certPath) {
+            throw "Refusing to overwrite an existing release certificate file."
+          }
+          try {
+            $certBytes = [Convert]::FromBase64String($env:WIN_CSC_LINK_SECRET)
+          } catch {
+            throw "WIN_CSC_LINK is not canonical base64 certificate data."
+          }
+          if ([Convert]::ToBase64String($certBytes) -cne $env:WIN_CSC_LINK_SECRET) {
+            throw "WIN_CSC_LINK must use canonical unwrapped base64 encoding."
+          }
+          [IO.File]::WriteAllBytes($certPath, $certBytes)
+          $flags = [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
+          $certificates = [Security.Cryptography.X509Certificates.X509Certificate2Collection]::new()
+          $certificates.Import($certBytes, $env:WIN_CSC_KEY_PASSWORD_SECRET, $flags)
+          $privateCertificates = @($certificates | Where-Object HasPrivateKey)
+          if ($privateCertificates.Count -cne 1) {
+            throw "The Windows release PFX must contain exactly one certificate with a private key."
+          }
+          $certificate = $privateCertificates[0]
+          $now = [DateTime]::UtcNow
+          if ($now -lt $certificate.NotBefore.ToUniversalTime() -or $now -gt $certificate.NotAfter.ToUniversalTime()) {
+            throw "The Windows release certificate is not currently valid."
+          }
+          $codeSigningOid = "1.3.6.1.5.5.7.3.3"
+          $hasCodeSigningEku = $false
+          foreach ($extension in $certificate.Extensions) {
+            if ($extension -is [Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension]) {
+              foreach ($usage in $extension.EnhancedKeyUsages) {
+                if ($usage.Value -ceq $codeSigningOid) {
+                  $hasCodeSigningEku = $true
+                }
+              }
+            }
+          }
+          if (-not $hasCodeSigningEku) {
+            throw "The Windows release certificate is not authorized for code signing."
+          }
+          $thumbprint = $certificate.Thumbprint.ToUpperInvariant()
+          if ($thumbprint -cnotmatch '^[0-9A-F]{40}$') {
+            throw "The Windows release certificate has an invalid SHA-1 thumbprint."
+          }
           "WIN_CSC_LINK=$certPath" >> $env:GITHUB_ENV
           "WIN_CSC_KEY_PASSWORD=$env:WIN_CSC_KEY_PASSWORD_SECRET" >> $env:GITHUB_ENV
+          "WIN_EXPECTED_CERT_THUMBPRINT=$thumbprint" >> $env:GITHUB_ENV
 
       - name: Prepare macOS signing and notarization
         if: matrix.platform == 'mac' && env.HAS_MAC_SIGNING == 'true'
@@ -537,16 +553,35 @@ jobs:
           APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_SIGN_IDENTITY_SECRET: ${{ secrets.APPLE_SIGN_IDENTITY }}
-          APPLE_XCODE_SIGN_IDENTITY_SECRET: ${{ secrets.APPLE_XCODE_SIGN_IDENTITY }}
         run: |
+          if [[ ! "$APPLE_DEVELOPMENT_TEAM" =~ ^[A-Z0-9]{10}$ ]]; then
+            echo "::error::APPLE_DEVELOPMENT_TEAM must be an exact ten-character team ID."
+            exit 1
+          fi
+          if [[ ! "$APPLE_API_KEY_ID" =~ ^[A-Z0-9]{10}$ ]]; then
+            echo "::error::APPLE_API_KEY_ID must be an exact ten-character key ID."
+            exit 1
+          fi
+          if [[ ! "$APPLE_API_ISSUER" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]; then
+            echo "::error::APPLE_API_ISSUER must be an exact UUID."
+            exit 1
+          fi
           cert_path="$RUNNER_TEMP/mac-codesign.p12"
           api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
           keychain_path="$RUNNER_TEMP/release-signing.keychain-db"
           keychain_password="$(uuidgen)"
 
+          test ! -e "$cert_path"
+          test ! -e "$api_key_path"
+          test ! -e "$keychain_path"
           printf '%s' "$MAC_CERTIFICATE_P12_BASE64" | base64 -D > "$cert_path"
           printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 -D > "$api_key_path"
+          chmod 600 "$cert_path" "$api_key_path"
+          test -s "$cert_path"
+          test "$(base64 < "$cert_path" | tr -d '\r\n')" = "$MAC_CERTIFICATE_P12_BASE64"
+          test "$(base64 < "$api_key_path" | tr -d '\r\n')" = "$APPLE_API_KEY_P8_BASE64"
+          grep -q '^-----BEGIN PRIVATE KEY-----$' "$api_key_path"
+          grep -q '^-----END PRIVATE KEY-----$' "$api_key_path"
 
           security create-keychain -p "$keychain_password" "$keychain_path"
           security set-keychain-settings -lut 21600 "$keychain_path"
@@ -556,71 +591,40 @@ jobs:
           security import "$cert_path" -k "$keychain_path" -P "$MAC_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productsign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path"
 
+          matching_identities="$(
+            security find-identity -v -p codesigning "$keychain_path" |
+              grep -E '"Developer ID Application: .+ \('"$APPLE_DEVELOPMENT_TEAM"'\)"' || true
+          )"
+          if [[ "$(printf '%s\n' "$matching_identities" | sed '/^$/d' | wc -l | tr -d ' ')" != "1" ]]; then
+            echo "::error::The release P12 must contain exactly one Developer ID Application identity for team $APPLE_DEVELOPMENT_TEAM."
+            exit 1
+          fi
+          identity_hash="$(printf '%s\n' "$matching_identities" | awk '{print $2}')"
+          if [[ ! "$identity_hash" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "::error::Unable to resolve the exact Developer ID Application identity."
+            exit 1
+          fi
+
           {
             echo "CSC_LINK=$cert_path"
             echo "CSC_KEY_PASSWORD=$MAC_CERTIFICATE_PASSWORD"
+            echo "CSC_NAME=$identity_hash"
             echo "APPLE_DEVELOPMENT_TEAM=$APPLE_DEVELOPMENT_TEAM"
             echo "APPLE_API_KEY=$api_key_path"
             echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID"
             echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
-            echo "APPLE_SIGN_IDENTITY=${APPLE_SIGN_IDENTITY_SECRET:-Developer ID Application}"
-            echo "APPLE_XCODE_SIGN_IDENTITY=${APPLE_XCODE_SIGN_IDENTITY_SECRET:-Developer ID Application}"
+            echo "APPLE_SIGN_IDENTITY=$identity_hash"
+            echo "APPLE_XCODE_SIGN_IDENTITY=$identity_hash"
             echo "APPLE_CODESIGN_TIMESTAMP=true"
           } >> "$GITHUB_ENV"
 
-      - name: Install dependencies
+      - name: Install exact reviewed release dependencies
         working-directory: iroha-demo-javascript
-        run: npm ci --ignore-scripts --install-links --no-audit --no-fund
+        run: npm run install:release
 
-      - name: Install and verify reviewed native binding
-        shell: bash
+      - name: Verify exact reviewed release dependency selection
         working-directory: iroha-demo-javascript
-        run: |
-          node --input-type=module <<'NODE'
-          import { constants, copyFileSync, existsSync, lstatSync, readFileSync } from "node:fs";
-          import { join } from "node:path";
-          import {
-            resolveNativeBuildRequirement,
-            resolveNativeProvenanceRequirement,
-          } from "./scripts/postinstallNativeCheck.mjs";
-          const installedSdkPath = join("node_modules", "@iroha", "iroha-js");
-          const installedSdk = lstatSync(installedSdkPath);
-          if (!installedSdk.isDirectory() || installedSdk.isSymbolicLink()) {
-            throw new Error("@iroha/iroha-js must be a physical package installed with --install-links");
-          }
-          const sourceNative = join("..", "iroha", "javascript", "iroha_js", "native");
-          const installedNative = join(installedSdkPath, "native");
-          const installedNativeStat = lstatSync(installedNative);
-          if (!installedNativeStat.isDirectory() || installedNativeStat.isSymbolicLink()) {
-            throw new Error("installed @iroha/iroha-js native path must be a physical directory");
-          }
-          const sourceNode = join(sourceNative, "iroha_js_host.node");
-          const sourceManifest = join(sourceNative, "iroha_js_host.checksums.json");
-          const installedNode = join(installedNative, "iroha_js_host.node");
-          const installedManifest = join(installedNative, "iroha_js_host.checksums.json");
-          for (const artifact of [sourceNode, sourceManifest, installedManifest]) {
-            const stat = lstatSync(artifact);
-            if (!stat.isFile() || stat.isSymbolicLink()) {
-              throw new Error(`${artifact} must be a regular file`);
-            }
-          }
-          if (existsSync(installedNode)) {
-            throw new Error("physical SDK package unexpectedly contains a native binary");
-          }
-          if (!readFileSync(sourceManifest).equals(readFileSync(installedManifest))) {
-            throw new Error("installed native manifest differs from the reviewed sibling manifest");
-          }
-          copyFileSync(sourceNode, installedNode, constants.COPYFILE_EXCL);
-          const requirement = resolveNativeBuildRequirement(
-            installedSdkPath,
-            undefined,
-            undefined,
-            resolveNativeProvenanceRequirement(process.env),
-          );
-          if (requirement.shouldBuild) {
-            throw new Error(`installed native binding failed verification: ${requirement.reason}`);
-          }
-          NODE
+        run: npm run verify:iroha-sdk
 
       - name: Verify Windows governance-integrity storage
         if: matrix.platform == 'win'
@@ -630,7 +634,6 @@ jobs:
           tests/secureBoundedJson.spec.ts
           tests/governanceValidationFee.spec.ts
           tests/governanceValidationFeeFinality.spec.ts
-          tests/governancePlainReferendum.spec.ts
 
       - name: Build macOS artifacts
         if: matrix.platform == 'mac'
@@ -647,20 +650,52 @@ jobs:
         working-directory: iroha-demo-javascript
         run: npm run dist:linux -- --${{ matrix.arch }} --publish never
 
-      - name: Collect release artifacts
+      - name: Verify notarized macOS application
+        if: matrix.platform == 'mac'
         shell: bash
         working-directory: iroha-demo-javascript
         run: |
-          mkdir -p artifact-output
-          find release -maxdepth 1 -type f \( \
-            -name '*.AppImage' -o \
-            -name '*.deb' -o \
-            -name '*.dmg' -o \
-            -name '*.exe' -o \
-            -name '*.rpm' -o \
-            -name '*.zip' \
-          \) -print0 | xargs -0 -I{} cp "{}" artifact-output/
-          find artifact-output -type f -maxdepth 1 -print
+          app_count="$(find release -mindepth 2 -maxdepth 2 -type d -name 'SORA Wallet.app' | wc -l | tr -d ' ')"
+          if [[ "$app_count" != "1" ]]; then
+            echo "::error::Expected one packaged SORA Wallet.app; found $app_count."
+            exit 1
+          fi
+          app_path="$(find release -mindepth 2 -maxdepth 2 -type d -name 'SORA Wallet.app' -print -quit)"
+          codesign --verify --deep --strict --verbose=4 "$app_path"
+          xcrun stapler validate "$app_path"
+          spctl --assess --type execute --verbose=4 "$app_path"
+
+      - name: Verify signed Windows installer
+        if: matrix.platform == 'win'
+        shell: pwsh
+        working-directory: iroha-demo-javascript
+        run: |
+          $version = $env:RELEASE_TAG.Substring(1)
+          $installer = Join-Path "release" "SORA-Wallet-$version-win-x64.exe"
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+            throw "The exact Windows installer is missing: $installer"
+          }
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status.ToString() -cne "Valid") {
+            throw "The Windows installer does not have a valid Authenticode signature."
+          }
+          if ($signature.SignerCertificate.Thumbprint.ToUpperInvariant() -cne $env:WIN_EXPECTED_CERT_THUMBPRINT) {
+            throw "The Windows installer was not signed by the exact release certificate."
+          }
+          if ($null -eq $signature.TimeStamperCertificate) {
+            throw "The Windows installer signature does not have a trusted timestamp."
+          }
+
+      - name: Collect release artifacts
+        shell: bash
+        working-directory: iroha-demo-javascript
+        run: >-
+          node scripts/collect-release-artifacts.mjs
+          --input release
+          --output artifact-output
+          --version "${RELEASE_TAG#v}"
+          --platform ${{ matrix.platform }}
+          --arch ${{ matrix.arch }}
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -687,6 +722,13 @@ jobs:
       SIGSTORE_CERTIFICATE_OIDC_ISSUER: "https://token.actions.githubusercontent.com"
       WALLET_COMMIT_SHA: ${{ needs.preflight.outputs.wallet_sha }}
     steps:
+      - name: Checkout immutable release tooling
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: iroha-demo-javascript
+          ref: ${{ env.APP_REF }}
+          persist-credentials: false
+
       - name: Download release artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -706,39 +748,12 @@ jobs:
             echo "::error::Release tag is not a supported version tag: $RELEASE_TAG"
             exit 1
           fi
-
-          release_version="${RELEASE_TAG#v}"
-          mapfile -d '' release_files < <(
-            find artifacts -maxdepth 1 -type f \( \
-              -name '*.AppImage' -o \
-              -name '*.deb' -o \
-              -name '*.dmg' -o \
-              -name '*.exe' -o \
-              -name '*.rpm' -o \
-              -name '*.zip' \
-            \) -print0 | sort -z
-          )
-          if (( ${#release_files[@]} == 0 )); then
-            echo "::error::No distributable release artifacts were downloaded."
-            exit 1
-          fi
-
-          for file in "${release_files[@]}"; do
-            name="$(basename "$file")"
-            if [[ "$name" != "SORA-Wallet-$release_version-"* ]]; then
-              echo "::error::Artifact $name does not match release $RELEASE_TAG."
-              exit 1
-            fi
-          done
-
-          duplicate_names="$(
-            printf '%s\n' "${release_files[@]##*/}" | sort | uniq -d
-          )"
-          if [[ -n "$duplicate_names" ]]; then
-            echo "::error::Duplicate release artifact names were merged:"
-            printf '%s\n' "$duplicate_names"
-            exit 1
-          fi
+          test "$(git -C iroha-demo-javascript rev-parse HEAD)" = "$GITHUB_SHA"
+          node iroha-demo-javascript/scripts/collect-release-artifacts.mjs \
+            --input artifacts \
+            --version "${RELEASE_TAG#v}" \
+            --platform all \
+            --validate-only
 
       - name: Write immutable source identity
         shell: bash
@@ -762,13 +777,18 @@ jobs:
             --argjson iroha_cargo_lock_size "$REVIEWED_IROHA_CARGO_LOCK_SIZE" \
             --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
             '{
-              schema: "sora.wallet.release-source.v2",
+              schema: "sora.wallet.release-source.v3",
               release_tag: $release_tag,
               tag_object_sha: $tag_object_sha,
               build: {
                 node_version: $node_version,
                 rust_toolchain: $rust_toolchain,
-                native_build_profile: $native_build_profile
+                native_build_profile: $native_build_profile,
+                exact_artifact_count: 9,
+                platform_signing: {
+                  macos_developer_id_notarization: "required-and-verified",
+                  windows_authenticode: "required-and-verified"
+                }
               },
               wallet: {
                 repository: $wallet_repository,
@@ -787,14 +807,31 @@ jobs:
                 native_contract: {
                   source_git_revision: $iroha_commit_sha,
                   source_tree_clean: true,
-                  connect_norito_bridge_abi_version: 21,
+                  build_provenance_version: 3,
+                  build_execution_policy: "trusted-local-cargo-v1",
+                  connect_norito_bridge_abi_version: 23,
                   secure_private_file_abi_version: 1,
-                  validation_fee_policy_fingerprint_vector: "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90",
-                  validation_fee_payout_lifecycle_fingerprint_vector: "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b",
+                  validation_fee_policy_fingerprint_vector: "4742b1f274928767564c6effa414e640e6f635874d74684b06b95414c5afa16e",
+                  validation_fee_payout_lifecycle_fingerprint_vector: "8fd84f6599e22db4da15f7152a914dc0091dd73a7906d5981cce37d485191c25",
                   required_exports: [
-                    "connectNoritoBridgeAbiVersion",
+                    "accountAddressParseEncoded",
+                    "accountAddressRender",
+                    "deriveConfidentialReceiveAddressV2",
+                    "buildIvmProvedTransactionPayload",
+                    "signQuotedIvmProvedTransactionPayload",
+                    "buildTransactionPayload",
+                    "signQuotedTransactionPayload",
+                    "encodeSignedTransactionVersioned",
+                    "hashSignedTransaction",
+                    "decodeTransactionReceiptJson",
+                    "noritoDecodeInstruction",
+                    "noritoEncodeInstruction",
+                    "inspectSubscriptionTriggerAction",
+                    "validationFeeHijiriQuoteRequestV1",
+                    "validationFeeVerifyHijiriQuoteResponseV1",
                     "validationFeePolicyProposalFingerprintV1",
                     "validationFeePayoutLifecycleProposalFingerprintV1",
+                    "connectNoritoBridgeAbiVersion",
                     "securePrivateFileAbiVersion",
                     "securePrivateDirectoryEnsure",
                     "securePrivateFileRead",
@@ -821,49 +858,8 @@ jobs:
             (cd "$(dirname "$file")" && shasum -a 256 "$(basename "$file")")
           done > artifacts/SHA256SUMS.txt
           test -s artifacts/SHA256SUMS.txt
-
-      - name: Create or update draft release
-        shell: bash
-        run: |
-          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --draft --verify-tag --title "$RELEASE_TAG" --generate-notes
-          elif [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" != "true" ]]; then
-            echo "::error::Refusing to replace assets on an already-published release."
-            exit 1
-          fi
-
-      - name: Upload draft distributables and checksums
-        shell: bash
-        run: |
-          upload_with_retry() {
-            local file="$1"
-            local attempt
-            for attempt in 1 2 3; do
-              if gh release upload "$RELEASE_TAG" "$file" --clobber; then
-                return 0
-              fi
-              if (( attempt < 3 )); then
-                sleep "$((attempt * 2))"
-              fi
-            done
-            echo "::error::Failed to upload $file after 3 attempts."
-            return 1
-          }
-
-          while IFS= read -r -d '' file; do
-            upload_with_retry "$file"
-          done < <(
-            find artifacts -maxdepth 1 -type f \( \
-              -name '*.AppImage' -o \
-              -name '*.deb' -o \
-              -name '*.dmg' -o \
-              -name '*.exe' -o \
-              -name '*.rpm' -o \
-              -name '*.zip' \
-            \) -print0 | sort -z
-          )
-          upload_with_retry artifacts/SOURCE-IDENTITY.json
-          upload_with_retry artifacts/SHA256SUMS.txt
+          test "$(wc -l < artifacts/SHA256SUMS.txt | tr -d ' ')" = "10"
+          (cd artifacts && shasum -a 256 -c SHA256SUMS.txt)
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -922,8 +918,9 @@ jobs:
           # Verify SORA Wallet release artifacts
 
           These bundles provide Sigstore keyless provenance from the tagged
-          GitHub Actions release workflow. They do not provide macOS
-          notarization or Windows Authenticode signing.
+          GitHub Actions release workflow. Sigstore does not itself provide
+          platform signing; this release workflow separately requires and
+          verifies macOS Developer ID notarization and Windows Authenticode.
 
           `SOURCE-IDENTITY.json` records the verified signed tag object, wallet
           commit, and exact Iroha commit used for the build.
@@ -970,14 +967,14 @@ jobs:
           EOF
           } > artifacts/SIGSTORE-VERIFY.md
 
-      - name: Upload Sigstore bundles and verification instructions
+      - name: Replace draft release with the verified local inventory
         shell: bash
         run: |
           upload_with_retry() {
             local file="$1"
             local attempt
             for attempt in 1 2 3; do
-              if gh release upload "$RELEASE_TAG" "$file" --clobber; then
+              if gh release upload "$RELEASE_TAG" "$file"; then
                 return 0
               fi
               if (( attempt < 3 )); then
@@ -988,12 +985,35 @@ jobs:
             return 1
           }
 
-          while IFS= read -r -d '' bundle; do
-            upload_with_retry "$bundle"
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --draft --verify-tag --title "$RELEASE_TAG" --generate-notes
+          elif [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" != "true" ]]; then
+            echo "::error::Refusing to replace assets on an already-published release."
+            exit 1
+          fi
+
+          while IFS= read -r asset; do
+            if [[ -n "$asset" ]]; then
+              gh release delete-asset "$RELEASE_TAG" "$asset" --yes
+            fi
+          done < <(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')
+
+          while IFS= read -r -d '' file; do
+            upload_with_retry "$file"
           done < <(
-            find artifacts -maxdepth 1 -type f -name '*.sigstore.json' -print0 | sort -z
+            find artifacts -maxdepth 1 -type f \( \
+              -name '*.AppImage' -o \
+              -name '*.deb' -o \
+              -name '*.dmg' -o \
+              -name '*.exe' -o \
+              -name '*.rpm' -o \
+              -name '*.zip' -o \
+              -name '*.sigstore.json' -o \
+              -name 'SOURCE-IDENTITY.json' -o \
+              -name 'SHA256SUMS.txt' -o \
+              -name 'SIGSTORE-VERIFY.md' \
+            \) -print0 | sort -z
           )
-          upload_with_retry artifacts/SIGSTORE-VERIFY.md
 
       - name: Verify draft release asset inventory
         shell: bash

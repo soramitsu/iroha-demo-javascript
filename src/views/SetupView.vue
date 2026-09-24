@@ -39,22 +39,9 @@
           />
         </label>
       </div>
-      <details class="setup-asset-literal">
-        <summary>{{ t("Edit raw asset ID") }}</summary>
-        <label>
-          {{ t("Raw asset ID") }}
-          <input
-            v-model="assetDefinitionDraft"
-            data-testid="raw-asset-id-input"
-          />
-        </label>
-      </details>
       <div class="actions">
         <button :disabled="pingLoading" @click="handlePing">
           {{ t("Check health") }}
-        </button>
-        <button class="secondary" @click="saveConnection">
-          {{ t("Save") }}
         </button>
       </div>
       <p v-if="pingMessage" class="helper">{{ pingMessage }}</p>
@@ -196,17 +183,16 @@
         </p>
         <label>
           {{ t("Account Metadata (JSON)") }}
-          <textarea v-model="metadataInput" rows="4"></textarea>
+          <textarea
+            v-model="metadataInput"
+            data-testid="registration-metadata-input"
+            rows="4"
+          ></textarea>
         </label>
       </div>
       <p class="transaction-fee-note">
         <span>{{ t("Fee") }}</span>
-        <strong>{{
-          formatTransactionFee(
-            transactionFeeHintForEndpoint(connectionForm.toriiUrl),
-            t,
-          )
-        }}</strong>
+        <strong>{{ formatTransactionFee(null, t) }}</strong>
       </p>
       <div class="actions">
         <button :disabled="registering || !canRegister" @click="handleRegister">
@@ -243,10 +229,10 @@ import {
 import { CHAIN_PRESETS, DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
+import { parseJsonWithoutDuplicateObjectKeys } from "@/utils/json";
 import {
   appendTransactionFee,
   formatTransactionFee,
-  transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
 import { assertFinalizedSubmissionResult } from "@/utils/transactionFinality";
 import {
@@ -268,7 +254,6 @@ const signingAlgorithmOptions = ref([
     isDefault: true,
   },
 ]);
-const assetDefinitionDraft = ref("");
 const activeNetworkPreset = computed(() =>
   CHAIN_PRESETS.find(
     (preset) =>
@@ -317,6 +302,22 @@ const authorityForm = reactive(
     session.authority,
   ),
 );
+const publicUserProfileFromForm = () => ({
+  displayName: userForm.displayName,
+  domain: userForm.domain,
+  accountId: userForm.accountId,
+  i105AccountId: userForm.i105AccountId,
+  i105DefaultAccountId: userForm.i105DefaultAccountId,
+  publicKeyHex: userForm.publicKeyHex,
+  signingAlgorithm: userForm.signingAlgorithm,
+  hasStoredSecret: userForm.hasStoredSecret,
+  localOnly: session.activeAccount?.localOnly ?? false,
+});
+const publicAuthorityProfileFromForm = () => ({
+  accountId: authorityForm.accountId,
+  signingAlgorithm: authorityForm.signingAlgorithm,
+  hasStoredSecret: authorityForm.hasStoredSecret,
+});
 const metadataInput = ref(
   JSON.stringify(
     { nickname: session.activeAccount?.displayName || "" },
@@ -401,7 +402,6 @@ watch(
         DEFAULT_CHAIN_PRESET.connection.assetDefinitionId,
     };
     Object.assign(connectionForm, nextConnection);
-    assetDefinitionDraft.value = "";
     void loadSigningAlgorithmOptions();
   },
   { deep: true, immediate: true },
@@ -482,17 +482,27 @@ const canRegister = computed(() =>
       !signingAlgorithmsUnavailable.value &&
       userForm.accountId &&
       authorityForm.accountId &&
-      (authorityForm.privateKeyHex.trim() || authorityHasSavedSecret.value),
+      authorityHasSavedSecret.value,
   ),
 );
 
-const metadataSchema = z.record(z.any()).catch(() => ({}));
+const metadataSchema = z.record(z.unknown());
+const MAX_REGISTRATION_METADATA_BYTES = 16 * 1024;
 
-const buildConnectionFromForm = (includeAssetDraft = false) => {
-  const nextAssetDefinitionId =
-    (includeAssetDraft ? assetDefinitionDraft.value.trim() : "") ||
-    connectionForm.assetDefinitionId ||
-    DEFAULT_CHAIN_PRESET.connection.assetDefinitionId;
+const parseRegistrationMetadata = () => {
+  const literal = metadataInput.value || "{}";
+  if (
+    new TextEncoder().encode(literal).byteLength >
+    MAX_REGISTRATION_METADATA_BYTES
+  ) {
+    throw new Error("Account metadata exceeds the supported size.");
+  }
+  return metadataSchema.parse(
+    parseJsonWithoutDuplicateObjectKeys(literal, "Account metadata"),
+  );
+};
+
+const buildConnectionFromForm = () => {
   return {
     toriiUrl:
       connectionForm.toriiUrl || DEFAULT_CHAIN_PRESET.connection.toriiUrl,
@@ -500,7 +510,9 @@ const buildConnectionFromForm = (includeAssetDraft = false) => {
     networkPrefix:
       connectionForm.networkPrefix ??
       DEFAULT_CHAIN_PRESET.connection.networkPrefix,
-    assetDefinitionId: nextAssetDefinitionId,
+    assetDefinitionId:
+      connectionForm.assetDefinitionId ||
+      DEFAULT_CHAIN_PRESET.connection.assetDefinitionId,
   };
 };
 
@@ -508,14 +520,6 @@ const syncConnectionFormToSession = () => {
   const nextConnection = buildConnectionFromForm();
   Object.assign(connectionForm, nextConnection);
   session.updateConnection(nextConnection);
-};
-
-const saveConnection = () => {
-  const nextConnection = buildConnectionFromForm(true);
-  Object.assign(connectionForm, nextConnection);
-  assetDefinitionDraft.value = "";
-  session.updateConnection(nextConnection);
-  session.persistState();
 };
 
 const saveUser = async () => {
@@ -540,6 +544,7 @@ const saveUser = async () => {
   try {
     await storeAccountSecret({
       accountId: userForm.accountId,
+      networkPrefix: connectionForm.networkPrefix,
       privateKeyHex: userForm.privateKeyHex,
       signingAlgorithm: userForm.signingAlgorithm,
     });
@@ -553,7 +558,7 @@ const saveUser = async () => {
   userForm.privateKeyHex = "";
   userForm.hasStoredSecret = true;
   syncConnectionFormToSession();
-  session.updateActiveAccount({ ...userForm, privateKeyHex: "" });
+  session.updateActiveAccount(publicUserProfileFromForm());
   session.persistState();
   registerMessage.value = t("Identity saved to secure storage.");
 };
@@ -580,6 +585,7 @@ const saveAuthority = async () => {
   try {
     await storeAccountSecret({
       accountId: authorityForm.accountId,
+      networkPrefix: connectionForm.networkPrefix,
       privateKeyHex: authorityForm.privateKeyHex,
       signingAlgorithm: authorityForm.signingAlgorithm,
     });
@@ -592,7 +598,7 @@ const saveAuthority = async () => {
   }
   authorityForm.privateKeyHex = "";
   authorityForm.hasStoredSecret = true;
-  session.updateAuthority({ ...authorityForm, privateKeyHex: "" });
+  session.updateAuthority(publicAuthorityProfileFromForm());
   session.persistState();
   registerMessage.value = t("Authority saved to secure storage.");
 };
@@ -678,32 +684,26 @@ const handleRegister = async () => {
   registering.value = true;
   registerMessage.value = "";
   try {
-    const metadata = metadataSchema.parse(
-      JSON.parse(metadataInput.value || "{}"),
-    );
+    const metadata = parseRegistrationMetadata();
     const result = await registerAccount({
       toriiUrl: connectionForm.toriiUrl,
       chainId: connectionForm.chainId,
       networkPrefix: connectionForm.networkPrefix,
       accountId: userForm.accountId,
-      domainId: userForm.domain,
       metadata,
       authorityAccountId: authorityForm.accountId,
-      authorityPrivateKeyHex: authorityForm.privateKeyHex.trim() || undefined,
-      authoritySigningAlgorithm: authorityForm.signingAlgorithm,
     });
     assertFinalizedSubmissionResult(result);
     syncConnectionFormToSession();
-    session.updateActiveAccount({ ...userForm, privateKeyHex: "" });
+    session.updateActiveAccount(publicUserProfileFromForm());
     session.persistState();
     registerMessage.value = appendTransactionFee(
       t("Account registration finalized in block {block}: {hash}", {
         block: result.finality.blockHeight,
         hash: result.hash,
       }),
-      result,
+      result.feeQuote,
       t,
-      transactionFeeHintForEndpoint(connectionForm.toriiUrl),
     );
   } catch (error) {
     registerMessage.value = toUserFacingErrorMessage(
@@ -724,14 +724,6 @@ const handleRegister = async () => {
   background: var(--frost-panel-raised);
   -webkit-backdrop-filter: var(--frost-filter-panel);
   backdrop-filter: var(--frost-filter-panel);
-}
-
-.setup-asset-literal {
-  padding: var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-surface-inset);
-  box-shadow: var(--shadow-inset);
 }
 
 .card-header {

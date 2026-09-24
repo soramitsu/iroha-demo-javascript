@@ -1,5 +1,8 @@
 import { blake3 } from "@noble/hashes/blake3.js";
-import { AccountAddress, encodeI105AccountAddress } from "@iroha/iroha-js";
+import {
+  AccountAddress,
+  encodeI105AccountAddress,
+} from "@iroha/iroha-js/address";
 import { domainToASCII } from "node:url";
 
 export interface SubscriptionPlanListItemResponse {
@@ -45,6 +48,8 @@ const ASSET_DEFINITION_ADDRESS_LENGTH = 21;
 const MAX_U8 = 0xff;
 const MAX_U32 = 0xffff_ffff;
 const MAX_QUANTITY_MANTISSA = (1n << 511n) - 1n;
+const MAX_SUBSCRIPTION_PAGE_ITEMS = 500;
+const MAX_USAGE_ACCUMULATED_KEYS = 256;
 const CANONICAL_QUANTITY_RE = /^(?:0|[1-9][0-9]*)(?:\.(?:[0-9]{0,27}[1-9]))?$/u;
 const DOMAIN_LABEL_RE = /^(?!-)[a-z0-9_-]{1,63}(?<!-)$/u;
 const SUBSCRIPTION_STATUS_VALUES = [
@@ -490,8 +495,14 @@ const decodeUsageAccumulated = (
   label: string,
 ): Record<string, string> => {
   const usage = requireRecord(value, label);
+  const entries = Object.entries(usage);
+  if (entries.length > MAX_USAGE_ACCUMULATED_KEYS) {
+    throw new Error(
+      `${label} exceeds the first-release limit of ${MAX_USAGE_ACCUMULATED_KEYS} keys.`,
+    );
+  }
   const decoded: Array<[string, string]> = [];
-  for (const [key, quantity] of Object.entries(usage)) {
+  for (const [key, quantity] of entries) {
     const canonicalKey = requireCanonicalName(key, `${label} key`);
     decoded.push([
       canonicalKey,
@@ -674,6 +685,11 @@ export const decodeSubscriptionPlanListResponse = (
   if (!Array.isArray(payload.items)) {
     throw new Error(`${label}.items must be an array.`);
   }
+  if (payload.items.length > MAX_SUBSCRIPTION_PAGE_ITEMS) {
+    throw new Error(
+      `${label}.items exceeds the first-release page limit of ${MAX_SUBSCRIPTION_PAGE_ITEMS}.`,
+    );
+  }
   const items = payload.items.map(decodePlanListItem);
   return {
     items,
@@ -731,6 +747,11 @@ export const decodeSubscriptionListResponse = (
   );
   if (!Array.isArray(payload.items)) {
     throw new Error(`${label}.items must be an array.`);
+  }
+  if (payload.items.length > MAX_SUBSCRIPTION_PAGE_ITEMS) {
+    throw new Error(
+      `${label}.items exceeds the first-release page limit of ${MAX_SUBSCRIPTION_PAGE_ITEMS}.`,
+    );
   }
   const items = payload.items.map((item, index) =>
     decodeSubscriptionListItemResponse(

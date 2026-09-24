@@ -1,17 +1,25 @@
 import { defineStore } from "pinia";
+import { AccountAddress } from "@iroha/iroha-js/browser";
+import type { CryptoAlgorithm } from "@iroha/iroha-js/crypto";
 import { CHAIN_PRESETS, DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import {
   normalizeChainIdValue,
   normalizeNetworkPrefixValue,
 } from "@/utils/chainMetadata";
 import { normalizeAccountIdLiteralForNetwork } from "@/utils/accountId";
+import { isCanonicalAssetDefinitionId } from "@/utils/assetId";
 import { normalizeEndpointUrl } from "@/utils/endpoint";
+import { parseJsonWithoutDuplicateObjectKeys } from "@/utils/json";
 import {
   DEFAULT_SIGNING_ALGORITHM,
   normalizeStoredSigningAlgorithm,
 } from "@/utils/signingAlgorithms";
 
 export const SESSION_STORAGE_KEY = "iroha-demo:session";
+export const SESSION_SCHEMA = "iroha-demo-public-session";
+export const SESSION_VERSION = 1 as const;
+const MAX_PERSISTED_SESSION_LENGTH = 1_048_576;
+const MAX_SESSION_ACCOUNTS = 128;
 
 export type ConnectionConfig = {
   toriiUrl: string;
@@ -28,7 +36,6 @@ export type UserProfile = {
   i105DefaultAccountId?: string;
   publicKeyHex: string;
   signingAlgorithm: string;
-  privateKeyHex?: string;
   hasStoredSecret?: boolean;
   localOnly: boolean;
 };
@@ -36,7 +43,6 @@ export type UserProfile = {
 export type AuthorityProfile = {
   accountId: string;
   signingAlgorithm?: string;
-  privateKeyHex?: string;
   hasStoredSecret?: boolean;
 };
 
@@ -46,16 +52,32 @@ export type SessionState = {
   authority: AuthorityProfile;
   accounts: UserProfile[];
   activeAccountId: string | null;
-  customChains: SavedChain[];
 };
 
-export type SavedChain = ConnectionConfig & {
-  id: string;
-  label: string;
+type PersistedPublicAccount = {
+  displayName: string;
+  domain: string;
+  accountId: string;
+  publicKeyHex: string;
+  signingAlgorithm: string;
+  hasStoredSecret: boolean;
+  localOnly: boolean;
+};
+
+type PersistedPublicSession = {
+  schema: typeof SESSION_SCHEMA;
+  version: typeof SESSION_VERSION;
+  connection: ConnectionConfig;
+  authority: {
+    accountId: string;
+    signingAlgorithm: string;
+    hasStoredSecret: boolean;
+  };
+  accounts: PersistedPublicAccount[];
+  activeAccountId: string | null;
 };
 
 const DEFAULT_DOMAIN_LABEL = "default";
-const LEGACY_EXAMPLE_DOMAIN_LABEL = "wonderland";
 const defaultUser = (): UserProfile => ({
   displayName: "",
   domain: DEFAULT_DOMAIN_LABEL,
@@ -64,52 +86,122 @@ const defaultUser = (): UserProfile => ({
   i105DefaultAccountId: "",
   publicKeyHex: "",
   signingAlgorithm: DEFAULT_SIGNING_ALGORITHM,
-  privateKeyHex: "",
   hasStoredSecret: false,
   localOnly: false,
 });
 
 const defaultState = (): SessionState => ({
   hydrated: false,
-  connection: { ...DEFAULT_CHAIN_PRESET.connection },
+  connection: normalizeConnection({ ...DEFAULT_CHAIN_PRESET.connection }),
   authority: {
     accountId: "",
     signingAlgorithm: DEFAULT_SIGNING_ALGORITHM,
-    privateKeyHex: "",
     hasStoredSecret: false,
   },
   accounts: [],
   activeAccountId: null,
-  customChains: [],
 });
 
-const trimString = (value: unknown): string => String(value ?? "").trim();
+const trimString = (value: unknown): string =>
+  typeof value === "string" ? value.trim() : "";
 
-const readLegacyProfileField = (
-  profile: Record<string, unknown>,
-  key: string,
-): string => trimString(profile[key]);
+const normalizeRuntimeText = (
+  value: unknown,
+  label: string,
+  options: { allowEmpty?: boolean; maxLength?: number } = {},
+): string => {
+  if (typeof value !== "string") {
+    throw new TypeError(`${label} must be text.`);
+  }
+  const normalized = value.trim();
+  const maximumLength = options.maxLength ?? 2_048;
+  if (
+    (!options.allowEmpty && normalized.length === 0) ||
+    normalized.length > maximumLength ||
+    normalized.normalize("NFC") !== normalized ||
+    /[\p{Cc}\u202a-\u202e\u2066-\u2069]/u.test(normalized)
+  ) {
+    throw new TypeError(`${label} must be bounded canonical text.`);
+  }
+  return normalized;
+};
 
-const isLegacyAccountLiteral = (value: string): boolean =>
-  trimString(value).includes("@");
+const requireRuntimeBoolean = (value: unknown, label: string): boolean => {
+  if (typeof value !== "boolean") {
+    throw new TypeError(`${label} must be a boolean.`);
+  }
+  return value;
+};
+
+const readRuntimeUpdate = (
+  value: unknown,
+  allowedKeys: readonly string[],
+  label: string,
+): Record<string, unknown> => {
+  let prototype: object | null;
+  let ownKeys: PropertyKey[];
+  try {
+    prototype =
+      value !== null && typeof value === "object"
+        ? Object.getPrototypeOf(value)
+        : null;
+    ownKeys =
+      value !== null && typeof value === "object" ? Reflect.ownKeys(value) : [];
+  } catch {
+    throw new TypeError(`${label} must be an exact data object.`);
+  }
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    (prototype !== Object.prototype && prototype !== null) ||
+    ownKeys.length > allowedKeys.length ||
+    ownKeys.some((key) => typeof key !== "string" || !allowedKeys.includes(key))
+  ) {
+    throw new TypeError(`${label} contains an unsupported field or shape.`);
+  }
+
+  const snapshot: Record<string, unknown> = {};
+  for (const key of ownKeys as string[]) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new TypeError(`${label} must be an exact data object.`);
+    }
+    if (
+      !descriptor ||
+      !descriptor.enumerable ||
+      !("value" in descriptor) ||
+      descriptor.value === undefined
+    ) {
+      throw new TypeError(`${label} must contain only defined data fields.`);
+    }
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
+};
+
+const assertNoPrivateKeyField = (
+  value: Record<string, unknown>,
+  label: string,
+): void => {
+  if (Object.prototype.hasOwnProperty.call(value, "privateKeyHex")) {
+    throw new TypeError(`${label} must not include private key material.`);
+  }
+};
 
 const isCanonicalAccountCandidate = (value: string): boolean => {
   const literal = trimString(value);
-  return literal.length >= 16 && !isLegacyAccountLiteral(literal);
+  return literal.length >= 16;
 };
 
-const normalizeDomainLabel = (domain: string, accountId: string): string => {
-  const normalized = trimString(domain);
-  if (!normalized) {
-    return DEFAULT_DOMAIN_LABEL;
-  }
-  if (
-    normalized === LEGACY_EXAMPLE_DOMAIN_LABEL &&
-    (!accountId || !isLegacyAccountLiteral(accountId))
-  ) {
-    return DEFAULT_DOMAIN_LABEL;
-  }
-  return normalized;
+const normalizeDomainLabel = (domain: string): string => {
+  const normalized = normalizeRuntimeText(domain, "Account domain", {
+    allowEmpty: true,
+    maxLength: 256,
+  });
+  return normalized || DEFAULT_DOMAIN_LABEL;
 };
 
 const deriveAccountAddressesFromProfile = (
@@ -137,7 +229,7 @@ const deriveAccountAddressesFromProfile = (
     });
     const accountId = trimString(derived.accountId);
     const i105AccountId = trimString(derived.i105AccountId);
-    if (!accountId || isLegacyAccountLiteral(accountId)) {
+    if (!accountId) {
       return null;
     }
     return {
@@ -159,23 +251,7 @@ const resolveAccountIdLiteral = (
     user.accountId,
     networkPrefix,
   );
-  if (derivedAccountId && accountId && !isLegacyAccountLiteral(accountId)) {
-    return derivedAccountId;
-  }
-  if (!isLegacyAccountLiteral(accountId)) {
-    return accountId;
-  }
-  if (derivedAccountId) {
-    return derivedAccountId;
-  }
-  const migratedCandidate = [
-    readLegacyProfileField(user, "i105"),
-    readLegacyProfileField(user, "ih58"),
-    readLegacyProfileField(user, "compressed"),
-  ]
-    .map((value) => normalizeAccountIdLiteralForNetwork(value, networkPrefix))
-    .find(isCanonicalAccountCandidate);
-  return migratedCandidate ?? accountId;
+  return derivedAccountId || accountId;
 };
 
 const resolveVisibleI105AccountId = (
@@ -206,11 +282,10 @@ const resolveVisibleI105AccountId = (
 
 const normalizeUser = (
   user: Partial<UserProfile> & Record<string, unknown>,
-  options?: { networkPrefix?: number },
+  networkPrefix: number,
 ): UserProfile => {
+  assertNoPrivateKeyField(user, "Session account");
   const normalized = { ...defaultUser(), ...user };
-  const networkPrefix =
-    options?.networkPrefix ?? DEFAULT_CHAIN_PRESET.connection.networkPrefix;
   const derivedAccountAddresses = deriveAccountAddressesFromProfile(
     normalized,
     networkPrefix,
@@ -220,9 +295,26 @@ const normalizeUser = (
     networkPrefix,
     derivedAccountAddresses?.accountId,
   );
+  if (!resolvedAccountId) {
+    throw new TypeError(
+      "Account ID must be a canonical I105 literal for the active network.",
+    );
+  }
+  const publicKeyHex = normalizeRuntimeText(
+    normalized.publicKeyHex,
+    "Account public key",
+    { maxLength: 16_384 },
+  );
+  if (!/^(?:[0-9a-f]{2})+$/u.test(publicKeyHex)) {
+    throw new TypeError("Account public key must be canonical lowercase hex.");
+  }
   return {
-    displayName: trimString(normalized.displayName),
-    domain: normalizeDomainLabel(normalized.domain, resolvedAccountId),
+    displayName: normalizeRuntimeText(
+      normalized.displayName,
+      "Account display name",
+      { allowEmpty: true, maxLength: 256 },
+    ),
+    domain: normalizeDomainLabel(normalized.domain),
     accountId: resolvedAccountId,
     i105AccountId: resolveVisibleI105AccountId(
       normalized,
@@ -233,37 +325,62 @@ const normalizeUser = (
     i105DefaultAccountId:
       derivedAccountAddresses?.i105DefaultAccountId ||
       trimString(normalized.i105DefaultAccountId),
-    publicKeyHex: trimString(normalized.publicKeyHex),
+    publicKeyHex,
     signingAlgorithm: normalizeStoredSigningAlgorithm(
       normalized.signingAlgorithm,
     ),
-    privateKeyHex: trimString(normalized.privateKeyHex),
-    hasStoredSecret: Boolean(normalized.hasStoredSecret),
-    localOnly: Boolean(normalized.localOnly),
+    hasStoredSecret: requireRuntimeBoolean(
+      normalized.hasStoredSecret,
+      "Account secret flag",
+    ),
+    localOnly: requireRuntimeBoolean(
+      normalized.localOnly,
+      "Account local-only flag",
+    ),
   };
 };
 
 const normalizeAuthority = (
   authority: Partial<AuthorityProfile> & Record<string, unknown>,
-  options?: { networkPrefix?: number },
-): AuthorityProfile => ({
-  accountId: normalizeAccountIdLiteralForNetwork(
+  networkPrefix: number,
+): AuthorityProfile => {
+  assertNoPrivateKeyField(authority, "Session authority");
+  const accountIdInput = normalizeRuntimeText(
     authority.accountId,
-    options?.networkPrefix ?? DEFAULT_CHAIN_PRESET.connection.networkPrefix,
-  ),
-  signingAlgorithm: normalizeStoredSigningAlgorithm(authority.signingAlgorithm),
-  privateKeyHex: trimString(authority.privateKeyHex),
-  hasStoredSecret: Boolean(authority.hasStoredSecret),
-});
+    "Authority account ID",
+    { allowEmpty: true, maxLength: 1_024 },
+  );
+  const accountId = normalizeAccountIdLiteralForNetwork(
+    accountIdInput,
+    networkPrefix,
+  );
+  if (accountIdInput && !accountId) {
+    throw new TypeError(
+      "Authority account ID must target the active network prefix.",
+    );
+  }
+  return {
+    accountId,
+    signingAlgorithm: normalizeStoredSigningAlgorithm(
+      authority.signingAlgorithm,
+    ),
+    hasStoredSecret: requireRuntimeBoolean(
+      authority.hasStoredSecret,
+      "Authority secret flag",
+    ),
+  };
+};
 
 const resolvePresetConnectionForEndpoint = (
   toriiUrl: unknown,
 ): ConnectionConfig | null => {
   try {
-    const normalizedEndpoint = normalizeEndpointUrl(String(toriiUrl ?? ""));
-    const presets = [DEFAULT_CHAIN_PRESET, ...CHAIN_PRESETS];
+    if (typeof toriiUrl !== "string") {
+      return null;
+    }
+    const normalizedEndpoint = normalizeEndpointUrl(toriiUrl);
     return (
-      presets.find(
+      CHAIN_PRESETS.find(
         (preset) =>
           normalizeEndpointUrl(preset.connection.toriiUrl) ===
           normalizedEndpoint,
@@ -275,46 +392,41 @@ const resolvePresetConnectionForEndpoint = (
 };
 
 const normalizeConnection = (
-  partial?: Partial<ConnectionConfig>,
+  partial: Partial<ConnectionConfig>,
 ): ConnectionConfig => {
-  if (!partial) {
-    return { ...DEFAULT_CHAIN_PRESET.connection };
-  }
   const rawToriiUrl = trimString(partial.toriiUrl);
   if (!rawToriiUrl) {
     throw new Error("Saved connection is missing its Torii endpoint.");
   }
-  let toriiUrl = rawToriiUrl;
-  let endpointValid = false;
-  try {
-    toriiUrl = normalizeEndpointUrl(rawToriiUrl);
-    endpointValid = true;
-  } catch (_error) {
-    // Preserve the configured literal so a malformed profile fails closed
-    // instead of silently targeting the default endpoint.
-  }
-  const endpointPresetConnection = endpointValid
-    ? resolvePresetConnectionForEndpoint(toriiUrl)
-    : null;
+  const toriiUrl = normalizeEndpointUrl(rawToriiUrl);
   const normalizedChainId = normalizeChainIdValue(partial?.chainId);
   const normalizedNetworkPrefix = normalizeNetworkPrefixValue(
     partial?.networkPrefix,
   );
-  const chainId = normalizedChainId ?? endpointPresetConnection?.chainId;
-  const networkPrefix =
-    normalizedNetworkPrefix ?? endpointPresetConnection?.networkPrefix;
-  if (!chainId || networkPrefix === undefined) {
+  if (!normalizedChainId || normalizedNetworkPrefix === null) {
     throw new Error(
-      "Saved connection is missing its chain ID or network prefix.",
+      "Connection requires a canonical chain ID and integer network prefix.",
     );
   }
+  const chainId = normalizedChainId;
+  const networkPrefix = normalizedNetworkPrefix;
   const hasExplicitAssetDefinitionId = Object.prototype.hasOwnProperty.call(
     partial,
     "assetDefinitionId",
   );
-  const assetDefinitionId = hasExplicitAssetDefinitionId
-    ? trimString(partial.assetDefinitionId)
-    : trimString(endpointPresetConnection?.assetDefinitionId);
+  const rawAssetDefinitionId = hasExplicitAssetDefinitionId
+    ? partial.assetDefinitionId
+    : "";
+  if (
+    typeof rawAssetDefinitionId !== "string" ||
+    (rawAssetDefinitionId.length > 0 &&
+      !isCanonicalAssetDefinitionId(rawAssetDefinitionId))
+  ) {
+    throw new TypeError(
+      "Asset definition ID must be empty or an exact canonical Base58 ID.",
+    );
+  }
+  const assetDefinitionId = rawAssetDefinitionId;
   return {
     toriiUrl,
     chainId,
@@ -323,33 +435,406 @@ const normalizeConnection = (
   };
 };
 
-const serializeSessionState = (state: SessionState) =>
-  JSON.stringify({
-    ...state,
-    authority: {
-      ...state.authority,
-      privateKeyHex: "",
-    },
-    accounts: state.accounts.map((account) => ({
-      ...account,
-      privateKeyHex: "",
-    })),
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const assertExactKeys = (
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[],
+  label: string,
+) => {
+  const actual = Object.keys(value).sort();
+  const expected = [...expectedKeys].sort();
+  if (
+    actual.length !== expected.length ||
+    actual.some((key, index) => key !== expected[index])
+  ) {
+    throw new TypeError(`${label} contains missing or unknown fields.`);
+  }
+};
+
+const readRecord = (value: unknown, label: string): Record<string, unknown> => {
+  if (!isPlainRecord(value)) {
+    throw new TypeError(`${label} must be an object.`);
+  }
+  return value;
+};
+
+const readCanonicalText = (
+  value: unknown,
+  label: string,
+  options: { allowEmpty?: boolean; maxLength?: number } = {},
+): string => {
+  const maxLength = options.maxLength ?? 2_048;
+  const containsUnsafeCharacter =
+    typeof value === "string" &&
+    /[\p{Cc}\u202a-\u202e\u2066-\u2069]/u.test(value);
+  if (
+    typeof value !== "string" ||
+    value.trim() !== value ||
+    value.normalize("NFC") !== value ||
+    (!options.allowEmpty && value.length === 0) ||
+    value.length > maxLength ||
+    containsUnsafeCharacter
+  ) {
+    throw new TypeError(`${label} must be canonical text.`);
+  }
+  return value;
+};
+
+const readBoolean = (value: unknown, label: string): boolean => {
+  if (typeof value !== "boolean") {
+    throw new TypeError(`${label} must be a boolean.`);
+  }
+  return value;
+};
+
+const readSigningAlgorithm = (value: unknown, label: string): string => {
+  const algorithm = readCanonicalText(value, label, { maxLength: 128 });
+  if (normalizeStoredSigningAlgorithm(algorithm) !== algorithm) {
+    throw new TypeError(`${label} must be a canonical signing algorithm.`);
+  }
+  return algorithm;
+};
+
+const decodeCanonicalPublicKey = (
+  value: unknown,
+  label: string,
+): Uint8Array => {
+  const literal = readCanonicalText(value, label, { maxLength: 16_384 });
+  if (!/^(?:[0-9a-f]{2})+$/u.test(literal)) {
+    throw new TypeError(`${label} must be canonical lowercase hex.`);
+  }
+  return Uint8Array.from(
+    literal.match(/.{2}/gu)!.map((byte) => Number.parseInt(byte, 16)),
+  );
+};
+
+const readAccountId = (
+  value: unknown,
+  label: string,
+  options: { allowEmpty?: boolean; networkPrefix?: number } = {},
+): string => {
+  const accountId = readCanonicalText(value, label, {
+    allowEmpty: options.allowEmpty,
+    maxLength: 1_024,
   });
+  if (accountId.includes("@")) {
+    throw new TypeError(`${label} uses an unsupported legacy account ID.`);
+  }
+  if (accountId && options.networkPrefix !== undefined) {
+    try {
+      const address = AccountAddress.parseEncoded(
+        accountId,
+        options.networkPrefix,
+      ).address;
+      if (address.toI105(options.networkPrefix) !== accountId) {
+        throw new Error("noncanonical account ID");
+      }
+    } catch {
+      throw new TypeError(
+        `${label} must be an exact canonical I105 account ID for the saved network.`,
+      );
+    }
+  }
+  return accountId;
+};
+
+const parsePersistedConnection = (value: unknown): ConnectionConfig => {
+  const connection = readRecord(value, "Saved session connection");
+  assertExactKeys(
+    connection,
+    ["toriiUrl", "chainId", "assetDefinitionId", "networkPrefix"],
+    "Saved session connection",
+  );
+  const toriiUrl = readCanonicalText(
+    connection.toriiUrl,
+    "Saved session Torii endpoint",
+  );
+  if (normalizeEndpointUrl(toriiUrl) !== toriiUrl) {
+    throw new TypeError("Saved session Torii endpoint must be canonical.");
+  }
+  const chainId = readCanonicalText(
+    connection.chainId,
+    "Saved session chain ID",
+    { maxLength: 256 },
+  );
+  if (normalizeChainIdValue(chainId) !== chainId) {
+    throw new TypeError("Saved session chain ID must be canonical text.");
+  }
+  const assetDefinitionId = readCanonicalText(
+    connection.assetDefinitionId,
+    "Saved session asset definition ID",
+    { allowEmpty: true },
+  );
+  if (assetDefinitionId && !isCanonicalAssetDefinitionId(assetDefinitionId)) {
+    throw new TypeError(
+      "Saved session asset definition ID must be an exact canonical Base58 ID.",
+    );
+  }
+  if (
+    typeof connection.networkPrefix !== "number" ||
+    normalizeNetworkPrefixValue(connection.networkPrefix) !==
+      connection.networkPrefix
+  ) {
+    throw new TypeError(
+      "Saved session network prefix must be an integer between 0 and 16383.",
+    );
+  }
+  return {
+    toriiUrl,
+    chainId,
+    assetDefinitionId,
+    networkPrefix: connection.networkPrefix,
+  };
+};
+
+const parsePersistedAuthority = (
+  value: unknown,
+  networkPrefix: number,
+): PersistedPublicSession["authority"] => {
+  const authority = readRecord(value, "Saved session authority");
+  assertExactKeys(
+    authority,
+    ["accountId", "signingAlgorithm", "hasStoredSecret"],
+    "Saved session authority",
+  );
+  return {
+    accountId: readAccountId(
+      authority.accountId,
+      "Saved session authority account ID",
+      { allowEmpty: true, networkPrefix },
+    ),
+    signingAlgorithm: readSigningAlgorithm(
+      authority.signingAlgorithm,
+      "Saved session authority signing algorithm",
+    ),
+    hasStoredSecret: readBoolean(
+      authority.hasStoredSecret,
+      "Saved session authority secret flag",
+    ),
+  };
+};
+
+const parsePersistedAccount = (
+  value: unknown,
+  index: number,
+  networkPrefix: number,
+): PersistedPublicAccount => {
+  const label = `Saved session account ${index}`;
+  const account = readRecord(value, label);
+  assertExactKeys(
+    account,
+    [
+      "displayName",
+      "domain",
+      "accountId",
+      "publicKeyHex",
+      "signingAlgorithm",
+      "hasStoredSecret",
+      "localOnly",
+    ],
+    label,
+  );
+  const accountId = readAccountId(account.accountId, `${label} account ID`, {
+    networkPrefix,
+  });
+  if (
+    normalizeAccountIdLiteralForNetwork(accountId, networkPrefix) !== accountId
+  ) {
+    throw new TypeError(
+      `${label} account ID must target the saved connection network prefix.`,
+    );
+  }
+  const publicKeyHex = readCanonicalText(
+    account.publicKeyHex,
+    `${label} public key`,
+    { maxLength: 16_384 },
+  );
+  const signingAlgorithm = readSigningAlgorithm(
+    account.signingAlgorithm,
+    `${label} signing algorithm`,
+  );
+  let expectedAccountId: string;
+  try {
+    expectedAccountId = AccountAddress.fromAccount({
+      publicKey: decodeCanonicalPublicKey(publicKeyHex, `${label} public key`),
+      algorithm: signingAlgorithm as CryptoAlgorithm,
+    }).toI105(networkPrefix);
+  } catch {
+    throw new TypeError(
+      `${label} public identity is invalid for its signing algorithm.`,
+    );
+  }
+  if (expectedAccountId !== accountId) {
+    throw new TypeError(
+      `${label} account ID does not match its public key and signing algorithm.`,
+    );
+  }
+  return {
+    displayName: readCanonicalText(
+      account.displayName,
+      `${label} display name`,
+      {
+        allowEmpty: true,
+        maxLength: 256,
+      },
+    ),
+    domain: readCanonicalText(account.domain, `${label} domain`, {
+      maxLength: 256,
+    }),
+    accountId,
+    publicKeyHex,
+    signingAlgorithm,
+    hasStoredSecret: readBoolean(
+      account.hasStoredSecret,
+      `${label} secret flag`,
+    ),
+    localOnly: readBoolean(account.localOnly, `${label} local-only flag`),
+  };
+};
+
+const parsePersistedSession = (raw: string): PersistedPublicSession => {
+  if (raw.length > MAX_PERSISTED_SESSION_LENGTH) {
+    throw new TypeError("Saved session exceeds the supported size.");
+  }
+  const payload = readRecord(
+    parseJsonWithoutDuplicateObjectKeys(raw, "Saved session"),
+    "Saved session",
+  );
+  assertExactKeys(
+    payload,
+    [
+      "schema",
+      "version",
+      "connection",
+      "authority",
+      "accounts",
+      "activeAccountId",
+    ],
+    "Saved session",
+  );
+  if (
+    payload.schema !== SESSION_SCHEMA ||
+    payload.version !== SESSION_VERSION
+  ) {
+    throw new TypeError("Saved session schema or version is unsupported.");
+  }
+  if (
+    !Array.isArray(payload.accounts) ||
+    payload.accounts.length > MAX_SESSION_ACCOUNTS
+  ) {
+    throw new TypeError(
+      "Saved session accounts must be an array of at most 128 entries.",
+    );
+  }
+  const connection = parsePersistedConnection(payload.connection);
+  const accounts = payload.accounts.map((account, index) =>
+    parsePersistedAccount(account, index, connection.networkPrefix),
+  );
+  const authority = parsePersistedAuthority(
+    payload.authority,
+    connection.networkPrefix,
+  );
+  if (
+    authority.accountId &&
+    normalizeAccountIdLiteralForNetwork(
+      authority.accountId,
+      connection.networkPrefix,
+    ) !== authority.accountId
+  ) {
+    throw new TypeError(
+      "Saved session authority account ID must target the saved connection network prefix.",
+    );
+  }
+  const accountIds = new Set(accounts.map((account) => account.accountId));
+  if (accountIds.size !== accounts.length) {
+    throw new TypeError("Saved session account IDs must be unique.");
+  }
+  const activeAccountId =
+    payload.activeAccountId === null
+      ? null
+      : readAccountId(
+          payload.activeAccountId,
+          "Saved session active account ID",
+          { networkPrefix: connection.networkPrefix },
+        );
+  if (
+    (accounts.length === 0 && activeAccountId !== null) ||
+    (accounts.length > 0 &&
+      (activeAccountId === null || !accountIds.has(activeAccountId)))
+  ) {
+    throw new TypeError(
+      "Saved session active account ID must select exactly one saved account.",
+    );
+  }
+  return {
+    schema: SESSION_SCHEMA,
+    version: SESSION_VERSION,
+    connection,
+    authority,
+    accounts,
+    activeAccountId,
+  };
+};
+
+const persistedSessionFromState = (state: SessionState): unknown => ({
+  schema: SESSION_SCHEMA,
+  version: SESSION_VERSION,
+  connection: {
+    toriiUrl: state.connection.toriiUrl,
+    chainId: state.connection.chainId,
+    assetDefinitionId: state.connection.assetDefinitionId,
+    networkPrefix: state.connection.networkPrefix,
+  },
+  authority: {
+    accountId: state.authority.accountId,
+    signingAlgorithm: state.authority.signingAlgorithm,
+    hasStoredSecret: state.authority.hasStoredSecret,
+  },
+  accounts: state.accounts.map((account) => ({
+    displayName: account.displayName,
+    domain: account.domain,
+    accountId: account.accountId,
+    publicKeyHex: account.publicKeyHex,
+    signingAlgorithm: account.signingAlgorithm,
+    hasStoredSecret: account.hasStoredSecret,
+    localOnly: account.localOnly,
+  })),
+  activeAccountId: state.activeAccountId,
+});
+
+const serializeSessionState = (state: SessionState): string => {
+  const payload = persistedSessionFromState(state);
+  return JSON.stringify(parsePersistedSession(JSON.stringify(payload)));
+};
 
 const normalizeSessionNetworkPrefix = (value: unknown): number | null => {
   return normalizeNetworkPrefixValue(value);
 };
 
 const normalizeAccounts = (
-  payload: Partial<SessionState> & { user?: UserProfile },
+  payload: Pick<SessionState, "accounts" | "activeAccountId">,
   options?: { networkPrefix?: number },
 ): Pick<SessionState, "accounts" | "activeAccountId"> & {
   accountIdMap: Map<string, string>;
 } => {
+  if (payload.accounts.length > MAX_SESSION_ACCOUNTS) {
+    throw new TypeError(
+      `Session accounts must contain at most ${MAX_SESSION_ACCOUNTS} entries.`,
+    );
+  }
   const accountIdMap = new Map<string, string>();
-  const connectionNetworkPrefix =
-    normalizeSessionNetworkPrefix(options?.networkPrefix) ??
-    normalizeConnection(payload.connection).networkPrefix;
+  const requestedNetworkPrefix =
+    options?.networkPrefix ?? DEFAULT_CHAIN_PRESET.connection.networkPrefix;
+  const connectionNetworkPrefix = normalizeSessionNetworkPrefix(
+    requestedNetworkPrefix,
+  );
+  if (connectionNetworkPrefix === null) {
+    throw new TypeError(
+      "Session network prefix must be an integer between 0 and 16383.",
+    );
+  }
 
   const normalizeCollection = (
     entries: Array<Partial<UserProfile> & Record<string, unknown>>,
@@ -359,20 +844,16 @@ const normalizeAccounts = (
     const orderedAccounts: UserProfile[] = [];
     entries.forEach((account, index) => {
       const originalAccountId = trimString(account.accountId);
-      const normalized = normalizeUser(account, {
-        networkPrefix: connectionNetworkPrefix,
-      });
+      const normalized = normalizeUser(account, connectionNetworkPrefix);
       if (originalAccountId && originalAccountId !== normalized.accountId) {
         accountIdMap.set(originalAccountId, normalized.accountId);
       }
       const dedupeKey = normalized.accountId || `__empty-${index}`;
       const existingIndex = dedupeIndexByKey.get(dedupeKey);
       if (existingIndex !== undefined) {
-        orderedAccounts[existingIndex] = {
-          ...orderedAccounts[existingIndex],
-          ...normalized,
-        };
-        return;
+        throw new TypeError(
+          "Session account IDs must remain unique after a network change.",
+        );
       }
       dedupeIndexByKey.set(dedupeKey, orderedAccounts.length);
       orderedAccounts.push(normalized);
@@ -388,7 +869,7 @@ const normalizeAccounts = (
         (account) => account.accountId === mappedActiveAccountId,
       )
         ? mappedActiveAccountId
-        : (orderedAccounts[0]?.accountId ?? null);
+        : null;
 
     return {
       accounts: orderedAccounts,
@@ -396,16 +877,9 @@ const normalizeAccounts = (
     };
   };
 
-  if (Array.isArray(payload.accounts) && payload.accounts.length) {
+  if (payload.accounts.length) {
     return {
       ...normalizeCollection(payload.accounts, payload.activeAccountId ?? null),
-      accountIdMap,
-    };
-  }
-
-  if (payload.user?.accountId) {
-    return {
-      ...normalizeCollection([payload.user], payload.user.accountId),
       accountIdMap,
     };
   }
@@ -436,42 +910,18 @@ export const useSessionStore = defineStore("session", {
       const raw = localStorage.getItem(SESSION_STORAGE_KEY);
       if (raw) {
         try {
-          const parsed = JSON.parse(raw);
-          const normalizedConnection = normalizeConnection(parsed.connection);
-          const normalizedAccounts = normalizeAccounts(parsed, {
-            networkPrefix: normalizedConnection.networkPrefix,
-          });
-          const base = defaultState();
-          const authority = normalizeAuthority(
-            {
-              ...base.authority,
-              ...(parsed.authority ?? {}),
-            },
-            {
-              networkPrefix: normalizedConnection.networkPrefix,
-            },
-          );
-          const rawAuthorityAccountId = trimString(authority.accountId);
-          const migratedAuthorityAccountId = rawAuthorityAccountId
-            ? (normalizedAccounts.accountIdMap.get(rawAuthorityAccountId) ??
-              rawAuthorityAccountId)
-            : "";
+          const parsed = parsePersistedSession(raw);
           this.$patch({
-            ...base,
-            connection: normalizedConnection,
-            authority: {
-              ...base.authority,
-              ...authority,
-              accountId: migratedAuthorityAccountId,
-            },
-            accounts: normalizedAccounts.accounts,
-            activeAccountId: normalizedAccounts.activeAccountId,
+            connection: parsed.connection,
+            authority: parsed.authority,
+            accounts: parsed.accounts.map((account) => ({
+              ...account,
+              i105AccountId: account.accountId,
+              i105DefaultAccountId: "",
+            })),
+            activeAccountId: parsed.activeAccountId,
             hydrated: true,
-            customChains: [],
           });
-          if (!this.activeAccountId && this.accounts[0]) {
-            this.activeAccountId = this.accounts[0].accountId;
-          }
           await this.syncStoredSecrets();
           return;
         } catch (error) {
@@ -492,8 +942,10 @@ export const useSessionStore = defineStore("session", {
       this.persistState();
     },
     updateConnection(partial: Partial<ConnectionConfig>) {
-      const definedPartial = Object.fromEntries(
-        Object.entries(partial).filter(([, value]) => value !== undefined),
+      const definedPartial = readRuntimeUpdate(
+        partial,
+        ["toriiUrl", "chainId", "assetDefinitionId", "networkPrefix"],
+        "Connection update",
       ) as Partial<ConnectionConfig>;
       const presetConnection =
         definedPartial.toriiUrl !== undefined
@@ -502,17 +954,6 @@ export const useSessionStore = defineStore("session", {
       const presetConnectionOverlay = presetConnection
         ? { ...presetConnection }
         : null;
-      if (
-        presetConnectionOverlay &&
-        !trimString(presetConnectionOverlay.assetDefinitionId) &&
-        !Object.prototype.hasOwnProperty.call(
-          definedPartial,
-          "assetDefinitionId",
-        )
-      ) {
-        delete (presetConnectionOverlay as Partial<ConnectionConfig>)
-          .assetDefinitionId;
-      }
       const nextConnection = normalizeConnection({
         ...this.connection,
         ...(presetConnectionOverlay ?? {}),
@@ -532,67 +973,60 @@ export const useSessionStore = defineStore("session", {
         { networkPrefix: nextConnection.networkPrefix },
       );
       const rawAuthorityAccountId = trimString(this.authority.accountId);
-      const migratedAuthorityAccountId = rawAuthorityAccountId
+      const nextAuthorityAccountId = rawAuthorityAccountId
         ? (normalizedAccounts.accountIdMap.get(rawAuthorityAccountId) ??
-          rawAuthorityAccountId)
+          normalizeAccountIdLiteralForNetwork(
+            rawAuthorityAccountId,
+            nextConnection.networkPrefix,
+          ))
         : "";
 
       this.$patch({
         connection: nextConnection,
         authority: {
           ...this.authority,
-          accountId: migratedAuthorityAccountId,
+          accountId: nextAuthorityAccountId,
         },
         accounts: normalizedAccounts.accounts,
         activeAccountId: normalizedAccounts.activeAccountId,
       });
-    },
-    syncChainNetworkPrefix(networkPrefix: number) {
-      const normalizedPrefix = normalizeSessionNetworkPrefix(networkPrefix);
-      if (
-        normalizedPrefix === null ||
-        normalizedPrefix === this.connection.networkPrefix
-      ) {
-        return false;
-      }
-
-      const normalizedAccounts = normalizeAccounts(
-        {
-          accounts: this.accounts,
-          activeAccountId: this.activeAccountId,
-        },
-        { networkPrefix: normalizedPrefix },
-      );
-      const rawAuthorityAccountId = trimString(this.authority.accountId);
-      const migratedAuthorityAccountId = rawAuthorityAccountId
-        ? (normalizedAccounts.accountIdMap.get(rawAuthorityAccountId) ??
-          rawAuthorityAccountId)
-        : "";
-
-      this.$patch({
-        connection: {
-          ...this.connection,
-          networkPrefix: normalizedPrefix,
-        },
-        authority: {
-          ...this.authority,
-          accountId: migratedAuthorityAccountId,
-        },
-        accounts: normalizedAccounts.accounts,
-        activeAccountId: normalizedAccounts.activeAccountId,
-      });
-      return true;
     },
     updateAuthority(partial: Partial<AuthorityProfile>) {
+      assertNoPrivateKeyField(
+        partial as Record<string, unknown>,
+        "Session authority",
+      );
+      const exactPartial = readRuntimeUpdate(
+        partial,
+        ["accountId", "signingAlgorithm", "hasStoredSecret"],
+        "Authority update",
+      );
       this.authority = normalizeAuthority(
-        { ...this.authority, ...partial },
-        { networkPrefix: this.connection.networkPrefix },
+        { ...this.authority, ...exactPartial },
+        this.connection.networkPrefix,
       );
     },
     addAccount(account: Partial<UserProfile> & Record<string, unknown>) {
-      const normalized = normalizeUser(account, {
-        networkPrefix: this.connection.networkPrefix,
-      });
+      assertNoPrivateKeyField(account, "Session account");
+      const exactAccount = readRuntimeUpdate(
+        account,
+        [
+          "displayName",
+          "domain",
+          "accountId",
+          "i105AccountId",
+          "i105DefaultAccountId",
+          "publicKeyHex",
+          "signingAlgorithm",
+          "hasStoredSecret",
+          "localOnly",
+        ],
+        "Account update",
+      );
+      const normalized = normalizeUser(
+        exactAccount,
+        this.connection.networkPrefix,
+      );
       const existingIndex = this.accounts.findIndex(
         (item) => item.accountId === normalized.accountId,
       );
@@ -602,6 +1036,11 @@ export const useSessionStore = defineStore("session", {
           ...normalized,
         });
       } else {
+        if (this.accounts.length >= MAX_SESSION_ACCOUNTS) {
+          throw new TypeError(
+            `Session accounts must contain at most ${MAX_SESSION_ACCOUNTS} entries.`,
+          );
+        }
         this.accounts.push(normalized);
       }
       this.activeAccountId = normalized.accountId;
@@ -623,6 +1062,7 @@ export const useSessionStore = defineStore("session", {
         ? await window.iroha
             .listAccountSecretFlags({
               accountIds: accounts.map((account) => account.accountId),
+              networkPrefix: this.connection.networkPrefix,
             })
             .catch(() => ({}) as Record<string, boolean>)
         : {};
@@ -631,6 +1071,7 @@ export const useSessionStore = defineStore("session", {
           ? await window.iroha
               .listAccountSecretFlags({
                 accountIds: [this.authority.accountId],
+                networkPrefix: this.connection.networkPrefix,
               })
               .catch(() => ({}) as Record<string, boolean>)
           : {};
@@ -638,14 +1079,12 @@ export const useSessionStore = defineStore("session", {
       this.$patch({
         authority: {
           ...this.authority,
-          privateKeyHex: "",
           hasStoredSecret: this.authority.accountId
             ? Boolean(authorityFlags[this.authority.accountId])
             : false,
         },
         accounts: accounts.map((account) => ({
           ...account,
-          privateKeyHex: "",
           hasStoredSecret: vaultAvailable
             ? Boolean(flags[account.accountId])
             : false,
@@ -664,12 +1103,24 @@ export const useSessionStore = defineStore("session", {
     updateActiveAccount(
       partial: Partial<UserProfile> & Record<string, unknown>,
     ) {
-      if (!this.activeAccountId && partial.accountId) {
-        this.addAccount(
-          normalizeUser(partial, {
-            networkPrefix: this.connection.networkPrefix,
-          }),
-        );
+      assertNoPrivateKeyField(partial, "Session account");
+      const exactPartial = readRuntimeUpdate(
+        partial,
+        [
+          "displayName",
+          "domain",
+          "accountId",
+          "i105AccountId",
+          "i105DefaultAccountId",
+          "publicKeyHex",
+          "signingAlgorithm",
+          "hasStoredSecret",
+          "localOnly",
+        ],
+        "Account update",
+      );
+      if (!this.activeAccountId && exactPartial.accountId) {
+        this.addAccount(exactPartial);
         return;
       }
       const index = this.accounts.findIndex(
@@ -679,23 +1130,11 @@ export const useSessionStore = defineStore("session", {
         return;
       }
       const normalized = normalizeUser(
-        { ...this.accounts[index], ...partial },
-        {
-          networkPrefix: this.connection.networkPrefix,
-        },
+        { ...this.accounts[index], ...exactPartial },
+        this.connection.networkPrefix,
       );
       this.accounts.splice(index, 1, normalized);
       this.activeAccountId = normalized.accountId;
-    },
-    addCustomChain(chain: Partial<SavedChain> & Partial<ConnectionConfig>) {
-      // Saved chain profile management is disabled; Settings owns the active endpoint.
-      this.updateConnection({
-        assetDefinitionId:
-          chain.assetDefinitionId ?? this.connection.assetDefinitionId,
-      });
-    },
-    removeCustomChain(id: string) {
-      this.customChains = this.customChains.filter((chain) => chain.id !== id);
     },
     useChainProfile(connection: Partial<ConnectionConfig>) {
       this.updateConnection(connection);

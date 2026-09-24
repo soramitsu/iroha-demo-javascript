@@ -276,7 +276,6 @@ describe("electron live e2e utils", () => {
       alias: "e2e-onboarding-shared@universal",
       privateKeyHex:
         "c1f4e0837b224bf67dd4bd8fb94f8f78e6d1856e6f6a2f89f5cb9184160a95c7",
-      offlineBalance: "100",
     });
   });
 
@@ -286,13 +285,11 @@ describe("electron live e2e utils", () => {
         E2E_ONBOARDING_ALIAS: "  QA Shared Alias  ",
         E2E_ONBOARDING_PRIVATE_KEY_HEX:
           "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        E2E_ONBOARDING_OFFLINE_BALANCE: "2500",
       }),
     ).toEqual({
       alias: "QA Shared Alias",
       privateKeyHex:
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      offlineBalance: "2500",
     });
   });
 
@@ -309,31 +306,28 @@ describe("electron live e2e utils", () => {
     expect(() =>
       parseOnboardingEnvConfig({
         E2E_STATEFUL_ALIAS: "legacy-alias",
-        E2E_STATEFUL_OFFLINE_BALANCE: "50",
+        E2E_STATEFUL_PRIVATE_KEY_HEX:
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       }),
-    ).toThrow("E2E_STATEFUL_ALIAS, E2E_STATEFUL_OFFLINE_BALANCE");
+    ).toThrow("E2E_STATEFUL_ALIAS, E2E_STATEFUL_PRIVATE_KEY_HEX");
   });
 
   it("reports deprecated onboarding vars in stable declaration order", () => {
     expect(() =>
       parseOnboardingEnvConfig({
-        E2E_STATEFUL_OFFLINE_BALANCE: "50",
         E2E_STATEFUL_PRIVATE_KEY_HEX:
           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         E2E_STATEFUL_ALIAS: "legacy-alias",
       }),
-    ).toThrow(
-      "E2E_STATEFUL_ALIAS, E2E_STATEFUL_PRIVATE_KEY_HEX, E2E_STATEFUL_OFFLINE_BALANCE",
-    );
+    ).toThrow("E2E_STATEFUL_ALIAS, E2E_STATEFUL_PRIVATE_KEY_HEX");
     expect(() =>
       parseOnboardingEnvConfig({
-        E2E_STATEFUL_OFFLINE_BALANCE: "50",
         E2E_STATEFUL_PRIVATE_KEY_HEX:
           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         E2E_STATEFUL_ALIAS: "legacy-alias",
       }),
     ).toThrow(
-      "E2E_STATEFUL_ALIAS -> E2E_ONBOARDING_ALIAS, E2E_STATEFUL_PRIVATE_KEY_HEX -> E2E_ONBOARDING_PRIVATE_KEY_HEX, E2E_STATEFUL_OFFLINE_BALANCE -> E2E_ONBOARDING_OFFLINE_BALANCE",
+      "E2E_STATEFUL_ALIAS -> E2E_ONBOARDING_ALIAS, E2E_STATEFUL_PRIVATE_KEY_HEX -> E2E_ONBOARDING_PRIVATE_KEY_HEX",
     );
   });
 
@@ -346,7 +340,6 @@ describe("electron live e2e utils", () => {
       alias: "e2e-onboarding-shared@universal",
       privateKeyHex:
         "c1f4e0837b224bf67dd4bd8fb94f8f78e6d1856e6f6a2f89f5cb9184160a95c7",
-      offlineBalance: "100",
     });
   });
 
@@ -360,13 +353,18 @@ describe("electron live e2e utils", () => {
     );
   });
 
-  it("rejects invalid onboarding offline balance values", () => {
+  it("rejects removed offline wallet E2E configuration", () => {
     expect(() =>
       parseOnboardingEnvConfig({
-        E2E_ONBOARDING_OFFLINE_BALANCE: "0",
+        E2E_ONBOARDING_OFFLINE_BALANCE: "100",
       }),
     ).toThrow(
-      "E2E_ONBOARDING_OFFLINE_BALANCE must be a positive numeric string.",
+      "Offline wallet E2E configuration is not supported in the first release",
+    );
+    expect(() =>
+      parseOnboardingEnvConfig({ E2E_STATEFUL_OFFLINE_BALANCE: "100" }),
+    ).toThrow(
+      "Offline wallet E2E configuration is not supported in the first release",
     );
   });
 

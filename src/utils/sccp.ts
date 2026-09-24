@@ -6,12 +6,6 @@ import { beginCell } from "@ton/core";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { AccountAddress } from "@iroha/iroha-js/address";
 import {
-  buildTairaXorBscSccpRecordDescriptor,
-  buildTairaXorBscSccpBurnRecordZkIvmRequest,
-  buildTairaXorTonSccpRecordDescriptor as sdkBuildTairaXorTonSccpRecordDescriptor,
-  buildTairaXorTonSccpBurnRecordZkIvmRequest as sdkBuildTairaXorTonSccpBurnRecordZkIvmRequest,
-  buildTairaXorSccpRecordDescriptor,
-  buildTairaXorSccpBurnRecordZkIvmRequest,
   canonicalSccpTransferPayloadBytes,
   canonicalSccpPayloadEnvelopeBytes,
   canonicalSccpMessageProofBundleBytes,
@@ -965,77 +959,11 @@ export type TairaXorOutboundBurnRecordRequest = {
     | TairaXorSolanaSccpBurnRecordZkIvmRequest;
 };
 
-// The pinned non-Solana compatibility snapshot predates the current public
-// TAIRA chain id. Keep its canonical payload implementation untouched, but
-// translate the chain context at this wrapper boundary. The chain id is not
-// part of those legacy transfer payload bytes or message-id derivations.
-const LEGACY_SCCP_TAIRA_CHAIN_ID = "809574f5-fee7-5e69-bfcf-52451e42d50f";
+export const SCCP_FIRST_RELEASE_UNSUPPORTED_ROUTE_ERROR =
+  "First-release SCCP writes require the exact governed taira_sol_xor Solana testnet route and route-scoped SORA outbound material.";
 
-type LegacyTairaRecordDescriptor =
-  | TairaXorSccpRecordDescriptor
-  | TairaXorBscSccpRecordDescriptor
-  | TairaXorTonSccpRecordDescriptor;
-
-const assertActiveLegacyTairaContext = (
-  chainId: string | undefined,
-  networkPrefix: number | undefined,
-): void => {
-  if (chainId !== undefined && chainId.toLowerCase() !== TAIRA_CHAIN_ID) {
-    throw new Error(`chainId must be active TAIRA ${TAIRA_CHAIN_ID}`);
-  }
-  if (
-    networkPrefix !== undefined &&
-    (!Number.isSafeInteger(networkPrefix) ||
-      networkPrefix !== TAIRA_NETWORK_PREFIX)
-  ) {
-    throw new Error(
-      `networkPrefix must be active TAIRA ${TAIRA_NETWORK_PREFIX}`,
-    );
-  }
-};
-
-const cloneLegacyDescriptorWithChainId = <
-  T extends LegacyTairaRecordDescriptor,
->(
-  descriptor: T,
-  chainId: string,
-): T => {
-  const canonicalPayloadBytes = Uint8Array.from(
-    descriptor.canonicalPayloadBytes,
-  );
-  const clone = {
-    ...descriptor,
-    chain_id: chainId,
-  } as unknown as T;
-  Object.defineProperty(clone, "canonicalPayloadBytes", {
-    configurable: false,
-    enumerable: false,
-    get: () => Uint8Array.from(canonicalPayloadBytes),
-  });
-  return Object.freeze(clone);
-};
-
-const adaptLegacyBurnRecordRequestToActiveTaira = <
-  T extends
-    | TairaXorSccpBurnRecordZkIvmRequest
-    | TairaXorBscSccpBurnRecordZkIvmRequest
-    | TairaXorTonSccpBurnRecordZkIvmRequest,
->(
-  request: T,
-): T => {
-  const descriptor = cloneLegacyDescriptorWithChainId(
-    request.descriptor,
-    TAIRA_CHAIN_ID,
-  );
-  const contract = Object.freeze({
-    ...request.contract,
-    descriptor,
-  });
-  return Object.freeze({
-    ...request,
-    descriptor,
-    contract,
-  }) as unknown as T;
+const rejectUnsupportedFirstReleaseSccpRoute = (): never => {
+  throw new Error(SCCP_FIRST_RELEASE_UNSUPPORTED_ROUTE_ERROR);
 };
 
 export type TairaXorSolanaSccpBurnRecordContractPayload = {
@@ -4607,9 +4535,7 @@ const normalizeSccpTransferNonce = (
   return parsed.toString();
 };
 
-export const buildTairaXorSolanaSccpRecordDescriptor = (input: {
-  chainId?: string;
-  networkPrefix?: number;
+const buildTairaXorSolanaSccpRecordDescriptor = (input: {
   routeRevision: number;
   tairaSender: string;
   solanaRecipient: string;
@@ -4677,8 +4603,8 @@ export const buildTairaXorSolanaSccpRecordDescriptor = (input: {
     version: 1,
     kind: "TairaXorSccpRecordDescriptor",
     execution_kind: "ivm_proved_record_sccp_message_v1",
-    chain_id: input.chainId ?? TAIRA_CHAIN_ID,
-    network_prefix: input.networkPrefix ?? TAIRA_NETWORK_PREFIX,
+    chain_id: TAIRA_CHAIN_ID,
+    network_prefix: TAIRA_NETWORK_PREFIX,
     route_id: SCCP_SOLANA_XOR_ROUTE_ID,
     asset_key: SCCP_XOR_ASSET_KEY,
     message_kind: "Transfer",
@@ -4720,8 +4646,6 @@ export const buildTairaXorSolanaOutboundPreview = (input: {
     "governed Solana route program address",
   );
   const recordDescriptor = buildTairaXorSolanaSccpRecordDescriptor({
-    chainId: TAIRA_CHAIN_ID,
-    networkPrefix: TAIRA_NETWORK_PREFIX,
     routeRevision: governedPins.revision,
     tairaSender: input.tairaSender,
     solanaRecipient: input.solanaRecipient,
@@ -4751,46 +4675,8 @@ export const buildTairaXorOutboundPreview = (input: {
   amountDecimal: string;
   nonce: string | number | bigint;
 }): TairaXorOutboundPreview => {
-  const tairaSender = normalizeTairaAccountId(input.tairaSender);
-  const recipientAddress = normalizeTronAddress(input.tronRecipient);
-  const bridgeAddress = readSccpTronBridgeAddress(input.manifest);
-  if (!bridgeAddress) {
-    throw new Error("The TRON bridge deployment address is missing.");
-  }
-  normalizeTronAddress(bridgeAddress);
-  const amount = bridgeDecimalToBaseUnits(input.amountDecimal);
-  if (amount === "0") {
-    throw new Error("Amount must be greater than zero.");
-  }
-  const recordDescriptor = buildTairaXorSccpRecordDescriptor({
-    chainId: LEGACY_SCCP_TAIRA_CHAIN_ID,
-    networkPrefix: TAIRA_NETWORK_PREFIX,
-    tairaSender,
-    recipientAddress,
-    amount,
-    nonce: input.nonce,
-  });
-  const payload = recordDescriptor.payload as unknown as Record<
-    string,
-    unknown
-  >;
-  return {
-    payload,
-    canonicalPayloadHex: recordDescriptor.canonical_payload_hex,
-    recordDescriptor: cloneLegacyDescriptorWithChainId(
-      recordDescriptor,
-      TAIRA_CHAIN_ID,
-    ),
-    messageId: recordDescriptor.message_id,
-    payloadHash: sccpPayloadHash(recordDescriptor.canonicalPayloadBytes),
-    contractPayloadHash: tairaXorTransferPayloadHash({
-      tairaSender,
-      recipientAddress,
-      amount,
-      nonce: input.nonce,
-    }),
-    amountBaseUnits: amount,
-  };
+  void input;
+  return rejectUnsupportedFirstReleaseSccpRoute();
 };
 
 export const buildTairaXorBscOutboundPreview = (input: {
@@ -4800,47 +4686,8 @@ export const buildTairaXorBscOutboundPreview = (input: {
   amountDecimal: string;
   nonce: string | number | bigint;
 }): TairaXorOutboundPreview => {
-  const tairaSender = normalizeTairaAccountId(input.tairaSender);
-  const recipientAddress = normalizeBscAddress(input.bscRecipient);
-  const bridgeAddress = readSccpBscBridgeAddress(input.manifest);
-  if (!bridgeAddress) {
-    throw new Error("The BSC bridge deployment address is missing.");
-  }
-  normalizeBscAddress(bridgeAddress);
-  const amount = bridgeDecimalToTairaBaseUnits(input.amountDecimal);
-  if (amount === "0") {
-    throw new Error("Amount must be greater than zero.");
-  }
-  const recordDescriptor = buildTairaXorBscSccpRecordDescriptor({
-    chainId: LEGACY_SCCP_TAIRA_CHAIN_ID,
-    networkPrefix: TAIRA_NETWORK_PREFIX,
-    tairaSender,
-    recipientAddress,
-    amount,
-    nonce: input.nonce,
-  });
-  const payload = recordDescriptor.payload as unknown as Record<
-    string,
-    unknown
-  >;
-  const canonicalPayloadEnvelopeBytes = canonicalSccpPayloadEnvelopeBytes({
-    kind: "Transfer",
-    value: payload,
-  });
-  return {
-    payload,
-    canonicalPayloadHex: recordDescriptor.canonical_payload_hex,
-    recordDescriptor: cloneLegacyDescriptorWithChainId(
-      recordDescriptor,
-      TAIRA_CHAIN_ID,
-    ),
-    messageId: recordDescriptor.message_id,
-    payloadHash: sccpPayloadHash(canonicalPayloadEnvelopeBytes),
-    contractPayloadHash: sccpPayloadHash(
-      recordDescriptor.canonicalPayloadBytes,
-    ),
-    amountBaseUnits: amount,
-  };
+  void input;
+  return rejectUnsupportedFirstReleaseSccpRoute();
 };
 
 export const buildTairaXorTonSccpRecordDescriptor = (input: {
@@ -4853,35 +4700,8 @@ export const buildTairaXorTonSccpRecordDescriptor = (input: {
   expectedMessageId?: string;
   expectedCanonicalPayloadHex?: string;
 }): TairaXorTonSccpRecordDescriptor => {
-  assertActiveLegacyTairaContext(input.chainId, input.networkPrefix);
-  const recipient = normalizeTonRawAddress(input.tonRecipient);
-  if (!recipient) {
-    throw new Error("Enter a valid TON raw recipient address.");
-  }
-  const amount = bridgeDecimalToTairaBaseUnits(
-    normalizeBridgeAmount(input.amountDecimal),
-  );
-  const descriptorInput: Parameters<
-    typeof sdkBuildTairaXorTonSccpRecordDescriptor
-  >[0] = {
-    chainId: LEGACY_SCCP_TAIRA_CHAIN_ID,
-    networkPrefix: TAIRA_NETWORK_PREFIX,
-    tairaSender: normalizeTairaAccountId(input.tairaSender),
-    recipientAddress: recipient,
-    amount,
-    nonce: input.nonce,
-  };
-  if (input.expectedMessageId) {
-    descriptorInput.expectedMessageId = input.expectedMessageId;
-  }
-  if (input.expectedCanonicalPayloadHex) {
-    descriptorInput.expectedCanonicalPayloadHex =
-      input.expectedCanonicalPayloadHex;
-  }
-  return cloneLegacyDescriptorWithChainId(
-    sdkBuildTairaXorTonSccpRecordDescriptor(descriptorInput),
-    TAIRA_CHAIN_ID,
-  );
+  void input;
+  return rejectUnsupportedFirstReleaseSccpRoute();
 };
 
 export const buildTairaXorTonOutboundPreview = (input: {
@@ -4891,119 +4711,8 @@ export const buildTairaXorTonOutboundPreview = (input: {
   amountDecimal: string;
   nonce: string | number | bigint;
 }): TairaXorOutboundPreview => {
-  const bridgeAddress = readSccpTonBridgeAddress(input.manifest);
-  if (!bridgeAddress) {
-    throw new Error("The TON bridge deployment address is missing.");
-  }
-  normalizeTonRawAddress(bridgeAddress);
-  const recordDescriptor = buildTairaXorTonSccpRecordDescriptor({
-    chainId: TAIRA_CHAIN_ID,
-    networkPrefix: TAIRA_NETWORK_PREFIX,
-    tairaSender: input.tairaSender,
-    tonRecipient: input.tonRecipient,
-    amountDecimal: input.amountDecimal,
-    nonce: input.nonce,
-  });
-  const payload = recordDescriptor.payload as unknown as Record<
-    string,
-    unknown
-  >;
-  const canonicalPayloadEnvelopeBytes = canonicalSccpPayloadEnvelopeBytes({
-    kind: "Transfer",
-    value: payload,
-  });
-  return {
-    payload,
-    canonicalPayloadHex: recordDescriptor.canonical_payload_hex,
-    recordDescriptor,
-    messageId: recordDescriptor.message_id,
-    payloadHash: sccpPayloadHash(canonicalPayloadEnvelopeBytes),
-    contractPayloadHash: sccpPayloadHash(
-      recordDescriptor.canonicalPayloadBytes,
-    ),
-    amountBaseUnits: String(recordDescriptor.payload.amount),
-  };
-};
-
-const buildTairaXorTonSccpBurnRecordZkIvmRequest = (input: {
-  descriptor: TairaXorTonSccpRecordDescriptor;
-  settlementAssetDefinitionId: string;
-  authority?: string;
-  vkRef: TairaXorBurnRecordMaterial["vkRef"];
-  bytecode: string;
-  gasLimit?: number;
-}): TairaXorTonSccpBurnRecordZkIvmRequest => {
-  const requestInput: Parameters<
-    typeof sdkBuildTairaXorTonSccpBurnRecordZkIvmRequest
-  >[0] = {
-    descriptor: cloneLegacyDescriptorWithChainId(
-      input.descriptor,
-      LEGACY_SCCP_TAIRA_CHAIN_ID,
-    ),
-    sender: String(input.descriptor.payload.sender),
-    recipientAddress: String(input.descriptor.payload.recipient),
-    amount: String(input.descriptor.payload.amount),
-    nonce: String(input.descriptor.payload.nonce),
-    settlementAssetDefinitionId: input.settlementAssetDefinitionId,
-    vkRef: input.vkRef,
-    bytecode: input.bytecode,
-  };
-  if (input.authority) {
-    requestInput.authority = input.authority;
-  }
-  if (input.gasLimit !== undefined) {
-    requestInput.gasLimit = input.gasLimit;
-  }
-  return adaptLegacyBurnRecordRequestToActiveTaira(
-    sdkBuildTairaXorTonSccpBurnRecordZkIvmRequest(requestInput),
-  );
-};
-
-const patchTairaXorTonBurnRecordEnvelopePayload = (
-  request: TairaXorTonSccpBurnRecordZkIvmRequest,
-): TairaXorTonSccpBurnRecordZkIvmRequest => {
-  const descriptor = request.descriptor as unknown as Record<string, unknown>;
-  const payload = descriptor.payload as Record<string, unknown>;
-  const canonicalPayloadEnvelopeBytes = canonicalSccpPayloadEnvelopeBytes({
-    kind: "Transfer",
-    value: payload,
-  });
-  const canonicalPayloadEnvelopeHex = bytesToLowerHex(
-    canonicalPayloadEnvelopeBytes,
-  );
-  const recordInstructionHex = bytesToLowerHex(
-    buildRecordSccpMessageInstructionBytes(canonicalPayloadEnvelopeBytes),
-  );
-  const patchedDescriptor = {
-    ...descriptor,
-    record_instruction: {
-      kind: "RecordSccpMessage",
-      payload_bytes_hex: canonicalPayloadEnvelopeHex,
-    },
-  };
-  const contract = request.contract as unknown as Record<string, unknown>;
-  const contractPayload = {
-    ...(contract.payload as Record<string, unknown>),
-    record_instruction: recordInstructionHex,
-  };
-  const patchedContract = {
-    ...contract,
-    descriptor: patchedDescriptor,
-    payload: contractPayload,
-    record_instruction_hex: recordInstructionHex,
-  };
-  return {
-    ...request,
-    descriptor: patchedDescriptor,
-    contract: patchedContract,
-    request: {
-      ...request.request,
-      metadata: {
-        ...request.request.metadata,
-        contract_payload: contractPayload,
-      },
-    },
-  } as unknown as TairaXorTonSccpBurnRecordZkIvmRequest;
+  void input;
+  return rejectUnsupportedFirstReleaseSccpRoute();
 };
 
 export const buildTairaXorTonOutboundBurnRecordRequest = (input: {
@@ -5014,28 +4723,8 @@ export const buildTairaXorTonOutboundBurnRecordRequest = (input: {
   nonce: string | number | bigint;
   authority?: string;
 }): TairaXorOutboundBurnRecordRequest => {
-  const materialResult = readSccpTairaBurnRecordMaterialResult(input.manifest);
-  const material = materialResult.material;
-  if (!material) {
-    throw new Error(
-      materialResult.reason ??
-        "The TAIRA burn-record ZK contract material is missing.",
-    );
-  }
-  const outbound = buildTairaXorTonOutboundPreview(input);
-  const zkIvmRequest = buildTairaXorTonSccpBurnRecordZkIvmRequest({
-    descriptor: outbound.recordDescriptor as TairaXorTonSccpRecordDescriptor,
-    settlementAssetDefinitionId: material.settlementAssetDefinitionId,
-    authority: input.authority,
-    vkRef: material.vkRef,
-    bytecode: material.contractArtifactB64,
-    gasLimit: material.gasLimit,
-  });
-  return {
-    outbound,
-    material,
-    zkIvmRequest: patchTairaXorTonBurnRecordEnvelopePayload(zkIvmRequest),
-  };
+  void input;
+  return rejectUnsupportedFirstReleaseSccpRoute();
 };
 
 export const buildTairaXorSolanaOutboundBurnRecordRequest = (input: {
@@ -5112,43 +4801,8 @@ export const buildTairaXorOutboundBurnRecordRequest = (input: {
   nonce: string | number | bigint;
   authority?: string;
 }): TairaXorOutboundBurnRecordRequest => {
-  const materialResult = readSccpTairaBurnRecordMaterialResult(input.manifest);
-  const material = materialResult.material;
-  if (!material) {
-    throw new Error(
-      materialResult.reason ??
-        "The TAIRA burn-record ZK contract material is missing.",
-    );
-  }
-  const outbound = buildTairaXorOutboundPreview(input);
-  const tairaSender = normalizeTairaAccountId(input.tairaSender);
-  const authority = input.authority
-    ? normalizeTairaAccountId(input.authority)
-    : tairaSender;
-  const zkIvmRequest = adaptLegacyBurnRecordRequestToActiveTaira(
-    buildTairaXorSccpBurnRecordZkIvmRequest({
-      descriptor: cloneLegacyDescriptorWithChainId(
-        outbound.recordDescriptor as TairaXorSccpRecordDescriptor,
-        LEGACY_SCCP_TAIRA_CHAIN_ID,
-      ),
-      chainId: LEGACY_SCCP_TAIRA_CHAIN_ID,
-      networkPrefix: TAIRA_NETWORK_PREFIX,
-      sender: tairaSender,
-      recipientAddress: normalizeTronAddress(input.tronRecipient),
-      amount: outbound.amountBaseUnits,
-      nonce: input.nonce,
-      settlementAssetDefinitionId: material.settlementAssetDefinitionId,
-      authority,
-      vkRef: material.vkRef,
-      bytecode: material.contractArtifactB64,
-      gasLimit: material.gasLimit,
-    }),
-  );
-  return {
-    outbound,
-    material,
-    zkIvmRequest,
-  };
+  void input;
+  return rejectUnsupportedFirstReleaseSccpRoute();
 };
 
 export const buildTairaXorBscOutboundBurnRecordRequest = (input: {
@@ -5159,44 +4813,8 @@ export const buildTairaXorBscOutboundBurnRecordRequest = (input: {
   nonce: string | number | bigint;
   authority?: string;
 }): TairaXorOutboundBurnRecordRequest => {
-  const materialResult = readSccpTairaBurnRecordMaterialResult(input.manifest);
-  const material = materialResult.material;
-  if (!material) {
-    throw new Error(
-      materialResult.reason ??
-        "The TAIRA burn-record ZK contract material is missing.",
-    );
-  }
-  const outbound = buildTairaXorBscOutboundPreview(input);
-  const tairaSender = normalizeTairaAccountId(input.tairaSender);
-  const authority = input.authority
-    ? normalizeTairaAccountId(input.authority)
-    : tairaSender;
-  const zkIvmRequest = adaptLegacyBurnRecordRequestToActiveTaira(
-    buildTairaXorBscSccpBurnRecordZkIvmRequest({
-      descriptor: cloneLegacyDescriptorWithChainId(
-        outbound.recordDescriptor as TairaXorBscSccpRecordDescriptor,
-        LEGACY_SCCP_TAIRA_CHAIN_ID,
-      ),
-      chainId: LEGACY_SCCP_TAIRA_CHAIN_ID,
-      networkPrefix: TAIRA_NETWORK_PREFIX,
-      sender: tairaSender,
-      recipientAddress: normalizeBscAddress(input.bscRecipient),
-      amount: outbound.amountBaseUnits,
-      settlementAmount: normalizeBridgeAmount(input.amountDecimal),
-      nonce: input.nonce,
-      settlementAssetDefinitionId: material.settlementAssetDefinitionId,
-      authority,
-      vkRef: material.vkRef,
-      bytecode: material.contractArtifactB64,
-      gasLimit: material.gasLimit,
-    }),
-  );
-  return {
-    outbound,
-    material,
-    zkIvmRequest,
-  };
+  void input;
+  return rejectUnsupportedFirstReleaseSccpRoute();
 };
 
 const normalizeHex32 = (value: string, label: string): string => {
@@ -18466,6 +18084,20 @@ export const resolveSccpRouteReadiness = (input: {
   const route =
     input.route ??
     resolveSccpRouteProfile(input.counterparty ?? SCCP_XOR_ROUTE.counterparty);
+  if (route.counterparty !== "solana") {
+    return {
+      ready: false,
+      status: "disabled",
+      reasons: [SCCP_FIRST_RELEASE_UNSUPPORTED_ROUTE_ERROR],
+      loadFailure: null,
+      counterparty: route.counterparty,
+      manifest: null,
+      tronManifest: null,
+      bscManifest: null,
+      tonManifest: null,
+      solanaManifest: null,
+    };
+  }
   const tronProfile = resolveSccpTronNetworkProfile(
     input.tronNetwork ?? SCCP_TRON_NETWORK.key,
   );
@@ -19211,6 +18843,9 @@ export const resolveSccpRouteReadiness = (input: {
         ),
       );
     } else {
+      reasons.push(
+        "The Solana SCCP route must be the exact active typed-registry taira_sol_xor revision; legacy manifests and route-manager publications are unsupported.",
+      );
       const productionReady = readProductionReadyFlag(solanaManifest);
       const disabledReason = readReadinessAliasString(
         solanaManifest,

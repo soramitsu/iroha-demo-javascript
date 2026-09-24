@@ -1,8 +1,0 @@
-{
-  "schema": "sora.wallet.governance-referendum-source.v1",
-  "chainId": "fc56984b-2be7-431d-840e-21514d1883f0",
-  "networkPrefix": 369,
-  "genesisHash": "884b61c61f56dcddceee7aa3dc1deb89fb8552576d02b01a1b7af9ae7fd5ff7a",
-  "descriptorUrl": "https://cbsi-core.soramitsu.io/governance/plain-referendum/current.json",
-  "artifactBaseUrl": "https://cbsi-core.soramitsu.io/governance/plain-referendum/artifacts"
-}

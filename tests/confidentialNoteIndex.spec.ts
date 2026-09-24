@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseConfidentialNoteIndexPage } from "../electron/confidentialNoteIndex";
+import { FIRST_RELEASE_CONFIDENTIAL_NOTE_PAGE_SIZE } from "../electron/firstReleaseResourceLimits";
 
 const HASH = "ab".repeat(32);
 
@@ -111,5 +112,17 @@ describe("confidential note index decoder", () => {
         next_cursor: "041",
       }),
     ).toThrow(/canonical positive block cursor/u);
+  });
+
+  it("rejects a response page before decoding more items than requested", () => {
+    expect(() =>
+      parseConfidentialNoteIndexPage({
+        ...page(),
+        items: Array.from(
+          { length: FIRST_RELEASE_CONFIDENTIAL_NOTE_PAGE_SIZE + 1 },
+          item,
+        ),
+      }),
+    ).toThrow(/requested page limit/u);
   });
 });

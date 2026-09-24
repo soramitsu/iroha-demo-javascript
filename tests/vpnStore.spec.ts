@@ -41,11 +41,23 @@ describe("vpn store", () => {
       tunnelAddresses: ["10.208.0.2/32"],
       mtuBytes: 1280,
       displayBillingLabel: "standard · soranet.vpn.standard",
+      operatorAccountId: "operator@wonderland",
+      leaseFee: "25",
+      settlementGraceSecs: 120,
+      flowLabelBits: 24,
+      paddingBudgetMs: 80,
+      relayIdHex: "11".repeat(32),
+      relayMldsa65PublicKeyHex: "22".repeat(1_952),
+      descriptorCommitHex: "33".repeat(32),
+      tlsServerName: "relay.example",
+      relayTlsSpkiSha256Hex: "44".repeat(32),
+      relayCertificateSha256Hex: "55".repeat(32),
+      directorySnapshotDigestHex: "66".repeat(32),
     });
     store.setReceipts([
       {
-        sessionId: "sess_1",
-        accountId: "alice@wonderland",
+        sessionId: "77".repeat(16),
+        accountId: "testuAliceRealI105AccountId",
         exitClass: "high-security",
         relayEndpoint: "/dns/torii.exit.example/udp/9443/quic",
         meterFamily: "soranet.vpn.standard",
@@ -56,6 +68,16 @@ describe("vpn store", () => {
         bytesOut: 0,
         status: "disconnected",
         receiptSource: "torii",
+        quoteId: "88".repeat(32),
+        paymentTxHash: "99".repeat(32),
+        feeAssetId: "xor#universal.universal",
+        escrowAccountId: "vpn-escrow@wonderland",
+        operatorAccountId: "operator@wonderland",
+        leaseFee: "25",
+        earnedFee: "10",
+        refundedFee: "15",
+        leaseIdHex: "aa".repeat(32),
+        settleLeaseInstruction: null,
       },
     ]);
     store.setHelperHealth({
@@ -85,7 +107,7 @@ describe("vpn store", () => {
     expect(store.lastProfile?.relayEndpoint).toBe(
       "/dns/torii.exit.example/udp/9443/quic",
     );
-    expect(store.receipts[0]?.sessionId).toBe("sess_1");
+    expect(store.receipts[0]?.sessionId).toBe("77".repeat(16));
     expect(store.helperHealth?.helperReady).toBe(true);
     expect(localStorage.getItem(VPN_STORAGE_KEY)).toBeNull();
   });

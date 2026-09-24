@@ -1,86 +1,33 @@
 import { clipboard, contextBridge, ipcRenderer } from "electron";
-import { secp256k1 } from "@noble/curves/secp256k1";
-import { blake2b } from "@noble/hashes/blake2b";
-import { keccak_256 } from "@noble/hashes/sha3";
-import { spawn } from "node:child_process";
 import {
   createCipheriv,
   createDecipheriv,
-  createHash,
   hkdfSync,
   randomBytes,
 } from "crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, resolve as resolvePath } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-  PublicKey,
-  SystemProgram,
-  Transaction,
-  TransactionInstruction,
-} from "@solana/web3.js";
-import { bindSignedSolanaTransactionForBroadcast } from "./solanaTransaction";
-import {
-  ToriiClient,
-  buildPrivateCreateKaigiTransaction,
-  buildPrivateEndKaigiTransaction,
-  buildPrivateJoinKaigiTransaction,
-  buildConfidentialTransferProofV2,
-  buildConfidentialUnshieldProofV2,
-  buildConfidentialUnshieldProofV3,
-  buildPrivateKaigiFeeSpend,
-  buildCreateKaigiInstruction,
-  buildEndKaigiInstruction,
-  buildJoinKaigiInstruction,
-  buildRegisterAccountInstruction,
-  buildShieldInstruction,
-  buildTransferAssetInstruction,
-  buildUnshieldInstruction,
-  buildZkTransferInstruction,
-  buildTransactionPayload,
-  buildIvmProvedTransactionPayload,
-  compileKotodamaProgram,
-  computeValidationFeePayoutLifecycleProposalFingerprintV1,
-  computeValidationFeePolicyProposalFingerprintV1,
-  signQuotedIvmProvedTransactionPayload,
-  submitTransactionEntrypoint,
-  hashSignedTransaction,
-  inspectSubscriptionTriggerAction,
-  noritoDecodeInstruction,
-  normalizeAssetDefinitionId,
-  normalizeAssetHoldingId,
-  signQuotedTransactionPayload,
-  type FeeQuoteResponse,
-  type KaigiCallView,
-  type ToriiBridgeMessageSubmitPayload,
-  type ToriiVerifierBackendLabelV1,
+import type {
+  CryptoAlgorithm,
+  ToriiPipelineTransactionStatus,
 } from "@iroha/iroha-js";
-import { buildCanonicalJsonRequest } from "@iroha/iroha-js/canonical-request";
 import {
-  buildKaigiRosterJoinProof,
+  NetworkId,
+  buildCanonicalJsonRequest,
+} from "@iroha/iroha-js/canonical-request";
+import { normalizeAssetHoldingId } from "@iroha/iroha-js/normalizers";
+import {
   generateKeyPair as generateSdkKeyPair,
   normalizeCryptoAlgorithm,
-  privateKeyMultihash,
   publicKeyFromPrivate,
   sign,
   supportedCryptoAlgorithms,
 } from "@iroha/iroha-js/crypto";
 import {
-  bindTairaXorBscToTairaSourceProofPackage,
-  buildBscSourceChainProofEnvelope,
-  buildBscMainnetSccpDestinationProofRequest,
-  buildBscTestnetSccpDestinationProofRequest,
-  parseTronTriggerSmartContractRawData,
-  type EvmSccpProofRequestInput,
-} from "../src/legacy/sccpLegacySdk.js";
-import {
   DEFAULT_SIGNING_ALGORITHM,
   signingAlgorithmLabel,
 } from "../src/utils/signingAlgorithms";
 import {
-  confidentialModeSupportsShield,
+  assertConfidentialPolicyProjectionAgreement,
   formatOnboardingError,
-  isPositiveWholeAmount,
   normalizeAccountAssetListPayload,
   normalizeBaseUrl,
   normalizeConfidentialAssetPolicyPayload,
@@ -88,21 +35,16 @@ import {
   normalizeGovernanceCitizenCountPayload,
   normalizeGovernanceCouncilCurrentPayload,
   normalizeGovernanceUnlockStatsPayload,
-  normalizeAssetDefinitionConfidentialPolicy,
-  normalizeOfflineReadinessPayload,
   parseNexusLifecycleJson,
   normalizePublicLaneRewardsPayload,
   normalizePublicLaneStakePayload,
   normalizePublicLaneValidatorsPayload,
-  readApiErrorDetail,
+  extractApiErrorDetail,
   readNexusUnbondingDelayMs,
-  stripConfidentialFeeSponsor,
-  type AssetDefinitionConfidentialPolicyView,
   type ConfidentialAssetPolicyView,
   type ExplorerAccountQrResponse,
   type GovernanceCouncilCurrentResponseView,
   type NexusLifecycleView,
-  type OfflineReadinessView,
   type PublicLaneRewardsResponseView,
   type PublicLaneStakeResponseView,
   type PublicLaneValidatorsResponseView,
@@ -128,46 +70,57 @@ import {
   type SoraCloudStatusView,
   type SoraCloudStorageClass,
 } from "../src/utils/soracloud";
-import { SORACLOUD_SETTLEMENT_CONFIRMATION_CHANNEL } from "./soraCloudSettlementBoundary";
 import {
   type ChainMetadata,
   parseFirstReleaseChainMetadataPayload,
 } from "../src/utils/chainMetadata";
 import type {
+  AccountAssetsResponse,
+  AccountPermissionsResponse,
+  AccountTransactionsResponse,
+  ExplorerMetricsResponse,
   GovernanceCitizenStatusResponse,
+  GovernanceUnlockStatsResponse,
   NetworkStatsResponse,
+  ToriiHealth,
+  VpnProfile,
+  VpnReceipt,
 } from "../src/types/iroha";
 import {
-  assertPlainGovernanceProposalWrite,
   canonicalGovernanceProposalId,
-  isAccountInParliamentRoster,
-  isReferendumPlainVoteOpen,
   normalizeGovernanceProposalDetail,
   normalizeGovernanceProposalList,
-  plainBallotLockCoversReferendum,
-  type GovernanceParliamentDecision,
+  type GovernanceProposalIdResolver,
   type GovernanceProposalDetail,
   type GovernanceProposalList,
   type GovernanceWritableProposalKindId,
 } from "../src/governance/model";
-import {
-  readTransactionFee,
-  type TransactionFeeLike,
-} from "../src/utils/transactionFee";
-import { isSecretLikeTextValue } from "../src/utils/secretLike";
-import { normalizeSccpPackageOrRemoteModuleUrl } from "../src/utils/sccpProverUrl";
+import type { TransactionFeeQuoteView } from "../src/utils/transactionFee";
 import {
   waitForFinalizedTransaction,
   type TransactionFinalityProof,
 } from "./transactionFinality";
-import { deriveOnChainShieldedBalance } from "../src/utils/confidential";
 import { nodeFetch } from "./nodeFetch";
 import {
-  getSccpNileTestTronSignerStatus,
-  signSccpNileTestTronTransaction,
-  type SccpNileTestTronSignerStatus,
-  type SccpNileTestTronTransactionSignInput,
-} from "./tronTestSigner";
+  MAX_TORII_JSON_RESPONSE_BYTES,
+  readBoundedJsonResponse,
+  readBoundedResponseBytes,
+} from "./boundedJsonResponse";
+import {
+  assertFirstReleaseHasMore,
+  assertFirstReleasePageWindow,
+  requireFirstReleaseInputArray,
+  requireFirstReleaseInputText,
+  requireFirstReleasePagination,
+  requireOptionalFirstReleaseFilter,
+} from "./firstReleaseReadInput";
+import {
+  parseFirstReleaseVpnAvailabilityIpcResponse,
+  parseFirstReleaseVpnProfileIpcResponse,
+  parseFirstReleaseVpnReceiptListIpcResponse,
+  parseFirstReleaseVpnStatusIpcResponse,
+} from "./firstReleaseVpnIpcResponse";
+import { parseStrictJson } from "./secureBoundedJson";
 import {
   assertEndpointFaucetChallengeAvailable,
   assertEndpointFeatureOperationSupported,
@@ -205,72 +158,59 @@ import {
 import {
   deriveAccountAddressView,
   normalizeCanonicalAccountIdLiteral,
-  normalizeCompatAccountIdLiteral,
+  requireAccountIdBoundToPublicKey,
 } from "./accountAddress";
 import {
   buildCanonicalInstructionFeeQuoteRequest,
+  resolveFirstReleaseNetworkIdForConfiguredIdentity,
+  resolveFirstReleaseTransactionNetworkId,
   resolveCanonicalInstructionWireInput,
+  transactionFeeQuoteView,
 } from "./transactionFeeQuote";
+import {
+  FIRST_RELEASE_FEE_QUOTE_RESPONSE_MAX_BYTES,
+  parseFirstReleaseAuthorityFeeQuoteResponse,
+  type FirstReleaseAuthorityFeeQuoteResponse,
+} from "./firstReleaseFeeQuoteResponse";
 import {
   decryptKaigiPayload,
   decryptKaigiPayloadWithSecret,
   encryptKaigiPayload,
   encryptKaigiPayloadWithSecret,
   generateKaigiX25519KeyPair,
-  type KaigiSealedBox,
-  type KaigiSecretBox,
   type KaigiX25519KeyPair,
 } from "./kaigiCrypto";
-import { discoverKaigiRelayManifest } from "./kaigiRelay";
 import {
-  readPrivateKaigiFeeSchedule,
-  readPrivateKaigiTransferVerifyingKey,
   requireKaigiCallId,
   requireKaigiInviteSecretBase64Url,
-  type PrivateKaigiFeeSchedule,
-  type PrivateKaigiTransferVerifyingKeyContext,
-} from "./privateKaigiContract";
+} from "../src/utils/kaigiInvite";
 import {
-  buildWalletConfidentialMetadataV3,
   collectWalletConfidentialLedger,
-  CONFIDENTIAL_WALLET_METADATA_SCHEMA,
-  createWalletConfidentialNote,
-  deriveWalletConfidentialNullifierHex,
-  deriveWalletConfidentialOwnerTagHex,
   deriveWalletConfidentialReceiveAddress,
-  selectWalletConfidentialNotes,
-  selectWalletConfidentialNotesForExactAmount,
   type WalletConfidentialTransactionLike,
-  type WalletSpendableConfidentialNote,
 } from "./confidentialWallet";
 import { parseConfidentialNoteIndexPage } from "./confidentialNoteIndex";
 import { installGlobalIrohaJsNativeBinding } from "./irohaJsNativeDir";
-import { type GovernanceValidationFeePolicyView } from "./governanceValidationFee";
-import { GOVERNANCE_VALIDATION_FEE_POLICY_IPC_CHANNEL } from "./governanceValidationFeeFinality";
 import {
-  GOVERNANCE_PLAIN_REFERENDUM_IPC_CHANNEL,
-  assertGovernancePlainReferendumBallotBinding,
-  assertGovernancePlainReferendumBallotDraft,
-  type LoadedGovernancePlainReferendumContract,
-  type GovernancePlainReferendumObservedIdentity,
-} from "./governancePlainReferendum";
+  computeFirstReleaseValidationFeePayoutLifecycleFingerprint,
+  computeFirstReleaseValidationFeePolicyFingerprint,
+} from "./firstReleaseGovernanceFingerprint";
+import {
+  parseGovernanceValidationFeePolicyView,
+  type GovernanceValidationFeePolicyView,
+} from "./governanceValidationFeePolicyView";
+import { GOVERNANCE_VALIDATION_FEE_POLICY_IPC_CHANNEL } from "./governanceValidationFeeFinality";
 import {
   assertGovernanceCitizenDraftResponse,
   decodeGovernanceCitizenStatus,
   normalizeGovernanceNetworkPrefix,
   unavailableGovernanceCitizenStatus,
 } from "./governanceCitizenStatus";
+import { parseRetryAfterMs, withBoundedHttpGetRetry } from "./httpReadRetry";
 import {
-  parseRetryAfterMs,
-  withBoundedHttpGetFetchRetry,
-  withBoundedHttpGetRetry,
-} from "./httpReadRetry";
-import {
-  GOVERNANCE_BALLOT_WIRE_IDS,
-  assertGovernanceBallotDraftResponse,
   normalizeGovernanceDraftPayloadHex,
   normalizeGovernanceDraftWireId,
-} from "./governanceBallotDraft";
+} from "./governanceDraftInstruction";
 import {
   runLocalVpnRepair,
   runVpnConnectAfterProfileCheck,
@@ -280,7 +220,6 @@ import { normalizeFirstReleaseAssetDefinitionId } from "./assetDefinitionId";
 import {
   assertValidationFeePayoutLifecycleDecodedInstruction,
   assertValidationFeePayoutLifecycleDraftResponse,
-  assertValidationFeeDraftWindowAgainstCapabilities,
   assertValidationFeePolicyDecodedInstruction,
   assertValidationFeePolicyDraftResponse,
   buildValidationFeePayoutLifecycleDraftRequest,
@@ -297,6 +236,7 @@ import {
   governanceCapabilitiesContractFingerprintV1,
   parseGovernanceCapabilitiesV1,
   TAIRA_GOVERNANCE_CHAIN_ID,
+  TAIRA_GOVERNANCE_NETWORK_ID,
   TAIRA_GOVERNANCE_NETWORK_PREFIX,
   type GovernanceCapabilitiesV1,
 } from "./governanceCapabilities";
@@ -304,21 +244,8 @@ import {
   GOVERNANCE_CAPABILITIES_PATH,
   GOVERNANCE_CITIZEN_DRAFT_PATH,
   VALIDATION_FEE_PROPOSALS_PATH,
-  validationFeePlainBallotDraftPath,
   validationFeeProposalPath,
 } from "./governanceRoutes";
-import {
-  buildSoraCloudHfDeployRequest,
-  soraCloudXorQuantityFromNanos,
-} from "./soraCloudDeployRequest";
-import { executeSoraCloudHfDraftToCommit } from "./soraCloudHfFlow";
-import {
-  buildSoraCloudCommittedLaunchResponse,
-  decodeMatchingSoraCloudHfStatus,
-  readSoraCloudHfLatestSequence,
-  type SoraCloudHfDeployExpectation,
-  type SoraCloudHfSettlementReview,
-} from "./soraCloudResponses";
 import {
   decodeSubscriptionListItemResponse,
   decodeSubscriptionListResponse,
@@ -337,8 +264,13 @@ import {
   type SubscriptionCreateMutationDraft,
   type SubscriptionStateDraft,
 } from "./subscriptionMutationDraft";
-import { type ConfidentialReceiveKeyRecord } from "./secureVault";
 import {
+  SECURE_VAULT_MAX_RECEIVE_KEY_BATCH,
+  SECURE_VAULT_MAX_RECEIVE_KEYS_PER_ACCOUNT,
+  type ConfidentialReceiveKeyRecord,
+} from "./secureVault";
+import {
+  CONFIDENTIAL_WALLET_BACKUP_CIPHERTEXT_MAX_CHARACTERS,
   CONFIDENTIAL_WALLET_BACKUP_KDF_INFO,
   CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2,
   type ConfidentialWalletBackupMetadata,
@@ -346,14 +278,64 @@ import {
   type ConfidentialWalletBackupStateBoxV2,
 } from "../src/utils/walletBackup";
 import { normalizeMnemonicPhrase } from "../src/utils/mnemonic";
+import { parseJsonWithoutDuplicateObjectKeys } from "../src/utils/json";
+import { wrapRendererSigningBoundary } from "./rendererSigningBoundary";
 import {
-  snapshotSccpDataValue,
-  snapshotSccpJsonDataValue,
-} from "../src/utils/sccpDataSnapshot";
+  requireFirstReleaseIpcInput,
+  requireFirstReleaseIpcInputObject,
+} from "./firstReleaseIpcInput";
+import {
+  FIRST_RELEASE_CLIPBOARD_TEXT_MAX_BYTES,
+  FIRST_RELEASE_CRYPTO_KEY_MATERIAL_MAX_BYTES,
+  FIRST_RELEASE_ACCOUNT_TRANSACTION_SCAN_MAX_ITEMS,
+  FIRST_RELEASE_ACCOUNT_TRANSACTION_SCAN_MAX_PAGES,
+  FIRST_RELEASE_CONFIDENTIAL_NOTE_PAGE_SIZE,
+  assertFirstReleaseConfidentialNoteContinuation,
+  assertFirstReleaseConfidentialScanTargets,
+  consumeFirstReleaseConfidentialNotePage,
+  requireFirstReleaseFaucetRequestId,
+  requireFirstReleaseJsonObject,
+  reserveFirstReleaseFaucetRequest,
+} from "./firstReleaseResourceLimits";
+import { streamFirstReleaseSseJson } from "./firstReleaseSse";
+import {
+  normalizeFirstReleaseKaigiCall,
+  normalizeFirstReleaseKaigiCallEvent,
+  normalizeFirstReleaseKaigiCallSignals,
+  type FirstReleaseKaigiCallView,
+} from "./firstReleaseToriiResponses";
+import {
+  KAIGI_CALL_METADATA_SCHEMA,
+  KAIGI_CALL_OFFER_SCHEMA,
+  KAIGI_CHAIN_ANSWER_SCHEMA,
+  KAIGI_CHAIN_SIGNAL_SCHEMA,
+  normalizeFirstReleaseKaigiCallMetadata,
+  normalizeFirstReleaseKaigiCallOfferPayload,
+  normalizeFirstReleaseKaigiChainAnswerPayload,
+  normalizeFirstReleaseKaigiChainSignalMetadata,
+  requireFirstReleaseKaigiMeetingPrivacy,
+  toFirstReleaseKaigiUiEvent,
+} from "./firstReleaseKaigiPayloads";
+import {
+  decodeFirstReleaseInstruction,
+  inspectFirstReleaseSubscriptionTriggerAction,
+} from "./firstReleaseNativeInstruction";
+import {
+  buildFirstReleaseAuthorityTransactionDraft,
+  hashFirstReleaseSignedTransaction,
+  signFirstReleaseAuthorityTransaction,
+  type FirstReleaseAuthorityTransactionDraft,
+} from "./firstReleaseTransaction";
+import {
+  buildFirstReleaseCreateKaigiInstruction,
+  buildFirstReleaseEndKaigiInstruction,
+  buildFirstReleaseJoinKaigiInstruction,
+  buildFirstReleaseRegisterAccountInstruction,
+  buildFirstReleaseTransferAssetInstruction,
+  requireFirstReleaseTransferQuantity,
+} from "./firstReleaseInstructionBuilders";
 
-type HexString = string;
-
-installGlobalIrohaJsNativeBinding(import.meta.url);
+const irohaNativeBinding = installGlobalIrohaJsNativeBinding(import.meta.url);
 
 type ToriiConfig = {
   toriiUrl: string;
@@ -365,112 +347,77 @@ type SigningAlgorithmOption = {
   label: string;
   isDefault: boolean;
 };
-type RuntimeConfigResponse = {
-  walletConnectProjectId: string;
-  sccpBscE2eWallet: string;
-  sccpSolanaE2eWallet: string;
-  sccpTonE2eWallet: string;
-  sccpTonConnectManifestUrl: string;
-};
-
-const DEFAULT_SCCP_PROVER_V8_HEAP_MB = 8192;
-const MIN_SCCP_PROVER_V8_HEAP_MB = 1024;
-const MAX_SCCP_PROVER_V8_HEAP_MB = 32768;
-
 const trimString = (value: unknown): string => String(value ?? "").trim();
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-
-const readRuntimeConfigEnv = (name: string): string =>
-  trimString(process.env[name]);
-
-const getRuntimeConfigSnapshot = (): RuntimeConfigResponse => ({
-  walletConnectProjectId: readRuntimeConfigEnv("VITE_WALLETCONNECT_PROJECT_ID"),
-  sccpBscE2eWallet: readRuntimeConfigEnv("VITE_SCCP_BSC_E2E_WALLET"),
-  sccpSolanaE2eWallet: readRuntimeConfigEnv("VITE_SCCP_SOLANA_E2E_WALLET"),
-  sccpTonE2eWallet: readRuntimeConfigEnv("VITE_SCCP_TON_E2E_WALLET"),
-  sccpTonConnectManifestUrl: readRuntimeConfigEnv(
-    "VITE_SCCP_TONCONNECT_MANIFEST_URL",
-  ),
-});
-
-const SECRET_LIKE_PAYLOAD_KEY_PATTERN =
-  /(?:private[_-]?key|mnemonic|recovery[_-]?phrase|seed[_-]?phrase|secret)/iu;
-const SIGNING_HELPER_PAYLOAD_KEY_PATTERN =
-  /^(?:privateSignature|private_signature|signatureB64|signature_b64|signedTransaction|signed_transaction|walletSignature|wallet_signature)$/iu;
-
-const assertNoSecretLikePayloadFields = (
-  value: unknown,
-  path: string,
-  seen = new WeakSet<object>(),
+const assertExactObjectKeys = (
+  record: Record<string, unknown>,
+  expectedKeys: readonly string[],
+  label: string,
 ): void => {
-  if (isSecretLikeTextValue(value)) {
-    throw new Error(
-      `${path} must not contain recovery phrases or private key material before Torii submission.`,
-    );
+  const actual = Object.keys(record).sort();
+  const expected = [...expectedKeys].sort();
+  if (
+    actual.length !== expected.length ||
+    actual.some((key, index) => key !== expected[index])
+  ) {
+    throw new Error(`${label} has an unsupported shape.`);
   }
-  if (Array.isArray(value)) {
-    if (seen.has(value)) {
-      return;
-    }
-    seen.add(value);
-    value.forEach((entry, index) => {
-      assertNoSecretLikePayloadFields(entry, `${path}[${index}]`, seen);
-    });
-    return;
-  }
-  if (!isPlainRecord(value)) {
-    return;
-  }
-  if (seen.has(value)) {
-    return;
-  }
-  seen.add(value);
-  for (const [key, child] of Object.entries(value)) {
-    if (SECRET_LIKE_PAYLOAD_KEY_PATTERN.test(key)) {
-      throw new Error(`${path}.${key} must not be submitted to Torii.`);
-    }
-    if (SIGNING_HELPER_PAYLOAD_KEY_PATTERN.test(key)) {
-      throw new Error(
-        `${path}.${key} must not include detached signature helper payloads inside SCCP material.`,
-      );
-    }
-    assertNoSecretLikePayloadFields(child, `${path}.${key}`, seen);
+};
+const assertRequiredAndOptionalObjectKeys = (
+  record: Record<string, unknown>,
+  requiredKeys: readonly string[],
+  optionalKeys: readonly string[],
+  label: string,
+): void => {
+  const actual = new Set(Object.keys(record));
+  const allowed = new Set([...requiredKeys, ...optionalKeys]);
+  if (
+    requiredKeys.some((key) => !actual.has(key)) ||
+    [...actual].some((key) => !allowed.has(key))
+  ) {
+    throw new Error(`${label} has an unsupported shape.`);
   }
 };
 
-const extractConfidentialFeeMetadata = (
-  metadata: Record<string, unknown> | undefined,
-  operationLabel: string,
-): Record<string, unknown> | undefined => {
-  if (!isPlainRecord(metadata)) {
-    return undefined;
+const requireCanonicalResponseText = (
+  value: unknown,
+  label: string,
+  maximumBytes = 64 * 1024,
+): string => {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.trim() !== value ||
+    Buffer.byteLength(value, "utf8") > maximumBytes ||
+    Array.from(value).some((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 0x1f || code === 0x7f;
+    })
+  ) {
+    throw new Error(`${label} must be canonical bounded text.`);
   }
-  const allowedEntries = Object.entries(metadata).filter(([key]) =>
-    ["fee_sponsor", "gas_asset_id", "gas_limit"].includes(key),
-  );
-  if (allowedEntries.length !== Object.keys(metadata).length) {
+  return value;
+};
+
+const requireExactJsonUnsignedInteger = (
+  value: unknown,
+  label: string,
+  { allowZero = true }: { allowZero?: boolean } = {},
+): number => {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    Object.is(value, -0) ||
+    value < (allowZero ? 0 : 1)
+  ) {
     throw new Error(
-      `${operationLabel} does not allow public metadata or memos.`,
+      `${label} must be an exact ${allowZero ? "non-negative" : "positive"} JSON integer.`,
     );
   }
-  return Object.fromEntries(allowedEntries);
+  return value;
 };
-const withConfidentialGasMetadata = (
-  assetDefinitionId: string,
-  metadata?: Record<string, unknown>,
-): Record<string, unknown> => {
-  const gasAssetId = trimString(metadata?.gas_asset_id ?? assetDefinitionId);
-  if (!gasAssetId) {
-    throw new Error(
-      "Confidential transaction metadata requires a non-empty gas asset id.",
-    );
-  }
-  return {
-    ...(isPlainRecord(metadata) ? metadata : {}),
-    gas_asset_id: gasAssetId,
-  };
-};
+
 const SORA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 const DEFAULT_GAS_ASSET_DISABLED_ORIGINS = new Set([
   "https://minamoto.sora.org",
@@ -505,8 +452,13 @@ const FAUCET_CLAIM_STATUS_TIMEOUT_MS = 240_000;
 const FAUCET_FINALITY_STALE_MS = 5 * 60_000;
 const FAUCET_FINALITY_PROGRESS_OBSERVATION_MS = 3_000;
 
-const isSecureVaultAvailable = async (): Promise<boolean> =>
-  Boolean(await ipcRenderer.invoke("vault:isAvailable"));
+const isSecureVaultAvailable = async (): Promise<boolean> => {
+  const result = await ipcRenderer.invoke("vault:isAvailable");
+  if (typeof result !== "boolean") {
+    throw new Error("Secure vault availability returned an invalid response.");
+  }
+  return result;
+};
 
 const assertSecureVaultAvailable = async (operationLabel: string) => {
   if (await isSecureVaultAvailable()) {
@@ -520,9 +472,14 @@ const assertSecureVaultAvailable = async (operationLabel: string) => {
 const storeAccountSecretInVault = async (input: {
   accountId: string;
   privateKeyHex: string;
-  signingAlgorithm?: string;
+  signingAlgorithm: string;
 }): Promise<void> => {
-  await ipcRenderer.invoke("vault:storeAccountSecret", input);
+  const result = await ipcRenderer.invoke("vault:storeAccountSecret", input);
+  if (result !== undefined) {
+    throw new Error(
+      "Secure vault secret storage returned an invalid response.",
+    );
+  }
 };
 
 type AccountSecretMaterial = {
@@ -532,25 +489,164 @@ type AccountSecretMaterial = {
 
 const getAccountSecretMaterialFromVault = async (
   accountId: string,
-): Promise<AccountSecretMaterial | null> =>
-  (await ipcRenderer.invoke("vault:getAccountSecretMaterial", {
+): Promise<AccountSecretMaterial | null> => {
+  const result = (await ipcRenderer.invoke("vault:getAccountSecretMaterial", {
     accountId,
-  })) as AccountSecretMaterial | null;
+  })) as unknown;
+  if (result === null) {
+    return null;
+  }
+  const material = requireFirstReleaseIpcInputObject<AccountSecretMaterial>(
+    result,
+    {
+      label: "Secure vault account secret material",
+      required: ["privateKeyHex", "signingAlgorithm"],
+    },
+  );
+  const privateKeyHex = normalizePrivateKeyHex(material.privateKeyHex);
+  const signingAlgorithm = normalizeRequiredBridgeSigningAlgorithm(
+    material.signingAlgorithm,
+  );
+  if (
+    privateKeyHex !== material.privateKeyHex ||
+    signingAlgorithm !== material.signingAlgorithm
+  ) {
+    throw new Error("Secure vault account secret material is not canonical.");
+  }
+  return { privateKeyHex, signingAlgorithm };
+};
 
 const listAccountSecretFlagsFromVault = async (
   accountIds: string[],
-): Promise<Record<string, boolean>> =>
-  (await ipcRenderer.invoke("vault:listAccountSecretFlags", {
+): Promise<Record<string, boolean>> => {
+  const result = (await ipcRenderer.invoke("vault:listAccountSecretFlags", {
     accountIds,
-  })) as Record<string, boolean>;
+  })) as unknown;
+  const expectedAccountIds = [...new Set(accountIds)];
+  const flags = requireFirstReleaseIpcInputObject<Record<string, boolean>>(
+    result,
+    {
+      label: "Secure vault account secret flags",
+      required: expectedAccountIds,
+    },
+  );
+  if (Object.values(flags).some((value) => typeof value !== "boolean")) {
+    throw new Error(
+      "Secure vault account secret flags returned invalid values.",
+    );
+  }
+  return { ...flags };
+};
 
-const storeConfidentialReceiveKeyInVault = async (
-  input: ConfidentialReceiveKeyRecord,
-): Promise<ConfidentialReceiveKeyRecord> =>
-  (await ipcRenderer.invoke(
-    "vault:storeReceiveKey",
-    input,
-  )) as ConfidentialReceiveKeyRecord;
+const isCanonicalBase64UrlBytes = (
+  value: string,
+  exactBytes: number,
+): boolean => {
+  const decoded = Buffer.from(value, "base64url");
+  try {
+    return (
+      decoded.length === exactBytes && decoded.toString("base64url") === value
+    );
+  } finally {
+    // Validation must not leave decoded private-key material to GC alone.
+    decoded.fill(0);
+  }
+};
+
+const parseConfidentialReceiveKeyRecord = (
+  value: unknown,
+  expectedAccountId: string | undefined,
+  label: string,
+): ConfidentialReceiveKeyRecord => {
+  const record =
+    requireFirstReleaseIpcInputObject<ConfidentialReceiveKeyRecord>(value, {
+      label,
+      required: [
+        "keyId",
+        "accountId",
+        "ownerTagHex",
+        "diversifierHex",
+        "publicKeyBase64Url",
+        "privateKeyBase64Url",
+        "createdAtMs",
+      ],
+    });
+  const keyId = requireFirstReleaseInputText(
+    record.keyId,
+    `${label}.keyId`,
+    64,
+  );
+  const publicKey = requireFirstReleaseInputText(
+    record.publicKeyBase64Url,
+    `${label}.publicKeyBase64Url`,
+    64,
+  );
+  const privateKey = requireFirstReleaseInputText(
+    record.privateKeyBase64Url,
+    `${label}.privateKeyBase64Url`,
+    64,
+  );
+  const accountId = requireFirstReleaseInputText(
+    record.accountId,
+    `${label}.accountId`,
+    512,
+  );
+  if (
+    !isCanonicalBase64UrlBytes(keyId, 18) ||
+    accountId.normalize("NFC") !== accountId ||
+    (expectedAccountId !== undefined && accountId !== expectedAccountId) ||
+    !/^[0-9a-f]{64}$/u.test(record.ownerTagHex) ||
+    !/^[0-9a-f]{64}$/u.test(record.diversifierHex) ||
+    !isCanonicalBase64UrlBytes(publicKey, 32) ||
+    !isCanonicalBase64UrlBytes(privateKey, 32) ||
+    !Number.isSafeInteger(record.createdAtMs) ||
+    Object.is(record.createdAtMs, -0) ||
+    record.createdAtMs < 0
+  ) {
+    throw new Error(`${label} is not a canonical receive-key record.`);
+  }
+  return {
+    keyId,
+    accountId,
+    ownerTagHex: record.ownerTagHex,
+    diversifierHex: record.diversifierHex,
+    publicKeyBase64Url: publicKey,
+    privateKeyBase64Url: privateKey,
+    createdAtMs: record.createdAtMs,
+  };
+};
+
+const storeConfidentialReceiveKeysInVault = async (
+  inputs: readonly ConfidentialReceiveKeyRecord[],
+): Promise<void> => {
+  const records = requireFirstReleaseInputArray(
+    inputs,
+    "Confidential receive-key storage batch",
+    SECURE_VAULT_MAX_RECEIVE_KEY_BATCH,
+  ).map((record, index) =>
+    parseConfidentialReceiveKeyRecord(
+      record,
+      undefined,
+      `Confidential receive-key storage batch[${index}]`,
+    ),
+  );
+  const response = requireFirstReleaseIpcInputObject<{ stored: number }>(
+    await ipcRenderer.invoke("vault:storeReceiveKeys", { records }),
+    {
+      label: "Secure vault receive-key batch response",
+      required: ["stored"],
+    },
+  );
+  if (
+    !Number.isSafeInteger(response.stored) ||
+    Object.is(response.stored, -0) ||
+    response.stored !== records.length
+  ) {
+    throw new Error(
+      "Secure vault receive-key batch returned an invalid response.",
+    );
+  }
+};
 
 const listConfidentialReceiveKeysForAccount = async (
   accountId: string,
@@ -558,22 +654,27 @@ const listConfidentialReceiveKeysForAccount = async (
   const result = (await ipcRenderer.invoke("vault:listReceiveKeysForAccount", {
     accountId,
   })) as unknown;
-  return Array.isArray(result)
-    ? (result as ConfidentialReceiveKeyRecord[])
-    : [];
+  return requireFirstReleaseInputArray(
+    result,
+    "Confidential receive-key list",
+    SECURE_VAULT_MAX_RECEIVE_KEYS_PER_ACCOUNT,
+  ).map((record, index) =>
+    parseConfidentialReceiveKeyRecord(
+      record,
+      accountId,
+      `Confidential receive key ${index}`,
+    ),
+  );
 };
 
-type HealthResponse = Awaited<ReturnType<ToriiClient["getHealth"]>>;
+type HealthResponse = ToriiHealth;
 type RegisterAccountInput = {
   toriiUrl: string;
   chainId: string;
   networkPrefix: number;
   accountId: string;
-  domainId: string;
   metadata?: Record<string, unknown>;
   authorityAccountId: string;
-  authorityPrivateKeyHex?: HexString;
-  authoritySigningAlgorithm?: string;
 };
 
 type TransferAssetInput = {
@@ -581,60 +682,16 @@ type TransferAssetInput = {
   chainId: string;
   assetDefinitionId: string;
   accountId: string;
-  destinationAccountId?: string;
+  destinationAccountId: string;
   networkPrefix: number;
   quantity: string;
-  privateKeyHex?: HexString;
-  signingAlgorithm?: string;
-  metadata?: Record<string, unknown>;
-  shielded?: boolean;
-  unshield?: boolean;
-  shieldedRecipient?: {
-    receiveKeyId?: string;
-    receivePublicKeyBase64Url?: string;
-    ownerTagHex?: string;
-    diversifierHex?: string;
-  };
-  shieldedReceiveKeyId?: string;
-  shieldedReceivePublicKeyBase64Url?: string;
-  shieldedOwnerTagHex?: string;
-  shieldedDiversifierHex?: string;
-};
-
-type UranaiPrivateTradeProofInput = {
-  toriiUrl: string;
-  chainId: string;
-  networkPrefix: number;
-  accountId: string;
-  assetDefinitionId: string;
-  collateralIn: string;
-  privacyFee?: string;
-  privateKeyHex?: HexString;
-  signingAlgorithm?: string;
-  marketId?: string;
-  outcomeIndex?: number;
-};
-
-type UranaiPrivateTradeProofResponse = {
-  schema: "uranai.irohaconnect.private-trade-proof.v1";
-  accountId: string;
-  assetDefinitionId: string;
-  resolvedAssetId: string;
-  spendAmount: string;
-  inputNullifier: string;
-  outputNoteCommitment: string;
-  positionCommitment: string;
-  proofEnv: string;
-  proofEnvEncoding: "base64";
-  rootHintHex: string;
-  nullifiersHex: string[];
-  outputCommitmentsHex: string[];
+  memo?: string;
 };
 
 type ResolveAccountAliasInput = {
   toriiUrl: string;
   alias: string;
-  networkPrefix?: number;
+  networkPrefix: number;
 };
 
 type AccountAliasResolutionResponse = {
@@ -684,6 +741,7 @@ type ConfidentialAssetBalanceResponse = {
 };
 
 type ConfidentialWalletBackupStatePayload = {
+  schema: "iroha-demo-confidential-wallet-state/v1";
   receiveKeys: Array<{
     keyId: string;
     ownerTagHex: string;
@@ -694,10 +752,6 @@ type ConfidentialWalletBackupStatePayload = {
   }>;
   shadowTransactions: PendingConfidentialWalletShadowTransaction[];
 };
-
-type ExplorerMetricsResponse = Awaited<
-  ReturnType<ToriiClient["getExplorerMetrics"]>
->;
 
 type VpnAvailabilityResponse = {
   platformSupported: boolean;
@@ -722,7 +776,7 @@ type VpnAvailabilityResponse = {
   systemTunnelService: string | null;
 };
 
-type VpnProfileResponse = Awaited<ReturnType<ToriiClient["getVpnProfile"]>>;
+type VpnProfileResponse = VpnProfile | null;
 
 type VpnStatusResponse = {
   state:
@@ -731,7 +785,7 @@ type VpnStatusResponse = {
     | "connected"
     | "disconnecting"
     | "reconciling"
-    | "remote-delete-pending"
+    | "remote-expiry-pending"
     | "repair-needed"
     | "error";
   sessionId: string | null;
@@ -762,50 +816,11 @@ type VpnStatusResponse = {
   lastReceipt: VpnReceiptResponse | null;
 };
 
-type VpnReceiptResponse = {
-  sessionId: string;
-  accountId: string;
-  exitClass: "standard" | "low-latency" | "high-security";
-  relayEndpoint: string;
-  meterFamily: string;
-  connectedAtMs: number;
-  disconnectedAtMs: number;
-  durationMs: number;
-  bytesIn: number;
-  bytesOut: number;
-  status: string;
-  receiptSource: "torii" | "local-fallback";
-};
+type VpnReceiptResponse = VpnReceipt;
 
-type AssetsResponse = Awaited<ReturnType<ToriiClient["listAccountAssets"]>>;
+type AssetsResponse = AccountAssetsResponse;
 
-type TransactionsResponse = Awaited<
-  ReturnType<ToriiClient["listAccountTransactions"]>
->;
-
-type AccountPermissionsResponse = Awaited<
-  ReturnType<ToriiClient["listAccountPermissions"]>
->;
-
-type GovernanceProposalResponse = Awaited<
-  ReturnType<ToriiClient["getGovernanceProposalTyped"]>
->;
-
-type GovernanceReferendumResponse = Awaited<
-  ReturnType<ToriiClient["getGovernanceReferendumTyped"]>
->;
-
-type GovernanceTallyResponse = Awaited<
-  ReturnType<ToriiClient["getGovernanceTallyTyped"]>
->;
-
-type GovernanceLocksResponse = Awaited<
-  ReturnType<ToriiClient["getGovernanceLocksTyped"]>
->;
-
-type GovernanceUnlockStatsResponse = Awaited<
-  ReturnType<ToriiClient["getGovernanceUnlockStatsTyped"]>
->;
+type TransactionsResponse = AccountTransactionsResponse;
 
 type GovernanceCouncilResponse = GovernanceCouncilCurrentResponseView;
 
@@ -826,8 +841,7 @@ type NexusStakingPolicyResponse = {
 };
 
 type KaigiSignalKeyPair = KaigiX25519KeyPair;
-type KaigiMeetingPrivacy = "private" | "transparent";
-type KaigiPeerIdentityReveal = "Hidden" | "RevealAfterJoin";
+type KaigiMeetingPrivacy = "transparent";
 type KaigiOfferDescription = {
   type: "offer";
   sdp: string;
@@ -841,9 +855,7 @@ type KaigiCreateMeetingInput = {
   toriiUrl: string;
   chainId: string;
   networkPrefix: number;
-  assetDefinitionId: string;
   hostAccountId: string;
-  privateKeyHex?: HexString;
   callId: string;
   title?: string;
   scheduledStartMs: number;
@@ -853,17 +865,14 @@ type KaigiCreateMeetingInput = {
   hostParticipantId: string;
   hostKaigiPublicKeyBase64Url: string;
   offerDescription: KaigiOfferDescription;
-  privacyMode?: KaigiMeetingPrivacy;
-  peerIdentityReveal?: KaigiPeerIdentityReveal;
+  privacyMode: "transparent";
 };
 
 type KaigiJoinMeetingInput = {
   toriiUrl: string;
   chainId: string;
   networkPrefix: number;
-  assetDefinitionId: string;
   participantAccountId: string;
-  privateKeyHex?: HexString;
   callId: string;
   inviteSecretBase64Url: string;
   participantId: string;
@@ -873,37 +882,37 @@ type KaigiJoinMeetingInput = {
 
 type KaigiGetMeetingInput = {
   toriiUrl: string;
+  networkPrefix: number;
   callId: string;
   inviteSecretBase64Url: string;
 };
 
 type KaigiPollMeetingSignalsInput = {
   toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
   accountId: string;
   callId: string;
   hostKaigiKeys: KaigiSignalKeyPair;
   afterTimestampMs?: number;
   limit?: number;
-  offset?: number;
 };
 
 type KaigiEndMeetingInput = {
   toriiUrl: string;
   chainId: string;
   networkPrefix: number;
-  assetDefinitionId: string;
   hostAccountId: string;
-  privateKeyHex?: HexString;
   callId: string;
   endedAtMs?: number;
 };
 
 type KaigiMeetingSignalRecord = {
   entrypointHash: string;
-  authority?: string;
-  timestampMs?: number;
+  authority: string;
+  timestampMs: number;
   callId: string;
-  participantAccountId?: string;
+  participantAccountId: string;
   participantId: string;
   participantName: string;
   walletIdentity?: string;
@@ -916,7 +925,7 @@ type KaigiMeetingView = {
   callId: string;
   meetingCode: string;
   title?: string;
-  hostAccountId?: string;
+  hostAccountId: string;
   hostDisplayName?: string;
   hostParticipantId?: string;
   hostKaigiPublicKeyBase64Url: string;
@@ -927,37 +936,7 @@ type KaigiMeetingView = {
   ended: boolean;
   endedAtMs?: number;
   privacyMode: KaigiMeetingPrivacy;
-  peerIdentityReveal: KaigiPeerIdentityReveal;
-  rosterRootHex: string;
   offerDescription: KaigiOfferDescription;
-};
-
-type PrivateKaigiConfidentialXorState = {
-  assetDefinitionId: string;
-  resolvedAssetId: string;
-  policyMode: string;
-  shieldedBalance: string | null;
-  shieldedBalanceExact: boolean;
-  transparentBalance: string;
-  canSelfShield: boolean;
-  message?: string;
-};
-
-type PrivateKaigiConfidentialXorContext = {
-  state: PrivateKaigiConfidentialXorState;
-};
-
-type PrivateKaigiConfidentialXorFeeContext =
-  PrivateKaigiConfidentialXorContext & {
-    latestRootHex: string;
-    verifyingKey: PrivateKaigiTransferVerifyingKeyContext;
-    feeSchedule: PrivateKaigiFeeSchedule;
-  };
-
-type PrivateKaigiXorShadowState = {
-  lastOnChainShieldedBalance: string | null;
-  pendingShieldCredit: string;
-  privateFeeDebit: string;
 };
 
 type PendingConfidentialWalletShadowTransaction = {
@@ -969,6 +948,7 @@ type PendingConfidentialWalletShadowTransaction = {
 };
 
 type PendingConfidentialWalletShadowState = {
+  schema: "iroha-demo-confidential-wallet-shadow/v1";
   transactions: PendingConfidentialWalletShadowTransaction[];
 };
 
@@ -995,10 +975,12 @@ type NexusPublicLaneBaseInput = {
 };
 
 type NexusPublicLaneStakeInput = NexusPublicLaneBaseInput & {
+  networkPrefix: number;
   validator?: string;
 };
 
 type NexusPublicLaneRewardsInput = NexusPublicLaneBaseInput & {
+  networkPrefix: number;
   account: string;
   assetId?: string;
   uptoEpoch?: number;
@@ -1011,7 +993,6 @@ type BondPublicLaneStakeInput = {
   stakeAccountId: string;
   validator: string;
   amount: string;
-  privateKeyHex?: HexString;
 };
 
 type RegisterPublicLaneValidatorInput = {
@@ -1024,7 +1005,6 @@ type RegisterPublicLaneValidatorInput = {
   peerId: string;
   selfStake: string;
   metadata?: Record<string, unknown>;
-  privateKeyHex?: HexString;
 };
 
 type SchedulePublicLaneUnbondInput = {
@@ -1036,7 +1016,6 @@ type SchedulePublicLaneUnbondInput = {
   amount: string;
   requestId: string;
   releaseAtMs: number;
-  privateKeyHex?: HexString;
 };
 
 type FinalizePublicLaneUnbondInput = {
@@ -1046,7 +1025,6 @@ type FinalizePublicLaneUnbondInput = {
   stakeAccountId: string;
   validator: string;
   requestId: string;
-  privateKeyHex?: HexString;
 };
 
 type ClaimPublicLaneRewardsInput = {
@@ -1055,11 +1033,11 @@ type ClaimPublicLaneRewardsInput = {
   networkPrefix: number;
   stakeAccountId: string;
   validator: string;
-  privateKeyHex?: HexString;
 };
 
 type AccountPermissionsInput = {
   toriiUrl: string;
+  networkPrefix: number;
   accountId: string;
   limit?: number;
   offset?: number;
@@ -1074,8 +1052,6 @@ type VpnConnectInput = {
   chainId: string;
   accountId: string;
   networkPrefix: number;
-  privateKeyHex?: HexString;
-  signingAlgorithm?: string;
   exitClass: "standard" | "low-latency" | "high-security";
 };
 
@@ -1084,11 +1060,9 @@ type VpnDisconnectInput = {
   chainId: string;
   accountId: string;
   networkPrefix: number;
-  privateKeyHex?: HexString;
-  signingAlgorithm?: string;
 };
 
-type VpnStatusInput = Partial<VpnDisconnectInput>;
+type VpnStatusInput = VpnDisconnectInput;
 
 type GovernanceCitizenStatusInput = {
   toriiUrl: string;
@@ -1096,37 +1070,19 @@ type GovernanceCitizenStatusInput = {
   networkPrefix: number;
 };
 
-type GovernanceLookupInput = {
-  toriiUrl: string;
-  proposalId: string;
-};
-
-type GovernanceReferendumLookupInput = {
-  toriiUrl: string;
-  referendumId: string;
-};
-
 type GovernanceProposalListInput = {
   toriiUrl: string;
-  status?: string | null;
-  kind?: string | null;
-  proposer?: string | null;
   limit?: number;
   cursor?: string | null;
 };
 
 type GovernanceProposalDetailInput = {
   toriiUrl: string;
+  networkPrefix: number;
   proposalId: string;
-  accountId?: string | null;
 };
 
-type GovernanceWriteOperation =
-  | "register-citizen"
-  | "propose"
-  | "plain-ballot"
-  | "parliament-ballot"
-  | "enact";
+type GovernanceWriteOperation = "register-citizen" | "propose";
 
 type GovernancePrepareContext = {
   toriiUrl: string;
@@ -1140,26 +1096,8 @@ type GovernanceProposalPrepareInput = GovernancePrepareContext & {
   payload: Record<string, unknown>;
 };
 
-type GovernancePlainBallotPrepareInput = GovernancePrepareContext & {
-  proposalId: string;
-  referendumId: string;
-  amount: string;
-  durationBlocks: string;
-  direction: "Aye" | "Nay" | "Abstain";
-};
-
-type GovernanceParliamentBallotPrepareInput = GovernancePrepareContext & {
-  proposalId: string;
-  body: string;
-  decision: GovernanceParliamentDecision;
-};
-
 type GovernanceCitizenRegistrationPrepareInput = GovernancePrepareContext & {
   amount: string;
-};
-
-type GovernanceEnactPrepareInput = GovernancePrepareContext & {
-  proposalId: string;
 };
 
 type GovernancePreparedActionView = {
@@ -1167,7 +1105,6 @@ type GovernancePreparedActionView = {
   operation: GovernanceWriteOperation;
   title: string;
   proposalId: string | null;
-  referendumId: string | null;
   decodedInstruction: Record<string, unknown>;
   fee: {
     payer: "authority" | "sponsor";
@@ -1184,7 +1121,6 @@ type GovernancePreparedActionView = {
 type GovernanceFinalizedActionView = TransactionSubmissionResultView & {
   operation: GovernanceWriteOperation;
   proposalId: string | null;
-  referendumId: string | null;
   status: "finalized";
 };
 
@@ -1215,11 +1151,9 @@ type SubscriptionListResponseView = {
   total: number;
 };
 
-type TransactionFeeView = TransactionFeeLike | string | number;
-
 type TransactionSubmissionResultView = {
   hash: string;
-  fee?: TransactionFeeView | null;
+  feeQuote?: TransactionFeeQuoteView;
   finality: TransactionFinalityProof;
 };
 
@@ -1233,7 +1167,7 @@ type SubscriptionActionResponseView = {
   finality: TransactionFinalityProof;
   state_status: "confirmed" | "advanced" | "indexing";
   reconciliation_message?: string;
-  fee?: TransactionFeeView | null;
+  feeQuote?: TransactionFeeQuoteView;
   billing_trigger_id?: string;
   usage_trigger_id?: string | null;
   first_charge_ms?: number;
@@ -1328,326 +1262,20 @@ type SoraCloudStatusInput = {
   toriiUrl: string;
 };
 
-type SoraCloudHfStatusInput = SoraCloudStatusInput & {
+type SoraCloudHfSharedLeaseStatusInput = SoraCloudStatusInput & {
   repoId: string;
-  revision?: string;
+  revision: string;
   storageClass: SoraCloudStorageClass;
   leaseTermMs: number;
   accountId?: string;
 };
 
-type SoraCloudHfDeployInput = SoraCloudStatusInput & {
-  chainId: string;
-  networkPrefix: number;
-  accountId: string;
-  repoId: string;
-  revision?: string;
-  modelName: string;
-  serviceName: string;
-  apartmentName?: string;
-  storageClass: SoraCloudStorageClass;
-  leaseTermMs: number;
-  leaseAssetDefinitionId: string;
-  baseFeeNanos: string;
-};
-
-type SoraCloudHfReconcileInput = SoraCloudStatusInput & {
-  chainId: string;
-  networkPrefix: number;
-  accountId: string;
-  transactionHash: string;
-};
-
-type SoraCloudHfDeployResponseView = {
-  ok: true;
-  settlement_status: "confirmed" | "indexing";
-  finality: TransactionFinalityProof;
-  action: string | null;
-  service_name: string;
-  sequence: number | null;
-  current_version?: string | null;
-  revision_count?: number | null;
-  tx_hash_hex: string;
-  storage_base_fee: string;
-  actual_storage_charge: string | null;
-  max_compute_reservation_fee: string;
-  actual_compute_charge: string | null;
-  reconciliation_message?: string;
-  fee?: TransactionFeeView | null;
-  rollout_handle?: string | null;
-  rollout_stage?: string | null;
-  rollout_percent?: number | null;
-  raw: Record<string, unknown> | null;
-};
-
-type SccpCapabilitiesResponse = Awaited<
-  ReturnType<ToriiClient["getSccpCapabilities"]>
->;
-type SccpProofManifestSetResponse = Awaited<
-  ReturnType<ToriiClient["getSccpRegistry"]>
->;
-type SccpSoraOutboundMaterialResponse = Awaited<
-  ReturnType<ToriiClient["getSccpSoraOutboundMaterial"]>
->;
-type SccpSoraOutboundMaterialInput = ToriiConfig &
-  Parameters<ToriiClient["getSccpSoraOutboundMaterial"]>[0];
-type SccpMessageProofBundleResponse = Record<string, unknown>;
-type SccpMessageProofArtifactResponse = Record<string, unknown>;
-type SccpMessageProofJobResponse = Record<string, unknown>;
-type SccpRecentMessagesInput = ToriiConfig & {
-  routeId?: string;
-  limit?: number;
-  offset?: number;
-};
-type SccpRecentMessagesResponse = {
-  items: Record<string, unknown>[];
-  total: number;
-  raw: Record<string, unknown>;
-};
-type SccpDestinationProofMaterialInput = {
-  networkIdHex?: string;
-  verifierAddressHex?: string;
-  bridgeAddressHex?: string;
-  verifierCodeHashHex?: string;
-  verifierKeyHashHex?: string;
-  expectedDestinationBindingHashHex?: string;
-  tronVerifierAddress?: string;
-  proofBytesHex?: string;
-};
-type SccpBscProofGenerateInput = {
-  request: unknown;
-  proverModuleUrl?: unknown;
-  proverConfigUrl?: unknown;
-  timeoutMs?: unknown;
-};
-type SccpBscSourceProofGenerateInput = {
-  input: unknown;
-  proverModuleUrl?: unknown;
-  proverConfigUrl?: unknown;
-  timeoutMs?: unknown;
-};
-type SccpSourceProofDeploymentRebuildInput = {
-  proofPackage: unknown;
-  sourceVerifierMaterial: unknown;
-  sourceAdapterEngineDeployment: unknown;
-  label?: unknown;
-};
-type SccpMessageProofBundleInput = ToriiConfig & {
-  messageId: string;
-};
-type SccpMessageProofInput = ToriiConfig &
-  SccpDestinationProofMaterialInput & {
-    messageId: string;
-  };
-type SccpBridgeProofSubmitInput = ToriiConfig &
-  SccpDestinationProofMaterialInput & {
-    accountId: string;
-    destinationProofB64?: string;
-    burnBundle?: Record<string, unknown>;
-    messageBundle?: Record<string, unknown>;
-    publicKeyHex?: string;
-    signatureB64?: string;
-    transactionPayloadB64?: string;
-    creationTimeMs?: number | string;
-  };
-type SccpBridgeMessageSubmitInput = ToriiConfig &
-  SccpDestinationProofMaterialInput & {
-    accountId: string;
-    nativeProofB64?: string;
-    messageBundle?: Record<string, unknown>;
-    publicKeyHex?: string;
-    signatureB64?: string;
-    transactionPayloadB64?: string;
-    receiptLane?: number | string;
-    settlement?: Record<string, unknown>;
-    creationTimeMs?: number | string;
-  };
-type SccpTransactionCommitWaitInput = ToriiConfig & {
-  hashHex: string;
-};
-type SccpTairaInboundSettlementDeployInput = ToriiConfig & {
-  accountId: string;
-  contractAlias?: string | null;
-  compiledCodeB64?: string | null;
-  leaseExpiryMs?: number | string | null;
-  privateKeyHex?: unknown;
-};
-type TronGatewayInput = {
-  endpoint?: string;
-};
-type TronTransactionInput = TronGatewayInput & {
-  txId: string;
-};
-type TronAccountInput = TronGatewayInput & {
-  address: string;
-};
-type TronBlockInput = TronGatewayInput & {
-  blockNumber?: number | string;
-};
-type TronBroadcastInput = TronGatewayInput & {
-  transaction: Record<string, unknown>;
-};
-type TronContractParameterInput =
-  | {
-      parameter: string;
-      callData?: never;
-    }
-  | {
-      callData: string;
-      parameter?: never;
-    }
-  | {
-      parameter?: undefined;
-      callData?: undefined;
-    };
-type TronTriggerSmartContractInput = TronGatewayInput &
-  TronContractParameterInput & {
-    ownerAddress: string;
-    contractAddress: string;
-    functionSelector: string;
-    feeLimit?: number | string;
-    callValue?: number | string;
-    permissionId?: number | string;
-  };
-type TronConstantContractInput = TronGatewayInput &
-  TronContractParameterInput & {
-    ownerAddress: string;
-    contractAddress: string;
-    functionSelector: string;
-  };
-type EvmRpcInput = {
-  endpoint?: string;
-};
-type EvmRpcCallInput = EvmRpcInput & {
-  method: string;
-  params?: unknown[];
-};
-type EvmTransactionInput = EvmRpcInput & {
-  txHash: string;
-};
-type EvmAddressInput = EvmRpcInput & {
-  address: string;
-  blockTag?: string;
-};
-type EvmCallInput = EvmRpcInput & {
-  to: string;
-  data: string;
-  from?: string;
-  value?: string;
-  blockTag?: string;
-};
-type EvmLogsInput = EvmRpcInput & {
-  address?: string | string[];
-  blockHash?: string;
-  fromBlock?: string;
-  toBlock?: string;
-  topics?: Array<string | string[] | null>;
-};
-type SolanaRpcInput = {
-  endpoint?: string;
-};
-type SolanaRpcCallInput = SolanaRpcInput & {
-  method: string;
-  params?: unknown[];
-};
-type SolanaAddressInput = SolanaRpcInput & {
-  address: string;
-};
-type SolanaTokenBalanceInput = SolanaRpcInput & {
-  ownerAddress: string;
-  mintAddress: string;
-};
-type SolanaAssociatedTokenAccountInput = SolanaRpcInput & {
-  payerAddress: string;
-  ownerAddress: string;
-  mintAddress: string;
-};
-type SolanaTransactionInput = SolanaRpcInput & {
-  signature: string;
-};
-type SolanaBroadcastInput = SolanaRpcInput & {
-  transactionB64: string;
-  expectedUnsignedTransactionB64: string;
-};
-type SolanaInstructionAccountMetaInput = {
-  pubkey: string;
-  isSigner?: boolean;
-  signer?: boolean;
-  isWritable?: boolean;
-  writable?: boolean;
-};
-type SolanaInstructionInput = {
-  programId: string;
-  accounts?: SolanaInstructionAccountMetaInput[];
-  dataHex: string;
-};
-type SolanaBuildTransactionInput = SolanaRpcInput & {
-  feePayer: string;
-  instructions: SolanaInstructionInput[];
-  recentBlockhash?: string;
-};
-type SolanaPreparedAssociatedTokenAccount = {
-  associatedTokenAddress: string;
-  exists: boolean;
-  createInstruction: SolanaInstructionInput | null;
-};
-type TronEventsInput = TronGatewayInput & {
-  txId: string;
-};
-
-type PendingSoraCloudHfSettlement = {
-  toriiUrl: string;
-  chainId: string;
-  networkPrefix: number;
-  accountId: string;
-  transactionHash: string;
-  statusInput: SoraCloudHfStatusInput;
-  expected: SoraCloudHfDeployExpectation;
-  settlement: SoraCloudHfSettlementReview;
-  minimumSequenceExclusive: number;
-  finality: TransactionFinalityProof;
-  fee?: TransactionFeeView | null;
-};
-
-const pendingSoraCloudHfSettlements = new Map<
-  string,
-  PendingSoraCloudHfSettlement
->();
-
-const soraCloudSettlementKey = (input: {
-  toriiUrl: string;
-  chainId: string;
-  networkPrefix: number;
-  accountId: string;
-  transactionHash: string;
-}) =>
-  [
-    normalizeBaseUrl(input.toriiUrl),
-    input.chainId,
-    String(input.networkPrefix),
-    input.accountId,
-    input.transactionHash,
-  ].join("\u001f");
-
-const assertNoRendererSoraCloudSecrets = (input: unknown) => {
-  const record = input as Record<string, unknown>;
-  if (
-    Object.prototype.hasOwnProperty.call(record, "privateKeyHex") ||
-    Object.prototype.hasOwnProperty.call(record, "apiToken")
-  ) {
-    throw new Error(
-      "SoraCloud secrets must come from the Electron secure vault.",
-    );
-  }
-};
-
 type IrohaBridge = {
-  getRuntimeConfig(): RuntimeConfigResponse;
   ping(config: ToriiConfig): Promise<HealthResponse>;
   getChainMetadata(config: ToriiConfig): Promise<ChainMetadataResponse>;
   inspectEndpoint(config: EndpointNetworkContext): Promise<EndpointInspection>;
-  getSigningAlgorithms(config?: ToriiConfig): Promise<SigningAlgorithmOption[]>;
-  generateKeyPair(input?: { signingAlgorithm?: string; seedHex?: string }): {
+  getSigningAlgorithms(config: ToriiConfig): Promise<SigningAlgorithmOption[]>;
+  generateKeyPair(input: { signingAlgorithm: string; seedHex?: string }): {
     publicKeyHex: string;
     privateKeyHex: string;
     signingAlgorithm: string;
@@ -1656,18 +1284,20 @@ type IrohaBridge = {
   isSecureVaultAvailable(): Promise<boolean>;
   storeAccountSecret(input: {
     accountId: string;
+    networkPrefix: number;
     privateKeyHex: string;
-    signingAlgorithm?: string;
+    signingAlgorithm: string;
   }): Promise<void>;
   listAccountSecretFlags(input: {
     accountIds: string[];
+    networkPrefix: number;
   }): Promise<Record<string, boolean>>;
   copyTextToClipboard(input: { text: string }): Promise<void>;
   deriveAccountAddress(input: {
     domain: string;
     publicKeyHex: string;
-    networkPrefix?: number;
-    signingAlgorithm?: string;
+    networkPrefix: number;
+    signingAlgorithm: string;
   }): {
     accountId: string;
     i105AccountId: string;
@@ -1677,28 +1307,16 @@ type IrohaBridge = {
     signingAlgorithm: string;
     accountIdWarning: string;
   };
-  derivePublicKey(
-    input:
-      | string
-      | {
-          privateKeyHex: string;
-          signingAlgorithm?: string;
-        },
-  ): { publicKeyHex: string; signingAlgorithm: string };
-  deriveConfidentialOwnerTag(input: {
-    privateKeyHex: string;
-    diversifierHex: string;
-  }): { ownerTagHex: string };
-  deriveConfidentialReceiveAddress(privateKeyHex: string): {
-    ownerTagHex: string;
-    diversifierHex: string;
+  derivePublicKey(input: { privateKeyHex: string; signingAlgorithm: string }): {
+    publicKeyHex: string;
+    signingAlgorithm: string;
   };
   resolveAccountAlias(
     input: ResolveAccountAliasInput,
   ): Promise<AccountAliasResolutionResponse>;
   createConfidentialPaymentAddress(input: {
     accountId: string;
-    privateKeyHex?: string;
+    networkPrefix: number;
   }): Promise<ConfidentialPaymentAddress>;
   exportConfidentialWalletBackup(
     input: ExportConfidentialWalletBackupInput,
@@ -1736,25 +1354,11 @@ type IrohaBridge = {
     accountId: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetPolicyView>;
-  getConfidentialTransferExecutionContext(input: {
-    toriiUrl: string;
-    chainId: string;
-    networkPrefix: number;
-    accountId: string;
-    privateKeyHex?: string;
-    assetDefinitionId: string;
-  }): Promise<{
-    resolvedAssetId: string;
-    effectiveMode: string;
-    backend: string;
-    circuitId: string;
-  }>;
   getConfidentialAssetBalance(input: {
     toriiUrl: string;
     chainId: string;
     networkPrefix: number;
     accountId: string;
-    privateKeyHex?: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetBalanceResponse>;
   scanConfidentialWallet(input: {
@@ -1762,38 +1366,12 @@ type IrohaBridge = {
     chainId: string;
     networkPrefix: number;
     accountId: string;
-    privateKeyHex?: string;
-    assetDefinitionId: string;
-    force?: boolean;
-  }): Promise<ConfidentialAssetBalanceResponse>;
-  getConfidentialWalletState(input: {
-    toriiUrl: string;
-    chainId: string;
-    networkPrefix: number;
-    accountId: string;
-    privateKeyHex?: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetBalanceResponse>;
-  getPrivateKaigiConfidentialXorState(input: {
-    toriiUrl: string;
-    chainId: string;
-    networkPrefix: number;
-    accountId: string;
-    assetDefinitionId: string;
-  }): Promise<PrivateKaigiConfidentialXorState>;
-  selfShieldPrivateKaigiXor(input: {
-    toriiUrl: string;
-    chainId: string;
-    networkPrefix: number;
-    accountId: string;
-    assetDefinitionId: string;
-    privateKeyHex?: string;
-    amount: string;
-  }): Promise<TransactionSubmissionResultView>;
   fetchAccountAssets(input: {
     toriiUrl: string;
     accountId: string;
-    networkPrefix?: number;
+    networkPrefix: number;
     assetDefinitionId?: string;
     limit?: number;
     offset?: number;
@@ -1801,8 +1379,7 @@ type IrohaBridge = {
   fetchAccountTransactions(input: {
     toriiUrl: string;
     accountId: string;
-    networkPrefix?: number;
-    privateKeyHex?: string;
+    networkPrefix: number;
     limit?: number;
     offset?: number;
   }): Promise<TransactionsResponse>;
@@ -1818,21 +1395,12 @@ type IrohaBridge = {
   getGovernanceCitizenCount(
     config: ToriiConfig,
   ): Promise<GovernanceCitizenCountResponse>;
-  getGovernanceProposal(
-    input: GovernanceLookupInput,
-  ): Promise<GovernanceProposalResponse>;
-  getGovernanceReferendum(
-    input: GovernanceReferendumLookupInput,
-  ): Promise<GovernanceReferendumResponse>;
-  getGovernanceTally(
-    input: GovernanceReferendumLookupInput,
-  ): Promise<GovernanceTallyResponse>;
-  getGovernanceLocks(
-    input: GovernanceReferendumLookupInput,
-  ): Promise<GovernanceLocksResponse>;
-  getGovernanceUnlockStats(
-    config: ToriiConfig,
-  ): Promise<GovernanceUnlockStatsResponse>;
+  getGovernanceUnlockStats(input: {
+    toriiUrl: string;
+    chainId: string;
+    networkPrefix: number;
+    accountId: string;
+  }): Promise<GovernanceUnlockStatsResponse>;
   getGovernanceCouncilCurrent(
     config: ToriiConfig,
   ): Promise<GovernanceCouncilResponse>;
@@ -1847,23 +1415,11 @@ type IrohaBridge = {
     chainId: string;
     networkPrefix: number;
   }): Promise<GovernanceValidationFeePolicyView>;
-  getGovernancePlainReferendumContract(
-    input: GovernancePlainReferendumObservedIdentity,
-  ): Promise<LoadedGovernancePlainReferendumContract>;
   prepareGovernanceCitizenRegistration(
     input: GovernanceCitizenRegistrationPrepareInput,
   ): Promise<GovernancePreparedActionView>;
   prepareGovernanceProposal(
     input: GovernanceProposalPrepareInput,
-  ): Promise<GovernancePreparedActionView>;
-  prepareGovernancePlainBallot(
-    input: GovernancePlainBallotPrepareInput,
-  ): Promise<GovernancePreparedActionView>;
-  prepareGovernanceParliamentBallot(
-    input: GovernanceParliamentBallotPrepareInput,
-  ): Promise<GovernancePreparedActionView>;
-  prepareGovernanceEnact(
-    input: GovernanceEnactPrepareInput,
   ): Promise<GovernancePreparedActionView>;
   confirmGovernanceAction(input: {
     reviewId: string;
@@ -1874,11 +1430,13 @@ type IrohaBridge = {
   ): Promise<ExplorerMetricsResponse | null>;
   getNetworkStats(input: {
     toriiUrl: string;
-    assetDefinitionId?: string;
+    assetDefinitionId: string;
+    networkPrefix: number;
   }): Promise<NetworkStatsResponse>;
   getExplorerAccountQr(input: {
     toriiUrl: string;
     accountId: string;
+    networkPrefix: number;
   }): Promise<ExplorerAccountQrResponse>;
   getVpnAvailability(
     input: VpnAvailabilityInput,
@@ -1889,10 +1447,6 @@ type IrohaBridge = {
   disconnectVpn(input?: VpnDisconnectInput): Promise<VpnStatusResponse>;
   repairVpn(): Promise<VpnStatusResponse>;
   listVpnReceipts(input?: VpnStatusInput): Promise<VpnReceiptResponse[]>;
-  getOfflineReadiness(input: {
-    toriiUrl: string;
-    assetDefinitionId: string;
-  }): Promise<OfflineReadinessView>;
   onboardAccount(input: {
     toriiUrl: string;
     chainId: string;
@@ -1907,7 +1461,7 @@ type IrohaBridge = {
       chainId: string;
       accountId: string;
       networkPrefix: number;
-      requestId?: string;
+      requestId: string;
     },
     onStatus?: FaucetStatusCallback,
   ): Promise<AccountFaucetResponse>;
@@ -1925,7 +1479,7 @@ type IrohaBridge = {
     input: KaigiWatchCallEventsInput,
     onEvent: KaigiCallEventCallback,
   ): Promise<string>;
-  stopWatchingKaigiCallEvents(subscriptionId: string): void;
+  stopWatchingKaigiCallEvents(input: { subscriptionId: string }): void;
   pollKaigiMeetingSignals(
     input: KaigiPollMeetingSignalsInput,
   ): Promise<KaigiMeetingSignalRecord[]>;
@@ -1977,133 +1531,10 @@ type IrohaBridge = {
     input: SubscriptionReconcileInput,
   ): Promise<SubscriptionActionResponseView>;
   getSoraCloudStatus(input: SoraCloudStatusInput): Promise<SoraCloudStatusView>;
-  deploySoraCloudHf(
-    input: SoraCloudHfDeployInput,
-  ): Promise<SoraCloudHfDeployResponseView>;
-  reconcileSoraCloudHfLaunch(
-    input: SoraCloudHfReconcileInput,
-  ): Promise<SoraCloudHfDeployResponseView>;
-  getSoraCloudHfStatus(
-    input: SoraCloudHfStatusInput,
+  getSoraCloudHfSharedLeaseStatus(
+    input: SoraCloudHfSharedLeaseStatusInput,
   ): Promise<SoraCloudHfStatusView>;
   getParameters(input: ToriiConfig): Promise<Record<string, unknown>>;
-  getSccpCapabilities(input: ToriiConfig): Promise<SccpCapabilitiesResponse>;
-  getSccpProofManifests(
-    input: ToriiConfig,
-  ): Promise<SccpProofManifestSetResponse>;
-  getSccpSoraOutboundMaterial(
-    input: SccpSoraOutboundMaterialInput,
-  ): Promise<SccpSoraOutboundMaterialResponse>;
-  listSccpRecentMessages(
-    input: SccpRecentMessagesInput,
-  ): Promise<SccpRecentMessagesResponse>;
-  getSccpMessageProofBundle(
-    input: SccpMessageProofBundleInput,
-  ): Promise<SccpMessageProofBundleResponse>;
-  getSccpMessageProofArtifact(
-    input: SccpMessageProofInput,
-  ): Promise<SccpMessageProofArtifactResponse>;
-  getSccpMessageProofJob(
-    input: SccpMessageProofInput,
-  ): Promise<SccpMessageProofJobResponse>;
-  proveBscSccpProof(
-    input: SccpBscProofGenerateInput,
-  ): Promise<Record<string, unknown>>;
-  proveBscSccpSourceProof(
-    input: SccpBscSourceProofGenerateInput,
-  ): Promise<Record<string, unknown>>;
-  rebuildSccpMessageBundleSourceProofWithDeployment(
-    input: SccpSourceProofDeploymentRebuildInput,
-  ): Promise<Record<string, unknown>>;
-  buildTonSccpMessageBundleSourceProofWithDeployment(
-    input: SccpSourceProofDeploymentRebuildInput,
-  ): Promise<Record<string, unknown>>;
-  submitSccpBridgeProof(
-    input: SccpBridgeProofSubmitInput,
-  ): Promise<Record<string, unknown>>;
-  submitSccpBridgeMessage(
-    input: SccpBridgeMessageSubmitInput,
-  ): Promise<Record<string, unknown>>;
-  waitForSccpTransactionCommit(
-    input: SccpTransactionCommitWaitInput,
-  ): Promise<Record<string, unknown>>;
-  deploySccpTairaInboundSettlementContract(
-    input: SccpTairaInboundSettlementDeployInput,
-  ): Promise<Record<string, unknown> | null>;
-  deriveZkIvmPayload(
-    input: ZkIvmRequestInput,
-  ): Promise<Record<string, unknown>>;
-  startZkIvmProveJob(
-    input: ZkIvmRequestInput,
-  ): Promise<Record<string, unknown>>;
-  getZkIvmProveJob(input: ZkIvmProveJobInput): Promise<Record<string, unknown>>;
-  cancelZkIvmProveJob(
-    input: ZkIvmProveJobInput,
-  ): Promise<Record<string, unknown>>;
-  submitZkIvmProvedTransaction(
-    input: ZkIvmProvedTransactionSubmitInput,
-  ): Promise<Record<string, unknown>>;
-  getTronTransaction(
-    input: TronTransactionInput,
-  ): Promise<Record<string, unknown>>;
-  getTronAccount(input: TronAccountInput): Promise<Record<string, unknown>>;
-  getTronTransactionReceipt(
-    input: TronTransactionInput,
-  ): Promise<Record<string, unknown>>;
-  getTronTransactionEvents(
-    input: TronEventsInput,
-  ): Promise<Record<string, unknown>>;
-  getTronSolidBlock(input?: TronBlockInput): Promise<Record<string, unknown>>;
-  getTronWitnesses(input?: TronGatewayInput): Promise<Record<string, unknown>>;
-  getTronFinalityData(
-    input?: TronGatewayInput,
-  ): Promise<Record<string, unknown>>;
-  getSccpNileTestTronSigner(): Promise<SccpNileTestTronSignerStatus>;
-  signSccpNileTestTronTransaction(
-    input: SccpNileTestTronTransactionSignInput,
-  ): Promise<Record<string, unknown>>;
-  broadcastTronTransaction(
-    input: TronBroadcastInput,
-  ): Promise<Record<string, unknown>>;
-  triggerTronSmartContract(
-    input: TronTriggerSmartContractInput,
-  ): Promise<Record<string, unknown>>;
-  triggerTronConstantContract(
-    input: TronConstantContractInput,
-  ): Promise<Record<string, unknown>>;
-  callEvmRpc(input: EvmRpcCallInput): Promise<unknown>;
-  getEvmChainId(input?: EvmRpcInput): Promise<string>;
-  getEvmBalance(input: EvmAddressInput): Promise<string>;
-  getEvmCode(input: EvmAddressInput): Promise<string>;
-  callEvmContract(input: EvmCallInput): Promise<string>;
-  getEvmTransactionReceipt(
-    input: EvmTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  getEvmTransaction(
-    input: EvmTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  getEvmBlockByHash(input: {
-    endpoint?: string;
-    blockHash: string;
-    fullTransactions?: boolean;
-  }): Promise<Record<string, unknown> | null>;
-  getEvmLogs(input: EvmLogsInput): Promise<Record<string, unknown>[]>;
-  callSolanaRpc(input: SolanaRpcCallInput): Promise<unknown>;
-  getSolanaBalance(input: SolanaAddressInput): Promise<string>;
-  getSolanaTokenBalance(
-    input: SolanaTokenBalanceInput,
-  ): Promise<Record<string, unknown>>;
-  prepareSolanaAssociatedTokenAccount(
-    input: SolanaAssociatedTokenAccountInput,
-  ): Promise<SolanaPreparedAssociatedTokenAccount>;
-  getSolanaSignatureStatus(
-    input: SolanaTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  getSolanaTransaction(
-    input: SolanaTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  buildSolanaTransaction(input: SolanaBuildTransactionInput): Promise<string>;
-  broadcastSolanaTransaction(input: SolanaBroadcastInput): Promise<string>;
   bondPublicLaneStake(
     input: BondPublicLaneStakeInput,
   ): Promise<TransactionSubmissionResultView>;
@@ -2162,14 +1593,14 @@ class ApiRequestError extends Error {
 }
 
 const createApiRequestError = async (
-  response: Pick<Response, "status" | "statusText" | "headers" | "text">,
+  response: Pick<Response, "status" | "statusText" | "headers" | "arrayBuffer">,
   label: string,
 ) =>
   new ApiRequestError({
     label,
     status: response.status,
     statusText: response.statusText,
-    detail: await readApiErrorDetail(response),
+    detail: await readBoundedApiErrorDetail(response),
     retryAfterMs: parseRetryAfterMs(response.headers.get("retry-after")),
   });
 
@@ -2207,55 +1638,9 @@ const isRedundantHttpErrorDetail = (
   );
 };
 
-const clientCache = new Map<string, ToriiClient>();
-const nativeClientCache = new Map<string, ToriiClient>();
+const MAX_ACTIVE_KAIGI_CALL_WATCHERS = 8;
 const kaigiCallWatchers = new Map<string, AbortController>();
 const faucetRequestControllers = new Map<string, AbortController>();
-const retryingToriiFetch: typeof fetch = (input, init) =>
-  withBoundedHttpGetFetchRetry(nodeFetch, input, init);
-
-const isLoopbackToriiBaseUrl = (baseUrl: string): boolean => {
-  try {
-    const parsed = new URL(baseUrl);
-    const hostname = parsed.hostname
-      .trim()
-      .toLowerCase()
-      .replace(/^\[/u, "")
-      .replace(/\]$/u, "")
-      .replace(/\.$/u, "");
-    return (
-      parsed.protocol === "http:" &&
-      (hostname === "localhost" ||
-        hostname.endsWith(".localhost") ||
-        hostname === "127.0.0.1" ||
-        hostname === "::1" ||
-        /^127(?:\.\d{1,3}){3}$/u.test(hostname))
-    );
-  } catch {
-    return false;
-  }
-};
-
-const getClient = (toriiUrlRaw: string, nativeBinding?: unknown) => {
-  const baseUrl = normalizeBaseUrl(toriiUrlRaw);
-  const cache = nativeBinding ? nativeClientCache : clientCache;
-  const cached = cache.get(baseUrl);
-  if (cached) {
-    return cached;
-  }
-  const clientOptions: Record<string, unknown> = {
-    fetchImpl: retryingToriiFetch,
-  };
-  if (isLoopbackToriiBaseUrl(baseUrl)) {
-    clientOptions.allowInsecure = true;
-  }
-  if (nativeBinding) {
-    clientOptions.__nativeBinding = nativeBinding;
-  }
-  const client = new ToriiClient(baseUrl, clientOptions);
-  cache.set(baseUrl, client);
-  return client;
-};
 
 const createFaucetAbortError = () => {
   const error = new Error("Faucet request canceled.");
@@ -2299,21 +1684,6 @@ const waitForMs = (delayMs: number, signal?: AbortSignal) =>
     }, delayMs);
     signal?.addEventListener("abort", onAbort, { once: true });
   });
-
-const CONFIDENTIAL_TRANSFER_ROOT_RETRY_ATTEMPTS = 3;
-const CONFIDENTIAL_TRANSFER_ROOT_RETRY_DELAY_MS = 750;
-const isConfidentialRootHintMismatchError = (error: unknown) =>
-  (error instanceof Error ? error.message : String(error ?? "")).includes(
-    "tree commitments do not match the supplied root_hint",
-  );
-
-const readNumericField = (value: unknown): number | null => {
-  const normalized = Number(value);
-  if (!Number.isFinite(normalized)) {
-    return null;
-  }
-  return normalized;
-};
 
 const formatDurationForError = (durationMs: number) => {
   const seconds = Math.max(0, Math.round(durationMs / 1000));
@@ -2378,34 +1748,65 @@ const readFaucetLedgerFinalityState = async (
         "/v1/ledger/headers",
         response.status,
         response.statusText,
-        await readApiErrorDetail(response),
+        await readBoundedApiErrorDetail(response),
       );
     }
     return null;
   }
-  const payload = (await response.json().catch(() => null)) as unknown;
-  const headers = Array.isArray(payload)
-    ? payload
-    : isPlainRecord(payload) && Array.isArray(payload.items)
-      ? payload.items
-      : [];
-  const latestHeader = headers.find(isPlainRecord);
-  if (!latestHeader) {
+  const payload = await readBoundedJsonResponse(response, {
+    label: "Faucet ledger finality",
+    maximumBytes: MAX_TORII_JSON_RESPONSE_BYTES,
+    requireApplicationJson: true,
+  });
+  if (!Array.isArray(payload) || payload.length === 0) {
     return null;
   }
-  const height = readNumericField(latestHeader.height);
-  const creationTimeMs = readNumericField(
-    latestHeader.creation_time_ms ?? latestHeader.creationTimeMs,
+  if (payload.length !== 1) {
+    throw new Error(
+      "Faucet ledger finality returned more block headers than requested.",
+    );
+  }
+  const latestHeader = payload[0];
+  if (!isPlainRecord(latestHeader)) {
+    throw new Error("Faucet ledger finality returned an invalid block header.");
+  }
+  assertExactObjectKeys(
+    latestHeader,
+    [
+      "height",
+      "prev_block_hash",
+      "merkle_root",
+      "result_merkle_root",
+      "da_proof_policies_hash",
+      "da_commitments_hash",
+      "da_pin_intents_hash",
+      "npos_effects_hash",
+      "sccp_commitment_root",
+      "creation_time_ms",
+      "view_change_index",
+      "confidential_features",
+      "execution_context_hash",
+    ],
+    "Faucet ledger finality block header",
   );
-  if (creationTimeMs === null) {
-    return null;
+  if (
+    typeof latestHeader.height !== "number" ||
+    !Number.isSafeInteger(latestHeader.height) ||
+    latestHeader.height < 1 ||
+    typeof latestHeader.creation_time_ms !== "number" ||
+    !Number.isSafeInteger(latestHeader.creation_time_ms) ||
+    latestHeader.creation_time_ms < 0
+  ) {
+    throw new Error(
+      "Faucet ledger finality returned noncanonical height metadata.",
+    );
   }
   const responseDateMs = Date.parse(trimString(response.headers.get("date")));
   const nowMs = Number.isFinite(responseDateMs) ? responseDateMs : Date.now();
-  const ageMs = Math.max(0, nowMs - creationTimeMs);
+  const ageMs = Math.max(0, nowMs - latestHeader.creation_time_ms);
   return {
     ageMs,
-    height,
+    height: latestHeader.height,
   };
 };
 
@@ -2431,29 +1832,27 @@ const readFaucetSumeragiState = async (
         "/v1/sumeragi/status",
         response.status,
         response.statusText,
-        await readApiErrorDetail(response),
+        await readBoundedApiErrorDetail(response),
       );
     }
     return null;
   }
-  const payload = (await response.json().catch(() => null)) as unknown;
-  const record = isPlainRecord(payload) ? payload : {};
-  const txQueue = isPlainRecord(record.tx_queue) ? record.tx_queue : {};
-  const queueDepth = readNumericField(txQueue.depth);
-  const queueSaturated = txQueue.saturated === true;
-  const committedHeight = readSumeragiCommittedHeight(record);
-  const laneHeights = Array.isArray(record.lane_commitments)
-    ? record.lane_commitments
-        .map((value) =>
-          isPlainRecord(value) ? readNumericField(value.block_height) : null,
-        )
-        .filter((value): value is number => value !== null)
-    : [];
+  const payload = await readBoundedJsonResponse(response, {
+    label: "Faucet Sumeragi finality",
+    maximumBytes: MAX_TORII_JSON_RESPONSE_BYTES,
+    requireApplicationJson: true,
+  });
+  const committedHeight = readSumeragiCommittedHeight(payload);
+  if (committedHeight === null) {
+    throw new Error(
+      "Faucet Sumeragi finality returned an unsupported protocol status.",
+    );
+  }
   return {
     committedHeight,
-    queuedHeight: laneHeights.length ? Math.max(...laneHeights) : null,
-    queueDepth,
-    queueSaturated,
+    queuedHeight: null,
+    queueDepth: null,
+    queueSaturated: false,
   };
 };
 
@@ -2560,25 +1959,55 @@ const assertFaucetEndpointFinalizing = async (
   );
 };
 
-const stripHexPrefix = (hex: string) => hex.trim().replace(/^0x/i, "");
-
 const toHex = (buffer: Buffer) => buffer.toString("hex");
 
 const hexToBuffer = (hex: string, label: string) => {
-  const normalized = stripHexPrefix(hex);
-  if (normalized.length === 0 || normalized.length % 2 !== 0) {
-    throw new Error(`${label} must be an even-length hex string`);
+  if (
+    typeof hex !== "string" ||
+    hex.length === 0 ||
+    hex.length > FIRST_RELEASE_CRYPTO_KEY_MATERIAL_MAX_BYTES * 2 ||
+    hex.length % 2 !== 0 ||
+    !/^[0-9a-f]+$/u.test(hex)
+  ) {
+    throw new Error(
+      `${label} must be a bounded canonical lowercase hex string`,
+    );
   }
-  if (!/^[0-9a-fA-F]+$/.test(normalized)) {
-    throw new Error(`${label} must contain only hexadecimal characters`);
+  return Buffer.from(hex, "hex");
+};
+
+const withPrivateKeyBuffer = <T>(
+  privateKeyHex: string,
+  label: string,
+  operation: (privateKey: Buffer) => T,
+): T => {
+  const privateKey = hexToBuffer(privateKeyHex, label);
+  try {
+    return operation(privateKey);
+  } finally {
+    privateKey.fill(0);
   }
-  return Buffer.from(normalized, "hex");
+};
+
+const withPrivateKeyBufferAsync = async <T>(
+  privateKeyHex: string,
+  label: string,
+  operation: (privateKey: Buffer) => Promise<T>,
+): Promise<T> => {
+  const privateKey = hexToBuffer(privateKeyHex, label);
+  try {
+    return await operation(privateKey);
+  } finally {
+    privateKey.fill(0);
+  }
 };
 
 const normalizePrivateKeyHex = (privateKeyHex: string) =>
-  hexToBuffer(privateKeyHex, "privateKeyHex").toString("hex");
+  withPrivateKeyBuffer(privateKeyHex, "privateKeyHex", (privateKey) =>
+    privateKey.toString("hex"),
+  );
 
-const normalizeBridgeSigningAlgorithm = (value?: unknown): string => {
+const normalizeBridgeSigningAlgorithm = (value?: unknown): CryptoAlgorithm => {
   const candidate = trimString(value) || DEFAULT_SIGNING_ALGORITHM;
   try {
     return normalizeCryptoAlgorithm(candidate);
@@ -2586,6 +2015,19 @@ const normalizeBridgeSigningAlgorithm = (value?: unknown): string => {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Unsupported signing algorithm "${candidate}": ${detail}`);
   }
+};
+
+const normalizeRequiredBridgeSigningAlgorithm = (
+  value: unknown,
+): CryptoAlgorithm => {
+  if (typeof value !== "string" || !value || value.trim() !== value) {
+    throw new Error("signingAlgorithm must be an explicit canonical string.");
+  }
+  const normalized = normalizeBridgeSigningAlgorithm(value);
+  if (normalized !== value) {
+    throw new Error("signingAlgorithm must use a canonical SDK algorithm ID.");
+  }
+  return normalized;
 };
 
 const toSigningAlgorithmOption = (
@@ -2616,46 +2058,12 @@ const dedupeSigningAlgorithms = (algorithms: Iterable<unknown>): string[] => {
   return result;
 };
 
-const readNodeSigningAlgorithms = (capabilities: unknown): string[] | null => {
-  if (!isPlainRecord(capabilities)) {
-    return null;
-  }
-  const crypto = capabilities.crypto;
-  if (!isPlainRecord(crypto)) {
-    return null;
-  }
-  const sm = crypto.sm;
-  if (!isPlainRecord(sm)) {
-    return null;
-  }
-  const allowedSigning = sm.allowedSigning ?? sm.allowed_signing;
-  return Array.isArray(allowedSigning)
-    ? dedupeSigningAlgorithms(allowedSigning)
-    : null;
-};
-
 const resolveSigningAlgorithmOptions = async (
-  config?: ToriiConfig,
+  _config: ToriiConfig,
 ): Promise<SigningAlgorithmOption[]> => {
+  void _config;
   const localAlgorithms = dedupeSigningAlgorithms(supportedCryptoAlgorithms());
-  const localSet = new Set(localAlgorithms);
-  let selectedAlgorithms = localAlgorithms;
-  const toriiUrl = trimString(config?.toriiUrl);
-  if (toriiUrl) {
-    try {
-      const nodeAlgorithms = readNodeSigningAlgorithms(
-        await getClient(toriiUrl).getNodeCapabilities(),
-      );
-      if (nodeAlgorithms) {
-        selectedAlgorithms = nodeAlgorithms.filter((algorithm) =>
-          localSet.has(algorithm),
-        );
-      }
-    } catch {
-      // Endpoint capability discovery is best-effort; local support remains useful offline.
-    }
-  }
-  return selectedAlgorithms.map(toSigningAlgorithmOption);
+  return localAlgorithms.map(toSigningAlgorithmOption);
 };
 
 const CONNECT_SIGNING_ALGORITHM_CODES = new Map<string, number>([
@@ -2677,11 +2085,11 @@ const getConnectSigningAlgorithmCode = (algorithm: string): number => {
 
 type SigningMaterial = {
   privateKeyHex: string;
-  signingAlgorithm: string;
+  signingAlgorithm: CryptoAlgorithm;
 };
 
 const normalizeSigningMaterial = (
-  material: SigningMaterial,
+  material: AccountSecretMaterial,
 ): SigningMaterial => ({
   privateKeyHex: normalizePrivateKeyHex(material.privateKeyHex),
   signingAlgorithm: normalizeBridgeSigningAlgorithm(material.signingAlgorithm),
@@ -2689,28 +2097,40 @@ const normalizeSigningMaterial = (
 
 const resolveOptionalSigningMaterial = async (input: {
   accountId: string;
-  privateKeyHex?: string;
-  signingAlgorithm?: string;
+  networkPrefix: number;
 }): Promise<SigningMaterial | null> => {
-  const inlinePrivateKeyHex = trimString(input.privateKeyHex);
-  if (inlinePrivateKeyHex) {
-    return normalizeSigningMaterial({
-      privateKeyHex: inlinePrivateKeyHex,
-      signingAlgorithm: input.signingAlgorithm ?? DEFAULT_SIGNING_ALGORITHM,
-    });
-  }
-  const accountId = normalizeCompatAccountIdLiteral(
+  const accountId = normalizeCanonicalAccountIdLiteral(
     input.accountId,
     "accountId",
+    input.networkPrefix,
   );
   const storedSecret = await getAccountSecretMaterialFromVault(accountId);
-  return storedSecret ? normalizeSigningMaterial(storedSecret) : null;
+  if (!storedSecret) {
+    return null;
+  }
+  const signingMaterial = normalizeSigningMaterial(storedSecret);
+  const publicKeyHex = withPrivateKeyBuffer(
+    signingMaterial.privateKeyHex,
+    "privateKeyHex",
+    (privateKey) =>
+      toHex(
+        publicKeyFromPrivate(privateKey, {
+          algorithm: signingMaterial.signingAlgorithm,
+        }),
+      ),
+  );
+  requireAccountIdBoundToPublicKey({
+    accountId,
+    publicKeyHex,
+    networkPrefix: input.networkPrefix,
+    signingAlgorithm: signingMaterial.signingAlgorithm,
+  });
+  return signingMaterial;
 };
 
 const resolveSigningMaterial = async (input: {
   accountId: string;
-  privateKeyHex?: string;
-  signingAlgorithm?: string;
+  networkPrefix: number;
   operationLabel: string;
 }): Promise<SigningMaterial> => {
   const resolved = await resolveOptionalSigningMaterial(input);
@@ -2719,32 +2139,6 @@ const resolveSigningMaterial = async (input: {
   }
   throw new Error(
     `${input.operationLabel} requires a stored wallet secret. Restore or save this wallet again.`,
-  );
-};
-
-const formatExposedPrivateKey = (material: SigningMaterial): string => {
-  const normalized = normalizeSigningMaterial(material);
-  installGlobalIrohaJsNativeBinding(import.meta.url);
-  const encoded = privateKeyMultihash(
-    hexToBuffer(normalized.privateKeyHex, "privateKeyHex"),
-    { algorithm: normalized.signingAlgorithm },
-  );
-  return encoded.includes(":")
-    ? encoded
-    : `${normalized.signingAlgorithm}:${encoded}`;
-};
-
-const resolveOptionalPrivateKeyHex = async (input: {
-  accountId: string;
-  privateKeyHex?: string;
-}): Promise<string | null> => {
-  return (
-    (
-      await resolveOptionalSigningMaterial({
-        accountId: input.accountId,
-        privateKeyHex: input.privateKeyHex,
-      })
-    )?.privateKeyHex ?? null
   );
 };
 
@@ -2763,28 +2157,24 @@ const assertEd25519SigningMaterial = (
 
 const resolveConfidentialWalletDecryptionContext = async (input: {
   accountId: string;
-  privateKeyHex?: string;
+  networkPrefix: number;
   operationLabel: string;
 }) => {
-  const accountId = normalizeCompatAccountIdLiteral(
+  const accountId = normalizeCanonicalAccountIdLiteral(
     input.accountId,
     "accountId",
+    input.networkPrefix,
   );
   const signingMaterial = assertEd25519SigningMaterial(
     await resolveSigningMaterial({
       accountId,
-      privateKeyHex: input.privateKeyHex,
+      networkPrefix: input.networkPrefix,
       operationLabel: input.operationLabel,
     }),
     input.operationLabel,
   );
   const privateKeyHex = signingMaterial.privateKeyHex;
-  let receiveKeys: ConfidentialReceiveKeyRecord[] = [];
-  try {
-    receiveKeys = await listConfidentialReceiveKeysForAccount(accountId);
-  } catch (_error) {
-    receiveKeys = [];
-  }
+  const receiveKeys = await listConfidentialReceiveKeysForAccount(accountId);
   return {
     accountId,
     privateKeyHex,
@@ -2794,14 +2184,14 @@ const resolveConfidentialWalletDecryptionContext = async (input: {
 
 const createStoredConfidentialReceiveDescriptor = async (input: {
   accountId: string;
-  privateKeyHex?: string;
+  networkPrefix: number;
   operationLabel: string;
 }) => {
   await assertSecureVaultAvailable(input.operationLabel);
   const { accountId, privateKeyHex } =
     await resolveConfidentialWalletDecryptionContext({
       accountId: input.accountId,
-      privateKeyHex: input.privateKeyHex,
+      networkPrefix: input.networkPrefix,
       operationLabel: input.operationLabel,
     });
   const shieldedAddress = deriveWalletConfidentialReceiveAddress({
@@ -2809,7 +2199,7 @@ const createStoredConfidentialReceiveDescriptor = async (input: {
   });
   const receiveKeys = generateKaigiX25519KeyPair();
   const keyId = randomBytes(18).toString("base64url");
-  const storedKey = await storeConfidentialReceiveKeyInVault({
+  const storedKey: ConfidentialReceiveKeyRecord = {
     keyId,
     accountId,
     ownerTagHex: shieldedAddress.ownerTagHex,
@@ -2817,7 +2207,8 @@ const createStoredConfidentialReceiveDescriptor = async (input: {
     publicKeyBase64Url: receiveKeys.publicKeyBase64Url,
     privateKeyBase64Url: receiveKeys.privateKeyBase64Url,
     createdAtMs: Date.now(),
-  });
+  };
+  await storeConfidentialReceiveKeysInVault([storedKey]);
   return {
     receiveKeyId: storedKey.keyId,
     receivePublicKeyBase64Url: storedKey.publicKeyBase64Url,
@@ -2827,15 +2218,20 @@ const createStoredConfidentialReceiveDescriptor = async (input: {
 };
 
 const normalizeLaneId = (laneId: number) => {
-  if (!Number.isInteger(laneId) || laneId < 0) {
-    throw new Error("laneId must be a non-negative integer.");
+  if (
+    !Number.isSafeInteger(laneId) ||
+    Object.is(laneId, -0) ||
+    laneId < 0 ||
+    laneId > 0xffff_ffff
+  ) {
+    throw new Error("laneId must be an exact unsigned 32-bit integer.");
   }
   return laneId;
 };
 
 const normalizePositiveEpoch = (value: number, label: string) => {
-  if (!Number.isInteger(value) || value < 0) {
-    throw new Error(`${label} must be a non-negative integer.`);
+  if (!Number.isSafeInteger(value) || Object.is(value, -0) || value < 0) {
+    throw new Error(`${label} must be an exact non-negative safe integer.`);
   }
   return value;
 };
@@ -2870,39 +2266,6 @@ const normalizeIntegerAmount = (value: string, label: string) => {
   return amount;
 };
 
-const GOVERNANCE_U64_MAX = (1n << 64n) - 1n;
-const GOVERNANCE_U128_MAX = (1n << 128n) - 1n;
-
-const normalizeGovernancePositiveInteger = (
-  value: string,
-  label: string,
-  maximum: bigint,
-) => {
-  const amount = value.trim();
-  if (!/^[1-9]\d*$/.test(amount)) {
-    throw new Error(
-      `${label} must be a canonical positive whole-number string.`,
-    );
-  }
-  if (BigInt(amount) > maximum) {
-    throw new Error(`${label} exceeds the supported governance range.`);
-  }
-  return amount;
-};
-
-const normalizeBallotDirectionCode = (direction: "Aye" | "Nay" | "Abstain") => {
-  switch (direction) {
-    case "Aye":
-      return 0;
-    case "Nay":
-      return 1;
-    case "Abstain":
-      return 2;
-    default:
-      throw new Error("direction must be one of Aye, Nay, or Abstain.");
-  }
-};
-
 const normalizeRequestId = (value: string) => {
   const requestId = value.trim();
   if (!requestId) {
@@ -2911,76 +2274,18 @@ const normalizeRequestId = (value: string) => {
   return requestId;
 };
 
-const PRIVATE_KAIGI_ROOT_LOOKBACK = 16;
-const PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE = 200;
-const CONFIDENTIAL_NOTE_INDEX_PAGE_SIZE = 500;
+const CONFIDENTIAL_WALLET_BACKUP_ACCOUNT_TX_PAGE_SIZE = 200;
 const CONFIDENTIAL_TX_FINALITY_INTERVAL_MS = 500;
 const CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS = 600_000;
-const CONFIDENTIAL_UNSHIELD_V2_CIRCUIT_IDS = new Set([
-  "halo2/pasta/ipa/anon-unshield-merkle16-poseidon",
-  "halo2/pasta/ipa/anon-unshield-merkle16-poseidon-diversified",
-]);
-const CONFIDENTIAL_UNSHIELD_V3_CIRCUIT_IDS = new Set([
-  "halo2/pasta/ipa/anon-unshield-2in-1change-merkle16-poseidon",
-  "halo2/pasta/ipa/anon-unshield-2in-1change-merkle16-poseidon-diversified",
-]);
-const PRIVATE_KAIGI_SHADOW_STORAGE_NAMESPACE = "iroha-demo:private-kaigi-xor";
+const CONFIDENTIAL_WALLET_SHADOW_SCHEMA =
+  "iroha-demo-confidential-wallet-shadow/v1" as const;
 const CONFIDENTIAL_WALLET_SHADOW_STORAGE_PREFIX =
   "iroha-demo:confidential-wallet:";
-const CONFIDENTIAL_WALLET_SHADOW_STORAGE_NAMESPACE =
+const RETIRED_CONFIDENTIAL_WALLET_SHADOW_STORAGE_NAMESPACE =
   "iroha-demo:confidential-wallet";
-const PRIVATE_KAIGI_DEFAULT_SELF_SHIELD_AMOUNT = "1";
-const PRIVATE_KAIGI_CREATE_GAS = 420;
-const PRIVATE_KAIGI_JOIN_ZK_GAS = 1520;
-const PRIVATE_KAIGI_END_GAS = 220;
-const PRIVATE_KAIGI_PROOF_GAS_PER_BYTE = 5;
-
-type DecimalAmount = {
-  mantissa: bigint;
-  scale: number;
-};
-
-const readCrc16 = (namespace: string, body: string) => {
-  let crc = 0xffff;
-  const payload = `${namespace}:${body}`;
-  for (let index = 0; index < payload.length; index += 1) {
-    crc ^= payload.charCodeAt(index) << 8;
-    for (let shift = 0; shift < 8; shift += 1) {
-      if ((crc & 0x8000) !== 0) {
-        crc = ((crc << 1) ^ 0x1021) & 0xffff;
-      } else {
-        crc = (crc << 1) & 0xffff;
-      }
-    }
-  }
-  return crc & 0xffff;
-};
-
-const canonicalHashLiteralFromBuffer = (value: Buffer) => {
-  if (value.length !== 32) {
-    throw new Error("hash values must be 32 bytes.");
-  }
-  const normalized = Buffer.from(value);
-  normalized[normalized.length - 1] |= 1;
-  const body = normalized.toString("hex").toUpperCase();
-  const checksum = readCrc16("hash", body)
-    .toString(16)
-    .toUpperCase()
-    .padStart(4, "0");
-  return `hash:${body}#${checksum}`;
-};
-
-const canonicalHashLiteralFromHex = (value: string, label: string) =>
-  canonicalHashLiteralFromBuffer(hexToBuffer(value, label));
-
-const toPrivateKaigiCallIdDto = (value: string, label: string) => {
-  const normalized = normalizeKaigiCallId(value, label);
-  const [domainId, ...callNameParts] = normalized.split(":");
-  return {
-    domain_id: domainId,
-    call_name: callNameParts.join(":"),
-  };
-};
+const CONFIDENTIAL_WALLET_SHADOW_STORAGE_NAMESPACE =
+  "iroha-demo:confidential-wallet:v1";
+const SHADOW_STATE_MAX_BYTES = 2 * 1024 * 1024;
 
 const binaryToBuffer = (
   value: Buffer | ArrayBuffer | ArrayBufferView,
@@ -2994,33 +2299,14 @@ const binaryToBuffer = (
   return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
 };
 
-const NORITO_FRAME_HEADER_LENGTH = 40;
-const NRT0_PAYLOAD_LENGTH_OFFSET = 23;
 const VERSIONED_TRANSACTION_PAYLOAD_VERSION = 0x01;
+const PIPELINE_TRANSACTION_RECEIPT_MAX_BYTES = 1024 * 1024;
 
 type IrohaNativeTransactionCodec = {
-  encodeSignedTransactionNorito?: (
-    payload: Buffer,
-  ) => Buffer | Uint8Array | ArrayBuffer | ArrayBufferView;
   encodeSignedTransactionVersioned?: (
     payload: Buffer,
   ) => Buffer | Uint8Array | ArrayBuffer | ArrayBufferView;
-  decodeTransactionReceiptJson?: (
-    payload: Buffer,
-  ) => string | Buffer | Uint8Array | ArrayBuffer | ArrayBufferView;
-};
-
-type IrohaNativeSccpCodec = {
-  sccpRebuildMessageBundleSourceProofWithDeployment?: (
-    messageBundleJson: string,
-    sourceMaterialJson: string,
-    sourceDeploymentJson: string,
-  ) => string;
-  sccpBuildTonMessageBundleSourceProofWithDeployment?: (
-    messageBundleJson: string,
-    sourceMaterialJson: string,
-    sourceDeploymentJson: string,
-  ) => string;
+  decodeTransactionReceiptJson?: (payload: Buffer) => string;
 };
 
 const nativeCodecBytesToBuffer = (
@@ -3038,225 +2324,41 @@ const nativeCodecBytesToBuffer = (
   }
 };
 
-const isNrt0NoritoFrame = (payload: Buffer): boolean =>
-  payload.length >= NORITO_FRAME_HEADER_LENGTH &&
-  payload.subarray(0, 4).toString("ascii") === "NRT0";
-
-const unwrapNrt0NoritoFrame = (payload: Buffer): Buffer => {
-  if (!isNrt0NoritoFrame(payload)) {
-    return payload;
-  }
-  if (payload[4] !== 0 || payload[5] !== 0) {
-    throw new Error("Unsupported NRT0 transaction frame version.");
-  }
-  const payloadLength = payload.readBigUInt64LE(NRT0_PAYLOAD_LENGTH_OFFSET);
-  if (payloadLength > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new Error("NRT0 transaction frame payload is too large.");
-  }
-  const payloadStart = payload.length - Number(payloadLength);
-  if (payloadStart < NORITO_FRAME_HEADER_LENGTH) {
-    throw new Error("Malformed NRT0 transaction frame payload length.");
-  }
-  return payload.subarray(payloadStart);
-};
-
 const encodeSignedTransactionForPipeline = (
   signedTransaction: Buffer,
   options: {
     nativeBinding?: unknown;
-    requireNativeEncoding?: boolean;
   } = {},
 ): Buffer => {
-  const rawPayload = unwrapNrt0NoritoFrame(signedTransaction);
   const native = options.nativeBinding as
     | IrohaNativeTransactionCodec
     | undefined;
-  const nativeErrors: string[] = [];
-
-  if (typeof native?.encodeSignedTransactionVersioned === "function") {
-    try {
-      const encoded = nativeCodecBytesToBuffer(
-        native.encodeSignedTransactionVersioned(rawPayload),
-        "encodeSignedTransactionVersioned",
-      );
-      if (encoded[0] !== VERSIONED_TRANSACTION_PAYLOAD_VERSION) {
-        throw new Error(
-          `native versioned payload has unsupported version byte ${String(
-            encoded[0],
-          )}`,
-        );
-      }
-      return encoded;
-    } catch (error) {
-      nativeErrors.push(
-        `encodeSignedTransactionVersioned: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-
-  if (typeof native?.encodeSignedTransactionNorito === "function") {
-    try {
-      const encoded = nativeCodecBytesToBuffer(
-        native.encodeSignedTransactionNorito(rawPayload),
-        "encodeSignedTransactionNorito",
-      );
-      return Buffer.concat([
-        Buffer.from([VERSIONED_TRANSACTION_PAYLOAD_VERSION]),
-        unwrapNrt0NoritoFrame(encoded),
-      ]);
-    } catch (error) {
-      nativeErrors.push(
-        `encodeSignedTransactionNorito: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-
-  if (options.requireNativeEncoding) {
-    const detail = nativeErrors.length
-      ? ` ${nativeErrors.join("; ")}`
-      : " no compatible native encoder is available.";
+  if (typeof native?.encodeSignedTransactionVersioned !== "function") {
     throw new Error(
-      `ZK IVM proved transaction encoding requires the @iroha/iroha-js native encoder.${detail}`,
+      "Canonical VersionedSignedTransaction V1 validation requires native encodeSignedTransactionVersioned.",
     );
   }
-
-  return Buffer.concat([
-    Buffer.from([VERSIONED_TRANSACTION_PAYLOAD_VERSION]),
-    rawPayload,
-  ]);
-};
-
-const toJsonByteArray = (
-  value: Buffer | ArrayBuffer | ArrayBufferView,
-): number[] => {
-  return Array.from(binaryToBuffer(value));
-};
-
-const parseDecimalAmount = (value: string, label: string): DecimalAmount => {
-  const normalized = String(value ?? "").trim();
-  const match = /^(\d+)(?:\.(\d+))?$/.exec(normalized);
-  if (!match) {
-    throw new Error(`${label} must be a non-negative numeric string.`);
-  }
-  const fractional = match[2] ?? "";
-  return {
-    mantissa: BigInt(`${match[1]}${fractional}`),
-    scale: fractional.length,
-  };
-};
-
-const trimDecimalAmount = (value: DecimalAmount): DecimalAmount => {
-  let { mantissa, scale } = value;
-  while (scale > 0 && mantissa % 10n === 0n) {
-    mantissa /= 10n;
-    scale -= 1;
-  }
-  return { mantissa, scale };
-};
-
-const formatDecimalAmount = (value: DecimalAmount): string => {
-  const normalized = trimDecimalAmount(value);
-  const negative = normalized.mantissa < 0n;
-  const digits = (
-    negative ? -normalized.mantissa : normalized.mantissa
-  ).toString();
-  if (normalized.scale === 0) {
-    return `${negative ? "-" : ""}${digits}`;
-  }
-  const padded = digits.padStart(normalized.scale + 1, "0");
-  const whole = padded.slice(0, -normalized.scale) || "0";
-  const fraction = padded.slice(-normalized.scale).replace(/0+$/, "");
-  return `${negative ? "-" : ""}${whole}${fraction ? `.${fraction}` : ""}`;
-};
-
-const alignDecimalAmounts = (left: DecimalAmount, right: DecimalAmount) => {
-  if (left.scale === right.scale) {
-    return { left, right, scale: left.scale };
-  }
-  if (left.scale > right.scale) {
-    return {
-      left,
-      right: {
-        mantissa: right.mantissa * 10n ** BigInt(left.scale - right.scale),
-        scale: left.scale,
-      },
-      scale: left.scale,
-    };
-  }
-  return {
-    left: {
-      mantissa: left.mantissa * 10n ** BigInt(right.scale - left.scale),
-      scale: right.scale,
-    },
-    right,
-    scale: right.scale,
-  };
-};
-
-const addDecimalAmounts = (left: DecimalAmount, right: DecimalAmount) => {
-  const aligned = alignDecimalAmounts(left, right);
-  return trimDecimalAmount({
-    mantissa: aligned.left.mantissa + aligned.right.mantissa,
-    scale: aligned.scale,
-  });
-};
-
-const subtractDecimalAmounts = (left: DecimalAmount, right: DecimalAmount) => {
-  const aligned = alignDecimalAmounts(left, right);
-  return trimDecimalAmount({
-    mantissa: aligned.left.mantissa - aligned.right.mantissa,
-    scale: aligned.scale,
-  });
-};
-
-const multiplyDecimalAmountByInteger = (
-  value: DecimalAmount,
-  multiplier: number,
-) =>
-  trimDecimalAmount({
-    mantissa: value.mantissa * BigInt(multiplier),
-    scale: value.scale,
-  });
-
-const compareDecimalStrings = (left: string, right: string) => {
-  const aligned = alignDecimalAmounts(
-    parseDecimalAmount(left, "left"),
-    parseDecimalAmount(right, "right"),
+  const input = Buffer.from(signedTransaction);
+  const encoded = nativeCodecBytesToBuffer(
+    native.encodeSignedTransactionVersioned(input),
+    "encodeSignedTransactionVersioned",
   );
-  if (aligned.left.mantissa === aligned.right.mantissa) {
-    return 0;
+  if (
+    encoded.length === 0 ||
+    encoded[0] !== VERSIONED_TRANSACTION_PAYLOAD_VERSION
+  ) {
+    throw new Error(
+      "Native signed transaction encoder did not return VersionedSignedTransaction V1 bytes.",
+    );
   }
-  return aligned.left.mantissa > aligned.right.mantissa ? 1 : -1;
+  if (!encoded.equals(input)) {
+    throw new Error(
+      "Signed transaction input was not the exact canonical VersionedSignedTransaction V1 encoding.",
+    );
+  }
+  return encoded;
 };
 
-const minDecimalString = (left: string, right: string) =>
-  compareDecimalStrings(left, right) <= 0 ? left : right;
-
-const ceilDecimalToIntegerString = (value: string) => {
-  const parsed = parseDecimalAmount(value, "value");
-  if (parsed.scale === 0) {
-    return parsed.mantissa.toString();
-  }
-  const divisor = 10n ** BigInt(parsed.scale);
-  const whole = parsed.mantissa / divisor;
-  const remainder = parsed.mantissa % divisor;
-  return (remainder === 0n ? whole : whole + 1n).toString();
-};
-
-const newPrivateKaigiShadowState = (): PrivateKaigiXorShadowState => ({
-  lastOnChainShieldedBalance: null,
-  pendingShieldCredit: "0",
-  privateFeeDebit: "0",
-});
-
-const privateKaigiShadowStateCache = new Map<
-  string,
-  PrivateKaigiXorShadowState
->();
 const confidentialWalletShadowStateCache = new Map<
   string,
   PendingConfidentialWalletShadowState
@@ -3264,10 +2366,25 @@ const confidentialWalletShadowStateCache = new Map<
 
 type EndpointScopedStorageKeys = {
   current: string | null;
-  legacy: string;
+  retired: readonly string[];
 };
 
-const quarantineLegacyEndpointDerivedKey = (
+const deleteEndpointDerivedStateKeys = (
+  keys: readonly string[],
+  cache: Map<string, unknown>,
+) => {
+  for (const key of new Set(keys)) {
+    cache.delete(key);
+    try {
+      globalThis.localStorage?.removeItem(key);
+    } catch {
+      // Retired endpoint-derived state remains unusable even when storage is
+      // unavailable for deletion.
+    }
+  }
+};
+
+const deleteInvalidCurrentShadowState = (
   key: string,
   cache: Map<string, unknown>,
 ) => {
@@ -3275,207 +2392,13 @@ const quarantineLegacyEndpointDerivedKey = (
   try {
     globalThis.localStorage?.removeItem(key);
   } catch {
-    // Legacy endpoint-derived state is ignored even if storage is unavailable.
+    // Invalid state is never read again during this renderer run.
   }
-};
-
-const getPrivateKaigiShadowKeys = (input: {
-  toriiUrl: string;
-  accountId: string;
-  assetDefinitionId: string;
-  endpointScope?: EndpointIdentityScopeInput | null;
-}): EndpointScopedStorageKeys => ({
-  current: input.endpointScope
-    ? buildEndpointDerivedStorageKey(
-        PRIVATE_KAIGI_SHADOW_STORAGE_NAMESPACE,
-        input.endpointScope,
-        [input.accountId, input.assetDefinitionId],
-      )
-    : null,
-  legacy: [
-    `${PRIVATE_KAIGI_SHADOW_STORAGE_NAMESPACE}:`,
-    normalizeBaseUrl(input.toriiUrl),
-    input.accountId.trim().toLowerCase(),
-    input.assetDefinitionId.trim().toLowerCase(),
-  ].join(""),
-});
-
-const readPrivateKaigiShadowState = (
-  keys: EndpointScopedStorageKeys,
-): PrivateKaigiXorShadowState => {
-  quarantineLegacyEndpointDerivedKey(keys.legacy, privateKaigiShadowStateCache);
-  if (!keys.current) {
-    return newPrivateKaigiShadowState();
-  }
-  const key = keys.current;
-  const cached = privateKaigiShadowStateCache.get(key);
-  if (cached) {
-    return { ...cached };
-  }
-  const storage = globalThis.localStorage;
-  if (!storage) {
-    const empty = newPrivateKaigiShadowState();
-    privateKaigiShadowStateCache.set(key, empty);
-    return { ...empty };
-  }
-  try {
-    const raw = storage.getItem(key);
-    if (!raw) {
-      const empty = newPrivateKaigiShadowState();
-      privateKaigiShadowStateCache.set(key, empty);
-      return { ...empty };
-    }
-    const parsed = JSON.parse(raw) as Partial<PrivateKaigiXorShadowState>;
-    const state: PrivateKaigiXorShadowState = {
-      lastOnChainShieldedBalance:
-        typeof parsed.lastOnChainShieldedBalance === "string"
-          ? parsed.lastOnChainShieldedBalance
-          : null,
-      pendingShieldCredit:
-        typeof parsed.pendingShieldCredit === "string"
-          ? parsed.pendingShieldCredit
-          : "0",
-      privateFeeDebit:
-        typeof parsed.privateFeeDebit === "string"
-          ? parsed.privateFeeDebit
-          : "0",
-    };
-    privateKaigiShadowStateCache.set(key, state);
-    return { ...state };
-  } catch {
-    const empty = newPrivateKaigiShadowState();
-    privateKaigiShadowStateCache.set(key, empty);
-    return { ...empty };
-  }
-};
-
-const writePrivateKaigiShadowState = (
-  keys: EndpointScopedStorageKeys,
-  state: PrivateKaigiXorShadowState,
-) => {
-  quarantineLegacyEndpointDerivedKey(keys.legacy, privateKaigiShadowStateCache);
-  if (!keys.current) {
-    return;
-  }
-  const key = keys.current;
-  const normalized = {
-    lastOnChainShieldedBalance: state.lastOnChainShieldedBalance,
-    pendingShieldCredit: formatDecimalAmount(
-      parseDecimalAmount(state.pendingShieldCredit, "pendingShieldCredit"),
-    ),
-    privateFeeDebit: formatDecimalAmount(
-      parseDecimalAmount(state.privateFeeDebit, "privateFeeDebit"),
-    ),
-  } satisfies PrivateKaigiXorShadowState;
-  privateKaigiShadowStateCache.set(key, normalized);
-  const storage = globalThis.localStorage;
-  if (!storage) {
-    return;
-  }
-  try {
-    storage.setItem(key, JSON.stringify(normalized));
-  } catch {
-    // Ignore storage write failures and keep the in-memory shadow state.
-  }
-};
-
-const syncPrivateKaigiShadowState = (
-  state: PrivateKaigiXorShadowState,
-  onChainShieldedBalance: string,
-) => {
-  if (state.lastOnChainShieldedBalance) {
-    const delta = subtractDecimalAmounts(
-      parseDecimalAmount(onChainShieldedBalance, "onChainShieldedBalance"),
-      parseDecimalAmount(
-        state.lastOnChainShieldedBalance,
-        "lastOnChainShieldedBalance",
-      ),
-    );
-    if (delta.mantissa > 0n) {
-      const consumed = minDecimalString(
-        formatDecimalAmount(delta),
-        state.pendingShieldCredit,
-      );
-      state.pendingShieldCredit = formatDecimalAmount(
-        subtractDecimalAmounts(
-          parseDecimalAmount(state.pendingShieldCredit, "pendingShieldCredit"),
-          parseDecimalAmount(consumed, "consumed"),
-        ),
-      );
-    }
-  }
-  state.lastOnChainShieldedBalance = formatDecimalAmount(
-    parseDecimalAmount(onChainShieldedBalance, "onChainShieldedBalance"),
-  );
-  return state;
-};
-
-const computePrivateKaigiEffectiveShieldedBalance = (input: {
-  onChainShieldedBalance: string;
-  shadowState: PrivateKaigiXorShadowState;
-}) => {
-  const balance = addDecimalAmounts(
-    parseDecimalAmount(input.onChainShieldedBalance, "onChainShieldedBalance"),
-    parseDecimalAmount(
-      input.shadowState.pendingShieldCredit,
-      "pendingShieldCredit",
-    ),
-  );
-  const effective = subtractDecimalAmounts(
-    balance,
-    parseDecimalAmount(input.shadowState.privateFeeDebit, "privateFeeDebit"),
-  );
-  return effective.mantissa > 0n ? formatDecimalAmount(effective) : "0";
-};
-
-const appendPrivateKaigiShieldCredit = (input: {
-  toriiUrl: string;
-  accountId: string;
-  amount: string;
-  assetDefinitionId: string;
-  endpointScope: EndpointIdentityScopeInput;
-}) => {
-  const keys = getPrivateKaigiShadowKeys({
-    toriiUrl: input.toriiUrl,
-    accountId: input.accountId,
-    assetDefinitionId: input.assetDefinitionId,
-    endpointScope: input.endpointScope,
-  });
-  const state = readPrivateKaigiShadowState(keys);
-  state.pendingShieldCredit = formatDecimalAmount(
-    addDecimalAmounts(
-      parseDecimalAmount(state.pendingShieldCredit, "pendingShieldCredit"),
-      parseDecimalAmount(input.amount, "amount"),
-    ),
-  );
-  writePrivateKaigiShadowState(keys, state);
-};
-
-const appendPrivateKaigiFeeDebit = (input: {
-  toriiUrl: string;
-  accountId: string;
-  amount: string;
-  assetDefinitionId: string;
-  endpointScope: EndpointIdentityScopeInput;
-}) => {
-  const keys = getPrivateKaigiShadowKeys({
-    toriiUrl: input.toriiUrl,
-    accountId: input.accountId,
-    assetDefinitionId: input.assetDefinitionId,
-    endpointScope: input.endpointScope,
-  });
-  const state = readPrivateKaigiShadowState(keys);
-  state.privateFeeDebit = formatDecimalAmount(
-    addDecimalAmounts(
-      parseDecimalAmount(state.privateFeeDebit, "privateFeeDebit"),
-      parseDecimalAmount(input.amount, "amount"),
-    ),
-  );
-  writePrivateKaigiShadowState(keys, state);
 };
 
 const newConfidentialWalletShadowState =
   (): PendingConfidentialWalletShadowState => ({
+    schema: CONFIDENTIAL_WALLET_SHADOW_SCHEMA,
     transactions: [],
   });
 
@@ -3491,58 +2414,237 @@ const getConfidentialWalletShadowKeys = (input: {
         [input.accountId],
       )
     : null,
-  legacy: [
-    CONFIDENTIAL_WALLET_SHADOW_STORAGE_PREFIX,
-    normalizeBaseUrl(input.toriiUrl),
-    input.accountId.trim().toLowerCase(),
-  ].join(""),
+  retired: [
+    ...(input.endpointScope
+      ? [
+          buildEndpointDerivedStorageKey(
+            RETIRED_CONFIDENTIAL_WALLET_SHADOW_STORAGE_NAMESPACE,
+            input.endpointScope,
+            [input.accountId],
+          ),
+        ]
+      : []),
+    [
+      CONFIDENTIAL_WALLET_SHADOW_STORAGE_PREFIX,
+      normalizeBaseUrl(input.toriiUrl),
+      input.accountId.trim().toLowerCase(),
+    ].join(""),
+  ],
 });
 
-const normalizePendingConfidentialWalletShadowTransaction = (
+const FORBIDDEN_SHADOW_SECRET_FIELDS = new Set([
+  "invitesecret",
+  "mnemonic",
+  "passphrase",
+  "password",
+  "privatekey",
+  "privatekeybase64url",
+  "privatekeyhex",
+  "receiveprivatekeybase64url",
+  "recoveryphrase",
+  "secret",
+  "seedphrase",
+  "x25519privatekey",
+]);
+
+const assertPublicShadowJsonValue = (
   value: unknown,
-): PendingConfidentialWalletShadowTransaction | null => {
+  label: string,
+  depth = 0,
+): void => {
+  if (depth > 32) {
+    throw new Error(`${label} exceeds the shadow JSON nesting limit.`);
+  }
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
+    return;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error(`${label} contains a non-finite number.`);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > 2048) {
+      throw new Error(`${label} exceeds the shadow JSON array limit.`);
+    }
+    value.forEach((entry, index) =>
+      assertPublicShadowJsonValue(entry, `${label}[${index}]`, depth + 1),
+    );
+    return;
+  }
+  if (!isPlainRecord(value) || Object.keys(value).length > 256) {
+    throw new Error(`${label} must contain bounded plain JSON objects.`);
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    if (
+      !key ||
+      key.trim() !== key ||
+      ["__proto__", "constructor", "prototype"].includes(key) ||
+      FORBIDDEN_SHADOW_SECRET_FIELDS.has(
+        key.replace(/[^a-z0-9]/giu, "").toLowerCase(),
+      )
+    ) {
+      throw new Error(`${label} contains a forbidden or invalid field.`);
+    }
+    assertPublicShadowJsonValue(entry, `${label}.${key}`, depth + 1);
+  }
+};
+
+const clonePublicShadowRecord = (
+  value: Record<string, unknown>,
+  label: string,
+): Record<string, unknown> => {
+  const cloned = requireFirstReleaseJsonObject(value, label);
+  assertPublicShadowJsonValue(cloned, label);
+  return cloned;
+};
+
+const parsePendingConfidentialWalletShadowTransaction = (
+  value: unknown,
+  label = "Confidential wallet shadow transaction",
+): PendingConfidentialWalletShadowTransaction => {
   if (!isPlainRecord(value)) {
-    return null;
+    throw new Error(`${label} must be an object.`);
   }
-  const hash = trimString(
-    value.hash ?? value.txHash ?? value.entrypoint_hash,
-  ).toLowerCase();
-  if (!hash) {
-    return null;
-  }
-  const createdAtMs = Number(
-    value.createdAtMs ?? value.created_at_ms ?? Date.now(),
+  assertExactObjectKeys(
+    value,
+    ["hash", "createdAtMs", "authority", "metadata", "instructions"],
+    label,
   );
+  if (typeof value.hash !== "string" || !/^[0-9a-f]{64}$/u.test(value.hash)) {
+    throw new Error(`${label}.hash must be canonical lowercase hex.`);
+  }
+  if (
+    typeof value.createdAtMs !== "number" ||
+    !Number.isSafeInteger(value.createdAtMs) ||
+    value.createdAtMs < 0
+  ) {
+    throw new Error(`${label}.createdAtMs must be a non-negative integer.`);
+  }
+  if (
+    typeof value.authority !== "string" ||
+    !value.authority ||
+    value.authority.trim() !== value.authority ||
+    Buffer.byteLength(value.authority, "utf8") > 2048
+  ) {
+    throw new Error(`${label}.authority must be canonical bounded text.`);
+  }
+  if (value.metadata !== null && !isPlainRecord(value.metadata)) {
+    throw new Error(`${label}.metadata must be an object or null.`);
+  }
+  let instructions: readonly unknown[];
+  try {
+    instructions = requireFirstReleaseInputArray(
+      value.instructions,
+      `${label}.instructions`,
+      256,
+    );
+  } catch {
+    throw new Error(`${label}.instructions must be a bounded object array.`);
+  }
+  if (!instructions.every(isPlainRecord)) {
+    throw new Error(`${label}.instructions must be a bounded object array.`);
+  }
   return {
-    hash,
-    createdAtMs:
-      Number.isFinite(createdAtMs) && createdAtMs >= 0
-        ? Math.trunc(createdAtMs)
-        : Date.now(),
-    authority: trimString(value.authority),
-    metadata: isPlainRecord(value.metadata)
-      ? { ...(value.metadata as Record<string, unknown>) }
-      : null,
-    instructions: Array.isArray(value.instructions)
-      ? value.instructions.filter(isPlainRecord).map((entry) => ({ ...entry }))
-      : [],
+    hash: value.hash,
+    createdAtMs: value.createdAtMs,
+    authority: value.authority,
+    metadata:
+      value.metadata === null
+        ? null
+        : clonePublicShadowRecord(value.metadata, `${label}.metadata`),
+    instructions: instructions.map((entry, index) =>
+      clonePublicShadowRecord(entry, `${label}.instructions[${index}]`),
+    ),
   };
+};
+
+const parseStoredConfidentialWalletShadowState = (
+  raw: string,
+): PendingConfidentialWalletShadowState => {
+  if (Buffer.byteLength(raw, "utf8") > SHADOW_STATE_MAX_BYTES) {
+    throw new Error("Confidential wallet shadow state exceeds its byte limit.");
+  }
+  const parsed = parseStrictJson(raw, "Confidential wallet shadow state");
+  if (!isPlainRecord(parsed)) {
+    throw new Error("Confidential wallet shadow state must be an object.");
+  }
+  assertExactObjectKeys(
+    parsed,
+    ["schema", "transactions"],
+    "Confidential wallet shadow state",
+  );
+  if (parsed.schema !== CONFIDENTIAL_WALLET_SHADOW_SCHEMA) {
+    throw new Error("Confidential wallet shadow state schema is unsupported.");
+  }
+  if (!Array.isArray(parsed.transactions) || parsed.transactions.length > 128) {
+    throw new Error(
+      "Confidential wallet shadow transactions must be a bounded array.",
+    );
+  }
+  const transactions = parsed.transactions.map((entry, index) =>
+    parsePendingConfidentialWalletShadowTransaction(
+      entry,
+      `Confidential wallet shadow transactions[${index}]`,
+    ),
+  );
+  if (
+    new Set(transactions.map((entry) => entry.hash)).size !==
+    transactions.length
+  ) {
+    throw new Error(
+      "Confidential wallet shadow transaction hashes must be unique.",
+    );
+  }
+  for (let index = 1; index < transactions.length; index += 1) {
+    const previous = transactions[index - 1];
+    const current = transactions[index];
+    if (
+      previous.createdAtMs > current.createdAtMs ||
+      (previous.createdAtMs === current.createdAtMs &&
+        previous.hash.localeCompare(current.hash) >= 0)
+    ) {
+      throw new Error(
+        "Confidential wallet shadow transactions are not canonically ordered.",
+      );
+    }
+  }
+  const state: PendingConfidentialWalletShadowState = {
+    schema: CONFIDENTIAL_WALLET_SHADOW_SCHEMA,
+    transactions,
+  };
+  if (JSON.stringify(state) !== raw) {
+    throw new Error("Confidential wallet shadow state is not canonical JSON.");
+  }
+  return state;
 };
 
 const readConfidentialWalletShadowState = (
   keys: EndpointScopedStorageKeys,
+  options: Readonly<{ requireDurable?: boolean }> = {},
 ): PendingConfidentialWalletShadowState => {
-  quarantineLegacyEndpointDerivedKey(
-    keys.legacy,
+  deleteEndpointDerivedStateKeys(
+    keys.retired,
     confidentialWalletShadowStateCache,
   );
   if (!keys.current) {
+    if (options.requireDurable === true) {
+      throw new Error(
+        "Confidential wallet shadow state requires a trusted endpoint identity scope.",
+      );
+    }
     return newConfidentialWalletShadowState();
   }
   const key = keys.current;
   const cached = confidentialWalletShadowStateCache.get(key);
-  if (cached) {
+  if (cached && options.requireDurable !== true) {
     return {
+      schema: CONFIDENTIAL_WALLET_SHADOW_SCHEMA,
       transactions: cached.transactions.map((entry) => ({
         ...entry,
         metadata: entry.metadata ? { ...entry.metadata } : null,
@@ -3554,36 +2656,30 @@ const readConfidentialWalletShadowState = (
   }
   const storage = globalThis.localStorage;
   if (!storage) {
+    if (options.requireDurable === true) {
+      throw new Error("Confidential wallet shadow storage is unavailable.");
+    }
     const empty = newConfidentialWalletShadowState();
     confidentialWalletShadowStateCache.set(key, empty);
     return {
+      schema: CONFIDENTIAL_WALLET_SHADOW_SCHEMA,
       transactions: [],
     };
   }
   try {
     const raw = storage.getItem(key);
-    if (!raw) {
+    if (raw === null) {
       const empty = newConfidentialWalletShadowState();
       confidentialWalletShadowStateCache.set(key, empty);
       return {
+        schema: CONFIDENTIAL_WALLET_SHADOW_SCHEMA,
         transactions: [],
       };
     }
-    const parsed = JSON.parse(
-      raw,
-    ) as Partial<PendingConfidentialWalletShadowState>;
-    const state: PendingConfidentialWalletShadowState = {
-      transactions: Array.isArray(parsed.transactions)
-        ? parsed.transactions
-            .map(normalizePendingConfidentialWalletShadowTransaction)
-            .filter(
-              (entry): entry is PendingConfidentialWalletShadowTransaction =>
-                Boolean(entry),
-            )
-        : [],
-    };
+    const state = parseStoredConfidentialWalletShadowState(raw);
     confidentialWalletShadowStateCache.set(key, state);
     return {
+      schema: CONFIDENTIAL_WALLET_SHADOW_SCHEMA,
       transactions: state.transactions.map((entry) => ({
         ...entry,
         metadata: entry.metadata ? { ...entry.metadata } : null,
@@ -3592,54 +2688,102 @@ const readConfidentialWalletShadowState = (
         })),
       })),
     };
-  } catch {
+  } catch (error) {
+    if (options.requireDurable === true) {
+      throw new Error(
+        `Confidential wallet shadow state could not be read durably: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    deleteInvalidCurrentShadowState(key, confidentialWalletShadowStateCache);
     const empty = newConfidentialWalletShadowState();
     confidentialWalletShadowStateCache.set(key, empty);
     return {
+      schema: CONFIDENTIAL_WALLET_SHADOW_SCHEMA,
       transactions: [],
     };
   }
+};
+
+const prepareConfidentialWalletShadowState = (
+  state: PendingConfidentialWalletShadowState,
+): Readonly<{
+  normalized: PendingConfidentialWalletShadowState;
+  encoded: string;
+}> => {
+  const dedupedTransactions = new Map<
+    string,
+    PendingConfidentialWalletShadowTransaction
+  >();
+  state.transactions
+    .map((entry, index) =>
+      parsePendingConfidentialWalletShadowTransaction(
+        entry,
+        `Confidential wallet shadow transactions[${index}]`,
+      ),
+    )
+    .forEach((entry) => {
+      const existing = dedupedTransactions.get(entry.hash);
+      if (existing && JSON.stringify(existing) !== JSON.stringify(entry)) {
+        throw new Error(
+          "Confidential wallet shadow merge contains conflicting records for one transaction hash; no records were stored.",
+        );
+      }
+      dedupedTransactions.set(entry.hash, entry);
+    });
+  const canonicalTransactions = [...dedupedTransactions.values()].sort(
+    (left, right) =>
+      left.createdAtMs - right.createdAtMs ||
+      left.hash.localeCompare(right.hash),
+  );
+  if (canonicalTransactions.length > 128) {
+    throw new Error(
+      "Confidential wallet shadow merge exceeds its transaction capacity; no records were stored.",
+    );
+  }
+  const normalized: PendingConfidentialWalletShadowState = {
+    schema: CONFIDENTIAL_WALLET_SHADOW_SCHEMA,
+    transactions: canonicalTransactions,
+  };
+  const encoded = JSON.stringify(normalized);
+  if (Buffer.byteLength(encoded, "utf8") > SHADOW_STATE_MAX_BYTES) {
+    throw new Error("Confidential wallet shadow state exceeds its byte limit.");
+  }
+  return { normalized, encoded };
 };
 
 const writeConfidentialWalletShadowState = (
   keys: EndpointScopedStorageKeys,
   state: PendingConfidentialWalletShadowState,
 ) => {
-  quarantineLegacyEndpointDerivedKey(
-    keys.legacy,
+  deleteEndpointDerivedStateKeys(
+    keys.retired,
     confidentialWalletShadowStateCache,
   );
   if (!keys.current) {
-    return;
+    throw new Error(
+      "Confidential wallet shadow state requires a trusted endpoint identity scope.",
+    );
   }
   const key = keys.current;
-  const dedupedTransactions = new Map<
-    string,
-    PendingConfidentialWalletShadowTransaction
-  >();
-  state.transactions
-    .map(normalizePendingConfidentialWalletShadowTransaction)
-    .filter((entry): entry is PendingConfidentialWalletShadowTransaction =>
-      Boolean(entry),
-    )
-    .forEach((entry) => {
-      dedupedTransactions.set(entry.hash, entry);
-    });
-  const normalized: PendingConfidentialWalletShadowState = {
-    transactions: [...dedupedTransactions.values()]
-      .sort((left, right) => left.createdAtMs - right.createdAtMs)
-      .slice(-128),
-  };
-  confidentialWalletShadowStateCache.set(key, normalized);
+  const { normalized, encoded } = prepareConfidentialWalletShadowState(state);
   const storage = globalThis.localStorage;
   if (!storage) {
-    return;
+    throw new Error(
+      "Confidential wallet shadow storage is unavailable; backup restore was not completed.",
+    );
   }
   try {
-    storage.setItem(key, JSON.stringify(normalized));
-  } catch {
-    // Ignore storage write failures and keep the in-memory shadow state.
+    storage.setItem(key, encoded);
+  } catch (error) {
+    throw new Error(
+      `Confidential wallet shadow state could not be stored durably: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
+  confidentialWalletShadowStateCache.set(key, normalized);
 };
 
 const deriveConfidentialWalletBackupKey = (mnemonic: string, salt: Buffer) => {
@@ -3684,61 +2828,205 @@ const parseConfidentialWalletBackupStatePayload = (
   if (!isPlainRecord(value)) {
     throw new Error("Confidential wallet backup state is invalid.");
   }
+  assertExactObjectKeys(
+    value,
+    ["schema", "receiveKeys", "shadowTransactions"],
+    "Confidential wallet backup state",
+  );
+  if (value.schema !== "iroha-demo-confidential-wallet-state/v1") {
+    throw new Error("Unsupported confidential wallet backup state schema.");
+  }
+  if (
+    !Array.isArray(value.receiveKeys) ||
+    value.receiveKeys.length > SECURE_VAULT_MAX_RECEIVE_KEYS_PER_ACCOUNT
+  ) {
+    throw new Error("Confidential wallet backup receive keys are invalid.");
+  }
+  const seenKeyIds = new Set<string>();
+  const receiveKeys = value.receiveKeys.map((entry, index) => {
+    const label = `confidentialWallet.receiveKeys[${index}]`;
+    if (!isPlainRecord(entry)) {
+      throw new Error(`${label} must be an object.`);
+    }
+    assertExactObjectKeys(
+      entry,
+      [
+        "keyId",
+        "ownerTagHex",
+        "diversifierHex",
+        "publicKeyBase64Url",
+        "privateKeyBase64Url",
+        "createdAtMs",
+      ],
+      label,
+    );
+    const keyId = trimString(entry.keyId);
+    if (
+      typeof entry.keyId !== "string" ||
+      entry.keyId !== keyId ||
+      !isCanonicalBase64UrlBytes(keyId, 18) ||
+      seenKeyIds.has(keyId)
+    ) {
+      throw new Error(`${label}.keyId is invalid or duplicated.`);
+    }
+    seenKeyIds.add(keyId);
+    const ownerTagHex = trimString(entry.ownerTagHex);
+    const diversifierHex = trimString(entry.diversifierHex);
+    if (
+      entry.ownerTagHex !== ownerTagHex ||
+      entry.diversifierHex !== diversifierHex ||
+      !/^[0-9a-f]{64}$/u.test(ownerTagHex) ||
+      !/^[0-9a-f]{64}$/u.test(diversifierHex)
+    ) {
+      throw new Error(`${label} contains invalid canonical key material.`);
+    }
+    const publicKeyBase64Url = normalizeBase64UrlString(
+      entry.publicKeyBase64Url,
+      `${label}.publicKeyBase64Url`,
+    );
+    const privateKeyBase64Url = normalizeBase64UrlString(
+      entry.privateKeyBase64Url,
+      `${label}.privateKeyBase64Url`,
+    );
+    if (
+      entry.publicKeyBase64Url !== publicKeyBase64Url ||
+      entry.privateKeyBase64Url !== privateKeyBase64Url ||
+      !isCanonicalBase64UrlBytes(publicKeyBase64Url, 32) ||
+      !isCanonicalBase64UrlBytes(privateKeyBase64Url, 32)
+    ) {
+      throw new Error(`${label} contains noncanonical X25519 key material.`);
+    }
+    if (
+      typeof entry.createdAtMs !== "number" ||
+      !Number.isSafeInteger(entry.createdAtMs) ||
+      entry.createdAtMs < 0
+    ) {
+      throw new Error(`${label}.createdAtMs is invalid.`);
+    }
+    return {
+      keyId,
+      ownerTagHex,
+      diversifierHex,
+      publicKeyBase64Url,
+      privateKeyBase64Url,
+      createdAtMs: entry.createdAtMs,
+    };
+  });
+  if (
+    !Array.isArray(value.shadowTransactions) ||
+    value.shadowTransactions.length > 128
+  ) {
+    throw new Error(
+      "Confidential wallet backup shadow transactions are invalid.",
+    );
+  }
+  const seenTransactionHashes = new Set<string>();
+  const shadowTransactions = value.shadowTransactions.map((entry, index) => {
+    const label = `confidentialWallet.shadowTransactions[${index}]`;
+    const parsed = parsePendingConfidentialWalletShadowTransaction(
+      entry,
+      label,
+    );
+    if (seenTransactionHashes.has(parsed.hash)) {
+      throw new Error(`${label}.hash is invalid or duplicated.`);
+    }
+    seenTransactionHashes.add(parsed.hash);
+    return parsed;
+  });
   return {
-    receiveKeys: Array.isArray(value.receiveKeys)
-      ? value.receiveKeys
-          .map((entry) => {
-            if (!isPlainRecord(entry)) {
-              return null;
-            }
-            const keyId = trimString(entry.keyId);
-            const ownerTagHex = trimString(entry.ownerTagHex).toLowerCase();
-            const diversifierHex = trimString(
-              entry.diversifierHex,
-            ).toLowerCase();
-            const publicKeyBase64Url = normalizeBase64UrlString(
-              entry.publicKeyBase64Url,
-              "confidentialWallet.receiveKeys.publicKeyBase64Url",
-            );
-            const privateKeyBase64Url = normalizeBase64UrlString(
-              entry.privateKeyBase64Url,
-              "confidentialWallet.receiveKeys.privateKeyBase64Url",
-            );
-            const createdAtMs = Number(entry.createdAtMs ?? Date.now());
-            if (
-              !/^[A-Za-z0-9_-]{8,128}$/.test(keyId) ||
-              !/^[0-9a-f]{64}$/.test(ownerTagHex) ||
-              !/^[0-9a-f]{64}$/.test(diversifierHex)
-            ) {
-              return null;
-            }
-            return {
-              keyId,
-              ownerTagHex,
-              diversifierHex,
-              publicKeyBase64Url,
-              privateKeyBase64Url,
-              createdAtMs:
-                Number.isFinite(createdAtMs) && createdAtMs >= 0
-                  ? Math.trunc(createdAtMs)
-                  : Date.now(),
-            };
-          })
-          .filter(
-            (
-              entry,
-            ): entry is ConfidentialWalletBackupStatePayload["receiveKeys"][number] =>
-              Boolean(entry),
-          )
-      : [],
-    shadowTransactions: Array.isArray(value.shadowTransactions)
-      ? value.shadowTransactions
-          .map(normalizePendingConfidentialWalletShadowTransaction)
-          .filter(
-            (entry): entry is PendingConfidentialWalletShadowTransaction =>
-              Boolean(entry),
-          )
-      : [],
+    schema: "iroha-demo-confidential-wallet-state/v1",
+    receiveKeys,
+    shadowTransactions,
+  };
+};
+
+const parseConfidentialWalletBackupMetadataInput = (
+  value: unknown,
+): ConfidentialWalletBackupMetadataV2 => {
+  const metadata = requireFirstReleaseIpcInputObject<Record<string, unknown>>(
+    value,
+    {
+      label: "Confidential wallet backup metadata",
+      required: [
+        "schema",
+        "chainId",
+        "accountId",
+        "scanWatermarkBlock",
+        "stateBox",
+      ],
+    },
+  );
+  if (metadata.schema !== CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2) {
+    throw new Error("Unsupported confidential wallet backup schema.");
+  }
+  const scanWatermarkBlock = metadata.scanWatermarkBlock;
+  if (
+    scanWatermarkBlock !== null &&
+    (typeof scanWatermarkBlock !== "number" ||
+      !Number.isSafeInteger(scanWatermarkBlock) ||
+      Object.is(scanWatermarkBlock, -0) ||
+      scanWatermarkBlock < 0)
+  ) {
+    throw new Error(
+      "Confidential wallet backup scan watermark must be null or an exact non-negative integer.",
+    );
+  }
+  const stateBox = requireFirstReleaseIpcInputObject<Record<string, unknown>>(
+    metadata.stateBox,
+    {
+      label: "Confidential wallet backup state box",
+      required: [
+        "kdf",
+        "cipher",
+        "saltBase64Url",
+        "ivBase64Url",
+        "ciphertextBase64Url",
+        "authTagBase64Url",
+      ],
+    },
+  );
+  if (stateBox.kdf !== "HKDF-SHA256" || stateBox.cipher !== "AES-256-GCM") {
+    throw new Error(
+      "Confidential wallet backup state box uses an unsupported cryptographic contract.",
+    );
+  }
+  return {
+    schema: CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2,
+    chainId: requireFirstReleaseInputText(
+      metadata.chainId,
+      "confidentialWallet.chainId",
+      256,
+    ),
+    accountId: requireFirstReleaseInputText(
+      metadata.accountId,
+      "confidentialWallet.accountId",
+      1_024,
+    ),
+    scanWatermarkBlock,
+    stateBox: {
+      kdf: "HKDF-SHA256",
+      cipher: "AES-256-GCM",
+      saltBase64Url: requireFirstReleaseInputText(
+        stateBox.saltBase64Url,
+        "confidentialWallet.stateBox.saltBase64Url",
+        43,
+      ),
+      ivBase64Url: requireFirstReleaseInputText(
+        stateBox.ivBase64Url,
+        "confidentialWallet.stateBox.ivBase64Url",
+        16,
+      ),
+      ciphertextBase64Url: requireFirstReleaseInputText(
+        stateBox.ciphertextBase64Url,
+        "confidentialWallet.stateBox.ciphertextBase64Url",
+        CONFIDENTIAL_WALLET_BACKUP_CIPHERTEXT_MAX_CHARACTERS,
+      ),
+      authTagBase64Url: requireFirstReleaseInputText(
+        stateBox.authTagBase64Url,
+        "confidentialWallet.stateBox.authTagBase64Url",
+        22,
+      ),
+    },
   };
 };
 
@@ -3746,33 +3034,59 @@ const decryptConfidentialWalletBackupState = (
   stateBox: ConfidentialWalletBackupStateBoxV2,
   mnemonic: string,
 ): ConfidentialWalletBackupStatePayload => {
-  const salt = Buffer.from(
-    normalizeBase64UrlString(
-      stateBox.saltBase64Url,
-      "confidentialWallet.stateBox.saltBase64Url",
-    ),
-    "base64url",
+  if (stateBox.kdf !== "HKDF-SHA256" || stateBox.cipher !== "AES-256-GCM") {
+    throw new Error(
+      "Confidential wallet backup state box uses an unsupported cryptographic contract.",
+    );
+  }
+  const decodeCanonicalBase64Url = (
+    value: unknown,
+    label: string,
+    options: Readonly<{
+      expectedBytes?: number;
+      maximumCharacters: number;
+    }>,
+  ): Buffer => {
+    if (
+      typeof value !== "string" ||
+      value.length === 0 ||
+      value.length > options.maximumCharacters ||
+      !/^[A-Za-z0-9_-]+$/u.test(value)
+    ) {
+      throw new Error(`${label} must be bounded canonical base64url.`);
+    }
+    const decoded = Buffer.from(value, "base64url");
+    if (
+      decoded.length === 0 ||
+      (options.expectedBytes !== undefined &&
+        decoded.length !== options.expectedBytes) ||
+      decoded.toString("base64url") !== value
+    ) {
+      throw new Error(`${label} must be bounded canonical base64url.`);
+    }
+    return decoded;
+  };
+  const salt = decodeCanonicalBase64Url(
+    stateBox.saltBase64Url,
+    "confidentialWallet.stateBox.saltBase64Url",
+    { expectedBytes: 32, maximumCharacters: 43 },
   );
-  const iv = Buffer.from(
-    normalizeBase64UrlString(
-      stateBox.ivBase64Url,
-      "confidentialWallet.stateBox.ivBase64Url",
-    ),
-    "base64url",
+  const iv = decodeCanonicalBase64Url(
+    stateBox.ivBase64Url,
+    "confidentialWallet.stateBox.ivBase64Url",
+    { expectedBytes: 12, maximumCharacters: 16 },
   );
-  const ciphertext = Buffer.from(
-    normalizeBase64UrlString(
-      stateBox.ciphertextBase64Url,
-      "confidentialWallet.stateBox.ciphertextBase64Url",
-    ),
-    "base64url",
+  const ciphertext = decodeCanonicalBase64Url(
+    stateBox.ciphertextBase64Url,
+    "confidentialWallet.stateBox.ciphertextBase64Url",
+    {
+      maximumCharacters: CONFIDENTIAL_WALLET_BACKUP_CIPHERTEXT_MAX_CHARACTERS,
+    },
   );
-  const authTag = Buffer.from(
-    normalizeBase64UrlString(
-      stateBox.authTagBase64Url,
-      "confidentialWallet.stateBox.authTagBase64Url",
-    ),
-    "base64url",
+  const authTag = decodeCanonicalBase64Url(
+    stateBox.authTagBase64Url,
+    "confidentialWallet.stateBox.authTagBase64Url",
+    { expectedBytes: 16, maximumCharacters: 22 },
   );
   const key = deriveConfidentialWalletBackupKey(mnemonic, salt);
   const decipher = createDecipheriv("aes-256-gcm", key, iv);
@@ -3783,49 +3097,14 @@ const decryptConfidentialWalletBackupState = (
   ]).toString("utf8");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(plaintext);
+    parsed = parseJsonWithoutDuplicateObjectKeys(
+      plaintext,
+      "Confidential wallet backup state",
+    );
   } catch {
     throw new Error("Confidential wallet backup could not be decrypted.");
   }
   return parseConfidentialWalletBackupStatePayload(parsed);
-};
-
-const upsertConfidentialWalletShadowTransaction = (input: {
-  toriiUrl: string;
-  accountId: string;
-  endpointScope: EndpointIdentityScopeInput;
-  txHash: string;
-  authority: string;
-  metadata?: Record<string, unknown>;
-  instructions?: Array<Record<string, unknown>>;
-  createdAtMs?: number;
-}) => {
-  const keys = getConfidentialWalletShadowKeys({
-    toriiUrl: input.toriiUrl,
-    accountId: input.accountId,
-    endpointScope: input.endpointScope,
-  });
-  const state = readConfidentialWalletShadowState(keys);
-  const hash = trimString(input.txHash).toLowerCase();
-  if (!hash) {
-    return;
-  }
-  const nextTransaction: PendingConfidentialWalletShadowTransaction = {
-    hash,
-    createdAtMs: Math.trunc(input.createdAtMs ?? Date.now()),
-    authority: trimString(input.authority),
-    metadata: input.metadata ? { ...input.metadata } : null,
-    instructions: Array.isArray(input.instructions)
-      ? input.instructions
-          .filter(isPlainRecord)
-          .map((instruction) => ({ ...instruction }))
-      : [],
-  };
-  state.transactions = [
-    ...state.transactions.filter((transaction) => transaction.hash !== hash),
-    nextTransaction,
-  ];
-  writeConfidentialWalletShadowState(keys, state);
 };
 
 const mergeConfidentialWalletShadowTransactions = (input: {
@@ -3902,87 +3181,21 @@ const mergeConfidentialWalletShadowTransactions = (input: {
   return merged;
 };
 
-const computePrivateKaigiInstructionGas = (input: {
-  action: "create" | "join" | "end";
-  proofByteLength: number;
-}) => {
-  switch (input.action) {
-    case "create":
-      return PRIVATE_KAIGI_CREATE_GAS;
-    case "join":
-      return (
-        PRIVATE_KAIGI_JOIN_ZK_GAS +
-        PRIVATE_KAIGI_PROOF_GAS_PER_BYTE * Math.max(0, input.proofByteLength)
-      );
-    case "end":
-      return PRIVATE_KAIGI_END_GAS;
-    default:
-      return PRIVATE_KAIGI_END_GAS;
-  }
-};
-
-const KAIGI_CHAIN_SIGNAL_SCHEMA = "iroha-demo-kaigi-chain-signal/v1";
-const KAIGI_CHAIN_ANSWER_SCHEMA = "iroha-demo-kaigi-answer/v1";
-const KAIGI_CALL_METADATA_SCHEMA = "iroha-demo-kaigi-call-metadata/v2";
-const KAIGI_CALL_OFFER_SCHEMA = "iroha-demo-kaigi-offer/v2";
-
-type KaigiChainAnswerPayload = {
-  schema: typeof KAIGI_CHAIN_ANSWER_SCHEMA;
-  callId: string;
-  kind: "answer";
-  participantAccountId?: string;
-  participantId: string;
-  participantName: string;
-  walletIdentity?: string;
-  roomId?: string;
-  createdAtMs: number;
-  description: {
-    type: "answer";
-    sdp: string;
-  };
-};
-
-type KaigiCallOfferPayload = {
-  schema: typeof KAIGI_CALL_OFFER_SCHEMA;
-  callId: string;
-  hostAccountId?: string;
-  hostDisplayName: string;
-  hostParticipantId: string;
-  hostKaigiPublicKeyBase64Url: string;
-  createdAtMs: number;
-  description: KaigiOfferDescription;
-};
-
-type KaigiCallMetadata = {
-  schema: typeof KAIGI_CALL_METADATA_SCHEMA;
-  meetingCode: string;
-  expiresAtMs: number;
-  live: boolean;
-  privacyMode: KaigiMeetingPrivacy;
-  peerIdentityReveal: KaigiPeerIdentityReveal;
-  encryptedOffer: KaigiSecretBox;
-};
-
-type KaigiChainSignalMetadata = {
-  schema: typeof KAIGI_CHAIN_SIGNAL_SCHEMA;
-  callId: string;
-  signalKind: "answer";
-  hostAccountId?: string;
-  participantAccountId?: string;
-  createdAtMs: number;
-  encryptedSignal: KaigiSealedBox;
-};
-
 const normalizeReleaseAtMs = (value: number) => {
-  if (!Number.isInteger(value) || value < 0) {
-    throw new Error("releaseAtMs must be a non-negative integer.");
+  if (!Number.isSafeInteger(value) || Object.is(value, -0) || value < 0) {
+    throw new Error("releaseAtMs must be an exact non-negative safe integer.");
   }
   return value;
 };
 
-const normalizeTimestampMs = (value: number, label: string) => {
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${label} must be a positive integer.`);
+const normalizeTimestampMs = (value: unknown, label: string): number => {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    Object.is(value, -0) ||
+    value <= 0
+  ) {
+    throw new Error(`${label} must be an exact positive safe integer.`);
   }
   return value;
 };
@@ -3991,476 +3204,92 @@ const normalizeKaigiCallId = (value: string, label: string) => {
   return requireKaigiCallId(value, label);
 };
 
-const normalizeKaigiParticipantId = (value: string) => {
-  const normalized = String(value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9-_\s]+/g, "")
-    .replace(/_/g, "-")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-  return normalized || "participant";
-};
-
-const normalizeKaigiAnswerDescription = (value: {
-  type?: string;
-  sdp?: string;
-}) => {
-  const type = String(value?.type ?? "").trim();
-  const sdp = String(value?.sdp ?? "");
-  if (type !== "answer") {
-    throw new Error("Kaigi answerDescription.type must be answer.");
-  }
-  if (!sdp.trim()) {
-    throw new Error("Kaigi answerDescription.sdp is required.");
-  }
-  return {
-    type: "answer" as const,
-    sdp,
-  };
-};
-
-const normalizeKaigiOfferDescription = (value: {
-  type?: string;
-  sdp?: string;
-}) => {
-  const type = String(value?.type ?? "").trim();
-  const sdp = String(value?.sdp ?? "");
-  if (type !== "offer") {
-    throw new Error("Kaigi offerDescription.type must be offer.");
-  }
-  if (!sdp.trim()) {
-    throw new Error("Kaigi offerDescription.sdp is required.");
-  }
-  return {
-    type: "offer" as const,
-    sdp,
-  };
-};
-
-const normalizeKaigiMeetingPrivacy = (value: unknown): KaigiMeetingPrivacy => {
-  const normalized = String(value ?? "private")
-    .trim()
-    .toLowerCase();
-  if (normalized === "transparent") {
-    return "transparent";
-  }
-  return "private";
-};
-
-const normalizeKaigiPeerIdentityReveal = (
-  value: unknown,
-): KaigiPeerIdentityReveal => {
-  const normalized = String(value ?? "Hidden")
-    .trim()
-    .toLowerCase();
-  if (
-    normalized === "revealafterjoin" ||
-    normalized === "reveal_after_join" ||
-    normalized === "reveal-after-join"
-  ) {
-    return "RevealAfterJoin";
-  }
-  return "Hidden";
-};
-
 const normalizeBase64UrlString = (value: unknown, label: string): string => {
-  const normalized = String(value ?? "").trim();
-  if (!normalized) {
+  if (typeof value !== "string" || value.length === 0) {
     throw new Error(`${label} is required.`);
   }
-  if (!/^[A-Za-z0-9_-]+$/.test(normalized)) {
+  if (!/^[A-Za-z0-9_-]+$/u.test(value)) {
     throw new Error(`${label} must be base64url.`);
   }
-  return normalized;
-};
-
-const normalizeBase64String = (value: unknown, label: string): string => {
-  const normalized = String(value ?? "").trim();
-  if (!normalized) {
-    throw new Error(`${label} is required.`);
-  }
-  if (!/^[A-Za-z0-9+/=]+$/.test(normalized)) {
-    throw new Error(`${label} must be base64.`);
-  }
-  return normalized;
-};
-
-const normalizeKaigiRosterRootHex = (value: unknown, label: string) => {
-  const normalized = String(value ?? "")
-    .trim()
-    .replace(/^0x/i, "")
-    .toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(normalized)) {
-    throw new Error(`${label} must be a 32-byte hex digest.`);
-  }
-  return normalized;
-};
-
-const normalizeOptionalCompatAccountIdLiteral = (
-  value: unknown,
-  label: string,
-) => {
-  const normalized = String(value ?? "").trim();
-  if (!normalized) {
-    return undefined;
-  }
-  return normalizeCompatAccountIdLiteral(normalized, label);
-};
-
-const deriveKaigiRosterJoinSeed = (input: {
-  callId: string;
-  participantAccountId: string;
-  privateKeyHex: string;
-}) =>
-  createHash("sha256")
-    .update("iroha-demo-kaigi-roster-join/v1\0")
-    .update(input.callId)
-    .update("\0")
-    .update(input.participantAccountId)
-    .update("\0")
-    .update(input.privateKeyHex.trim().toLowerCase())
-    .digest();
-
-const deriveKaigiHostActionSeed = (input: {
-  callId: string;
-  hostAccountId: string;
-  privateKeyHex: string;
-}) =>
-  deriveKaigiRosterJoinSeed({
-    callId: input.callId,
-    participantAccountId: input.hostAccountId,
-    privateKeyHex: input.privateKeyHex,
-  });
-
-const parseJsonRecord = (value: unknown): Record<string, unknown> | null => {
-  if (!value) {
-    return null;
-  }
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-      return null;
-    } catch (_error) {
-      return null;
-    }
-  }
-  if (typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  return null;
-};
-
-const splitKaigiCallId = (callId: string) => {
-  const normalized = normalizeKaigiCallId(callId, "callId");
-  const [domainId, ...callNameParts] = normalized.split(":");
-  const callName = callNameParts.join(":").trim();
-  if (!domainId || !callName) {
-    throw new Error("callId must be in exact domain.dataspace:meeting format.");
-  }
-  return {
-    domainId,
-    callName,
-  };
-};
-
-const normalizeKaigiMeetingCode = (value: unknown, callId: string): string => {
-  const explicit = String(value ?? "").trim();
-  if (explicit) {
-    return explicit;
-  }
-  const { callName } = splitKaigiCallId(callId);
-  return callName.replace(/^kaigi-/, "") || callName;
-};
-
-const normalizeKaigiCallEvent = (value: unknown): KaigiCallEvent | null => {
-  const record = parseJsonRecord(value);
-  if (!record) {
-    return null;
-  }
-  const kind = String(record.kind ?? "")
-    .trim()
-    .toLowerCase();
-  const callRecord = parseJsonRecord(record.call);
-  const callId = normalizeKaigiCallId(
-    String(callRecord?.call_id ?? callRecord?.callId ?? ""),
-    "kaigi call event.callId",
-  );
-  if (kind === "ended") {
-    return {
-      kind: "ended",
-      callId,
-      endedAtMs: normalizeTimestampMs(
-        Number(record.ended_at_ms ?? record.endedAtMs),
-        "kaigi call event.endedAtMs",
-      ),
-    };
-  }
-  if (kind === "roster_updated") {
-    return {
-      kind: "roster_updated",
-      callId,
-    };
-  }
-  return null;
-};
-
-const extractTransactionMetadata = (
-  transaction: Record<string, unknown>,
-): Record<string, unknown> | null => {
-  const directCandidates = [
-    transaction.metadata,
-    transaction.transaction_metadata,
-    transaction.tx_metadata,
-  ];
-  for (const candidate of directCandidates) {
-    const record = parseJsonRecord(candidate);
-    if (record) {
-      return record;
-    }
-  }
-
-  const nestedCandidates = [
-    parseJsonRecord(transaction.transaction),
-    parseJsonRecord(transaction.tx),
-    parseJsonRecord(transaction.payload),
-    parseJsonRecord(transaction.record),
-  ];
-  for (const candidate of nestedCandidates) {
-    if (!candidate) {
-      continue;
-    }
-    const nestedMetadata = [
-      candidate.metadata,
-      candidate.transaction_metadata,
-      candidate.tx_metadata,
-    ];
-    for (const nestedCandidate of nestedMetadata) {
-      const record = parseJsonRecord(nestedCandidate);
-      if (record) {
-        return record;
-      }
-    }
-  }
-
-  return null;
-};
-
-const parseKaigiChainSignalMetadata = (
-  transaction: Record<string, unknown>,
-): KaigiChainSignalMetadata | null => {
-  const metadata = extractTransactionMetadata(transaction);
-  if (!metadata) {
-    return null;
-  }
-  const signalRecord = parseJsonRecord(metadata.kaigi_signal) ?? metadata;
-  if (!signalRecord || signalRecord.schema !== KAIGI_CHAIN_SIGNAL_SCHEMA) {
-    return null;
-  }
-  const callId = normalizeKaigiCallId(
-    String(signalRecord.callId ?? signalRecord.call_id ?? ""),
-    "kaigi signal metadata.callId",
-  );
-  const signalKind = String(
-    signalRecord.signalKind ?? signalRecord.signal_kind ?? "",
-  ).trim();
-  if (signalKind !== "answer") {
-    return null;
-  }
-  const hostAccountId = normalizeOptionalCompatAccountIdLiteral(
-    signalRecord.hostAccountId ?? signalRecord.host_account_id,
-    "kaigi signal metadata.hostAccountId",
-  );
-  const participantAccountId = normalizeOptionalCompatAccountIdLiteral(
-    signalRecord.participantAccountId ?? signalRecord.participant_account_id,
-    "kaigi signal metadata.participantAccountId",
-  );
-  const createdAtMs = normalizeTimestampMs(
-    Number(signalRecord.createdAtMs ?? signalRecord.created_at_ms),
-    "kaigi signal metadata.createdAtMs",
-  );
-  const encryptedSignal = parseJsonRecord(
-    signalRecord.encryptedSignal ?? signalRecord.encrypted_signal,
-  );
-  if (!encryptedSignal) {
-    return null;
-  }
-
-  return {
-    schema: KAIGI_CHAIN_SIGNAL_SCHEMA,
-    callId,
-    signalKind: "answer",
-    ...(hostAccountId ? { hostAccountId } : {}),
-    ...(participantAccountId ? { participantAccountId } : {}),
-    createdAtMs,
-    encryptedSignal: encryptedSignal as KaigiSealedBox,
-  };
-};
-
-const parseKaigiChainAnswerPayload = (
-  value: unknown,
-): KaigiChainAnswerPayload => {
-  const record = parseJsonRecord(value);
-  if (!record || record.schema !== KAIGI_CHAIN_ANSWER_SCHEMA) {
-    throw new Error("Kaigi answer payload schema is invalid.");
-  }
-  const callId = normalizeKaigiCallId(
-    String(record.callId ?? record.call_id ?? ""),
-    "kaigi answer payload.callId",
-  );
-  const participantAccountId = normalizeOptionalCompatAccountIdLiteral(
-    record.participantAccountId ?? record.participant_account_id,
-    "kaigi answer payload.participantAccountId",
-  );
-  const participantId = normalizeKaigiParticipantId(
-    String(record.participantId ?? record.participant_id ?? ""),
-  );
-  const participantName = String(
-    record.participantName ?? record.participant_name ?? "",
-  ).trim();
-  if (!participantName) {
-    throw new Error("Kaigi answer payload.participantName is required.");
-  }
-  const createdAtMs = normalizeTimestampMs(
-    Number(record.createdAtMs ?? record.created_at_ms),
-    "kaigi answer payload.createdAtMs",
-  );
-  const descriptionRecord = parseJsonRecord(record.description);
-  const description = normalizeKaigiAnswerDescription({
-    type: String(descriptionRecord?.type ?? ""),
-    sdp: String(descriptionRecord?.sdp ?? ""),
-  });
-  const walletIdentity = String(
-    record.walletIdentity ?? record.wallet_identity ?? "",
-  ).trim();
-  const roomId = String(record.roomId ?? record.room_id ?? "").trim();
-
-  return {
-    schema: KAIGI_CHAIN_ANSWER_SCHEMA,
-    callId,
-    kind: "answer",
-    ...(participantAccountId ? { participantAccountId } : {}),
-    participantId,
-    participantName,
-    ...(walletIdentity ? { walletIdentity } : {}),
-    ...(roomId ? { roomId } : {}),
-    createdAtMs,
-    description,
-  };
-};
-
-const parseKaigiCallMetadata = (
-  value: unknown,
-  callId: string,
-): KaigiCallMetadata => {
-  const record = parseJsonRecord(value);
-  if (!record || record.schema !== KAIGI_CALL_METADATA_SCHEMA) {
-    throw new Error("Kaigi meeting metadata schema is invalid.");
-  }
-  const encryptedOffer = parseJsonRecord(
-    record.encryptedOffer ?? record.encrypted_offer,
-  );
-  if (!encryptedOffer) {
-    throw new Error("Kaigi meeting metadata.encryptedOffer is required.");
-  }
-  return {
-    schema: KAIGI_CALL_METADATA_SCHEMA,
-    meetingCode: normalizeKaigiMeetingCode(
-      record.meetingCode ?? record.meeting_code,
-      callId,
-    ),
-    expiresAtMs: normalizeTimestampMs(
-      Number(record.expiresAtMs ?? record.expires_at_ms),
-      "kaigi meeting metadata.expiresAtMs",
-    ),
-    live: record.live !== false,
-    privacyMode: normalizeKaigiMeetingPrivacy(
-      record.privacyMode ?? record.privacy_mode,
-    ),
-    peerIdentityReveal: normalizeKaigiPeerIdentityReveal(
-      record.peerIdentityReveal ?? record.peer_identity_reveal,
-    ),
-    encryptedOffer: encryptedOffer as KaigiSecretBox,
-  };
+  return value;
 };
 
 const resolveKaigiMeetingView = (
-  callPayload: KaigiCallView,
+  callPayload: FirstReleaseKaigiCallView,
   callId: string,
   inviteSecretBase64Url: string,
+  networkPrefix: number,
 ): KaigiMeetingView => {
-  const callMetadata = parseKaigiCallMetadata(
-    parseJsonRecord(callPayload.metadata)?.kaigi_call ??
-      parseJsonRecord(callPayload.metadata)?.kaigiCall,
-    callId,
-  );
-  const offerPayload = decryptKaigiPayloadWithSecret<KaigiCallOfferPayload>(
-    callMetadata.encryptedOffer,
-    inviteSecretBase64Url,
-  );
-  if (offerPayload.schema !== KAIGI_CALL_OFFER_SCHEMA) {
-    throw new Error("Kaigi offer metadata schema is invalid.");
+  const normalizedCallId = normalizeKaigiCallId(callId, "callId");
+  if (callPayload.call_id !== normalizedCallId) {
+    throw new Error("Kaigi call response is cross-wired.");
   }
-  const scheduledStartValue = callPayload.scheduled_start_ms;
-  const createdAtValue = callPayload.created_at_ms;
-  const endedAtValue = callPayload.ended_at_ms;
-  const statusValue = String(callPayload.status ?? "").toLowerCase();
-  const ended =
-    Number(endedAtValue) > 0 ||
-    statusValue.includes("ended") ||
-    statusValue.includes("inactive");
+  const scheduledStartMs = normalizeTimestampMs(
+    callPayload.scheduled_start_ms,
+    "kaigi call.scheduled_start_ms",
+  );
+  const createdAtMs = normalizeTimestampMs(
+    callPayload.created_at_ms,
+    "kaigi call.created_at_ms",
+  );
+  const live = callPayload.status === "active";
+  const privacyMode = requireFirstReleaseKaigiMeetingPrivacy(
+    callPayload.privacy_mode,
+    "kaigi call.privacy_mode",
+  );
+  const callMetadata = normalizeFirstReleaseKaigiCallMetadata(
+    callPayload.metadata.kaigi_call,
+    {
+      callId: normalizedCallId,
+      privacyMode,
+      scheduledStartMs,
+      live,
+    },
+  );
+  if (typeof callPayload.host_account_id !== "string") {
+    throw new Error(
+      "Transparent Kaigi call response is missing its host account.",
+    );
+  }
+  const expectedHostAccountId = normalizeCanonicalAccountIdLiteral(
+    callPayload.host_account_id,
+    "kaigi call.host_account_id",
+    networkPrefix,
+  );
+  const offerPayload = normalizeFirstReleaseKaigiCallOfferPayload(
+    decryptKaigiPayloadWithSecret<unknown>(
+      callMetadata.encryptedOffer,
+      inviteSecretBase64Url,
+    ),
+    {
+      callId: normalizedCallId,
+      privacyMode,
+      hostAccountId: expectedHostAccountId,
+      createdAtMs,
+      networkPrefix,
+    },
+  );
+  const endedAtMs =
+    callPayload.status === "ended"
+      ? normalizeTimestampMs(callPayload.ended_at_ms, "kaigi call.ended_at_ms")
+      : undefined;
 
   return {
-    callId: normalizeKaigiCallId(callId, "callId"),
-    meetingCode:
-      callMetadata.meetingCode || normalizeKaigiMeetingCode(null, callId),
-    ...(String(callPayload.title ?? "").trim()
-      ? { title: String(callPayload.title).trim() }
-      : {}),
-    ...(offerPayload.hostAccountId
-      ? {
-          hostAccountId: normalizeCompatAccountIdLiteral(
-            offerPayload.hostAccountId,
-            "hostAccountId",
-          ),
-        }
-      : {}),
-    ...(offerPayload.hostDisplayName
-      ? { hostDisplayName: offerPayload.hostDisplayName }
-      : {}),
-    ...(offerPayload.hostParticipantId
-      ? { hostParticipantId: offerPayload.hostParticipantId }
-      : {}),
-    hostKaigiPublicKeyBase64Url: normalizeBase64UrlString(
-      offerPayload.hostKaigiPublicKeyBase64Url,
-      "hostKaigiPublicKeyBase64Url",
-    ),
-    scheduledStartMs:
-      Number.isFinite(Number(scheduledStartValue)) &&
-      Number(scheduledStartValue) > 0
-        ? Number(scheduledStartValue)
-        : offerPayload.createdAtMs,
+    callId: normalizedCallId,
+    meetingCode: callMetadata.meetingCode,
+    ...(callPayload.title ? { title: callPayload.title } : {}),
+    hostAccountId: offerPayload.hostAccountId,
+    hostDisplayName: offerPayload.hostDisplayName,
+    hostParticipantId: offerPayload.hostParticipantId,
+    hostKaigiPublicKeyBase64Url: offerPayload.hostKaigiPublicKeyBase64Url,
+    scheduledStartMs,
     expiresAtMs: callMetadata.expiresAtMs,
-    createdAtMs: normalizeTimestampMs(
-      Number(createdAtValue ?? offerPayload.createdAtMs),
-      "kaigi record.createdAtMs",
-    ),
-    live: Boolean(callMetadata.live),
-    ended,
-    ...(Number.isFinite(Number(endedAtValue)) && Number(endedAtValue) > 0
-      ? { endedAtMs: Number(endedAtValue) }
-      : {}),
+    createdAtMs,
+    live,
+    ended: callPayload.status === "ended",
+    ...(endedAtMs === undefined ? {} : { endedAtMs }),
     privacyMode: callMetadata.privacyMode,
-    peerIdentityReveal: callMetadata.peerIdentityReveal,
-    rosterRootHex: normalizeKaigiRosterRootHex(
-      callPayload.roster_root_hex,
-      "kaigi call.roster_root_hex",
-    ),
-    offerDescription: normalizeKaigiOfferDescription(offerPayload.description),
+    offerDescription: offerPayload.description,
   };
 };
 
@@ -4472,6 +3301,90 @@ const ensureObjectResponse = (
     throw new Error(`${label} response must be a JSON object.`);
   }
   return payload as Record<string, unknown>;
+};
+
+const APPLICATION_JSON_CONTENT_TYPE = /^application\/json(?:\s*;|$)/iu;
+const BINARY_ERROR_CONTENT_TYPE =
+  /^(?:application\/x-norito|application\/octet-stream)(?:\s*;|$)/iu;
+const API_ERROR_DETAIL_MAX_BYTES = 64 * 1024;
+
+const decodeCanonicalUtf8ResponseBytes = (
+  bytes: Buffer,
+  label: string,
+): string => {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (error) {
+    throw new Error(`${label} is not valid UTF-8.`, { cause: error });
+  }
+  if (!Buffer.from(text, "utf8").equals(bytes)) {
+    throw new Error(`${label} is not canonical UTF-8.`);
+  }
+  return text;
+};
+
+const readBoundedApiErrorDetail = async (
+  response: Pick<Response, "headers" | "arrayBuffer">,
+): Promise<string> => {
+  const rejectCode = extractApiErrorDetail(
+    response.headers.get("x-iroha-reject-code") ?? "",
+  );
+  if (rejectCode) {
+    return rejectCode;
+  }
+  const contentType = response.headers.get("content-type")?.trim() ?? "";
+  if (BINARY_ERROR_CONTENT_TYPE.test(contentType)) {
+    return "";
+  }
+  try {
+    const bytes = await readBoundedResponseBytes(response, {
+      label: "Torii error detail",
+      maximumBytes: API_ERROR_DETAIL_MAX_BYTES,
+      allowEmpty: true,
+    });
+    if (bytes.length === 0) {
+      return "";
+    }
+    const text = decodeCanonicalUtf8ResponseBytes(bytes, "Torii error detail");
+    if (APPLICATION_JSON_CONTENT_TYPE.test(contentType)) {
+      return extractApiErrorDetail(parseStrictJson(text, "Torii error detail"));
+    }
+    return extractApiErrorDetail(text);
+  } catch {
+    return "";
+  }
+};
+
+const readBoundedJsonObjectResponse = async (
+  response: Pick<Response, "headers" | "arrayBuffer">,
+  label: string,
+): Promise<Record<string, unknown>> =>
+  ensureObjectResponse(
+    await readBoundedJsonResponse(response, {
+      label,
+      maximumBytes: MAX_TORII_JSON_RESPONSE_BYTES,
+      requireApplicationJson: true,
+    }),
+    label,
+  );
+
+const readBoundedExactJsonTextResponse = async (
+  response: Pick<Response, "headers" | "arrayBuffer">,
+  label: string,
+  maximumBytes = MAX_TORII_JSON_RESPONSE_BYTES,
+): Promise<string> => {
+  const contentType = response.headers.get("content-type")?.trim() ?? "";
+  if (!APPLICATION_JSON_CONTENT_TYPE.test(contentType)) {
+    throw new Error(`${label} did not return application/json.`);
+  }
+  const bytes = await readBoundedResponseBytes(response, {
+    label: `${label} JSON`,
+    maximumBytes,
+  });
+  const text = decodeCanonicalUtf8ResponseBytes(bytes, `${label} JSON body`);
+  parseStrictJson(text, label);
+  return text;
 };
 
 const fetchGetResponse = async (
@@ -4508,8 +3421,641 @@ const fetchJson = async (
   if (!response.ok) {
     throw await createApiRequestError(response, label);
   }
-  const payload = (await response.json()) as unknown;
-  return ensureObjectResponse(payload, label);
+  return readBoundedJsonObjectResponse(response, label);
+};
+
+type FirstReleaseCanonicalAuth = Readonly<{
+  accountId: string;
+  networkId: NetworkId;
+  privateKey: Buffer;
+}>;
+
+const canonicalToriiJsonRequest = async (input: {
+  toriiUrl: string;
+  path: string;
+  method: "GET" | "POST";
+  label: string;
+  auth: FirstReleaseCanonicalAuth;
+  query?: URLSearchParams;
+  body?: unknown;
+  signal?: AbortSignal;
+}): Promise<Response> => {
+  const toriiUrl = normalizeBaseUrl(input.toriiUrl);
+  if (!input.path.startsWith("/") || input.path.startsWith("//")) {
+    throw new Error(`${input.label} path is invalid.`);
+  }
+  const request = await buildCanonicalJsonRequest({
+    accountId: input.auth.accountId,
+    networkId: input.auth.networkId,
+    privateKey: input.auth.privateKey,
+    method: input.method,
+    path: input.path,
+    baseUrl: toriiUrl,
+    query: input.query,
+    ...(input.body === undefined ? {} : { body: input.body }),
+  });
+  const query = input.query?.toString() ?? "";
+  return nodeFetch(`${toriiUrl}${input.path}${query ? `?${query}` : ""}`, {
+    method: request.method,
+    headers: request.headers,
+    ...(input.method === "POST" ? { body: request.body } : {}),
+    redirect: "error",
+    signal: input.signal,
+  });
+};
+
+const fetchFirstReleaseHealth = async (
+  toriiUrl: string,
+  signal?: AbortSignal,
+): Promise<HealthResponse> => {
+  const response = await fetchGetResponse(
+    buildNexusEndpoint(toriiUrl, "/v1/health"),
+    "Torii health",
+    undefined,
+    signal,
+  );
+  if ([404, 503].includes(response.status)) return null;
+  if (!response.ok) throw await createApiRequestError(response, "Torii health");
+  const payload = await readBoundedJsonObjectResponse(response, "Torii health");
+  assertExactObjectKeys(payload, ["status"], "Torii health");
+  return {
+    status: requireCanonicalResponseText(payload.status, "Torii health.status"),
+  };
+};
+
+const fetchFirstReleaseConfiguration = async (
+  toriiUrl: string,
+): Promise<Record<string, unknown> | null> => {
+  const response = await fetchGetResponse(
+    buildNexusEndpoint(toriiUrl, "/v1/configuration"),
+    "Torii configuration",
+  );
+  if ([404, 503].includes(response.status)) return null;
+  if (!response.ok) {
+    throw await createApiRequestError(response, "Torii configuration");
+  }
+  return readBoundedJsonObjectResponse(response, "Torii configuration");
+};
+
+const readExplorerDurationMs = (
+  value: unknown,
+  label: string,
+): number | null => {
+  if (value === null) return null;
+  if (!isPlainRecord(value)) {
+    throw new Error(`${label} must be null or an exact duration object.`);
+  }
+  assertExactObjectKeys(value, ["ms"], label);
+  return requireExactJsonUnsignedInteger(value.ms, `${label}.ms`);
+};
+
+const normalizeFirstReleaseExplorerMetrics = (
+  payload: Record<string, unknown>,
+): ExplorerMetricsResponse => {
+  assertExactObjectKeys(
+    payload,
+    [
+      "peers",
+      "domains",
+      "accounts",
+      "assets",
+      "transactions_accepted",
+      "transactions_rejected",
+      "block",
+      "block_created_at",
+      "finalized_block",
+      "avg_commit_time",
+      "avg_block_time",
+    ],
+    "Explorer metrics",
+  );
+  const blockCreatedAt =
+    payload.block_created_at === null
+      ? null
+      : requireCanonicalResponseText(
+          payload.block_created_at,
+          "Explorer metrics.block_created_at",
+          64,
+        );
+  if (
+    blockCreatedAt !== null &&
+    new Date(blockCreatedAt).toISOString() !== blockCreatedAt
+  ) {
+    throw new Error(
+      "Explorer metrics.block_created_at must be a canonical ISO timestamp.",
+    );
+  }
+  return {
+    peers: requireExactJsonUnsignedInteger(
+      payload.peers,
+      "Explorer metrics.peers",
+    ),
+    domains: requireExactJsonUnsignedInteger(
+      payload.domains,
+      "Explorer metrics.domains",
+    ),
+    accounts: requireExactJsonUnsignedInteger(
+      payload.accounts,
+      "Explorer metrics.accounts",
+    ),
+    assets: requireExactJsonUnsignedInteger(
+      payload.assets,
+      "Explorer metrics.assets",
+    ),
+    transactionsAccepted: requireExactJsonUnsignedInteger(
+      payload.transactions_accepted,
+      "Explorer metrics.transactions_accepted",
+    ),
+    transactionsRejected: requireExactJsonUnsignedInteger(
+      payload.transactions_rejected,
+      "Explorer metrics.transactions_rejected",
+    ),
+    blockHeight: requireExactJsonUnsignedInteger(
+      payload.block,
+      "Explorer metrics.block",
+    ),
+    blockCreatedAt,
+    finalizedBlockHeight: requireExactJsonUnsignedInteger(
+      payload.finalized_block,
+      "Explorer metrics.finalized_block",
+    ),
+    averageCommitTimeMs: readExplorerDurationMs(
+      payload.avg_commit_time,
+      "Explorer metrics.avg_commit_time",
+    ),
+    averageBlockTimeMs: readExplorerDurationMs(
+      payload.avg_block_time,
+      "Explorer metrics.avg_block_time",
+    ),
+  };
+};
+
+const fetchFirstReleaseExplorerMetrics = async (
+  toriiUrl: string,
+  signal?: AbortSignal,
+): Promise<ExplorerMetricsResponse | null> => {
+  const response = await fetchGetResponse(
+    buildNexusEndpoint(toriiUrl, "/v1/explorer/metrics"),
+    "Explorer metrics",
+    undefined,
+    signal,
+  );
+  if ([403, 404, 503].includes(response.status)) return null;
+  if (!response.ok) {
+    throw await createApiRequestError(response, "Explorer metrics");
+  }
+  return normalizeFirstReleaseExplorerMetrics(
+    await readBoundedJsonObjectResponse(response, "Explorer metrics"),
+  );
+};
+
+const fetchFirstReleaseExplorerAccountQr = (
+  toriiUrl: string,
+  accountId: string,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> =>
+  fetchJson(
+    buildNexusEndpoint(
+      toriiUrl,
+      `/v1/explorer/accounts/${encodeURIComponent(accountId)}/qr`,
+    ),
+    "Explorer account QR",
+    undefined,
+    signal,
+  );
+
+const fetchFirstReleaseAliasResolution = async (
+  toriiUrl: string,
+  alias: string,
+): Promise<Record<string, unknown> | null> => {
+  const canonicalAlias = requireCanonicalResponseText(alias, "Account alias");
+  const response = await nodeFetch(
+    buildNexusEndpoint(toriiUrl, "/v1/aliases/resolve"),
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ alias: canonicalAlias }),
+      redirect: "error",
+    },
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw await createApiRequestError(response, "Account alias resolution");
+  }
+  const payload = await readBoundedJsonObjectResponse(
+    response,
+    "Account alias resolution",
+  );
+  assertRequiredAndOptionalObjectKeys(
+    payload,
+    ["alias", "account_id"],
+    ["index", "source"],
+    "Account alias resolution",
+  );
+  if (payload.alias !== canonicalAlias) {
+    throw new Error(
+      "Account alias resolution did not bind the requested alias.",
+    );
+  }
+  requireCanonicalResponseText(
+    payload.account_id,
+    "Account alias resolution.account_id",
+  );
+  if (payload.index !== undefined) {
+    requireExactJsonUnsignedInteger(
+      payload.index,
+      "Account alias resolution.index",
+    );
+  }
+  if (payload.source !== undefined) {
+    requireCanonicalResponseText(
+      payload.source,
+      "Account alias resolution.source",
+      256,
+    );
+  }
+  return payload;
+};
+
+const fetchFirstReleaseTransactionStatus = async (
+  toriiUrl: string,
+  hashHex: string,
+  options: {
+    scope?: "local" | "global";
+    signal?: AbortSignal;
+  } = {},
+): Promise<ToriiPipelineTransactionStatus | null> => {
+  if (!/^[0-9a-f]{64}$/u.test(hashHex)) {
+    throw new Error("Transaction hash must be exactly 32 lowercase hex bytes.");
+  }
+  const scope = options.scope ?? "local";
+  const response = await fetchGetResponse(
+    buildNexusEndpoint(toriiUrl, "/v1/pipeline/transactions/status", {
+      hash: hashHex,
+      scope,
+    }),
+    "Transaction status",
+    undefined,
+    options.signal,
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw await createApiRequestError(response, "Transaction status");
+  }
+  const payload = await readBoundedJsonObjectResponse(
+    response,
+    "Transaction status",
+  );
+  assertExactObjectKeys(
+    payload,
+    ["hash", "status", "scope", "resolved_from"],
+    "Transaction status",
+  );
+  if (payload.hash !== hashHex || payload.scope !== scope) {
+    throw new Error(
+      "Transaction status did not bind the requested hash and scope.",
+    );
+  }
+  if (
+    payload.resolved_from !== "cache" &&
+    payload.resolved_from !== "queue" &&
+    payload.resolved_from !== "state"
+  ) {
+    throw new Error("Transaction status resolved_from is unsupported.");
+  }
+  if (!isPlainRecord(payload.status)) {
+    throw new Error("Transaction status.status must be an object.");
+  }
+  assertRequiredAndOptionalObjectKeys(
+    payload.status,
+    ["kind"],
+    ["block_height"],
+    "Transaction status.status",
+  );
+  if (
+    ![
+      "Queued",
+      "Approved",
+      "Committed",
+      "Applied",
+      "Rejected",
+      "Expired",
+    ].includes(String(payload.status.kind))
+  ) {
+    throw new Error("Transaction status kind is unsupported.");
+  }
+  if (payload.status.block_height !== undefined) {
+    requireExactJsonUnsignedInteger(
+      payload.status.block_height,
+      "Transaction status.status.block_height",
+      { allowZero: false },
+    );
+  }
+  return payload as unknown as ToriiPipelineTransactionStatus;
+};
+
+const normalizeFirstReleaseTransactionPage = (
+  payload: Record<string, unknown>,
+  networkPrefix: number,
+  maximumItems: number,
+): TransactionsResponse => {
+  assertExactObjectKeys(
+    payload,
+    ["items", "total", "has_more", "count_mode"],
+    "Account transactions",
+  );
+  if (typeof payload.has_more !== "boolean") {
+    throw new Error("Account transactions.has_more must be a boolean.");
+  }
+  if (payload.count_mode !== "exact") {
+    throw new Error('Account transactions.count_mode must be "exact".');
+  }
+  if (!Array.isArray(payload.items) || payload.items.length > maximumItems) {
+    throw new Error(
+      "Account transactions.items exceeds the requested page limit.",
+    );
+  }
+  const items = payload.items.map((value, index) => {
+    const label = `Account transactions.items[${index}]`;
+    if (!isPlainRecord(value)) throw new Error(`${label} must be an object.`);
+    assertRequiredAndOptionalObjectKeys(
+      value,
+      ["entrypoint_hash", "result_ok"],
+      ["authority", "timestamp_ms", "memo"],
+      label,
+    );
+    const entrypointHash = requireCanonicalResponseText(
+      value.entrypoint_hash,
+      `${label}.entrypoint_hash`,
+      256,
+    );
+    if (typeof value.result_ok !== "boolean") {
+      throw new Error(`${label}.result_ok must be a boolean.`);
+    }
+    const normalized: TransactionsResponse["items"][number] = {
+      entrypoint_hash: entrypointHash,
+      result_ok: value.result_ok,
+    };
+    if (value.authority !== undefined) {
+      normalized.authority = normalizeCanonicalAccountIdLiteral(
+        requireCanonicalResponseText(
+          value.authority,
+          `${label}.authority`,
+          1_024,
+        ),
+        `${label}.authority`,
+        networkPrefix,
+      );
+    }
+    if (value.timestamp_ms !== undefined) {
+      normalized.timestamp_ms = requireExactJsonUnsignedInteger(
+        value.timestamp_ms,
+        `${label}.timestamp_ms`,
+      );
+    }
+    if (value.memo !== undefined) {
+      normalized.memo = requireCanonicalResponseText(
+        value.memo,
+        `${label}.memo`,
+        16 * 1_024,
+      );
+    }
+    return normalized;
+  });
+  const total = requireExactJsonUnsignedInteger(
+    payload.total,
+    "Account transactions.total",
+  );
+  if (total < items.length) {
+    throw new Error(
+      "Account transactions.total cannot be less than items.length.",
+    );
+  }
+  return { items, total };
+};
+
+const fetchFirstReleaseAccountTransactions = async (input: {
+  toriiUrl: string;
+  accountId: string;
+  networkPrefix: number;
+  limit: number;
+  offset?: number;
+}): Promise<TransactionsResponse> => {
+  const pageRequest = requireFirstReleasePagination(input, {
+    defaultLimit: 20,
+    label: "Account transactions",
+  });
+  const endpoint = new URL(
+    `${normalizeBaseUrl(input.toriiUrl)}/v1/accounts/${encodeURIComponent(input.accountId)}/transactions`,
+  );
+  endpoint.searchParams.set("limit", String(pageRequest.limit));
+  endpoint.searchParams.set("offset", String(pageRequest.offset));
+  endpoint.searchParams.set("count_mode", "exact");
+  const response = await fetchGetResponse(
+    endpoint.toString(),
+    "Account transactions",
+  );
+  if (!response.ok) {
+    throw await createApiRequestError(response, "Account transactions");
+  }
+  const payload = await readBoundedJsonObjectResponse(
+    response,
+    "Account transactions",
+  );
+  const page = normalizeFirstReleaseTransactionPage(
+    payload,
+    input.networkPrefix,
+    pageRequest.limit,
+  );
+  assertFirstReleasePageWindow(page, pageRequest, "Account transactions");
+  assertFirstReleaseHasMore(
+    payload.has_more,
+    page,
+    pageRequest,
+    "Account transactions",
+  );
+  return page;
+};
+
+const fetchFirstReleaseAccountPermissions = async (input: {
+  toriiUrl: string;
+  accountId: string;
+  limit: number;
+  offset?: number;
+}): Promise<AccountPermissionsResponse> => {
+  const pageRequest = requireFirstReleasePagination(input, {
+    defaultLimit: 200,
+    label: "Account permissions",
+  });
+  const endpoint = new URL(
+    `${normalizeBaseUrl(input.toriiUrl)}/v1/accounts/${encodeURIComponent(input.accountId)}/permissions`,
+  );
+  endpoint.searchParams.set("limit", String(pageRequest.limit));
+  endpoint.searchParams.set("offset", String(pageRequest.offset));
+  endpoint.searchParams.set("count_mode", "exact");
+  const response = await fetchGetResponse(
+    endpoint.toString(),
+    "Account permissions",
+  );
+  if (!response.ok) {
+    throw await createApiRequestError(response, "Account permissions");
+  }
+  const payload = await readBoundedJsonObjectResponse(
+    response,
+    "Account permissions",
+  );
+  assertExactObjectKeys(
+    payload,
+    ["items", "total", "has_more", "count_mode"],
+    "Account permissions",
+  );
+  if (typeof payload.has_more !== "boolean") {
+    throw new Error("Account permissions.has_more must be a boolean.");
+  }
+  if (payload.count_mode !== "exact") {
+    throw new Error('Account permissions.count_mode must be "exact".');
+  }
+  if (
+    !Array.isArray(payload.items) ||
+    payload.items.length > pageRequest.limit
+  ) {
+    throw new Error(
+      "Account permissions.items exceeds the requested page limit.",
+    );
+  }
+  const items = payload.items.map((value, index) => {
+    const label = `Account permissions.items[${index}]`;
+    if (!isPlainRecord(value)) throw new Error(`${label} must be an object.`);
+    assertExactObjectKeys(value, ["name", "payload"], label);
+    const name = requireCanonicalResponseText(value.name, `${label}.name`, 512);
+    if (value.payload !== null && !isPlainRecord(value.payload)) {
+      throw new Error(`${label}.payload must be an object or null.`);
+    }
+    return { name, payload: value.payload as Record<string, unknown> | null };
+  });
+  const total = requireExactJsonUnsignedInteger(
+    payload.total,
+    "Account permissions.total",
+  );
+  if (total < items.length) {
+    throw new Error(
+      "Account permissions.total cannot be less than items.length.",
+    );
+  }
+  const page = { items, total };
+  assertFirstReleasePageWindow(page, pageRequest, "Account permissions");
+  assertFirstReleaseHasMore(
+    payload.has_more,
+    page,
+    pageRequest,
+    "Account permissions",
+  );
+  return page;
+};
+
+const fetchFirstReleaseGovernanceUnlockStats = async (input: {
+  toriiUrl: string;
+  auth: FirstReleaseCanonicalAuth;
+}): Promise<Record<string, unknown>> => {
+  const response = await canonicalToriiJsonRequest({
+    toriiUrl: input.toriiUrl,
+    path: "/v1/gov/unlocks/stats",
+    method: "GET",
+    label: "Governance unlock statistics",
+    auth: input.auth,
+  });
+  if (!response.ok) {
+    throw await createApiRequestError(response, "Governance unlock statistics");
+  }
+  return readBoundedJsonObjectResponse(
+    response,
+    "Governance unlock statistics",
+  );
+};
+
+const fetchFirstReleaseAuthorityFeeQuote = async (input: {
+  toriiUrl: string;
+  networkPrefix: number;
+  payload: object;
+  auth: FirstReleaseCanonicalAuth;
+}): Promise<FirstReleaseAuthorityFeeQuoteResponse> => {
+  const response = await canonicalToriiJsonRequest({
+    toriiUrl: input.toriiUrl,
+    path: "/v1/fees/quote",
+    method: "POST",
+    label: "Transaction fee quote",
+    auth: input.auth,
+    body: { payload: input.payload },
+  });
+  if (response.status !== 200) {
+    throw await createApiRequestError(response, "Transaction fee quote");
+  }
+  return parseFirstReleaseAuthorityFeeQuoteResponse(
+    await readBoundedExactJsonTextResponse(
+      response,
+      "Transaction fee quote",
+      FIRST_RELEASE_FEE_QUOTE_RESPONSE_MAX_BYTES,
+    ),
+    {
+      expectedAuthority: input.auth.accountId,
+      networkPrefix: input.networkPrefix,
+    },
+  );
+};
+
+const fetchFirstReleaseKaigiCall = async (
+  toriiUrl: string,
+  callId: string,
+  signal?: AbortSignal,
+): Promise<FirstReleaseKaigiCallView | null> => {
+  const response = await fetchGetResponse(
+    buildNexusEndpoint(
+      toriiUrl,
+      `/v1/kaigi/calls/${encodeURIComponent(callId)}`,
+    ),
+    "Kaigi call",
+    undefined,
+    signal,
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) throw await createApiRequestError(response, "Kaigi call");
+  return normalizeFirstReleaseKaigiCall(
+    await readBoundedJsonObjectResponse(response, "Kaigi call"),
+    callId,
+  );
+};
+
+const fetchFirstReleaseKaigiSignals = async (input: {
+  toriiUrl: string;
+  callId: string;
+  auth: FirstReleaseCanonicalAuth;
+  afterTimestampMs?: number;
+  limit: number;
+}) => {
+  const query = new URLSearchParams();
+  if (input.afterTimestampMs !== undefined) {
+    query.set("after_timestamp_ms", String(input.afterTimestampMs));
+  }
+  query.set("limit", String(input.limit));
+  const path = `/v1/kaigi/calls/${encodeURIComponent(input.callId)}/signals`;
+  const response = await canonicalToriiJsonRequest({
+    toriiUrl: input.toriiUrl,
+    path,
+    method: "GET",
+    label: "Kaigi call signals",
+    auth: input.auth,
+    query,
+  });
+  if (!response.ok) {
+    throw await createApiRequestError(response, "Kaigi call signals");
+  }
+  return normalizeFirstReleaseKaigiCallSignals(
+    await readBoundedJsonObjectResponse(response, "Kaigi call signals"),
+    input.callId,
+  );
 };
 
 const fetchNexusLifecycle = async (
@@ -4525,7 +4071,9 @@ const fetchNexusLifecycle = async (
   if (!response.ok) {
     throw await createApiRequestError(response, "Nexus lifecycle");
   }
-  return parseNexusLifecycleJson(await response.text());
+  return parseNexusLifecycleJson(
+    await readBoundedExactJsonTextResponse(response, "Nexus lifecycle"),
+  );
 };
 
 const NETWORK_STATS_REQUEST_TIMEOUT_MS = 3_500;
@@ -4554,23 +4102,15 @@ const withNetworkStatsTimeout = async <T>(
 };
 
 const fetchRuntimeStatusSnapshot = async (
-  client: ToriiClient,
   toriiUrlRaw: string,
   signal: AbortSignal,
 ): Promise<unknown> => {
-  try {
-    return await fetchJson(
-      buildNexusEndpoint(toriiUrlRaw, "/status"),
-      "Runtime status telemetry",
-      undefined,
-      signal,
-    );
-  } catch (error) {
-    if (signal.aborted) {
-      throw error;
-    }
-    return client.getStatusSnapshot({ signal });
-  }
+  return fetchJson(
+    buildNexusEndpoint(toriiUrlRaw, "/status"),
+    "Runtime status telemetry",
+    undefined,
+    signal,
+  );
 };
 
 const postJson = async (
@@ -4591,16 +4131,22 @@ const postJson = async (
   if (!response.ok) {
     throw await createApiRequestError(response, label);
   }
-  const payload = (await response.json()) as unknown;
-  return ensureObjectResponse(payload, label);
+  return readBoundedJsonObjectResponse(response, label);
 };
 
-const parseJsonIfAvailable = async (response: Response): Promise<unknown> => {
+const parseJsonIfAvailable = async (
+  response: Response,
+  label: string,
+): Promise<unknown> => {
   const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.toLowerCase().includes("json")) {
+  if (!APPLICATION_JSON_CONTENT_TYPE.test(contentType.trim())) {
     return null;
   }
-  return await response.json();
+  return readBoundedJsonResponse(response, {
+    label,
+    maximumBytes: MAX_TORII_JSON_RESPONSE_BYTES,
+    requireApplicationJson: true,
+  });
 };
 
 const fetchChainMetadata = async (
@@ -4614,7 +4160,7 @@ const fetchChainMetadata = async (
   if (!response.ok) {
     throw await createApiRequestError(response, "Chain metadata");
   }
-  const payload = await parseJsonIfAvailable(response);
+  const payload = await parseJsonIfAvailable(response, "Chain metadata");
   if (payload === null) {
     throw new Error("Chain metadata did not return JSON.");
   }
@@ -4622,14 +4168,34 @@ const fetchChainMetadata = async (
 };
 
 const normalizeOptionalAccountNetworkPrefix = (value: unknown) => {
-  if (value === undefined || value === null || value === "") {
+  if (value === undefined) {
     return undefined;
   }
-  const normalized = Number(value);
-  if (!Number.isInteger(normalized) || normalized < 0 || normalized > 0x3fff) {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > 0x3fff
+  ) {
     throw new Error("networkPrefix must be an integer between 0 and 16383.");
   }
-  return normalized;
+  return value;
+};
+
+const normalizeRequiredChainId = (value: unknown): string => {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    value.trim() !== value ||
+    value.length > 128 ||
+    Array.from(value).some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 0x1f || code === 0x7f;
+    })
+  ) {
+    throw new Error("chainId must be canonical non-empty text.");
+  }
+  return value;
 };
 
 const assertWriteConnectionMatchesEndpoint = async (input: {
@@ -4639,10 +4205,7 @@ const assertWriteConnectionMatchesEndpoint = async (input: {
   feature?: EndpointFeature;
   operation?: string;
 }) => {
-  const configuredChainId = String(input.chainId ?? "").trim();
-  if (!configuredChainId) {
-    throw new Error("chainId is required.");
-  }
+  const configuredChainId = normalizeRequiredChainId(input.chainId);
   const configuredNetworkPrefix = normalizeOptionalAccountNetworkPrefix(
     input.networkPrefix,
   );
@@ -4684,10 +4247,7 @@ const assertFaucetChallengeConnectionAvailable = async (input: {
   chainId: string;
   networkPrefix: number;
 }) => {
-  const configuredChainId = String(input.chainId ?? "").trim();
-  if (!configuredChainId) {
-    throw new Error("chainId is required.");
-  }
+  const configuredChainId = normalizeRequiredChainId(input.chainId);
   const configuredNetworkPrefix = normalizeOptionalAccountNetworkPrefix(
     input.networkPrefix,
   );
@@ -4721,7 +4281,7 @@ const inspectEndpointDerivedScope = async (
 const tryNormalizeCanonicalAccountIdLiteral = (
   value: string,
   label: string,
-  networkPrefix?: number,
+  networkPrefix: number,
 ) => {
   try {
     return normalizeCanonicalAccountIdLiteral(value, label, networkPrefix);
@@ -4733,7 +4293,7 @@ const tryNormalizeCanonicalAccountIdLiteral = (
 const normalizeFirstAccountIdCandidate = (
   candidates: string[],
   label: string,
-  networkPrefix?: number,
+  networkPrefix: number,
 ) => {
   let lastError: unknown = null;
   for (const candidate of candidates) {
@@ -4756,13 +4316,13 @@ const normalizeFirstAccountIdCandidate = (
 const resolveAccountAliasSelector = async (
   input: ResolveAccountAliasInput,
 ): Promise<AccountAliasResolutionResponse> => {
-  const selector = trimString(input.alias);
-  if (!selector) {
-    throw new Error("alias must be a non-empty string.");
-  }
+  const selector = requireFirstReleaseInputText(input.alias, "alias", 1_024);
   const networkPrefix = normalizeOptionalAccountNetworkPrefix(
     input.networkPrefix,
   );
+  if (networkPrefix === undefined) {
+    throw new Error("networkPrefix is required to resolve an account alias.");
+  }
   const literalAccountId = tryNormalizeCanonicalAccountIdLiteral(
     selector,
     "accountId",
@@ -4776,82 +4336,52 @@ const resolveAccountAliasSelector = async (
     };
   }
 
-  const client = getClient(input.toriiUrl);
-  let aliasResolveError: unknown = null;
-  try {
-    const resolved = await client.resolveAlias(selector);
-    const resolvedAccountId = trimString(resolved?.account_id);
-    if (resolvedAccountId) {
-      const accountId = normalizeFirstAccountIdCandidate(
-        [resolvedAccountId],
-        "alias account_id",
-        networkPrefix,
-      );
-      const source = trimString(resolved?.source);
-      return {
-        alias: trimString(resolved?.alias) || selector,
-        accountId,
-        resolved: true,
-        ...(source ? { source } : {}),
-      };
-    }
-  } catch (error) {
-    aliasResolveError = error;
+  const resolved = await fetchFirstReleaseAliasResolution(
+    input.toriiUrl,
+    selector,
+  );
+  if (!resolved) {
+    throw new Error(`Account alias "${selector}" was not found.`);
   }
-
-  try {
-    const snapshot = await client.getExplorerAccountQr(selector);
-    const accountId = normalizeFirstAccountIdCandidate(
-      [snapshot.literal, snapshot.canonicalId],
-      "explorer account alias",
-      networkPrefix ?? snapshot.networkPrefix,
-    );
-    return {
-      alias: selector,
-      accountId,
-      resolved: true,
-      source: "explorer_qr",
-    };
-  } catch (qrError) {
-    if (aliasResolveError) {
-      const detail =
-        aliasResolveError instanceof Error
-          ? trimString(aliasResolveError.message)
-          : trimString(aliasResolveError);
-      throw new Error(
-        detail
-          ? `Account alias "${selector}" could not be resolved. ${detail}`
-          : `Account alias "${selector}" could not be resolved.`,
-      );
-    }
-    const detail =
-      qrError instanceof Error
-        ? trimString(qrError.message)
-        : trimString(qrError);
-    throw new Error(
-      detail
-        ? `Account alias "${selector}" could not be resolved. ${detail}`
-        : `Account alias "${selector}" was not found.`,
-    );
-  }
+  const accountId = normalizeFirstAccountIdCandidate(
+    [
+      requireCanonicalResponseText(
+        resolved.account_id,
+        "Account alias resolution.account_id",
+        1_024,
+      ),
+    ],
+    "alias account_id",
+    networkPrefix,
+  );
+  const source = trimString(resolved.source);
+  return {
+    alias: selector,
+    accountId,
+    resolved: true,
+    ...(source ? { source } : {}),
+  };
 };
 
 const fetchKaigiMeetingView = async (
   input: KaigiGetMeetingInput,
 ): Promise<KaigiMeetingView> => {
-  const payload = await getClient(input.toriiUrl).getKaigiCall(
-    normalizeKaigiCallId(input.callId, "callId"),
+  const normalizedCallId = normalizeKaigiCallId(input.callId, "callId");
+  const payload = await fetchFirstReleaseKaigiCall(
+    input.toriiUrl,
+    normalizedCallId,
   );
   if (!payload) {
     throw new Error("Kaigi meeting was not found.");
   }
   return resolveKaigiMeetingView(
     payload,
-    payload.call_id ?? input.callId,
+    normalizedCallId,
     requireKaigiInviteSecretBase64Url(
       input.inviteSecretBase64Url,
       "inviteSecretBase64Url",
     ),
+    input.networkPrefix,
   );
 };
 
@@ -4877,18 +4407,22 @@ const normalizeOptionalPositiveInteger = (
   value: unknown,
   label: string,
 ): number | undefined => {
-  if (value === undefined || value === null || value === "") {
+  if (value === undefined) {
     return undefined;
   }
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`${label} must be a positive integer.`);
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    Object.is(value, -0) ||
+    value <= 0
+  ) {
+    throw new Error(`${label} must be an exact positive safe integer.`);
   }
-  return parsed;
+  return value;
 };
 
 const normalizeFirstReleaseSubscriptionId = (value: unknown): string => {
-  const literal = trimString(value);
+  const literal = requireFirstReleaseInputText(value, "subscriptionId", 1_024);
   const separator = literal.indexOf("$");
   if (
     separator <= 0 ||
@@ -4949,33 +4483,90 @@ const buildSubscriptionActionDraftBody = (
 const listSubscriptionPlansFromTorii = async (
   input: SubscriptionListPlansInput,
 ): Promise<SubscriptionPlanListResponseView> => {
+  const pageRequest = requireFirstReleasePagination(input, {
+    defaultLimit: 100,
+    label: "Subscription plans",
+  });
+  const provider = requireOptionalFirstReleaseFilter(
+    input.provider,
+    "Subscription plans provider",
+  );
   const endpoint = buildNexusEndpoint(
     input.toriiUrl,
     "/v1/subscriptions/plans",
     {
-      provider: trimString(input.provider) || undefined,
-      limit: input.limit,
-      offset: input.offset,
+      provider,
+      limit: pageRequest.limit,
+      offset: pageRequest.offset,
       count_mode: "exact",
     },
   );
   const payload = await fetchJson(endpoint, "Subscription plans");
-  return decodeSubscriptionPlanListResponse(payload);
+  requireFirstReleaseInputArray(
+    payload.items,
+    "Subscription plans response.items",
+    pageRequest.limit,
+  );
+  const page = decodeSubscriptionPlanListResponse(payload);
+  assertFirstReleasePageWindow(page, pageRequest, "Subscription plans");
+  assertFirstReleaseHasMore(
+    payload.has_more,
+    page,
+    pageRequest,
+    "Subscription plans",
+  );
+  return page;
 };
 
 const listSubscriptionsFromTorii = async (
   input: SubscriptionListInput,
 ): Promise<SubscriptionListResponseView> => {
+  const pageRequest = requireFirstReleasePagination(input, {
+    defaultLimit: 100,
+    label: "Subscriptions",
+  });
+  const ownedBy = requireOptionalFirstReleaseFilter(
+    input.ownedBy,
+    "Subscriptions owner",
+  );
+  const provider = requireOptionalFirstReleaseFilter(
+    input.provider,
+    "Subscriptions provider",
+  );
+  const status = requireOptionalFirstReleaseFilter(
+    input.status,
+    "Subscriptions status",
+    32,
+  );
+  if (
+    status !== undefined &&
+    !["active", "paused", "past_due", "canceled", "suspended"].includes(status)
+  ) {
+    throw new Error("Subscriptions status is unsupported.");
+  }
   const endpoint = buildNexusEndpoint(input.toriiUrl, "/v1/subscriptions", {
-    owned_by: trimString(input.ownedBy) || undefined,
-    provider: trimString(input.provider) || undefined,
-    status: trimString(input.status) || undefined,
-    limit: input.limit,
-    offset: input.offset,
+    owned_by: ownedBy,
+    provider,
+    status,
+    limit: pageRequest.limit,
+    offset: pageRequest.offset,
     count_mode: "exact",
   });
   const payload = await fetchJson(endpoint, "Subscriptions");
-  return decodeSubscriptionListResponse(payload);
+  requireFirstReleaseInputArray(
+    payload.items,
+    "Subscriptions response.items",
+    pageRequest.limit,
+  );
+  const page = decodeSubscriptionListResponse(payload);
+  assertFirstReleasePageWindow(page, pageRequest, "Subscriptions");
+  assertFirstReleaseHasMore(
+    payload.has_more,
+    page,
+    pageRequest,
+    "Subscriptions",
+  );
+  return page;
 };
 
 const getSubscriptionFromTorii = async (
@@ -5000,6 +4591,8 @@ const getSubscriptionFromTorii = async (
 
 const SUBSCRIPTION_PLAN_LOOKUP_PAGE_SIZE = 100;
 const SUBSCRIPTION_PLAN_LOOKUP_MAX_ITEMS = 10_000;
+const SUBSCRIPTION_PLAN_LOOKUP_MAX_PAGES =
+  SUBSCRIPTION_PLAN_LOOKUP_MAX_ITEMS / SUBSCRIPTION_PLAN_LOOKUP_PAGE_SIZE;
 const SUBSCRIPTION_STATE_CONFIRM_INTERVAL_MS = 500;
 const SUBSCRIPTION_STATE_CONFIRM_TIMEOUT_MS = 20_000;
 const SUBSCRIPTION_RESOLVED_TIME_CLOCK_SKEW_MS = 30_000;
@@ -5040,12 +4633,22 @@ const getSubscriptionPlanFromTorii = async (
   planId: string,
 ): Promise<Record<string, unknown>> => {
   let offset = 0;
-  while (offset <= SUBSCRIPTION_PLAN_LOOKUP_MAX_ITEMS) {
+  let pages = 0;
+  while (offset < SUBSCRIPTION_PLAN_LOOKUP_MAX_ITEMS) {
+    if (pages >= SUBSCRIPTION_PLAN_LOOKUP_MAX_PAGES) {
+      throw new Error(
+        "Subscription plan lookup exceeded the first-release page bound.",
+      );
+    }
     const page = await listSubscriptionPlansFromTorii({
       toriiUrl,
-      limit: SUBSCRIPTION_PLAN_LOOKUP_PAGE_SIZE,
+      limit: Math.min(
+        SUBSCRIPTION_PLAN_LOOKUP_PAGE_SIZE,
+        SUBSCRIPTION_PLAN_LOOKUP_MAX_ITEMS - offset,
+      ),
       offset,
     });
+    pages += 1;
     const match = page.items.find((item) => item.plan_id === planId);
     if (match) {
       return match.plan;
@@ -5060,7 +4663,7 @@ const getSubscriptionPlanFromTorii = async (
     }
     offset += page.items.length;
   }
-  if (offset > SUBSCRIPTION_PLAN_LOOKUP_MAX_ITEMS) {
+  if (offset >= SUBSCRIPTION_PLAN_LOOKUP_MAX_ITEMS) {
     throw new Error(
       "Subscription plan lookup exceeded the first-release verification bound.",
     );
@@ -5071,11 +4674,11 @@ const getSubscriptionPlanFromTorii = async (
 };
 
 const decodeSubscriptionDraftInstruction = (payloadHex: string): unknown =>
-  noritoDecodeInstruction(Buffer.from(payloadHex, "hex"));
+  decodeFirstReleaseInstruction(Buffer.from(payloadHex, "hex"));
 
 const inspectSubscriptionDraftTriggerAction = (
   encodedAction: string,
-): unknown => inspectSubscriptionTriggerAction(encodedAction);
+): unknown => inspectFirstReleaseSubscriptionTriggerAction(encodedAction);
 
 const confirmSubscriptionResultingState = async (input: {
   toriiUrl: string;
@@ -5136,7 +4739,7 @@ const buildSubscriptionMutationReceipt = (
   draft: SubscriptionCreateMutationDraft | SubscriptionActionMutationDraft,
   submission: {
     hash: string;
-    fee?: TransactionFeeView | null;
+    feeQuote?: TransactionFeeQuoteView;
     finality: TransactionFinalityProof;
   },
   confirmation: {
@@ -5153,7 +4756,7 @@ const buildSubscriptionMutationReceipt = (
   ...(confirmation.reconciliationMessage
     ? { reconciliation_message: confirmation.reconciliationMessage }
     : {}),
-  ...(submission.fee ? { fee: submission.fee } : {}),
+  ...(submission.feeQuote ? { feeQuote: submission.feeQuote } : {}),
   ...(draft.action === "create"
     ? {
         billing_trigger_id: draft.billing_trigger_id,
@@ -5328,9 +4931,10 @@ const createSubscriptionOnTorii = async (
           networkPrefix: writeConnection.networkPrefix,
         };
       },
-      resolveSigningMaterial: ({ accountId }) =>
+      resolveSigningMaterial: ({ accountId, networkPrefix }) =>
         resolveSigningMaterial({
           accountId,
+          networkPrefix,
           operationLabel: "Create subscription",
         }),
       quoteAndSign: async (prepared, signingMaterial) =>
@@ -5351,6 +4955,7 @@ const createSubscriptionOnTorii = async (
         submitSignedTransactionAndWaitForFinalizedBlock(
           input.toriiUrl,
           tx.signedTransaction,
+          { feeQuote: tx.feeQuote },
         ),
       confirmResultingState: (prepared) =>
         confirmSubscriptionResultingState({
@@ -5515,9 +5120,10 @@ const postSubscriptionActionToTorii = async (
           networkPrefix: writeConnection.networkPrefix,
         };
       },
-      resolveSigningMaterial: ({ accountId }) =>
+      resolveSigningMaterial: ({ accountId, networkPrefix }) =>
         resolveSigningMaterial({
           accountId,
+          networkPrefix,
           operationLabel,
         }),
       quoteAndSign: async (prepared, signingMaterial) =>
@@ -5538,6 +5144,7 @@ const postSubscriptionActionToTorii = async (
         submitSignedTransactionAndWaitForFinalizedBlock(
           input.toriiUrl,
           tx.signedTransaction,
+          { feeQuote: tx.feeQuote },
         ),
       confirmResultingState: (prepared) =>
         confirmSubscriptionResultingState({
@@ -5645,114 +5252,21 @@ const reconcileSubscriptionMutationOnTorii = async (
   return reconciled;
 };
 
-const normalizeSoraCloudStorageClass = (
-  value: unknown,
-): SoraCloudStorageClass => {
-  const normalized = trimString(value).toLowerCase();
-  if (normalized === "hot" || normalized === "warm" || normalized === "cold") {
-    return normalized;
-  }
-  throw new Error("storageClass must be hot, warm, or cold.");
-};
-
-const normalizeSoraCloudHfToken = (
-  value: unknown,
-  label: string,
-  maxBytes: number,
-): string => {
-  const normalized = trimString(value);
-  if (!normalized) {
-    throw new Error(`${label} must not be empty.`);
-  }
-  if (Buffer.byteLength(normalized, "utf8") > maxBytes) {
-    throw new Error(`${label} exceeds ${maxBytes} UTF-8 bytes.`);
-  }
-  if (/[\p{Cc}\s]/u.test(normalized)) {
-    throw new Error(
-      `${label} must not contain whitespace or control characters.`,
-    );
-  }
-  return normalized;
-};
-
-const normalizeSoraCloudName = (value: unknown, label: string): string => {
-  const normalized = trimString(value).normalize("NFC");
-  if (!normalized) {
-    throw new Error(`${label} must not be empty.`);
-  }
-  if (/[\s@#$]/u.test(normalized)) {
-    throw new Error(
-      `${label} contains a character forbidden by the Iroha Name contract.`,
-    );
-  }
-  return normalized;
-};
-
-const normalizePositiveU64Number = (value: unknown, label: string): number => {
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error(`${label} must be a positive safe integer.`);
-  }
-  return parsed;
-};
-
-const fetchSoraCloudHfStatusPayload = (
-  input: SoraCloudHfStatusInput,
+const fetchSoraCloudHfSharedLeaseStatusPayload = (
+  input: SoraCloudHfSharedLeaseStatusInput,
 ): Promise<Record<string, unknown>> =>
   fetchJson(
     buildNexusEndpoint(
       input.toriiUrl,
-      "/v1/soracloud/hf/status",
+      "/v1/soracloud/hf/lease/status",
       buildSoraCloudHfStatusQuery(input),
     ),
-    "SoraCloud HF status",
+    "SoraCloud HF shared-lease status",
   );
-
-const fetchOptionalSoraCloudHfStatusPayload = async (
-  input: SoraCloudHfStatusInput,
-): Promise<Record<string, unknown> | null> => {
-  try {
-    return await fetchSoraCloudHfStatusPayload(input);
-  } catch (error) {
-    if (error instanceof ApiRequestError && error.status === 404) {
-      return null;
-    }
-    throw error;
-  }
-};
-
-const postCanonicalSoraCloudHfDraft = async (input: {
-  toriiUrl: string;
-  accountId: string;
-  privateKey: Buffer;
-  body: Record<string, unknown>;
-}): Promise<Record<string, unknown>> => {
-  const path = "/v1/soracloud/hf/deploy";
-  const request = await buildCanonicalJsonRequest({
-    accountId: input.accountId,
-    method: "POST",
-    path,
-    baseUrl: normalizeBaseUrl(input.toriiUrl),
-    body: input.body,
-    privateKey: input.privateKey,
-  });
-  const response = await nodeFetch(
-    buildNexusEndpoint(input.toriiUrl, path),
-    request,
-  );
-  if (!response.ok) {
-    throw await createApiRequestError(response, "Launch SoraCloud instance");
-  }
-  return ensureObjectResponse(
-    (await response.json()) as unknown,
-    "Launch SoraCloud instance",
-  );
-};
 
 const getSoraCloudStatusFromTorii = async (
   input: SoraCloudStatusInput,
 ): Promise<SoraCloudStatusView> => {
-  assertNoRendererSoraCloudSecrets(input);
   try {
     const payload = await fetchJson(
       buildNexusEndpoint(input.toriiUrl, "/v1/soracloud/status"),
@@ -5779,271 +5293,16 @@ const getParametersFromTorii = (input: ToriiConfig) =>
     "Network parameters",
   );
 
-const getOfflineReadinessFromTorii = async (input: {
-  toriiUrl: string;
-  assetDefinitionId: string;
-}): Promise<OfflineReadinessView> => {
-  const assetDefinitionId = normalizeFirstReleaseAssetDefinitionId(
-    input.assetDefinitionId,
-  );
-  const payload = await fetchJson(
-    buildNexusEndpoint(input.toriiUrl, "/v1/offline/readiness", {
-      asset_definition_id: assetDefinitionId,
-    }),
-    "Offline readiness",
-  );
-  return normalizeOfflineReadinessPayload(payload, assetDefinitionId);
-};
-
-const deploySoraCloudHfOnTorii = async (
-  input: SoraCloudHfDeployInput,
-): Promise<SoraCloudHfDeployResponseView> => {
-  assertNoRendererSoraCloudSecrets(input);
-  const repoId = normalizeSoraCloudHfToken(input.repoId, "repoId", 256);
-  const revision = trimString(input.revision)
-    ? normalizeSoraCloudHfToken(input.revision, "revision", 160)
-    : undefined;
-  const resolvedRevision = revision ?? "main";
-  const modelName = normalizeSoraCloudHfToken(
-    input.modelName,
-    "modelName",
-    128,
-  );
-  const serviceName = normalizeSoraCloudName(input.serviceName, "serviceName");
-  const apartmentName = trimString(input.apartmentName)
-    ? normalizeSoraCloudName(input.apartmentName, "apartmentName")
-    : undefined;
-  const storageClass = normalizeSoraCloudStorageClass(input.storageClass);
-  const leaseTermMs = normalizePositiveU64Number(
-    input.leaseTermMs,
-    "leaseTermMs",
-  );
-  const rawLeaseAssetDefinitionId = trimString(input.leaseAssetDefinitionId);
-  const leaseAssetDefinitionId = normalizeAssetDefinitionId(
-    rawLeaseAssetDefinitionId,
-    "leaseAssetDefinitionId",
-  );
-  const baseFeeNanos = trimString(input.baseFeeNanos);
-  const baseFee = soraCloudXorQuantityFromNanos(baseFeeNanos);
-
-  const writeConnection = await assertWriteConnectionMatchesEndpoint({
-    toriiUrl: input.toriiUrl,
-    chainId: input.chainId,
-    networkPrefix: input.networkPrefix,
-    feature: "soraCloudDeploy",
-  });
-  const accountId = normalizeCanonicalAccountIdLiteral(
-    input.accountId,
-    "accountId",
-    writeConnection.networkPrefix,
-  );
-
-  const statusInput: SoraCloudHfStatusInput = {
-    toriiUrl: input.toriiUrl,
-    repoId,
-    revision: resolvedRevision,
-    storageClass,
-    leaseTermMs,
-    accountId,
-  };
-  const baselineStatus =
-    await fetchOptionalSoraCloudHfStatusPayload(statusInput);
-  const minimumSequenceExclusive = baselineStatus
-    ? readSoraCloudHfLatestSequence(baselineStatus)
-    : 0;
-
-  const signingMaterial = assertEd25519SigningMaterial(
-    await resolveSigningMaterial({
-      accountId,
-      operationLabel: "Launch SoraCloud instance",
-    }),
-    "Launch SoraCloud instance",
-  );
-  const privateKeyHex = signingMaterial.privateKeyHex;
-  const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
-  const request = buildSoraCloudHfDeployRequest({
-    repoId,
-    revision,
-    modelName,
-    serviceName,
-    apartmentName,
-    storageClass,
-    leaseTermMs,
-    leaseAssetDefinitionId,
-    baseFeeNanos,
-    privateKeyHex,
-  });
-  const expected: SoraCloudHfDeployExpectation = {
-    accountId,
-    signer: request.provenance.signer,
-    joinProvenance: request.provenance,
-    generatedServiceProvenance: request.generated_service_provenance,
-    ...(request.generated_apartment_provenance
-      ? {
-          generatedApartmentProvenance: request.generated_apartment_provenance,
-        }
-      : {}),
-    repoId,
-    resolvedRevision,
-    modelName,
-    serviceName,
-    apartmentName,
-    storageClass,
-    leaseTermMs,
-    leaseAssetDefinitionId,
-    baseFee,
-  };
-
-  let reviewedSettlement: SoraCloudHfSettlementReview | null = null;
-  const result = await executeSoraCloudHfDraftToCommit({
-    expected,
-    minimumSequenceExclusive,
-    dependencies: {
-      fetchDraft: () =>
-        postCanonicalSoraCloudHfDraft({
-          toriiUrl: input.toriiUrl,
-          accountId,
-          privateKey,
-          body: request,
-        }),
-      decodeInstruction: (payload) =>
-        noritoDecodeInstruction(Buffer.from(payload)),
-      authorizeSettlement: async (settlement) => {
-        reviewedSettlement = settlement;
-        return (
-          (await ipcRenderer.invoke(SORACLOUD_SETTLEMENT_CONFIRMATION_CHANNEL, {
-            accountId,
-            toriiUrl: normalizeBaseUrl(input.toriiUrl),
-            repoId,
-            resolvedRevision,
-            modelName,
-            serviceName,
-            storageClass,
-            leaseTermMs,
-            ...settlement,
-          })) === true
-        );
-      },
-      commitInstructions: async (instructions) => {
-        const tx = await quoteAndSignInstructionTransaction({
-          toriiUrl: input.toriiUrl,
-          chainId: writeConnection.chainId,
-          authority: accountId,
-          networkPrefix: writeConnection.networkPrefix,
-          instructions,
-          metadata: {},
-          privateKey,
-          privateKeyAlgorithm: signingMaterial.signingAlgorithm,
-        });
-        const submission =
-          await submitSignedTransactionAndWaitForFinalizedBlock(
-            input.toriiUrl,
-            tx.signedTransaction,
-          );
-        return {
-          hash: submission.hash,
-          finality: submission.finality,
-          ...(submission.fee ? { fee: submission.fee } : {}),
-        };
-      },
-      fetchCommittedStatus: () => fetchSoraCloudHfStatusPayload(statusInput),
-      wait: (delayMs) => waitForMs(delayMs),
-    },
-  });
-  const pendingKey = soraCloudSettlementKey({
-    toriiUrl: input.toriiUrl,
-    chainId: writeConnection.chainId,
-    networkPrefix: writeConnection.networkPrefix,
-    accountId,
-    transactionHash: result.tx_hash_hex,
-  });
-  if (result.settlement_status === "indexing") {
-    if (!reviewedSettlement) {
-      throw new Error(
-        "SoraCloud finalized transaction is missing its reviewed settlement context.",
-      );
-    }
-    pendingSoraCloudHfSettlements.set(pendingKey, {
-      toriiUrl: normalizeBaseUrl(input.toriiUrl),
-      chainId: writeConnection.chainId,
-      networkPrefix: writeConnection.networkPrefix,
-      accountId,
-      transactionHash: result.tx_hash_hex,
-      statusInput,
-      expected,
-      settlement: reviewedSettlement,
-      minimumSequenceExclusive,
-      finality: result.finality,
-      ...(result.fee ? { fee: result.fee } : {}),
-    });
-  } else {
-    pendingSoraCloudHfSettlements.delete(pendingKey);
-  }
-  return result;
-};
-
-const reconcileSoraCloudHfLaunchOnTorii = async (
-  input: SoraCloudHfReconcileInput,
-): Promise<SoraCloudHfDeployResponseView> => {
-  assertNoRendererSoraCloudSecrets(input);
-  const transactionHash = trimString(input.transactionHash);
-  if (!/^[0-9a-f]{64}$/u.test(transactionHash)) {
-    throw new Error(
-      "SoraCloud reconciliation transaction hash must be canonical lowercase 32-byte hex.",
-    );
-  }
-  const writeConnection = await assertWriteConnectionMatchesEndpoint({
-    toriiUrl: input.toriiUrl,
-    chainId: input.chainId,
-    networkPrefix: input.networkPrefix,
-    feature: "soraCloudDeploy",
-  });
-  const accountId = normalizeCanonicalAccountIdLiteral(
-    input.accountId,
-    "accountId",
-    writeConnection.networkPrefix,
-  );
-  const pendingKey = soraCloudSettlementKey({
-    toriiUrl: input.toriiUrl,
-    chainId: writeConnection.chainId,
-    networkPrefix: writeConnection.networkPrefix,
-    accountId,
-    transactionHash,
-  });
-  const pending = pendingSoraCloudHfSettlements.get(pendingKey);
-  if (!pending) {
-    throw new Error(
-      "No pending SoraCloud settlement matches this finalized transaction and wallet context.",
-    );
-  }
-  const status = decodeMatchingSoraCloudHfStatus(
-    await fetchSoraCloudHfStatusPayload(pending.statusInput),
-    pending.expected,
-    pending.settlement,
-    pending.minimumSequenceExclusive,
-  );
-  const reconciled = buildSoraCloudCommittedLaunchResponse({
-    status,
-    serviceName: pending.expected.serviceName,
-    transactionHash: pending.transactionHash,
-    finality: pending.finality,
-    ...(pending.fee ? { fee: pending.fee } : {}),
-  });
-  pendingSoraCloudHfSettlements.delete(pendingKey);
-  return reconciled;
-};
-
-const getSoraCloudHfStatusFromTorii = async (
-  input: SoraCloudHfStatusInput,
+const getSoraCloudHfSharedLeaseStatusFromTorii = async (
+  input: SoraCloudHfSharedLeaseStatusInput,
 ): Promise<SoraCloudHfStatusView> => {
-  assertNoRendererSoraCloudSecrets(input);
   try {
-    const payload = await fetchSoraCloudHfStatusPayload(input);
-    return normalizeSoraCloudHfStatusPayload(payload);
+    const payload = await fetchSoraCloudHfSharedLeaseStatusPayload(input);
+    return normalizeSoraCloudHfStatusPayload(payload, input);
   } catch (error) {
     if (error instanceof ApiRequestError && error.status === 404) {
       return missingSoraCloudHfStatus(
-        "The requested Hugging Face source or deployment was not found.",
+        "The requested Hugging Face source was not found in the shared-lease state.",
         error.status,
       );
     }
@@ -6051,4885 +5310,10 @@ const getSoraCloudHfStatusFromTorii = async (
   }
 };
 
-const DEFAULT_TRON_GATEWAY_URL = "https://api.trongrid.io";
-
-const normalizeTotal = (value: unknown, fallback: number): number => {
-  const total = Number(value);
-  return Number.isFinite(total) && total >= 0 ? Math.trunc(total) : fallback;
-};
-
-const normalizeSccpMessageIdPathSegment = (value: string): string => {
-  const normalized = trimString(value).toLowerCase().replace(/^0x/u, "");
-  if (!/^[0-9a-f]{64}$/u.test(normalized)) {
-    throw new Error("SCCP message id must be a 32-byte hex string.");
-  }
-  return normalized;
-};
-
-const getSccpMessageProofBundleFromTorii = (
-  input: SccpMessageProofBundleInput,
-): Promise<SccpMessageProofBundleResponse> =>
-  fetchJson(
-    buildNexusEndpoint(
-      input.toriiUrl,
-      `/v1/sccp/proofs/message/${normalizeSccpMessageIdPathSegment(input.messageId)}`,
-    ),
-    "SCCP message proof bundle",
-  );
-
-const SCCP_DISCOVERY_REQUEST_TIMEOUT_MS = 15_000;
-
-const withSccpDiscoveryTimeout = async <T>(
-  label: string,
-  run: (signal: AbortSignal) => Promise<T>,
-): Promise<T> => {
-  const controller = new AbortController();
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      const error = new Error(`${label} request timed out.`);
-      controller.abort(error);
-      reject(error);
-    }, SCCP_DISCOVERY_REQUEST_TIMEOUT_MS);
-  });
-
-  try {
-    return await Promise.race([run(controller.signal), timeoutPromise]);
-  } finally {
-    if (timeoutId !== null) {
-      clearTimeout(timeoutId);
-    }
-  }
-};
-
-const getSccpCapabilitiesFromTorii = (
-  input: ToriiConfig,
-): Promise<SccpCapabilitiesResponse> =>
-  withSccpDiscoveryTimeout("SCCP capabilities", (signal) =>
-    getClient(input.toriiUrl).getSccpCapabilities({ signal }),
-  );
-
-const getSccpProofManifestsFromTorii = (
-  input: ToriiConfig,
-): Promise<SccpProofManifestSetResponse> =>
-  withSccpDiscoveryTimeout("SCCP governed registry", (signal) =>
-    getClient(input.toriiUrl).getSccpRegistry({ signal }),
-  );
-
-const getSccpSoraOutboundMaterialFromTorii = (
-  input: SccpSoraOutboundMaterialInput,
-): Promise<SccpSoraOutboundMaterialResponse> =>
-  withSccpDiscoveryTimeout("SCCP SORA outbound material", (signal) =>
-    getClient(input.toriiUrl).getSccpSoraOutboundMaterial(
-      {
-        sourceProfile: input.sourceProfile,
-        routeId: input.routeId,
-        assetKey: input.assetKey,
-        revision: input.revision,
-      },
-      { signal },
-    ),
-  );
-
-const listSccpRecentMessagesFromTorii = async (
-  input: SccpRecentMessagesInput,
-): Promise<SccpRecentMessagesResponse> => {
-  const payload = await withSccpDiscoveryTimeout(
-    "SCCP recent messages",
-    (signal) =>
-      fetchJson(
-        buildNexusEndpoint(input.toriiUrl, "/v1/sccp/messages/recent", {
-          route_id: trimString(input.routeId) || undefined,
-          limit: input.limit,
-          offset: input.offset,
-        }),
-        "SCCP recent messages",
-        undefined,
-        signal,
-      ),
-  );
-  const rawItems = Array.isArray(payload.items)
-    ? payload.items
-    : Array.isArray(payload.messages)
-      ? payload.messages
-      : [];
-  const items = rawItems.filter(
-    (entry): entry is Record<string, unknown> =>
-      isPlainRecord(entry) && !Array.isArray(entry),
-  );
-  return {
-    items,
-    total: normalizeTotal(payload.total, items.length),
-    raw: payload,
-  };
-};
-
-const normalizeSccpSubmitCreationTime = (
-  value: number | string | undefined,
-): number | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-  const normalized = Number(value);
-  if (!Number.isSafeInteger(normalized) || normalized <= 0) {
-    throw new Error("SCCP creationTimeMs must be a positive safe integer.");
-  }
-  return normalized;
-};
-
-const normalizeRequiredSccpArtifactB64 = (
-  value: unknown,
-  label: string,
-): string => {
-  const normalized = trimString(value);
-  if (!normalized) {
-    throw new Error(`${label} is required.`);
-  }
-  return normalized;
-};
-
-const rejectLegacySccpSubmitFields = (
-  entries: ReadonlyArray<readonly [string, unknown]>,
-): void => {
-  const rejected = entries
-    .filter(([, value]) => value !== undefined && value !== null)
-    .map(([name]) => name);
-  if (rejected.length > 0) {
-    throw new Error(
-      `Legacy SCCP submit fields are not accepted by the exact first-release API: ${rejected.join(", ")}.`,
-    );
-  }
-};
-
-const resolveSccpDetachedSignature = async (
-  input: {
-    accountId: string;
-    signatureB64?: string;
-    transactionPayloadB64?: string;
-    creationTimeMs?: number | string;
-  },
-  operationLabel: string,
-  prepare: () => Promise<{
-    submitted: boolean;
-    transaction_payload_b64: string | null;
-    signing_message_b64: string | null;
-    creation_time_ms: number;
-  }>,
-): Promise<{
-  authority: string;
-  signature_b64: string;
-  transaction_payload_b64: string;
-  creation_time_ms: number;
-}> => {
-  const authority = normalizeCanonicalAccountIdLiteral(
-    input.accountId,
-    "accountId",
-  );
-  const signatureB64 = trimString(input.signatureB64);
-  const transactionPayloadB64 = trimString(input.transactionPayloadB64);
-  const requestedCreationTime = normalizeSccpSubmitCreationTime(
-    input.creationTimeMs,
-  );
-  if (signatureB64 || transactionPayloadB64) {
-    if (!signatureB64 || !transactionPayloadB64 || !requestedCreationTime) {
-      throw new Error(
-        "Detached SCCP submission requires signatureB64, transactionPayloadB64, and creationTimeMs together.",
-      );
-    }
-    return {
-      authority,
-      signature_b64: signatureB64,
-      transaction_payload_b64: transactionPayloadB64,
-      creation_time_ms: requestedCreationTime,
-    };
-  }
-
-  const prepared = await prepare();
-  if (
-    prepared.submitted ||
-    !prepared.transaction_payload_b64 ||
-    !prepared.signing_message_b64
-  ) {
-    throw new Error(
-      `${operationLabel} preparation did not return an unsigned transaction payload and signing message.`,
-    );
-  }
-  const signingMessage = Buffer.from(prepared.signing_message_b64, "base64");
-  if (
-    signingMessage.length !== 32 ||
-    signingMessage.toString("base64") !== prepared.signing_message_b64
-  ) {
-    throw new Error(
-      `${operationLabel} preparation returned a non-canonical signing message.`,
-    );
-  }
-  const signingMaterial = await resolveSigningMaterial({
-    accountId: authority,
-    operationLabel,
-  });
-  const signature = sign(
-    signingMessage,
-    hexToBuffer(signingMaterial.privateKeyHex, "privateKeyHex"),
-    { algorithm: signingMaterial.signingAlgorithm },
-  );
-  return {
-    authority,
-    signature_b64: Buffer.from(signature).toString("base64"),
-    transaction_payload_b64: prepared.transaction_payload_b64,
-    creation_time_ms: prepared.creation_time_ms,
-  };
-};
-
-const buildSccpAuthorityFeePayment =
-  (): ToriiBridgeMessageSubmitPayload["fee_payment"] => ({
-    payer: "authority",
-    value: {
-      charge_limits: [],
-      gas_limit: null,
-    },
-  });
-
-const submitSccpBridgeProofToTorii = async (
-  input: SccpBridgeProofSubmitInput,
-): Promise<Record<string, unknown>> => {
-  const writeConnection = await assertWriteConnectionMatchesEndpoint({
-    toriiUrl: input.toriiUrl,
-    chainId: TAIRA_GOVERNANCE_CHAIN_ID,
-    networkPrefix: TAIRA_GOVERNANCE_NETWORK_PREFIX,
-  });
-  if (
-    trimString(
-      (input as SccpBridgeProofSubmitInput & { privateKeyHex?: unknown })
-        .privateKeyHex,
-    )
-  ) {
-    throw new Error(
-      "SCCP bridge submissions must use the secure vault; inline private keys are not accepted.",
-    );
-  }
-  rejectLegacySccpSubmitFields([
-    ["burnBundle", input.burnBundle],
-    ["messageBundle", input.messageBundle],
-    ["publicKeyHex", trimString(input.publicKeyHex) || undefined],
-    ["networkIdHex", trimString(input.networkIdHex) || undefined],
-    ["verifierAddressHex", trimString(input.verifierAddressHex) || undefined],
-    ["bridgeAddressHex", trimString(input.bridgeAddressHex) || undefined],
-    ["verifierCodeHashHex", trimString(input.verifierCodeHashHex) || undefined],
-    ["verifierKeyHashHex", trimString(input.verifierKeyHashHex) || undefined],
-    [
-      "expectedDestinationBindingHashHex",
-      trimString(input.expectedDestinationBindingHashHex) || undefined,
-    ],
-    ["tronVerifierAddress", trimString(input.tronVerifierAddress) || undefined],
-    ["proofBytesHex", trimString(input.proofBytesHex) || undefined],
-  ]);
-  const destinationProofB64 = normalizeRequiredSccpArtifactB64(
-    input.destinationProofB64,
-    "SCCP destinationProofB64",
-  );
-  const client = getClient(input.toriiUrl);
-  const authority = normalizeCanonicalAccountIdLiteral(
-    input.accountId,
-    "accountId",
-    writeConnection.networkPrefix,
-  );
-  const creationTime = normalizeSccpSubmitCreationTime(input.creationTimeMs);
-  const feePayment = buildSccpAuthorityFeePayment();
-  const detached = await resolveSccpDetachedSignature(
-    { ...input, accountId: authority },
-    "Submit SCCP bridge proof",
-    () =>
-      client.submitBridgeProof({
-        authority,
-        fee_payment: feePayment,
-        destination_proof_b64: destinationProofB64,
-        ...(creationTime === undefined
-          ? {}
-          : { creation_time_ms: creationTime }),
-      }),
-  );
-  const response = await client.submitBridgeProof({
-    ...detached,
-    fee_payment: feePayment,
-    destination_proof_b64: destinationProofB64,
-  });
-  return response as unknown as Record<string, unknown>;
-};
-
-const SCCP_SUBMIT_DEBUG_DIR = resolvePath(
-  process.cwd(),
-  "output",
-  "sccp-ton-live-proof",
-  "debug",
-);
-
-const summarizeSccpSubmitRecord = (value: unknown): Record<string, unknown> => {
-  if (!isPlainRecord(value)) {
-    return { kind: typeof value };
-  }
-  return {
-    keys: Object.keys(value).sort(),
-    route:
-      readOptionalSccpTextField(value, ["route", "route_id", "routeId"]) ??
-      undefined,
-    entrypoint:
-      readOptionalSccpTextField(value, ["entrypoint", "method"]) ?? undefined,
-    contractAlias:
-      readOptionalSccpTextField(value, ["contract_alias", "contractAlias"]) ??
-      undefined,
-    contractAddress:
-      readOptionalSccpTextField(value, [
-        "contract_address",
-        "contractAddress",
-      ]) ?? undefined,
-  };
-};
-
-const summarizeSccpMessageBundleForDebug = (
-  value: unknown,
-): Record<string, unknown> => {
-  const summary = summarizeSccpSubmitRecord(value);
-  if (!isPlainRecord(value)) {
-    return summary;
-  }
-  const commitment = isPlainRecord(value.commitment) ? value.commitment : {};
-  const payload = isPlainRecord(value.payload) ? value.payload : {};
-  const transfer = isPlainRecord(payload.Transfer)
-    ? payload.Transfer
-    : isPlainRecord(payload.value)
-      ? payload.value
-      : {};
-  const finalityProof = readOptionalSccpTextField(value, [
-    "finality_proof",
-    "finalityProof",
-  ]);
-  return {
-    ...summary,
-    version: value.version,
-    commitmentRoot: readOptionalSccpTextField(value, [
-      "commitment_root",
-      "commitmentRoot",
-    ]),
-    commitment: {
-      version: commitment.version,
-      kind: readOptionalSccpTextField(commitment, ["kind"]),
-      targetDomain: commitment.target_domain ?? commitment.targetDomain,
-      messageId: readOptionalSccpTextField(commitment, [
-        "message_id",
-        "messageId",
-      ]),
-      payloadHash: readOptionalSccpTextField(commitment, [
-        "payload_hash",
-        "payloadHash",
-      ]),
-    },
-    transfer: {
-      amount: readOptionalSccpTextField(transfer, ["amount"]),
-      senderCodec: transfer.sender_codec ?? transfer.senderCodec,
-      sender: readOptionalSccpTextField(transfer, ["sender"]),
-      recipientCodec: transfer.recipient_codec ?? transfer.recipientCodec,
-      recipient: readOptionalSccpTextField(transfer, ["recipient"]),
-      routeIdCodec: transfer.route_id_codec ?? transfer.routeIdCodec,
-      routeId: readOptionalSccpTextField(transfer, ["route_id", "routeId"]),
-      assetIdCodec: transfer.asset_id_codec ?? transfer.assetIdCodec,
-      assetId: readOptionalSccpTextField(transfer, ["asset_id", "assetId"]),
-    },
-    finalityProofBytes: finalityProof
-      ? Math.floor(finalityProof.replace(/^0x/iu, "").length / 2)
-      : 0,
-    finalityProofSha256: finalityProof
-      ? createHash("sha256").update(finalityProof).digest("hex")
-      : "",
-  };
-};
-
-const writeSccpSubmitDebugTrace = (
-  phase: string,
-  payload: Record<string, unknown>,
-  detail: Record<string, unknown> = {},
-) => {
-  try {
-    mkdirSync(SCCP_SUBMIT_DEBUG_DIR, { recursive: true });
-    const timestamp = new Date().toISOString();
-    const fileSafeTimestamp = timestamp.replace(/[:.]/g, "-");
-    const body = JSON.stringify(payload);
-    const trace = {
-      timestamp,
-      phase,
-      toriiUrl: typeof payload.toriiUrl === "string" ? payload.toriiUrl : "",
-      accountId: typeof payload.accountId === "string" ? payload.accountId : "",
-      payloadBytes: Buffer.byteLength(body),
-      messageBundle: summarizeSccpMessageBundleForDebug(payload.messageBundle),
-      messageBundleFull: isPlainRecord(payload.messageBundle)
-        ? payload.messageBundle
-        : null,
-      settlement: summarizeSccpSubmitRecord(payload.settlement),
-      receiptLane: payload.receiptLane,
-      detail,
-    };
-    writeFileSync(
-      resolvePath(SCCP_SUBMIT_DEBUG_DIR, `${fileSafeTimestamp}-${phase}.json`),
-      `${JSON.stringify(trace, null, 2)}\n`,
-      "utf8",
-    );
-  } catch {
-    // Debug tracing must never affect the bridge flow.
-  }
-};
-
-const submitSccpBridgeMessageToTorii = async (
-  input: SccpBridgeMessageSubmitInput,
-): Promise<Record<string, unknown>> => {
-  const writeConnection = await assertWriteConnectionMatchesEndpoint({
-    toriiUrl: input.toriiUrl,
-    chainId: TAIRA_GOVERNANCE_CHAIN_ID,
-    networkPrefix: TAIRA_GOVERNANCE_NETWORK_PREFIX,
-  });
-  if (
-    trimString(
-      (input as SccpBridgeMessageSubmitInput & { privateKeyHex?: unknown })
-        .privateKeyHex,
-    )
-  ) {
-    throw new Error(
-      "SCCP bridge submissions must use the secure vault; inline private keys are not accepted.",
-    );
-  }
-  rejectLegacySccpSubmitFields([
-    ["messageBundle", input.messageBundle],
-    ["settlement", input.settlement],
-    ["receiptLane", input.receiptLane],
-    ["publicKeyHex", trimString(input.publicKeyHex) || undefined],
-    ["networkIdHex", trimString(input.networkIdHex) || undefined],
-    ["verifierAddressHex", trimString(input.verifierAddressHex) || undefined],
-    ["bridgeAddressHex", trimString(input.bridgeAddressHex) || undefined],
-    ["verifierCodeHashHex", trimString(input.verifierCodeHashHex) || undefined],
-    ["verifierKeyHashHex", trimString(input.verifierKeyHashHex) || undefined],
-    [
-      "expectedDestinationBindingHashHex",
-      trimString(input.expectedDestinationBindingHashHex) || undefined,
-    ],
-    ["tronVerifierAddress", trimString(input.tronVerifierAddress) || undefined],
-    ["proofBytesHex", trimString(input.proofBytesHex) || undefined],
-  ]);
-  const nativeProofB64 = normalizeRequiredSccpArtifactB64(
-    input.nativeProofB64,
-    "SCCP nativeProofB64",
-  );
-  const client = getClient(input.toriiUrl);
-  const authority = normalizeCanonicalAccountIdLiteral(
-    input.accountId,
-    "accountId",
-    writeConnection.networkPrefix,
-  );
-  const creationTime = normalizeSccpSubmitCreationTime(input.creationTimeMs);
-  const feePayment = buildSccpAuthorityFeePayment();
-  const detached = await resolveSccpDetachedSignature(
-    { ...input, accountId: authority },
-    "Submit SCCP bridge message",
-    () =>
-      client.submitBridgeMessage({
-        authority,
-        fee_payment: feePayment,
-        native_proof_b64: nativeProofB64,
-        ...(creationTime === undefined
-          ? {}
-          : { creation_time_ms: creationTime }),
-      }),
-  );
-  const payload: ToriiBridgeMessageSubmitPayload = {
-    ...detached,
-    fee_payment: feePayment,
-    native_proof_b64: nativeProofB64,
-  };
-  writeSccpSubmitDebugTrace(
-    "request",
-    payload as unknown as Record<string, unknown>,
-  );
-  try {
-    const response = await client.submitBridgeMessage(payload);
-    writeSccpSubmitDebugTrace(
-      "response",
-      payload as unknown as Record<string, unknown>,
-      {
-        response,
-      },
-    );
-    return response as unknown as Record<string, unknown>;
-  } catch (error) {
-    writeSccpSubmitDebugTrace(
-      "error",
-      payload as unknown as Record<string, unknown>,
-      {
-        message: error instanceof Error ? error.message : String(error),
-        name: error instanceof Error ? error.name : typeof error,
-      },
-    );
-    throw error;
-  }
-};
-
-const waitForSccpTransactionCommitOnTorii = async (
-  input: SccpTransactionCommitWaitInput,
-): Promise<Record<string, unknown>> => {
-  const finalized = await waitForTransactionFinalizedInBlock(
-    input.toriiUrl,
-    input.hashHex,
-  );
-  return {
-    ok: true,
-    hash_hex: input.hashHex,
-    status: "Applied",
-    finality: finalized.finality,
-    ...(finalized.fee ? { fee: finalized.fee } : {}),
-  };
-};
-
-const SCCP_BSC_NODE_PROVER_TIMEOUT_MS = 20 * 60 * 1000;
-const SCCP_BSC_NODE_PROVER_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
-const SCCP_BSC_NODE_PROVER_CHILD_SOURCE = String.raw`
-const chunks = [];
-process.stdin.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-process.stdin.on("end", async () => {
-  try {
-    const { readFile } = await import("node:fs/promises");
-    const { fileURLToPath } = await import("node:url");
-    const nativeFetch = globalThis.fetch?.bind(globalThis);
-    if (typeof nativeFetch !== "function") {
-      throw new Error("BSC SCCP child prover runtime does not expose fetch.");
-    }
-    globalThis.fetch = async (resource, init) => {
-      const rawUrl =
-        typeof resource === "string"
-          ? resource
-          : resource instanceof URL
-            ? resource.href
-            : typeof resource?.url === "string"
-              ? resource.url
-              : "";
-      if (/^file:/iu.test(rawUrl)) {
-        if (init?.method && String(init.method).toUpperCase() !== "GET") {
-          return new Response("file:// prover material only supports GET", { status: 405 });
-        }
-        const bytes = await readFile(fileURLToPath(rawUrl));
-        const contentType = rawUrl.endsWith(".json")
-          ? "application/json"
-          : rawUrl.endsWith(".js") || rawUrl.endsWith(".mjs")
-            ? "text/javascript"
-            : "application/octet-stream";
-        return new Response(bytes, {
-          status: 200,
-          headers: { "content-type": contentType },
-        });
-      }
-      return nativeFetch(resource, init);
-    };
-    const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    if (!input || typeof input !== "object" || Array.isArray(input)) {
-      throw new Error("BSC SCCP child prover input must be an object.");
-    }
-    const direction = input.direction === "source" ? "source" : "destination";
-    const request = input.request;
-    if (!request || typeof request !== "object" || Array.isArray(request)) {
-      throw new Error("BSC SCCP child prover request must be an object.");
-    }
-    const moduleSpecifier = String(input.moduleSpecifier || "").trim();
-    if (!moduleSpecifier) {
-      throw new Error("BSC SCCP child prover module specifier is required.");
-    }
-    const configUrl = String(input.configUrl || "").trim();
-    if (configUrl) {
-      globalThis.IrohaSccpBscProverConfigUrl = configUrl;
-    }
-    const loopbackRemoteModuleHost = (hostname) => {
-      const normalized = String(hostname || "")
-        .trim()
-        .toLowerCase()
-        .replace(/^\[/u, "")
-        .replace(/\]$/u, "")
-        .replace(/\.$/u, "");
-      return (
-        normalized === "localhost" ||
-        normalized === "127.0.0.1" ||
-        normalized === "::1" ||
-        /^127(?:\.\d{1,3}){3}$/u.test(normalized)
-      );
-    };
-    const assertRemoteProverModuleUrl = (specifier) => {
-      const parsed = new URL(specifier);
-      if (parsed.username || parsed.password || parsed.search || parsed.hash) {
-        throw new Error("BSC SCCP remote prover module URL must not include credentials, query strings, or fragments.");
-      }
-      if (parsed.protocol === "https:") {
-        return parsed.href;
-      }
-      if (parsed.protocol === "http:" && loopbackRemoteModuleHost(parsed.hostname)) {
-        return parsed.href;
-      }
-      throw new Error("BSC SCCP remote prover module URL must be HTTPS or loopback HTTP.");
-    };
-    const fetchRemoteProverModuleSource = async (specifier) => {
-      const moduleUrl = assertRemoteProverModuleUrl(specifier);
-      const response = await fetch(moduleUrl, {
-          method: "GET",
-          credentials: "omit",
-          redirect: "error",
-          cache: "no-store",
-      });
-      if (!response.ok) {
-        throw new Error("BSC SCCP prover module could not be loaded: HTTP " + response.status);
-      }
-      return { moduleUrl, source: await response.text() };
-    };
-    const importRemoteProverModule = async (specifier) => {
-      const { SourceTextModule } = await import("node:vm");
-      if (typeof SourceTextModule !== "function") {
-        throw new Error("BSC SCCP child prover runtime cannot evaluate remote modules with import.meta.url.");
-      }
-      const moduleCache = new Map();
-      const load = async (rawSpecifier, parentUrl) => {
-        const resolvedUrl = assertRemoteProverModuleUrl(
-          parentUrl ? new URL(String(rawSpecifier), parentUrl).href : String(rawSpecifier),
-        );
-        const cached = moduleCache.get(resolvedUrl);
-        if (cached) {
-          return cached;
-        }
-        const { source } = await fetchRemoteProverModuleSource(resolvedUrl);
-        const module = new SourceTextModule(source, {
-          identifier: resolvedUrl,
-          initializeImportMeta(meta) {
-            meta.url = resolvedUrl;
-          },
-          importModuleDynamically: async (childSpecifier, referencingModule) => {
-            const childUrl = new URL(String(childSpecifier), referencingModule.identifier).href;
-            if (/^https?:\/\//iu.test(childUrl)) {
-              return load(childUrl);
-            }
-            return import(childUrl);
-          },
-        });
-        moduleCache.set(resolvedUrl, module);
-        await module.link(async (childSpecifier, referencingModule) => {
-          const childUrl = new URL(String(childSpecifier), referencingModule.identifier).href;
-          if (/^https?:\/\//iu.test(childUrl)) {
-            return load(childUrl);
-          }
-          throw new Error("BSC SCCP remote prover module static imports must use HTTPS or loopback HTTP.");
-        });
-        await module.evaluate();
-        return module;
-      };
-      const module = await load(specifier);
-      return module.namespace;
-    };
-    const importProverModule = async (specifier) => {
-      if (/^https?:\/\//iu.test(specifier)) {
-        return importRemoteProverModule(specifier);
-      }
-      return import(specifier);
-    };
-    const moduleExports = await importProverModule(moduleSpecifier);
-    const prove =
-      direction === "source"
-        ? [
-            moduleExports.irohaSccpBscSourceProve,
-            moduleExports.bscSccpSourceProve,
-            moduleExports.proveBscSource,
-            moduleExports.proveSource,
-            moduleExports.sourceProve,
-          ].find((candidate) => typeof candidate === "function")
-        : [
-            moduleExports.irohaSccpBscProve,
-            moduleExports.bscSccpProve,
-            moduleExports.evmSccpProve,
-            moduleExports.proveBsc,
-            moduleExports.prove,
-            moduleExports.proveFn,
-            moduleExports.default,
-          ].find((candidate) => typeof candidate === "function");
-    if (typeof prove !== "function") {
-      throw new Error("BSC SCCP prover module does not export a " + direction + " prove function.");
-    }
-    const proofBytesToHex = (value) => {
-      if (typeof value === "string") {
-        return value;
-      }
-      if (value instanceof ArrayBuffer) {
-        return "0x" + Buffer.from(value).toString("hex");
-      }
-      if (ArrayBuffer.isView(value)) {
-        return "0x" + Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("hex");
-      }
-      if (Array.isArray(value)) {
-        return "0x" + Buffer.from(value).toString("hex");
-      }
-      if (value && typeof value === "object") {
-        const keys = Object.keys(value);
-        if (keys.length > 0 && keys.every((key) => /^\d+$/u.test(key))) {
-          return "0x" + Buffer.from(keys.sort((a, b) => Number(a) - Number(b)).map((key) => value[key])).toString("hex");
-        }
-      }
-      throw new Error("BSC SCCP prover result proofBytes are missing.");
-    };
-    const resultField = (record, ...names) => {
-      if (!record || typeof record !== "object" || Array.isArray(record)) {
-        return undefined;
-      }
-      for (const name of names) {
-        if (Object.prototype.hasOwnProperty.call(record, name)) {
-          return record[name];
-        }
-      }
-      return undefined;
-    };
-    const result = await prove(request);
-    if (direction === "source") {
-      process.stdout.write(JSON.stringify({ ok: true, result }));
-      return;
-    }
-    const proofBytes = proofBytesToHex(resultField(result, "proofBytes", "proof_bytes"));
-    process.stdout.write(JSON.stringify({
-      ok: true,
-      result: {
-        proofBytes,
-        requestHash: resultField(result, "requestHash", "request_hash") ?? request.requestHash ?? request.request_hash,
-        backend: resultField(result, "backend") ?? request.backend,
-      },
-    }));
-  } catch (error) {
-    process.stdout.write(JSON.stringify({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    }));
-    process.exitCode = 1;
-  }
-});
-`;
-
-const resolveSccpProverHeapMb = (): number => {
-  const rawValue =
-    process.env["SCCP_BSC_PROVER_V8_HEAP_MB"] ??
-    process.env["VITE_SCCP_BSC_PROVER_V8_HEAP_MB"] ??
-    String(DEFAULT_SCCP_PROVER_V8_HEAP_MB);
-  const normalizedValue = String(rawValue).trim().toLowerCase();
-  if (
-    !normalizedValue ||
-    normalizedValue === "0" ||
-    normalizedValue === "false" ||
-    normalizedValue === "off"
-  ) {
-    return DEFAULT_SCCP_PROVER_V8_HEAP_MB;
-  }
-  const parsed = Number(normalizedValue);
-  return Number.isFinite(parsed)
-    ? Math.min(
-        MAX_SCCP_PROVER_V8_HEAP_MB,
-        Math.max(MIN_SCCP_PROVER_V8_HEAP_MB, Math.trunc(parsed)),
-      )
-    : DEFAULT_SCCP_PROVER_V8_HEAP_MB;
-};
-
-const activeSccpBscNetworkKey = (): "mainnet" | "testnet" => {
-  const normalized = readRuntimeConfigEnv("VITE_SCCP_BSC_NETWORK")
-    .toLowerCase()
-    .replace(/_/gu, "-");
-  return ["mainnet", "bsc-mainnet", "bnb-mainnet", "bsc"].includes(normalized)
-    ? "mainnet"
-    : "testnet";
-};
-
-const resolveSccpBscRuntimeProverConfigUrl = (input: unknown): string => {
-  const explicit = trimString(input);
-  if (explicit) {
-    return resolveSccpBscPackagedOrRemoteAssetSpecifier(
-      explicit,
-      "BSC SCCP prover config URL",
-    );
-  }
-  const active = activeSccpBscNetworkKey();
-  const configured = readRuntimeConfigEnv(
-    active === "mainnet"
-      ? "VITE_SCCP_BSC_MAINNET_PROVER_CONFIG_URL"
-      : "VITE_SCCP_BSC_TESTNET_PROVER_CONFIG_URL",
-  );
-  return configured
-    ? resolveSccpBscPackagedOrRemoteAssetSpecifier(
-        configured,
-        "BSC SCCP prover config URL",
-      )
-    : "";
-};
-
-const resolveSccpBscPackagedOrRemoteAssetSpecifier = (
-  input: unknown,
-  label: string,
-): string => {
-  const assetUrl = normalizeSccpPackageOrRemoteModuleUrl(
-    trimString(input),
-    label,
-  );
-  if (!assetUrl) {
-    return "";
-  }
-  if (/^https?:\/\//iu.test(assetUrl)) {
-    return assetUrl;
-  }
-  const relativePath = assetUrl.replace(/^\/+/u, "").replace(/^\.\//u, "");
-  if (
-    !relativePath ||
-    relativePath.includes("\0") ||
-    relativePath.split(/[\\/]+/u).includes("..")
-  ) {
-    throw new Error(`${label} must be package-relative.`);
-  }
-  const preloadDir = dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    resolvePath(process.cwd(), "public", relativePath),
-    resolvePath(process.cwd(), "dist/renderer", relativePath),
-    resolvePath(preloadDir, "../renderer", relativePath),
-  ];
-  const modulePath = candidates.find((candidate) => existsSync(candidate));
-  if (!modulePath) {
-    throw new Error(
-      `${label} was not found under public or renderer assets: ${assetUrl}`,
-    );
-  }
-  return pathToFileURL(modulePath).href;
-};
-
-const resolveSccpBscProverModuleSpecifier = (input: unknown): string => {
-  const moduleSpecifier = resolveSccpBscPackagedOrRemoteAssetSpecifier(
-    input,
-    "BSC SCCP prover module URL",
-  );
-  if (!moduleSpecifier) {
-    throw new Error("BSC SCCP prover module URL is required.");
-  }
-  return moduleSpecifier;
-};
-
-const normalizeOptionalTimeoutMs = (
-  value: unknown,
-  fallback: number,
-): number => {
-  if (value === undefined || value === null || value === "") {
-    return fallback;
-  }
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error("BSC SCCP prover timeoutMs must be a positive integer.");
-  }
-  return Math.min(parsed, SCCP_BSC_NODE_PROVER_TIMEOUT_MS);
-};
-
-const collectLimitedChildOutput = (
-  chunks: Buffer[],
-  chunk: Buffer,
-  label: string,
-) => {
-  const current = chunks.reduce((sum, entry) => sum + entry.byteLength, 0);
-  if (current + chunk.byteLength > SCCP_BSC_NODE_PROVER_OUTPUT_MAX_BYTES) {
-    throw new Error(`${label} exceeded the maximum output size.`);
-  }
-  chunks.push(Buffer.from(chunk));
-};
-
-const SCCP_BSC_MAINNET_NETWORK_ID_HEX =
-  "0x0000000000000000000000000000000000000000000000000000000000000038";
-const SCCP_BSC_TESTNET_NETWORK_ID_HEX =
-  "0x0000000000000000000000000000000000000000000000000000000000000061";
-const SCCP_BSC_NATIVE_EVM_PROVER_BUNDLE_HASH_KEYS = [
-  "nativeEvmProverBundleHash",
-  "native_evm_prover_bundle_hash",
-] as const;
-
-const readSccpOwnField = (
-  value: Record<string, unknown>,
-  keys: readonly string[],
-): unknown => {
-  for (const key of keys) {
-    if (Object.prototype.hasOwnProperty.call(value, key)) {
-      return value[key];
-    }
-  }
-  return undefined;
-};
-
-const readRequiredSccpTextField = (
-  value: Record<string, unknown>,
-  keys: readonly string[],
-  label: string,
-): string => {
-  const text = trimString(readSccpOwnField(value, keys));
-  if (!text) {
-    throw new Error(`${label} is required.`);
-  }
-  return text;
-};
-
-const readOptionalSccpTextField = (
-  value: Record<string, unknown>,
-  keys: readonly string[],
-): string | undefined => {
-  const text = trimString(readSccpOwnField(value, keys));
-  return text || undefined;
-};
-
-const readRequiredSccpRecordField = (
-  value: Record<string, unknown>,
-  keys: readonly string[],
-  label: string,
-): Record<string, unknown> => {
-  const selected = readSccpOwnField(value, keys);
-  if (!isPlainRecord(selected)) {
-    throw new Error(`${label} must be an object.`);
-  }
-  return selected;
-};
-
-const readOptionalSccpRecordField = (
-  value: Record<string, unknown>,
-  keys: readonly string[],
-): Record<string, unknown> | undefined => {
-  const selected = readSccpOwnField(value, keys);
-  return isPlainRecord(selected) ? selected : undefined;
-};
-
-const normalizeSccpUnsignedIndex = (value: unknown, label: string): string => {
-  let parsed: bigint;
-  if (typeof value === "bigint") {
-    parsed = value;
-  } else if (typeof value === "number") {
-    if (!Number.isSafeInteger(value)) {
-      throw new Error(`${label} must be a safe non-negative integer.`);
-    }
-    parsed = BigInt(value);
-  } else if (typeof value === "string") {
-    const text = value.trim().toLowerCase();
-    if (/^0x(?:0|[1-9a-f][0-9a-f]*)$/u.test(text)) {
-      parsed = BigInt(text);
-    } else if (/^(?:0|[1-9][0-9]*)$/u.test(text)) {
-      parsed = BigInt(text);
-    } else {
-      throw new Error(`${label} must be an unsigned integer.`);
-    }
-  } else {
-    throw new Error(`${label} must be an unsigned integer.`);
-  }
-  if (parsed < 0n || parsed > (1n << 64n) - 1n) {
-    throw new Error(`${label} must fit in an unsigned 64-bit integer.`);
-  }
-  return parsed.toString();
-};
-
-const readOptionalSccpUnsignedIndex = (
-  record: Record<string, unknown> | undefined,
-  keys: readonly string[],
-  label: string,
-): string | undefined => {
-  if (!record) {
-    return undefined;
-  }
-  let selectedValue = "";
-  let selectedKey = "";
-  for (const key of keys) {
-    if (!Object.prototype.hasOwnProperty.call(record, key)) {
-      continue;
-    }
-    const value = record[key];
-    if (value === undefined || value === null || value === "") {
-      continue;
-    }
-    const normalized = normalizeSccpUnsignedIndex(value, label);
-    if (!selectedValue) {
-      selectedValue = normalized;
-      selectedKey = key;
-      continue;
-    }
-    if (selectedValue !== normalized) {
-      throw new Error(
-        `${label} aliases disagree: ${selectedKey}=${selectedValue} but ${key}=${normalized}.`,
-      );
-    }
-  }
-  return selectedValue || undefined;
-};
-
-const readBscSourceReceiptRootIndex = (
-  request: Record<string, unknown>,
-  receipt: Record<string, unknown> | undefined,
-): string | undefined => {
-  const keys = [
-    "receiptRootIndex",
-    "receipt_root_index",
-    "transactionIndex",
-    "transaction_index",
-  ] as const;
-  const topLevel = readOptionalSccpUnsignedIndex(
-    request,
-    keys,
-    "BSC source receipt root index",
-  );
-  const receiptLevel = readOptionalSccpUnsignedIndex(
-    receipt,
-    keys,
-    "BSC source receipt root index",
-  );
-  if (topLevel && receiptLevel && topLevel !== receiptLevel) {
-    throw new Error(
-      "BSC source receipt root index aliases disagree between request and receipt.",
-    );
-  }
-  return topLevel || receiptLevel;
-};
-
-const withBscSourceReceiptRootIndex = <T extends Record<string, unknown>>(
-  request: T,
-): T & { receiptRootIndex?: string } => {
-  const receipt = readOptionalSccpRecordField(request, ["receipt"]);
-  const receiptRootIndex = readBscSourceReceiptRootIndex(request, receipt);
-  return receiptRootIndex
-    ? {
-        ...request,
-        receiptRootIndex,
-      }
-    : request;
-};
-
-const replaceBscSourceMessageBundleFinalityProof = (
-  proofPackage: Record<string, unknown>,
-  sourceProofHex: string,
-): Record<string, unknown> => {
-  const messageBundle = readRequiredSccpRecordField(
-    proofPackage,
-    ["messageBundle", "message_bundle"],
-    "BSC SCCP source proof package messageBundle",
-  );
-  const patchedMessageBundle: Record<string, unknown> = {
-    ...messageBundle,
-    finality_proof: sourceProofHex,
-  };
-  if (Object.prototype.hasOwnProperty.call(messageBundle, "finalityProof")) {
-    patchedMessageBundle.finalityProof = sourceProofHex;
-  }
-  const patchedPackage: Record<string, unknown> = {
-    ...proofPackage,
-    messageBundle: patchedMessageBundle,
-  };
-  if (Object.prototype.hasOwnProperty.call(proofPackage, "message_bundle")) {
-    patchedPackage.message_bundle = patchedMessageBundle;
-  }
-  return patchedPackage;
-};
-
-const withBscSourcePublicInputFinality = (
-  proofPackage: Record<string, unknown>,
-  sourceProof: { finalityHeight: string; finalityBlockHash: string },
-): Record<string, unknown> => {
-  const publicInputKey = isPlainRecord(proofPackage.publicInputs)
-    ? "publicInputs"
-    : isPlainRecord(proofPackage.public_inputs)
-      ? "public_inputs"
-      : null;
-  if (!publicInputKey) {
-    return proofPackage;
-  }
-  return {
-    ...proofPackage,
-    [publicInputKey]: {
-      ...(proofPackage[publicInputKey] as Record<string, unknown>),
-      finalityHeight: sourceProof.finalityHeight,
-      finalityBlockHash: sourceProof.finalityBlockHash,
-    },
-  };
-};
-
-const readBscSourceLaneMaterialForNativeProof = (
-  request: Record<string, unknown>,
-): {
-  sourceVerifierMaterial: Record<string, unknown>;
-  sourceAdapterEngineDeployment: Record<string, unknown>;
-} | null => {
-  const sourceVerifierMaterial = readOptionalSccpRecordField(request, [
-    "sourceVerifierMaterial",
-    "source_verifier_material",
-    "bscSourceVerifierMaterial",
-    "bsc_source_verifier_material",
-    "sccpSourceVerifierMaterial",
-    "sccp_source_verifier_material",
-  ]);
-  const sourceAdapterEngineDeployment = readOptionalSccpRecordField(request, [
-    "sourceAdapterEngineDeployment",
-    "source_adapter_engine_deployment",
-    "sourceAdapterDeployment",
-    "source_adapter_deployment",
-    "bscSourceAdapterEngineDeployment",
-    "bsc_source_adapter_engine_deployment",
-    "bscSourceAdapterDeployment",
-    "bsc_source_adapter_deployment",
-  ]);
-  if (!sourceVerifierMaterial && !sourceAdapterEngineDeployment) {
-    return null;
-  }
-  if (!sourceVerifierMaterial || !sourceAdapterEngineDeployment) {
-    throw new Error(
-      "BSC source proof requires both sourceVerifierMaterial and sourceAdapterEngineDeployment.",
-    );
-  }
-  return { sourceVerifierMaterial, sourceAdapterEngineDeployment };
-};
-
-const readBscSourceProofNetworkLabel = (
-  request: Record<string, unknown>,
-): "testnet" | "mainnet" | null => {
-  const normalizeNetworkLabel = (
-    selected: string | undefined,
-  ): "testnet" | "mainnet" | null => {
-    if (!selected) return null;
-    const normalized = selected.toLowerCase().replace(/_/gu, "-");
-    if (
-      normalized === "0x61" ||
-      normalized === "97" ||
-      normalized === "eip155:97" ||
-      normalized === SCCP_BSC_TESTNET_NETWORK_ID_HEX
-    ) {
-      return "testnet";
-    }
-    if (
-      normalized === "0x38" ||
-      normalized === "56" ||
-      normalized === "eip155:56" ||
-      normalized === SCCP_BSC_MAINNET_NETWORK_ID_HEX
-    ) {
-      return "mainnet";
-    }
-    if (normalized.includes("testnet") || normalized.includes("chapel")) {
-      return "testnet";
-    }
-    if (normalized.includes("mainnet") || normalized === "bsc") {
-      return "mainnet";
-    }
-    return null;
-  };
-  const directLabel = normalizeNetworkLabel(
-    readOptionalSccpTextField(request, [
-      "bscNetwork",
-      "bsc_network",
-      "evmNetwork",
-      "evm_network",
-      "network",
-      "networkKey",
-      "network_key",
-      "chainId",
-      "chain_id",
-      "chainIdHex",
-      "chain_id_hex",
-      "networkId",
-      "network_id",
-      "networkIdHex",
-      "network_id_hex",
-    ]),
-  );
-  if (directLabel) {
-    return directLabel;
-  }
-  const sourceVerifierMaterial = readOptionalSccpRecordField(request, [
-    "sourceVerifierMaterial",
-    "source_verifier_material",
-    "bscSourceVerifierMaterial",
-    "bsc_source_verifier_material",
-  ]);
-  const sourceAdapterEngineDeployment = readOptionalSccpRecordField(request, [
-    "sourceAdapterEngineDeployment",
-    "source_adapter_engine_deployment",
-    "sourceAdapterDeployment",
-    "source_adapter_deployment",
-    "bscSourceAdapterEngineDeployment",
-    "bsc_source_adapter_engine_deployment",
-    "bscSourceAdapterDeployment",
-    "bsc_source_adapter_deployment",
-  ]);
-  for (const material of [
-    sourceVerifierMaterial,
-    sourceAdapterEngineDeployment,
-  ]) {
-    if (!material) continue;
-    const materialLabel = normalizeNetworkLabel(
-      readOptionalSccpTextField(material, [
-        "bscNetwork",
-        "bsc_network",
-        "evmNetwork",
-        "evm_network",
-        "network",
-        "networkKey",
-        "network_key",
-        "chainId",
-        "chain_id",
-        "chainIdHex",
-        "chain_id_hex",
-        "networkId",
-        "network_id",
-        "networkIdHex",
-        "network_id_hex",
-      ]),
-    );
-    if (materialLabel) {
-      return materialLabel;
-    }
-  }
-  const active = activeSccpBscNetworkKey();
-  if (active) {
-    return active;
-  }
-  return null;
-};
-
-const readBscSourceValidatorSigningConfig = (
-  request: Record<string, unknown>,
-): {
-  sourceValidatorPrivateKeys: string;
-  sourceValidatorPowers?: string[];
-} => {
-  const networkLabel = readBscSourceProofNetworkLabel(request);
-  const privateKeyEnvNames = [
-    ...(networkLabel === "testnet"
-      ? ["SCCP_BSC_TESTNET_SOURCE_VALIDATOR_PRIVATE_KEYS"]
-      : []),
-    ...(networkLabel === "mainnet"
-      ? ["SCCP_BSC_MAINNET_SOURCE_VALIDATOR_PRIVATE_KEYS"]
-      : []),
-    "SCCP_BSC_SOURCE_VALIDATOR_PRIVATE_KEYS",
-  ];
-  const sourceValidatorPrivateKeys = privateKeyEnvNames
-    .map((name) => process.env[name]?.trim())
-    .find((value): value is string => Boolean(value));
-  if (!sourceValidatorPrivateKeys) {
-    throw new Error(
-      `Deployment-bound BSC source proof requires runtime validator keys in ${privateKeyEnvNames.join(
-        " or ",
-      )}.`,
-    );
-  }
-  const powerEnvNames = [
-    ...(networkLabel === "testnet"
-      ? ["SCCP_BSC_TESTNET_SOURCE_VALIDATOR_POWERS"]
-      : []),
-    ...(networkLabel === "mainnet"
-      ? ["SCCP_BSC_MAINNET_SOURCE_VALIDATOR_POWERS"]
-      : []),
-    "SCCP_BSC_SOURCE_VALIDATOR_POWERS",
-  ];
-  const sourceValidatorPowers = powerEnvNames
-    .map((name) => process.env[name]?.trim())
-    .find((value): value is string => Boolean(value))
-    ?.split(/[\s,]+/u)
-    .filter(Boolean);
-  return {
-    sourceValidatorPrivateKeys,
-    ...(sourceValidatorPowers && sourceValidatorPowers.length > 0
-      ? { sourceValidatorPowers }
-      : {}),
-  };
-};
-
-const replaceSccpSourceMessageBundle = (
-  proofPackage: Record<string, unknown>,
-  messageBundle: Record<string, unknown>,
-): Record<string, unknown> => {
-  const patchedPackage: Record<string, unknown> = {
-    ...proofPackage,
-    messageBundle,
-  };
-  if (Object.prototype.hasOwnProperty.call(proofPackage, "message_bundle")) {
-    patchedPackage.message_bundle = messageBundle;
-  }
-  return patchedPackage;
-};
-
-const isByteArray = (value: unknown): value is number[] =>
-  Array.isArray(value) &&
-  value.every((item) => Number.isInteger(item) && item >= 0 && item <= 255);
-
-const byteArrayToLowerHex = (bytes: readonly number[]): string =>
-  `0x${Buffer.from(bytes).toString("hex")}`;
-
-const readNumericByteObject = (
-  value: Record<string, unknown>,
-): number[] | null => {
-  const keys = Object.keys(value);
-  if (
-    keys.length === 0 ||
-    !keys.every((key) => /^(?:0|[1-9]\d*)$/u.test(key))
-  ) {
-    return null;
-  }
-  const indexed = keys
-    .map((key) => Number(key))
-    .sort((left, right) => left - right);
-  if (indexed.some((index, offset) => index !== offset)) {
-    return null;
-  }
-  const bytes = indexed.map((index) => value[String(index)]);
-  return isByteArray(bytes) ? bytes : null;
-};
-
-const canonicalizeSccpNativeJsonValue = (value: unknown): unknown => {
-  if (Buffer.isBuffer(value)) {
-    return `0x${value.toString("hex")}`;
-  }
-  if (value instanceof ArrayBuffer) {
-    return `0x${Buffer.from(value).toString("hex")}`;
-  }
-  if (ArrayBuffer.isView(value)) {
-    return `0x${Buffer.from(
-      value.buffer,
-      value.byteOffset,
-      value.byteLength,
-    ).toString("hex")}`;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => canonicalizeSccpNativeJsonValue(item));
-  }
-  if (!isPlainRecord(value)) {
-    return value;
-  }
-  if (value.type === "Buffer" && isByteArray(value.data)) {
-    return byteArrayToLowerHex(value.data);
-  }
-  const numericBytes = readNumericByteObject(value);
-  if (numericBytes) {
-    return byteArrayToLowerHex(numericBytes);
-  }
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entryValue]) => [
-      key,
-      canonicalizeSccpNativeJsonValue(entryValue),
-    ]),
-  );
-};
-
-const canonicalizeSccpNativeJsonRecord = (
-  value: Record<string, unknown>,
-  label: string,
-): Record<string, unknown> => {
-  const canonical = canonicalizeSccpNativeJsonValue(value);
-  if (!isPlainRecord(canonical)) {
-    throw new Error(`${label} must be an object.`);
-  }
-  return canonical;
-};
-
-const readSccpNativeField = (
-  record: Record<string, unknown>,
-  aliases: readonly string[],
-  label: string,
-): unknown => {
-  for (const alias of aliases) {
-    if (Object.prototype.hasOwnProperty.call(record, alias)) {
-      return record[alias];
-    }
-  }
-  throw new Error(`${label} is required.`);
-};
-
-const readSccpNativeRecord = (
-  record: Record<string, unknown>,
-  aliases: readonly string[],
-  label: string,
-): Record<string, unknown> => {
-  const value = readSccpNativeField(record, aliases, label);
-  if (!isPlainRecord(value)) {
-    throw new Error(`${label} must be an object.`);
-  }
-  return value;
-};
-
-const readSccpNativePayloadVariant = (
-  value: unknown,
-): { kind: string; value: Record<string, unknown> } => {
-  if (!isPlainRecord(value)) {
-    throw new Error("BSC SCCP source proof package payload must be an object.");
-  }
-  if (isPlainRecord(value.Transfer)) {
-    return { kind: "Transfer", value: value.Transfer };
-  }
-  if (value.kind === "Transfer" && isPlainRecord(value.value)) {
-    return { kind: "Transfer", value: value.value };
-  }
-  throw new Error("BSC SCCP source proof package payload must be a Transfer.");
-};
-
-const buildSccpNativeMerkleProofPayload = (
-  value: unknown,
-): Record<string, unknown> => {
-  if (!isPlainRecord(value)) {
-    throw new Error(
-      "BSC SCCP source proof package merkle_proof must be an object.",
-    );
-  }
-  const steps = Array.isArray(value.steps) ? value.steps : [];
-  return {
-    steps: steps.map((step, index) => {
-      if (!isPlainRecord(step)) {
-        throw new Error(
-          `BSC SCCP source proof package merkle_proof.steps[${index}] must be an object.`,
-        );
-      }
-      return {
-        sibling_hash: readSccpNativeField(
-          step,
-          ["sibling_hash", "siblingHash"],
-          `BSC SCCP source proof package merkle_proof.steps[${index}].sibling_hash`,
-        ),
-        sibling_is_left: readSccpNativeField(
-          step,
-          ["sibling_is_left", "siblingIsLeft"],
-          `BSC SCCP source proof package merkle_proof.steps[${index}].sibling_is_left`,
-        ),
-      };
-    }),
-  };
-};
-
-const buildSccpNativeTransferPayload = (
-  value: Record<string, unknown>,
-): Record<string, unknown> => ({
-  version: readSccpNativeField(value, ["version"], "payload.version"),
-  source_domain: readSccpNativeField(
-    value,
-    ["source_domain", "sourceDomain"],
-    "payload.source_domain",
-  ),
-  dest_domain: readSccpNativeField(
-    value,
-    ["dest_domain", "destDomain"],
-    "payload.dest_domain",
-  ),
-  nonce: readSccpNativeField(value, ["nonce"], "payload.nonce"),
-  asset_home_domain: readSccpNativeField(
-    value,
-    ["asset_home_domain", "assetHomeDomain"],
-    "payload.asset_home_domain",
-  ),
-  asset_id_codec: readSccpNativeField(
-    value,
-    ["asset_id_codec", "assetIdCodec"],
-    "payload.asset_id_codec",
-  ),
-  asset_id: `0x${Buffer.from(
-    String(
-      readSccpNativeField(value, ["asset_id", "assetId"], "payload.asset_id"),
-    ),
-    "utf8",
-  ).toString("hex")}`,
-  amount: readSccpNativeField(value, ["amount"], "payload.amount"),
-  sender_codec: readSccpNativeField(
-    value,
-    ["sender_codec", "senderCodec"],
-    "payload.sender_codec",
-  ),
-  sender: `0x${Buffer.from(
-    String(readSccpNativeField(value, ["sender"], "payload.sender")),
-    "utf8",
-  ).toString("hex")}`,
-  recipient_codec: readSccpNativeField(
-    value,
-    ["recipient_codec", "recipientCodec"],
-    "payload.recipient_codec",
-  ),
-  recipient: `0x${Buffer.from(
-    String(readSccpNativeField(value, ["recipient"], "payload.recipient")),
-    "utf8",
-  ).toString("hex")}`,
-  route_id_codec: readSccpNativeField(
-    value,
-    ["route_id_codec", "routeIdCodec"],
-    "payload.route_id_codec",
-  ),
-  route_id: `0x${Buffer.from(
-    String(
-      readSccpNativeField(value, ["route_id", "routeId"], "payload.route_id"),
-    ),
-    "utf8",
-  ).toString("hex")}`,
-});
-
-const buildSccpNativeMessageBundlePayload = (
-  messageBundle: Record<string, unknown>,
-): Record<string, unknown> => {
-  const canonicalBundle = canonicalizeSccpNativeJsonRecord(
-    messageBundle,
-    "BSC SCCP source proof package messageBundle",
-  );
-  const commitment = readSccpNativeRecord(
-    canonicalBundle,
-    ["commitment"],
-    "BSC SCCP source proof package messageBundle.commitment",
-  );
-  const payload = readSccpNativePayloadVariant(
-    readSccpNativeField(
-      canonicalBundle,
-      ["payload"],
-      "BSC SCCP source proof package messageBundle.payload",
-    ),
-  );
-  return {
-    version: readSccpNativeField(
-      canonicalBundle,
-      ["version"],
-      "BSC SCCP source proof package messageBundle.version",
-    ),
-    commitment_root: readSccpNativeField(
-      canonicalBundle,
-      ["commitment_root", "commitmentRoot"],
-      "BSC SCCP source proof package messageBundle.commitment_root",
-    ),
-    commitment: {
-      version: readSccpNativeField(
-        commitment,
-        ["version"],
-        "BSC SCCP source proof package messageBundle.commitment.version",
-      ),
-      kind: readSccpNativeField(
-        commitment,
-        ["kind"],
-        "BSC SCCP source proof package messageBundle.commitment.kind",
-      ),
-      target_domain: readSccpNativeField(
-        commitment,
-        ["target_domain", "targetDomain"],
-        "BSC SCCP source proof package messageBundle.commitment.target_domain",
-      ),
-      message_id: readSccpNativeField(
-        commitment,
-        ["message_id", "messageId"],
-        "BSC SCCP source proof package messageBundle.commitment.message_id",
-      ),
-      payload_hash: readSccpNativeField(
-        commitment,
-        ["payload_hash", "payloadHash"],
-        "BSC SCCP source proof package messageBundle.commitment.payload_hash",
-      ),
-    },
-    merkle_proof: buildSccpNativeMerkleProofPayload(
-      readSccpNativeField(
-        canonicalBundle,
-        ["merkle_proof", "merkleProof"],
-        "BSC SCCP source proof package messageBundle.merkle_proof",
-      ),
-    ),
-    payload: {
-      [payload.kind]: buildSccpNativeTransferPayload(payload.value),
-    },
-    finality_proof: readSccpNativeField(
-      canonicalBundle,
-      ["finality_proof", "finalityProof"],
-      "BSC SCCP source proof package messageBundle.finality_proof",
-    ),
-  };
-};
-
-const rebuildSccpSourceMessageBundleWithNativeDeployment = (
-  proofPackage: Record<string, unknown>,
-  laneMaterial: {
-    sourceVerifierMaterial: Record<string, unknown>;
-    sourceAdapterEngineDeployment: Record<string, unknown>;
-  },
-  label: string,
-): Record<string, unknown> => {
-  const messageBundle = readRequiredSccpRecordField(
-    proofPackage,
-    ["messageBundle", "message_bundle"],
-    `${label} SCCP source proof package messageBundle`,
-  );
-  const nativeBinding = installGlobalIrohaJsNativeBinding(
-    import.meta.url,
-  ) as IrohaNativeSccpCodec;
-  const rebuild =
-    nativeBinding.sccpRebuildMessageBundleSourceProofWithDeployment;
-  if (typeof rebuild !== "function") {
-    throw new Error(
-      `Native Iroha SDK binding is missing deployment-bound ${label} SCCP source proof support; rebuild @iroha/iroha-js native bindings.`,
-    );
-  }
-  const nativeMessageBundle =
-    buildSccpNativeMessageBundlePayload(messageBundle);
-  const nativeSourceVerifierMaterial = canonicalizeSccpNativeJsonRecord(
-    laneMaterial.sourceVerifierMaterial,
-    `${label} SCCP source verifier material`,
-  );
-  const nativeSourceAdapterEngineDeployment = canonicalizeSccpNativeJsonRecord(
-    laneMaterial.sourceAdapterEngineDeployment,
-    `${label} SCCP source adapter deployment`,
-  );
-  const outputText = rebuild(
-    JSON.stringify(nativeMessageBundle),
-    JSON.stringify(nativeSourceVerifierMaterial),
-    JSON.stringify(nativeSourceAdapterEngineDeployment),
-  );
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(outputText);
-  } catch (error) {
-    throw new Error(
-      `Native ${label} SCCP source proof rebuild returned invalid JSON: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  if (!isPlainRecord(parsed)) {
-    throw new Error(
-      `Native ${label} SCCP source proof rebuild must return an object.`,
-    );
-  }
-  const rebuiltMessageBundle = readRequiredSccpRecordField(
-    parsed,
-    ["messageBundle", "message_bundle"],
-    `Native ${label} SCCP source proof rebuild messageBundle`,
-  );
-  const sourceProofHash = readOptionalSccpTextField(parsed, [
-    "sourceProofHash",
-    "source_proof_hash",
-  ]);
-  const sourceAdapterDeploymentHash = readOptionalSccpTextField(parsed, [
-    "sourceAdapterDeploymentHash",
-    "source_adapter_deployment_hash",
-  ]);
-  const sourceAdapterDeploymentReceiptHash = readOptionalSccpTextField(parsed, [
-    "sourceAdapterDeploymentReceiptHash",
-    "source_adapter_deployment_receipt_hash",
-  ]);
-  const sourceVerifierEvidenceHash = readOptionalSccpTextField(parsed, [
-    "sourceVerifierEvidenceHash",
-    "source_verifier_evidence_hash",
-  ]);
-  return {
-    ...replaceSccpSourceMessageBundle(proofPackage, rebuiltMessageBundle),
-    ...(sourceProofHash ? { sourceProofHash } : {}),
-    ...(sourceAdapterDeploymentHash ? { sourceAdapterDeploymentHash } : {}),
-    ...(sourceAdapterDeploymentReceiptHash
-      ? { sourceAdapterDeploymentReceiptHash }
-      : {}),
-    ...(sourceVerifierEvidenceHash ? { sourceVerifierEvidenceHash } : {}),
-  };
-};
-
-const buildTonSourceMessageBundleWithNativeDeployment = (
-  proofPackage: Record<string, unknown>,
-  laneMaterial: {
-    sourceVerifierMaterial: Record<string, unknown>;
-    sourceAdapterEngineDeployment: Record<string, unknown>;
-  },
-): Record<string, unknown> => {
-  const messageBundle = readRequiredSccpRecordField(
-    proofPackage,
-    ["messageBundle", "message_bundle"],
-    "TON SCCP source proof package messageBundle",
-  );
-  const nativeBinding = installGlobalIrohaJsNativeBinding(
-    import.meta.url,
-  ) as IrohaNativeSccpCodec;
-  const build =
-    nativeBinding.sccpBuildTonMessageBundleSourceProofWithDeployment;
-  if (typeof build !== "function") {
-    throw new Error(
-      "Native Iroha SDK binding is missing deployment-bound TON SCCP source proof support; rebuild @iroha/iroha-js native bindings.",
-    );
-  }
-  const nativeMessageBundle =
-    buildSccpNativeMessageBundlePayload(messageBundle);
-  const nativeSourceVerifierMaterial = canonicalizeSccpNativeJsonRecord(
-    laneMaterial.sourceVerifierMaterial,
-    "TON SCCP source verifier material",
-  );
-  const nativeSourceAdapterEngineDeployment = canonicalizeSccpNativeJsonRecord(
-    laneMaterial.sourceAdapterEngineDeployment,
-    "TON SCCP source adapter deployment",
-  );
-  const outputText = build(
-    JSON.stringify(nativeMessageBundle),
-    JSON.stringify(nativeSourceVerifierMaterial),
-    JSON.stringify(nativeSourceAdapterEngineDeployment),
-  );
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(outputText);
-  } catch (error) {
-    throw new Error(
-      `Native TON SCCP source proof builder returned invalid JSON: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  if (!isPlainRecord(parsed)) {
-    throw new Error(
-      "Native TON SCCP source proof builder must return an object.",
-    );
-  }
-  const builtMessageBundle = readRequiredSccpRecordField(
-    parsed,
-    ["messageBundle", "message_bundle"],
-    "Native TON SCCP source proof builder messageBundle",
-  );
-  const sourceProofHash = readOptionalSccpTextField(parsed, [
-    "sourceProofHash",
-    "source_proof_hash",
-  ]);
-  const sourceAdapterDeploymentHash = readOptionalSccpTextField(parsed, [
-    "sourceAdapterDeploymentHash",
-    "source_adapter_deployment_hash",
-  ]);
-  const sourceAdapterDeploymentReceiptHash = readOptionalSccpTextField(parsed, [
-    "sourceAdapterDeploymentReceiptHash",
-    "source_adapter_deployment_receipt_hash",
-  ]);
-  const sourceVerifierEvidenceHash = readOptionalSccpTextField(parsed, [
-    "sourceVerifierEvidenceHash",
-    "source_verifier_evidence_hash",
-  ]);
-  return {
-    ...replaceSccpSourceMessageBundle(proofPackage, builtMessageBundle),
-    ...(sourceProofHash ? { sourceProofHash } : {}),
-    ...(sourceAdapterDeploymentHash ? { sourceAdapterDeploymentHash } : {}),
-    ...(sourceAdapterDeploymentReceiptHash
-      ? { sourceAdapterDeploymentReceiptHash }
-      : {}),
-    ...(sourceVerifierEvidenceHash ? { sourceVerifierEvidenceHash } : {}),
-  };
-};
-
-const rebuildBscSourceMessageBundleWithNativeDeployment = (
-  proofPackage: Record<string, unknown>,
-  laneMaterial: {
-    sourceVerifierMaterial: Record<string, unknown>;
-    sourceAdapterEngineDeployment: Record<string, unknown>;
-  },
-): Record<string, unknown> =>
-  rebuildSccpSourceMessageBundleWithNativeDeployment(
-    proofPackage,
-    laneMaterial,
-    "BSC",
-  );
-
-const rebuildSccpSourceProofResultInNode = (
-  input: SccpSourceProofDeploymentRebuildInput,
-): Record<string, unknown> => {
-  const request = snapshotSccpDataValue(
-    input,
-    "SCCP source proof deployment rebuild request",
-  );
-  if (!isPlainRecord(request)) {
-    throw new Error(
-      "SCCP source proof deployment rebuild request must be an object.",
-    );
-  }
-  const proofPackage = readRequiredSccpRecordField(
-    request,
-    ["proofPackage", "proof_package"],
-    "SCCP source proof deployment rebuild proofPackage",
-  );
-  const sourceVerifierMaterial = readRequiredSccpRecordField(
-    request,
-    ["sourceVerifierMaterial", "source_verifier_material"],
-    "SCCP source proof deployment rebuild sourceVerifierMaterial",
-  );
-  const sourceAdapterEngineDeployment = readRequiredSccpRecordField(
-    request,
-    [
-      "sourceAdapterEngineDeployment",
-      "source_adapter_engine_deployment",
-      "sourceAdapterDeployment",
-      "source_adapter_deployment",
-    ],
-    "SCCP source proof deployment rebuild sourceAdapterEngineDeployment",
-  );
-  const label = trimString(request.label) || "source";
-  return rebuildSccpSourceMessageBundleWithNativeDeployment(
-    proofPackage,
-    { sourceVerifierMaterial, sourceAdapterEngineDeployment },
-    label,
-  );
-};
-
-const buildTonSccpSourceProofResultInNode = (
-  input: SccpSourceProofDeploymentRebuildInput,
-): Record<string, unknown> => {
-  const request = snapshotSccpDataValue(
-    input,
-    "TON SCCP source proof deployment build request",
-  );
-  if (!isPlainRecord(request)) {
-    throw new Error(
-      "TON SCCP source proof deployment build request must be an object.",
-    );
-  }
-  const proofPackage = readRequiredSccpRecordField(
-    request,
-    ["proofPackage", "proof_package"],
-    "TON SCCP source proof deployment build proofPackage",
-  );
-  const sourceVerifierMaterial = readRequiredSccpRecordField(
-    request,
-    ["sourceVerifierMaterial", "source_verifier_material"],
-    "TON SCCP source proof deployment build sourceVerifierMaterial",
-  );
-  const sourceAdapterEngineDeployment = readRequiredSccpRecordField(
-    request,
-    [
-      "sourceAdapterEngineDeployment",
-      "source_adapter_engine_deployment",
-      "sourceAdapterDeployment",
-      "source_adapter_deployment",
-    ],
-    "TON SCCP source proof deployment build sourceAdapterEngineDeployment",
-  );
-  return buildTonSourceMessageBundleWithNativeDeployment(proofPackage, {
-    sourceVerifierMaterial,
-    sourceAdapterEngineDeployment,
-  });
-};
-
-const readBscSourceBridgeAddressForSourceProof = (
-  request: Record<string, unknown>,
-): string => {
-  const manifest = readOptionalSccpRecordField(request, ["manifest"]);
-  const address =
-    readOptionalSccpTextField(request, [
-      "sourceBridgeEmitterAddress",
-      "source_bridge_emitter_address",
-      "sourceBridgeAddress",
-      "source_bridge_address",
-      "bscSourceBridgeAddress",
-      "bsc_source_bridge_address",
-    ]) ??
-    (manifest
-      ? readOptionalSccpTextField(manifest, [
-          "sccpBscSourceBridgeAddress",
-          "sccp_bsc_source_bridge_address",
-          "bscSourceBridgeAddress",
-          "bsc_source_bridge_address",
-          "evmSourceBridgeAddress",
-          "evm_source_bridge_address",
-          "sourceBridgeAddress",
-          "source_bridge_address",
-        ])
-      : undefined);
-  if (!address) {
-    throw new Error(
-      "BSC source proof requires the manifest source bridge address.",
-    );
-  }
-  return normalizeEvmAddressHex(address, "BSC source bridge address");
-};
-
-const readBscRpcUrlForSourceProof = (
-  request: Record<string, unknown>,
-): string => {
-  const endpoint = readOptionalSccpTextField(request, [
-    "bscRpcUrl",
-    "bsc_rpc_url",
-    "evmRpcUrl",
-    "evm_rpc_url",
-    "rpcUrl",
-    "rpc_url",
-  ]);
-  if (!endpoint) {
-    throw new Error(
-      "BSC source proof requires a BSC RPC URL to read source bridge code.",
-    );
-  }
-  return endpoint;
-};
-
-const readBscSourceBridgeCodeHashForSourceProof = async (
-  request: Record<string, unknown>,
-  sourceBridgeAddress: string,
-): Promise<string> => {
-  const supplied = readOptionalSccpTextField(request, [
-    "sourceBridgeEmitterCodeHash",
-    "source_bridge_emitter_code_hash",
-    "sourceBridgeCodeHash",
-    "source_bridge_code_hash",
-  ]);
-  if (supplied) {
-    return normalizeEvmNonZeroHash(supplied, "BSC source bridge code hash");
-  }
-  const code = await getEvmCodeFromRpc({
-    endpoint: readBscRpcUrlForSourceProof(request),
-    address: sourceBridgeAddress,
-    blockTag: "latest",
-  });
-  if (code === "0x") {
-    throw new Error("BSC source bridge contract code is empty.");
-  }
-  return `0x${Buffer.from(
-    keccak_256(Buffer.from(code.slice(2), "hex")),
-  ).toString("hex")}`;
-};
-
-const buildBinaryBscSourceProofPackage = async (
-  proofPackage: Record<string, unknown>,
-  request: Record<string, unknown>,
-): Promise<Record<string, unknown>> => {
-  const messageBundle = readRequiredSccpRecordField(
-    proofPackage,
-    ["messageBundle", "message_bundle"],
-    "BSC SCCP source proof package messageBundle",
-  );
-  const commitment = readRequiredSccpRecordField(
-    messageBundle,
-    ["commitment"],
-    "BSC SCCP source proof package commitment",
-  );
-  const receipt = readOptionalSccpRecordField(request, ["receipt"]);
-  const receiptRootIndex = readBscSourceReceiptRootIndex(request, receipt);
-  const sourceBridgeEmitterAddress =
-    readBscSourceBridgeAddressForSourceProof(request);
-  const sourceBridgeEmitterCodeHash =
-    await readBscSourceBridgeCodeHashForSourceProof(
-      request,
-      sourceBridgeEmitterAddress,
-    );
-  const finalityHeight = readOptionalSccpTextField(request, [
-    "finalityHeight",
-    "finality_height",
-  ]);
-  const finalityBlockHash = readOptionalSccpTextField(request, [
-    "finalityBlockHash",
-    "finality_block_hash",
-  ]);
-  const laneMaterial = readBscSourceLaneMaterialForNativeProof(request);
-  if (!laneMaterial) {
-    throw new Error(
-      "BSC source proof requires deployment-bound sourceVerifierMaterial and sourceAdapterEngineDeployment; placeholder source proofs are unsupported.",
-    );
-  }
-  const sourceValidatorSigningConfig = laneMaterial
-    ? readBscSourceValidatorSigningConfig(request)
-    : null;
-  const blockReceipts = readSccpOwnField(request, [
-    "blockReceipts",
-    "block_receipts",
-    "receiptBlockReceipts",
-    "receipt_block_receipts",
-  ]);
-  const sourceProofInput = {
-    messageId: readRequiredSccpTextField(
-      commitment,
-      ["message_id", "messageId"],
-      "BSC SCCP source proof package message id",
-    ),
-    payloadHash: readRequiredSccpTextField(
-      commitment,
-      ["payload_hash", "payloadHash"],
-      "BSC SCCP source proof package payload hash",
-    ),
-    commitmentRoot: readRequiredSccpTextField(
-      messageBundle,
-      ["commitment_root", "commitmentRoot"],
-      "BSC SCCP source proof package commitment root",
-    ),
-    sourceEventDigest: readRequiredSccpTextField(
-      proofPackage,
-      ["sourceEventDigest", "source_event_digest"],
-      "BSC SCCP source proof package source event digest",
-    ),
-    sourceBridgeEmitterAddress,
-    sourceBridgeEmitterCodeHash,
-    ...(finalityHeight ? { finalityHeight } : {}),
-    ...(finalityBlockHash ? { finalityBlockHash } : {}),
-    ...(receipt ? { receipt } : {}),
-    ...(readOptionalSccpRecordField(request, ["block"])
-      ? { block: readOptionalSccpRecordField(request, ["block"]) }
-      : {}),
-    ...(Array.isArray(blockReceipts) ? { blockReceipts } : {}),
-    ...(receiptRootIndex
-      ? {
-          receiptRootIndex,
-        }
-      : {}),
-    ...(laneMaterial
-      ? {
-          sourceVerifierMaterial: laneMaterial.sourceVerifierMaterial,
-          sourceAdapterEngineDeployment:
-            laneMaterial.sourceAdapterEngineDeployment,
-        }
-      : {}),
-    ...(sourceValidatorSigningConfig ?? {}),
-  };
-  const sourceProof = buildBscSourceChainProofEnvelope(sourceProofInput);
-  const patchedProofPackage = withBscSourcePublicInputFinality(
-    replaceBscSourceMessageBundleFinalityProof(
-      proofPackage,
-      sourceProof.sourceProofHex,
-    ),
-    sourceProof,
-  );
-  return patchedProofPackage;
-};
-
-const SCCP_BSC_SOURCE_DOMAIN_ID = 2;
-const SCCP_SORA_TARGET_DOMAIN_ID = 0;
-const SCCP_TAIRA_BSC_XOR_ROUTE_ID = "taira_bsc_xor";
-
-const bindBscSourceProofResultInNode = async (
-  input: SccpBscSourceProofGenerateInput,
-  proofPackage: Record<string, unknown>,
-): Promise<Record<string, unknown>> => {
-  const request = snapshotSccpDataValue(
-    input.input,
-    "BSC SCCP source proof request",
-  );
-  if (!isPlainRecord(request)) {
-    throw new Error("BSC SCCP source proof request must be an object.");
-  }
-  const patchedProofPackage = await buildBinaryBscSourceProofPackage(
-    proofPackage,
-    request,
-  );
-  const bridgeAddress = readOptionalSccpTextField(request, [
-    "bridgeAddress",
-    "bridge_address",
-    "bscBridgeAddress",
-    "bsc_bridge_address",
-    "evmBridgeAddress",
-    "evm_bridge_address",
-  ]);
-  const bindInput = {
-    proofPackage: patchedProofPackage,
-    txId: readRequiredSccpTextField(
-      request,
-      [
-        "txId",
-        "txID",
-        "transactionHash",
-        "transaction_hash",
-        "transactionId",
-        "transaction_id",
-      ],
-      "BSC SCCP source proof request txId",
-    ),
-    bscSender: readRequiredSccpTextField(
-      request,
-      ["bscSender", "bsc_sender", "evmSender", "evm_sender", "sender"],
-      "BSC SCCP source proof request bscSender",
-    ),
-    tairaRecipient: readRequiredSccpTextField(
-      request,
-      [
-        "tairaRecipient",
-        "taira_recipient",
-        "recipient",
-        "tairaAccountId",
-        "taira_account_id",
-      ],
-      "BSC SCCP source proof request tairaRecipient",
-    ),
-    amount: readRequiredSccpTextField(
-      request,
-      ["amountBaseUnits", "amount_base_units", "amount"],
-      "BSC SCCP source proof request amountBaseUnits",
-    ),
-    ...(bridgeAddress ? { bridgeAddress } : {}),
-  };
-  const laneMaterial = readBscSourceLaneMaterialForNativeProof(request);
-  const proofPackageForBinding = laneMaterial
-    ? rebuildBscSourceMessageBundleWithNativeDeployment(
-        {
-          ...patchedProofPackage,
-          messageBundle:
-            bindTairaXorBscToTairaSourceProofPackage(bindInput).messageBundle,
-        },
-        laneMaterial,
-      )
-    : patchedProofPackage;
-  const bound = bindTairaXorBscToTairaSourceProofPackage({
-    ...bindInput,
-    proofPackage: proofPackageForBinding,
-  });
-  const boundMessageBundle = bound.messageBundle as Record<string, unknown>;
-  const boundCommitment = readRequiredSccpRecordField(
-    boundMessageBundle,
-    ["commitment"],
-    "BSC SCCP source proof package bound commitment",
-  );
-  const boundPayloadHash = readRequiredSccpTextField(
-    boundCommitment,
-    ["payload_hash", "payloadHash"],
-    "BSC SCCP source proof package bound payload hash",
-  );
-  const materialValue = (
-    packageKeys: readonly string[],
-    requestKeys: readonly string[],
-  ): string => {
-    return (
-      readOptionalSccpTextField(patchedProofPackage, packageKeys) ??
-      readOptionalSccpTextField(request, requestKeys) ??
-      ""
-    );
-  };
-  return {
-    messageBundle: boundMessageBundle,
-    settlement: bound.settlement,
-    publicInputs: {
-      sourceDomain: SCCP_BSC_SOURCE_DOMAIN_ID,
-      targetDomain: SCCP_SORA_TARGET_DOMAIN_ID,
-      messageId: bound.messageId,
-      payloadHash: boundPayloadHash,
-      commitmentRoot: bound.commitmentRoot,
-      txId: bound.txId,
-      sourceEventDigest: bound.sourceEventDigest,
-      amountBaseUnits: bound.amount,
-      sender: bindInput.bscSender,
-      recipient: bindInput.tairaRecipient,
-      routeId: SCCP_TAIRA_BSC_XOR_ROUTE_ID,
-    },
-    sourceEventDigest: bound.sourceEventDigest,
-    txId: bound.txId,
-    messageId: bound.messageId,
-    amountBaseUnits: bound.amount,
-    proofArtifactHash: materialValue(
-      ["proofArtifactHash", "proof_artifact_hash"],
-      ["proofArtifactHash", "proof_artifact_hash"],
-    ),
-    provingKeyHash: materialValue(
-      ["provingKeyHash", "proving_key_hash"],
-      ["provingKeyHash", "proving_key_hash"],
-    ),
-    nativeEvmProverBundleHash: materialValue(
-      ["nativeEvmProverBundleHash", "native_evm_prover_bundle_hash"],
-      ["nativeEvmProverBundleHash", "native_evm_prover_bundle_hash"],
-    ),
-  };
-};
-
-const readOptionalSccpHex32 = (
-  value: Record<string, unknown>,
-  keys: readonly string[],
-  label: string,
-): string | undefined => {
-  const raw = readSccpOwnField(value, keys);
-  if (raw === undefined || raw === null || raw === "") {
-    return undefined;
-  }
-  if (typeof raw !== "string") {
-    throw new Error(`${label} must be a canonical 32-byte hex string.`);
-  }
-  const normalized = raw.trim().toLowerCase();
-  if (
-    normalized !== raw.trim() ||
-    !/^0x[0-9a-f]{64}$/u.test(normalized) ||
-    /^0x0{64}$/u.test(normalized)
-  ) {
-    throw new Error(`${label} must be a non-zero 32-byte hex string.`);
-  }
-  return normalized;
-};
-
-const bindOptionalBscNativeEvmProverBundleHash = <
-  T extends Record<string, unknown>,
->(
-  request: T,
-  witness: Record<string, unknown>,
-): T & { nativeEvmProverBundleHash?: string } => {
-  const nativeEvmProverBundleHash = readOptionalSccpHex32(
-    witness,
-    SCCP_BSC_NATIVE_EVM_PROVER_BUNDLE_HASH_KEYS,
-    "BSC SCCP proof witness nativeEvmProverBundleHash",
-  );
-  return nativeEvmProverBundleHash
-    ? { ...request, nativeEvmProverBundleHash }
-    : request;
-};
-
-const readBscNodeProverNetwork = (
-  witness: Record<string, unknown>,
-): "mainnet" | "testnet" => {
-  const binding = readSccpOwnField(witness, [
-    "destinationBinding",
-    "destination_binding",
-  ]);
-  if (!isPlainRecord(binding)) {
-    return "testnet";
-  }
-  const rawNetworkId = readSccpOwnField(binding, [
-    "networkId",
-    "network_id",
-    "networkIdHex",
-    "network_id_hex",
-  ]);
-  if (
-    rawNetworkId === undefined ||
-    rawNetworkId === null ||
-    rawNetworkId === ""
-  ) {
-    return "testnet";
-  }
-  if (typeof rawNetworkId !== "string") {
-    throw new Error("BSC SCCP destination binding networkId must be hex.");
-  }
-  const networkId = rawNetworkId.trim().toLowerCase();
-  if (networkId === SCCP_BSC_MAINNET_NETWORK_ID_HEX) {
-    return "mainnet";
-  }
-  if (networkId === SCCP_BSC_TESTNET_NETWORK_ID_HEX) {
-    return "testnet";
-  }
-  throw new Error("BSC SCCP destination binding networkId is unsupported.");
-};
-
-const buildBscNodeProverRequest = (
-  requestOrWitness: Record<string, unknown>,
-): Record<string, unknown> => {
-  const existingRequestHash = readSccpOwnField(requestOrWitness, [
-    "requestHash",
-    "request_hash",
-  ]);
-  if (existingRequestHash !== undefined && existingRequestHash !== null) {
-    return bindOptionalBscNativeEvmProverBundleHash(
-      requestOrWitness,
-      requestOrWitness,
-    );
-  }
-  const network = readBscNodeProverNetwork(requestOrWitness);
-  const request =
-    network === "mainnet"
-      ? buildBscMainnetSccpDestinationProofRequest(
-          requestOrWitness as EvmSccpProofRequestInput,
-        )
-      : buildBscTestnetSccpDestinationProofRequest(
-          requestOrWitness as EvmSccpProofRequestInput,
-        );
-  return bindOptionalBscNativeEvmProverBundleHash(
-    request as unknown as Record<string, unknown>,
-    requestOrWitness,
-  );
-};
-
-const bscEvmGroth16EnvelopeHash = (
-  requestHash: string,
-  proofBytesHex: string,
-): string => {
-  if (!/^0x[0-9a-fA-F]{64}$/u.test(requestHash)) {
-    throw new Error("BSC SCCP proof result requestHash must be 32-byte hex.");
-  }
-  if (!/^0x[0-9a-fA-F]+$/u.test(proofBytesHex)) {
-    throw new Error("BSC SCCP proof result proofBytes must be hex.");
-  }
-  const prefix = Uint8Array.from(
-    Buffer.from("sccp:evm:groth16-proof-envelope:v1", "utf8"),
-  );
-  const requestHashBytes = Uint8Array.from(
-    Buffer.from(requestHash.slice(2), "hex"),
-  );
-  const proofBytes = Uint8Array.from(
-    Buffer.from(proofBytesHex.slice(2), "hex"),
-  );
-  const payload = new Uint8Array(
-    prefix.byteLength + requestHashBytes.byteLength + proofBytes.byteLength,
-  );
-  payload.set(prefix, 0);
-  payload.set(requestHashBytes, prefix.byteLength);
-  payload.set(proofBytes, prefix.byteLength + requestHashBytes.byteLength);
-  const digest = blake2b(payload, { dkLen: 32 });
-  return `0x${Buffer.from(digest).toString("hex")}`;
-};
-
-const proveBscSccpProofInNode = async (
-  input: SccpBscProofGenerateInput,
-  direction: "destination" | "source" = "destination",
-): Promise<Record<string, unknown>> => {
-  const requestOrWitness = snapshotSccpDataValue(
-    input.request,
-    "BSC SCCP proof request",
-  );
-  if (!isPlainRecord(requestOrWitness)) {
-    throw new Error("BSC SCCP proof request must be an object.");
-  }
-  assertNoSecretLikePayloadFields(requestOrWitness, "BSC SCCP proof request");
-  const request =
-    direction === "source"
-      ? withBscSourceReceiptRootIndex(requestOrWitness)
-      : buildBscNodeProverRequest(requestOrWitness);
-  const moduleSpecifier = resolveSccpBscProverModuleSpecifier(
-    input.proverModuleUrl,
-  );
-  const configUrl = resolveSccpBscRuntimeProverConfigUrl(input.proverConfigUrl);
-  const timeoutMs = normalizeOptionalTimeoutMs(
-    input.timeoutMs,
-    SCCP_BSC_NODE_PROVER_TIMEOUT_MS,
-  );
-  const childInput = JSON.stringify({
-    direction,
-    request,
-    moduleSpecifier,
-    configUrl,
-  });
-  const heapMb = resolveSccpProverHeapMb();
-  const child = spawn(
-    process.execPath,
-    [
-      `--max-old-space-size=${heapMb}`,
-      "--experimental-vm-modules",
-      "-e",
-      SCCP_BSC_NODE_PROVER_CHILD_SOURCE,
-    ],
-    {
-      env: {
-        ...process.env,
-        ELECTRON_RUN_AS_NODE: "1",
-        SCCP_BSC_PROVER_V8_HEAP_MB: String(heapMb),
-        VITE_SCCP_BSC_PROVER_V8_HEAP_MB: String(heapMb),
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-    },
-  );
-  const stdout: Buffer[] = [];
-  const stderr: Buffer[] = [];
-  let outputError: Error | null = null;
-  const timeout = setTimeout(() => {
-    child.kill("SIGTERM");
-  }, timeoutMs);
-  child.stdout.on("data", (chunk: Buffer) => {
-    try {
-      collectLimitedChildOutput(stdout, chunk, "BSC SCCP prover stdout");
-    } catch (error) {
-      outputError = error instanceof Error ? error : new Error(String(error));
-      child.kill("SIGTERM");
-    }
-  });
-  child.stderr.on("data", (chunk: Buffer) => {
-    try {
-      collectLimitedChildOutput(stderr, chunk, "BSC SCCP prover stderr");
-    } catch (error) {
-      outputError = error instanceof Error ? error : new Error(String(error));
-      child.kill("SIGTERM");
-    }
-  });
-  const exit = new Promise<{
-    code: number | null;
-    signal: NodeJS.Signals | null;
-  }>((resolveExit, rejectExit) => {
-    child.once("error", rejectExit);
-    child.once("close", (code, signal) => resolveExit({ code, signal }));
-  });
-  child.stdin.end(childInput);
-  const { code, signal } = await exit.finally(() => clearTimeout(timeout));
-  if (outputError) {
-    throw outputError;
-  }
-  const output = Buffer.concat(stdout).toString("utf8").trim();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(output);
-  } catch (_error) {
-    const detail = Buffer.concat(stderr).toString("utf8").trim().slice(0, 2000);
-    throw new Error(
-      `BSC SCCP prover child returned unreadable output.${
-        detail ? ` stderr: ${detail}` : ""
-      }`,
-    );
-  }
-  if (!isPlainRecord(parsed)) {
-    throw new Error("BSC SCCP prover child returned an invalid response.");
-  }
-  if (parsed.ok !== true) {
-    const childError = trimString(parsed.error) || `exit ${code ?? signal}`;
-    throw new Error(`BSC SCCP prover child failed: ${childError}`);
-  }
-  if (code !== 0) {
-    throw new Error(`BSC SCCP prover child exited with ${code ?? signal}.`);
-  }
-  const result = snapshotSccpDataValue(parsed.result, "BSC SCCP proof result");
-  if (!isPlainRecord(result)) {
-    throw new Error("BSC SCCP prover child result must be an object.");
-  }
-  assertNoSecretLikePayloadFields(result, "BSC SCCP proof result");
-  if (direction === "source") {
-    return result;
-  }
-  const proofBytesHex = trimString(result.proofBytes ?? result.proof_bytes);
-  if (!/^0x[0-9a-fA-F]+$/u.test(proofBytesHex)) {
-    throw new Error("BSC SCCP prover child result proofBytes must be hex.");
-  }
-  const proofBase64 = Buffer.from(proofBytesHex.slice(2), "hex").toString(
-    "base64",
-  );
-  const proofResult: Record<string, unknown> = {
-    proofBytes: proofBytesHex,
-    proofBase64,
-    backend: trimString(result.backend) || request.backend,
-    requestHash:
-      trimString(result.requestHash) || trimString(request.requestHash),
-    envelopeHash: bscEvmGroth16EnvelopeHash(
-      trimString(result.requestHash) || trimString(request.requestHash),
-      proofBytesHex,
-    ),
-    proofArtifactHash: request.proofArtifactHash,
-    provingKeyHash: request.provingKeyHash,
-    nativeEvmProverBundleHash: request.nativeEvmProverBundleHash,
-    destinationBinding: request.destinationBinding,
-    destinationBindingHash: request.destinationBindingHash,
-    publicInputs: request.publicInputs,
-    publicSignalWords: request.publicSignalWords,
-    bundleBytes: request.bundleBytes,
-    sourceProofBytes: request.sourceProofBytes,
-    proofContext: request.proofContext,
-    statementHash: request.statementHash,
-    sourceDomain: request.sourceDomain,
-  };
-  for (const [key, value] of Object.entries(proofResult)) {
-    if (value === undefined || value === null) {
-      delete proofResult[key];
-    }
-  }
-  delete proofResult.envelopeHash;
-  delete proofResult.envelope_hash;
-  return proofResult;
-};
-
-const proveBscSccpSourceProofInNode = async (
-  input: SccpBscSourceProofGenerateInput,
-): Promise<Record<string, unknown>> => {
-  const request = snapshotSccpDataValue(
-    input.input,
-    "BSC SCCP source proof request",
-  );
-  if (!isPlainRecord(request)) {
-    throw new Error("BSC SCCP source proof request must be an object.");
-  }
-  const sourceRequest = withBscSourceReceiptRootIndex(request);
-  const proofPackage = await proveBscSccpProofInNode(
-    {
-      request: sourceRequest,
-      proverModuleUrl: input.proverModuleUrl,
-      proverConfigUrl: input.proverConfigUrl,
-      timeoutMs: input.timeoutMs,
-    },
-    "source",
-  );
-  return bindBscSourceProofResultInNode(
-    { ...input, input: sourceRequest },
-    proofPackage,
-  );
-};
-
-const SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_CONTRACT_ALIAS =
-  "taira_xor_inbound_settlement::universal";
-const SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_SOURCE_NAME =
-  "contracts/taira/sccp/TairaXorSccpInboundSettlement.ko";
-const SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_CONTRACT_SOURCE = `
-seiyaku TairaXorSccpInboundSettlement {
-  kotoage fn finalize_inbound() permission(AssetManager) {
-    require(true);
-  }
-}
-`;
-
-const normalizeSccpContractAlias = (
-  value: unknown,
-  fallback: string,
-): string => {
-  const alias = trimString(value) || fallback;
-  if (!alias.includes("::")) {
-    throw new Error(
-      "TAIRA SCCP settlement contract alias must be fully qualified.",
-    );
-  }
-  return alias;
-};
-
-const normalizeOptionalLeaseExpiryMs = (value: unknown): number | undefined => {
-  if (value === undefined || value === null || value === "") {
-    return undefined;
-  }
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) {
-    throw new Error(
-      "Contract alias leaseExpiryMs must be a non-negative integer.",
-    );
-  }
-  return parsed;
-};
-
-const normalizeOptionalCompiledContractCodeB64 = (
-  value: unknown,
-): Uint8Array | null => {
-  const encoded = trimString(value);
-  if (!encoded) {
-    return null;
-  }
-  let decoded: Buffer;
-  try {
-    decoded = Buffer.from(encoded, "base64");
-  } catch {
-    throw new Error("compiledCodeB64 must be valid base64 contract bytecode.");
-  }
-  if (decoded.length === 0) {
-    throw new Error("compiledCodeB64 must not be empty.");
-  }
-  return Uint8Array.from(decoded);
-};
-
-const deploySccpTairaInboundSettlementContractToTorii = async (
-  input: SccpTairaInboundSettlementDeployInput,
-): Promise<Record<string, unknown> | null> => {
-  const writeConnection = await assertWriteConnectionMatchesEndpoint({
-    toriiUrl: input.toriiUrl,
-    chainId: TAIRA_GOVERNANCE_CHAIN_ID,
-    networkPrefix: TAIRA_GOVERNANCE_NETWORK_PREFIX,
-  });
-  const accountId = normalizeCanonicalAccountIdLiteral(
-    input.accountId,
-    "accountId",
-    writeConnection.networkPrefix,
-  );
-  if (trimString(input.privateKeyHex)) {
-    throw new Error(
-      "TAIRA SCCP settlement contract deployment must use the stored wallet secret; inline private keys are not accepted.",
-    );
-  }
-  const signingMaterial = await resolveSigningMaterial({
-    accountId,
-    operationLabel: "Deploy TAIRA SCCP settlement contract",
-  });
-  const contractAlias = normalizeSccpContractAlias(
-    input.contractAlias,
-    SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_CONTRACT_ALIAS,
-  );
-  const externalArtifactBytes = normalizeOptionalCompiledContractCodeB64(
-    input.compiledCodeB64,
-  );
-  let compiledCodeHashHex: string | undefined;
-  let compiledAbiHashHex: string | undefined;
-  const artifactBytes =
-    externalArtifactBytes ??
-    (await (async () => {
-      const compiled = await compileKotodamaProgram(
-        SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_CONTRACT_SOURCE,
-        {
-          sourceName: SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_SOURCE_NAME,
-        },
-      );
-      if (!compiled.ok) {
-        throw new Error(
-          compiled.diagnostics
-            .map((entry) => `${entry.severity}: ${entry.message}`)
-            .join("\n"),
-        );
-      }
-      const output = compiled.output;
-      const entrypoint = output.manifest?.entrypoints.find(
-        (candidate) => candidate.name === "finalize_inbound",
-      );
-      const params = entrypoint?.params.map((param) => [
-        param.name,
-        param.type_name,
-      ]);
-      if (
-        !entrypoint ||
-        entrypoint.permission !== "AssetManager" ||
-        JSON.stringify(params) !== JSON.stringify([])
-      ) {
-        throw new Error(
-          "Compiled TAIRA SCCP settlement contract ABI is invalid.",
-        );
-      }
-      compiledCodeHashHex = output.codeHashHex;
-      compiledAbiHashHex = output.abiHashHex;
-      return Uint8Array.from(output.artifactBytes);
-    })());
-  if (artifactBytes.length === 0) {
-    throw new Error("Compiled TAIRA SCCP settlement contract is empty.");
-  }
-  const baseUrl = normalizeBaseUrl(input.toriiUrl);
-  const client = new ToriiClient(baseUrl, {
-    fetchImpl: nodeFetch,
-    allowInsecure: baseUrl.startsWith("http://"),
-  });
-  const response = await client.deployContract({
-    authority: accountId,
-    privateKey: formatExposedPrivateKey(signingMaterial),
-    contractAlias,
-    codeB64: Buffer.from(artifactBytes).toString("base64"),
-    leaseExpiryMs: normalizeOptionalLeaseExpiryMs(input.leaseExpiryMs),
-  });
-  const deployedContract = response?.contracts.find(
-    (contract) => contract.contract_alias === contractAlias,
-  );
-  return {
-    ...(response ?? {}),
-    contract_alias: deployedContract?.contract_alias ?? contractAlias,
-    code_hash_hex: deployedContract?.code_hash_hex ?? compiledCodeHashHex,
-    abi_hash_hex: deployedContract?.abi_hash_hex ?? compiledAbiHashHex,
-    source_name: SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_SOURCE_NAME,
-  };
-};
-
-type ZkIvmRequestInput = {
-  toriiUrl: string;
-  chainId: string;
-  networkPrefix: number;
-  vkRef?: unknown;
-  vk_ref?: unknown;
-  authority?: unknown;
-  metadata?: unknown;
-  bytecode?: unknown;
-  proved?: unknown;
-};
-
-type ZkIvmProveJobInput = {
-  toriiUrl: string;
-  chainId: string;
-  networkPrefix: number;
-  jobId?: unknown;
-  job_id?: unknown;
-};
-type ZkIvmProvedTransactionSubmitInput = ToriiConfig & {
-  chainId: string;
-  accountId: string;
-  networkPrefix: number;
-  privateKeyHex?: unknown;
-  proved: Record<string, unknown>;
-  attachment: Record<string, unknown>;
-  gasLimit?: string | number;
-  metadata?: Record<string, unknown>;
-  creationTimeMs?: number;
-  ttlMs?: number;
-  nonce?: number;
-};
-
-const normalizeZkIvmVkRef = (
-  input: unknown,
-): { backend: string; name: string } => {
-  if (!isPlainRecord(input)) {
-    throw new Error("ZK IVM verifying key reference must be an object.");
-  }
-  const backend = trimString(input.backend);
-  const name = trimString(input.name);
-  if (!backend || !name) {
-    throw new Error(
-      "ZK IVM verifying key reference requires backend and name.",
-    );
-  }
-  return { backend, name };
-};
-
-const buildZkIvmRequestPayload = (
-  input: ZkIvmRequestInput,
-  networkPrefix: number,
-): Record<string, unknown> => {
-  const metadata =
-    input.metadata === undefined
-      ? {}
-      : isPlainRecord(input.metadata)
-        ? input.metadata
-        : null;
-  if (metadata === null) {
-    throw new Error("ZK IVM metadata must be an object when provided.");
-  }
-  if (input.bytecode === undefined || input.bytecode === null) {
-    throw new Error("ZK IVM bytecode is required.");
-  }
-  if (typeof input.bytecode === "string" && !input.bytecode.trim()) {
-    throw new Error("ZK IVM bytecode must not be empty.");
-  }
-  if (input.proved !== undefined && !isPlainRecord(input.proved)) {
-    throw new Error("ZK IVM proved payload must be an object when provided.");
-  }
-  return {
-    vk_ref: normalizeZkIvmVkRef(input.vkRef ?? input.vk_ref),
-    authority: normalizeCanonicalAccountIdLiteral(
-      trimString(input.authority),
-      "authority",
-      networkPrefix,
-    ),
-    metadata,
-    bytecode: input.bytecode,
-    ...(input.proved !== undefined ? { proved: input.proved } : {}),
-  };
-};
-
-const normalizeZkIvmJobId = (input: ZkIvmProveJobInput): string => {
-  const jobId = trimString(input.jobId ?? input.job_id).toLowerCase();
-  if (!/^[0-9a-f]{32}$/u.test(jobId)) {
-    throw new Error("ZK IVM prove job id must be a 16-byte hex string.");
-  }
-  return jobId;
-};
-
-const deriveZkIvmPayloadOnTorii = async (
-  input: ZkIvmRequestInput,
-): Promise<Record<string, unknown>> => {
-  const writeConnection = await assertWriteConnectionMatchesEndpoint({
-    toriiUrl: input.toriiUrl,
-    chainId: input.chainId,
-    networkPrefix: input.networkPrefix,
-    feature: "zkProofJobs",
-  });
-  return postJson(
-    buildNexusEndpoint(input.toriiUrl, "/v1/zk/ivm/derive"),
-    "ZK IVM derive",
-    buildZkIvmRequestPayload(input, writeConnection.networkPrefix),
-  );
-};
-
-const startZkIvmProveJobOnTorii = async (
-  input: ZkIvmRequestInput,
-): Promise<Record<string, unknown>> => {
-  const writeConnection = await assertWriteConnectionMatchesEndpoint({
-    toriiUrl: input.toriiUrl,
-    chainId: input.chainId,
-    networkPrefix: input.networkPrefix,
-    feature: "zkProofJobs",
-  });
-  return postJson(
-    buildNexusEndpoint(input.toriiUrl, "/v1/zk/ivm/prove"),
-    "ZK IVM prove",
-    buildZkIvmRequestPayload(input, writeConnection.networkPrefix),
-  );
-};
-
-const getZkIvmProveJobFromTorii = (
-  input: ZkIvmProveJobInput,
-): Promise<Record<string, unknown>> =>
-  fetchJson(
-    buildNexusEndpoint(
-      input.toriiUrl,
-      `/v1/zk/ivm/prove/${normalizeZkIvmJobId(input)}`,
-    ),
-    "ZK IVM prove job",
-  );
-
-const cancelZkIvmProveJobOnTorii = async (
-  input: ZkIvmProveJobInput,
-): Promise<Record<string, unknown>> => {
-  await assertWriteConnectionMatchesEndpoint({
-    toriiUrl: input.toriiUrl,
-    chainId: input.chainId,
-    networkPrefix: input.networkPrefix,
-    feature: "zkProofJobs",
-  });
-  const response = await nodeFetch(
-    buildNexusEndpoint(
-      input.toriiUrl,
-      `/v1/zk/ivm/prove/${normalizeZkIvmJobId(input)}`,
-    ),
-    {
-      method: "DELETE",
-      headers: {
-        Accept: "application/json",
-      },
-    },
-  );
-  if (!response.ok) {
-    throw await createApiRequestError(response, "ZK IVM prove job cancel");
-  }
-  const payload = (await response.json()) as unknown;
-  return ensureObjectResponse(payload, "ZK IVM prove job cancel");
-};
-
-const submitZkIvmProvedTransactionToTorii = async (
-  input: ZkIvmProvedTransactionSubmitInput,
-): Promise<Record<string, unknown>> => {
-  const chainId = trimString(input.chainId);
-  if (!chainId) {
-    throw new Error("chainId is required.");
-  }
-  const writeConnection = await assertWriteConnectionMatchesEndpoint({
-    toriiUrl: input.toriiUrl,
-    chainId,
-    networkPrefix: input.networkPrefix,
-    feature: "zkProofJobs",
-  });
-  const accountId = normalizeCanonicalAccountIdLiteral(
-    input.accountId,
-    "accountId",
-    writeConnection.networkPrefix,
-  );
-  if (!isPlainRecord(input.proved)) {
-    throw new Error("ZK IVM proved payload must be an object.");
-  }
-  if (!isPlainRecord(input.attachment)) {
-    throw new Error("ZK IVM proof attachment must be an object.");
-  }
-  if (input.metadata !== undefined && !isPlainRecord(input.metadata)) {
-    throw new Error(
-      "ZK IVM transaction metadata must be an object when provided.",
-    );
-  }
-  if (trimString(input.privateKeyHex)) {
-    throw new Error(
-      "ZK IVM proved transaction submissions must use stored wallet secrets; inline private keys are not accepted.",
-    );
-  }
-  const signingMaterial = await resolveSigningMaterial({
-    accountId,
-    operationLabel: "Submit ZK IVM proved transaction",
-  });
-  const nativeBinding = installGlobalIrohaJsNativeBinding(import.meta.url);
-  const creationTimeMs = input.creationTimeMs ?? Date.now();
-  const gasLimit = normalizeIntegerAmount(
-    String(
-      input.gasLimit ?? input.proved.gas_limit ?? input.proved.gasLimit ?? "",
-    ),
-    "gasLimit",
-  );
-  const draft = buildIvmProvedTransactionPayload({
-    chainId,
-    authority: accountId,
-    proved: input.proved,
-    attachment: input.attachment,
-    feePayment: { payer: "authority", chargeLimits: [], gasLimit },
-    metadata: input.metadata,
-    creationTimeMs,
-    ttlMs: input.ttlMs ?? 10 * 60 * 1000,
-    nonce: input.nonce,
-  });
-  const quote = await getClient(input.toriiUrl).quoteFees(draft, {
-    canonicalAuth: {
-      accountId,
-      privateKey: signingMaterial.privateKeyHex,
-    },
-  });
-  const tx = signQuotedIvmProvedTransactionPayload({
-    payload: draft,
-    quotedFeePayment: quote.intent,
-    privateKey: hexToBuffer(signingMaterial.privateKeyHex, "privateKeyHex"),
-    privateKeyAlgorithm: signingMaterial.signingAlgorithm,
-  });
-  const submission = await submitSignedTransactionAsVersioned(
-    input.toriiUrl,
-    tx.signedTransaction,
-    { nativeBinding, requireNativeEncoding: true },
-  );
-  const finalized = await waitForTransactionFinalizedInBlock(
-    input.toriiUrl,
-    submission.hash,
-  );
-  return transactionSubmissionResult({
-    ...submission,
-    ...(finalized.fee ? { fee: finalized.fee } : {}),
-    finality: finalized.finality,
-  });
-};
-
-const parseIpv4Octets = (hostname: string): number[] | null => {
-  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/u.test(hostname)) {
-    return null;
-  }
-  const octets = hostname.split(".").map((part) => Number(part));
-  return octets.every(
-    (octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255,
-  )
-    ? octets
-    : null;
-};
-
-const isPrivateOrReservedIpv4Octets = (octets: number[]): boolean => {
-  const [first, second] = octets;
-  return (
-    first === 0 ||
-    first === 10 ||
-    first === 127 ||
-    (first === 100 && second >= 64 && second <= 127) ||
-    (first === 169 && second === 254) ||
-    (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && second === 0) ||
-    (first === 192 && second === 168) ||
-    (first === 198 && (second === 18 || second === 19)) ||
-    first >= 224
-  );
-};
-
-const isPrivateOrReservedIpv4 = (hostname: string): boolean => {
-  const octets = parseIpv4Octets(hostname);
-  if (!octets) {
-    return false;
-  }
-  return isPrivateOrReservedIpv4Octets(octets);
-};
-
-const parseIpv6Hextets = (hostname: string): number[] | null => {
-  if (!hostname.includes(":")) {
-    return null;
-  }
-  const parts = hostname.split("::");
-  if (parts.length > 2) {
-    return null;
-  }
-  const parseSide = (side: string): number[] =>
-    side
-      ? side.split(":").map((part) => {
-          if (!/^[0-9a-f]{1,4}$/iu.test(part)) {
-            return Number.NaN;
-          }
-          return Number.parseInt(part, 16);
-        })
-      : [];
-  const left = parseSide(parts[0]);
-  const right = parseSide(parts[1] ?? "");
-  if (
-    [...left, ...right].some((hextet) => !Number.isInteger(hextet)) ||
-    (parts.length === 1 && left.length !== 8) ||
-    left.length + right.length > 8
-  ) {
-    return null;
-  }
-  const zeroFill =
-    parts.length === 2 ? Array(8 - left.length - right.length).fill(0) : [];
-  return [...left, ...zeroFill, ...right];
-};
-
-const hextetsToIpv4Octets = (high: number, low: number): number[] => [
-  (high >> 8) & 0xff,
-  high & 0xff,
-  (low >> 8) & 0xff,
-  low & 0xff,
-];
-
-const hasPrivateOrReservedEmbeddedIpv4 = (hextets: number[]): boolean => {
-  if (hextets.length !== 8) {
-    return false;
-  }
-  const lastIpv4 = hextetsToIpv4Octets(hextets[6], hextets[7]);
-  const leadingCompatibleZeros = hextets
-    .slice(0, 6)
-    .every((part) => part === 0);
-  const leadingMappedZeros =
-    hextets.slice(0, 5).every((part) => part === 0) && hextets[5] === 0xffff;
-  const nat64WellKnownPrefix =
-    hextets[0] === 0x64 &&
-    hextets[1] === 0xff9b &&
-    hextets.slice(2, 6).every((part) => part === 0);
-  if (
-    (leadingCompatibleZeros || leadingMappedZeros || nat64WellKnownPrefix) &&
-    isPrivateOrReservedIpv4Octets(lastIpv4)
-  ) {
-    return true;
-  }
-  if (hextets[0] === 0x2002) {
-    return isPrivateOrReservedIpv4Octets(
-      hextetsToIpv4Octets(hextets[1], hextets[2]),
-    );
-  }
-  return false;
-};
-
-const isPrivateTronGatewayHost = (hostname: string): boolean => {
-  const normalized = hostname
-    .trim()
-    .toLowerCase()
-    .replace(/^\[/u, "")
-    .replace(/\]$/u, "")
-    .replace(/\.$/u, "");
-  if (
-    normalized === "localhost" ||
-    normalized.endsWith(".localhost") ||
-    normalized === "local" ||
-    normalized === "::1" ||
-    normalized === "::"
-  ) {
-    return true;
-  }
-  if (isPrivateOrReservedIpv4(normalized)) {
-    return true;
-  }
-  const ipv4Mapped = normalized.match(
-    /(?::ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/iu,
-  );
-  if (ipv4Mapped?.[1] && isPrivateOrReservedIpv4(ipv4Mapped[1])) {
-    return true;
-  }
-  if (!normalized.includes(":")) {
-    return false;
-  }
-  const hextets = parseIpv6Hextets(normalized);
-  if (!hextets) {
-    return true;
-  }
-  if (
-    hasPrivateOrReservedEmbeddedIpv4(hextets) ||
-    (hextets[0] === 0x2001 && hextets[1] === 0)
-  ) {
-    return true;
-  }
-  const firstHextet = hextets[0];
-  return (
-    (firstHextet & 0xfe00) === 0xfc00 ||
-    (firstHextet & 0xffc0) === 0xfe80 ||
-    (firstHextet & 0xff00) === 0xff00 ||
-    normalized.startsWith("2001:db8:")
-  );
-};
-
-const normalizeTronGatewayUrl = (endpoint?: string): string => {
-  const normalized = normalizeBaseUrl(
-    trimString(endpoint) || DEFAULT_TRON_GATEWAY_URL,
-  );
-  let parsed: URL;
-  try {
-    parsed = new URL(normalized);
-  } catch {
-    throw new Error("TRON gateway endpoint must be a valid HTTPS URL.");
-  }
-  if (parsed.protocol !== "https:") {
-    throw new Error("TRON gateway endpoint must use HTTPS.");
-  }
-  if (parsed.username || parsed.password) {
-    throw new Error("TRON gateway endpoint must not include credentials.");
-  }
-  if (parsed.search || parsed.hash) {
-    throw new Error("TRON gateway endpoint must not include query or hash.");
-  }
-  if (isPrivateTronGatewayHost(parsed.hostname)) {
-    throw new Error("TRON gateway endpoint must not target a local network.");
-  }
-  return normalized;
-};
-
-const normalizeTronTxId = (txId: string): string => {
-  const normalized = trimString(txId).replace(/^0x/iu, "").toLowerCase();
-  if (!/^[0-9a-f]{64}$/u.test(normalized)) {
-    throw new Error("TRON transaction id must be a 32-byte hex string.");
-  }
-  return normalized;
-};
-
-const postTronJson = async (
-  input: TronGatewayInput | undefined,
-  path: string,
-  body: Record<string, unknown>,
-  label: string,
-): Promise<Record<string, unknown>> =>
-  postJson(`${normalizeTronGatewayUrl(input?.endpoint)}${path}`, label, body);
-
-const decodeTronGatewayMessage = (value: unknown): string => {
-  const text = trimString(value);
-  const hex = text.replace(/^0x/iu, "");
-  if (hex && hex.length % 2 === 0 && /^[0-9a-f]+$/iu.test(hex)) {
-    try {
-      return Buffer.from(hex, "hex").toString("utf8");
-    } catch {
-      return text;
-    }
-  }
-  return text;
-};
-
-const assertTronGatewayAccepted = (
-  payload: Record<string, unknown>,
-  label: string,
-): void => {
-  const result = payload.result;
-  const rejected =
-    result === false ||
-    (isPlainRecord(result) && result.result === false) ||
-    Boolean(payload.Error);
-  if (!rejected) {
-    return;
-  }
-  const detail = [
-    isPlainRecord(result) ? result.code : payload.code,
-    isPlainRecord(result) ? result.message : payload.message,
-    payload.Error,
-  ]
-    .map(decodeTronGatewayMessage)
-    .filter(Boolean)
-    .join(": ");
-  throw new Error(
-    detail
-      ? `${label} was rejected by the TRON node: ${detail}`
-      : `${label} was rejected by the TRON node.`,
-  );
-};
-
-const getTronJson = async (
-  input: TronGatewayInput | undefined,
-  path: string,
-  label: string,
-): Promise<Record<string, unknown>> =>
-  fetchJson(`${normalizeTronGatewayUrl(input?.endpoint)}${path}`, label);
-
-const getTronTransactionFromGateway = (
-  input: TronTransactionInput,
-): Promise<Record<string, unknown>> =>
-  postTronJson(
-    input,
-    "/wallet/gettransactionbyid",
-    { value: normalizeTronTxId(input.txId) },
-    "TRON transaction",
-  );
-
-const getTronTransactionReceiptFromGateway = (
-  input: TronTransactionInput,
-): Promise<Record<string, unknown>> =>
-  postTronJson(
-    input,
-    "/wallet/gettransactioninfobyid",
-    { value: normalizeTronTxId(input.txId) },
-    "TRON transaction receipt",
-  );
-
-const getTronTransactionEventsFromGateway = (
-  input: TronEventsInput,
-): Promise<Record<string, unknown>> =>
-  getTronJson(
-    input,
-    `/v1/transactions/${encodeURIComponent(normalizeTronTxId(input.txId))}/events`,
-    "TRON transaction events",
-  );
-
-const getTronSolidBlockFromGateway = (
-  input?: TronBlockInput,
-): Promise<Record<string, unknown>> => {
-  if (input?.blockNumber !== undefined && input.blockNumber !== "") {
-    const parsed = Number(input.blockNumber);
-    if (!Number.isSafeInteger(parsed) || parsed < 0) {
-      throw new Error("TRON block number must be a non-negative safe integer.");
-    }
-    return postTronJson(
-      input,
-      "/walletsolidity/getblockbynum",
-      { num: parsed },
-      "TRON solid block",
-    );
-  }
-  return postTronJson(
-    input,
-    "/walletsolidity/getnowblock",
-    {},
-    "TRON solid block",
-  );
-};
-
-const getTronWitnessesFromGateway = (
-  input?: TronGatewayInput,
-): Promise<Record<string, unknown>> =>
-  postTronJson(input, "/wallet/listwitnesses", {}, "TRON witnesses");
-
-const getTronFinalityDataFromGateway = async (
-  input?: TronGatewayInput,
-): Promise<Record<string, unknown>> => {
-  const [solidBlock, witnesses, nodeInfo] = await Promise.all([
-    getTronSolidBlockFromGateway(input),
-    getTronWitnessesFromGateway(input),
-    getTronJson(input, "/wallet/getnodeinfo", "TRON node info").catch(
-      (error) => ({
-        unavailable: true,
-        message: error instanceof Error ? error.message : String(error),
-      }),
-    ),
-  ]);
-  return {
-    solidBlock,
-    witnesses,
-    nodeInfo,
-    collectedAtMs: Date.now(),
-  };
-};
-
-const TRON_BASE58_ALPHABET =
-  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-
-const decodeTronBase58CheckPayload = (value: string, label: string): Buffer => {
-  let decodedValue = 0n;
-  for (const char of value) {
-    const index = TRON_BASE58_ALPHABET.indexOf(char);
-    if (index < 0) {
-      throw new Error(`${label} must be a valid TRON Base58Check address.`);
-    }
-    decodedValue = decodedValue * 58n + BigInt(index);
-  }
-  const hexValue =
-    decodedValue === 0n
-      ? ""
-      : decodedValue
-          .toString(16)
-          .padStart(
-            decodedValue.toString(16).length +
-              (decodedValue.toString(16).length % 2),
-            "0",
-          );
-  const body = hexValue ? Buffer.from(hexValue, "hex") : Buffer.alloc(0);
-  const leadingZeros = value.match(/^1*/u)?.[0].length ?? 0;
-  const decoded = Buffer.concat([Buffer.alloc(leadingZeros), body]);
-  if (decoded.length !== 25) {
-    throw new Error(`${label} must be a valid TRON Base58Check address.`);
-  }
-  const payload = decoded.subarray(0, 21);
-  const checksum = decoded.subarray(21);
-  const expected = createHash("sha256")
-    .update(createHash("sha256").update(payload).digest())
-    .digest()
-    .subarray(0, 4);
-  if (!checksum.equals(expected)) {
-    throw new Error(`${label} has an invalid TRON Base58Check checksum.`);
-  }
-  if (payload[0] !== 0x41 || payload.subarray(1).every((byte) => byte === 0)) {
-    throw new Error(`${label} must be a non-zero TRON mainnet address.`);
-  }
-  return payload;
-};
-
-const normalizeTronGatewayAddress = (value: string, label: string): string => {
-  const normalized = trimString(value);
-  if (!normalized) {
-    throw new Error(`${label} is required.`);
-  }
-  if (!/^T[1-9A-HJ-NP-Za-km-z]{33}$/u.test(normalized)) {
-    throw new Error(`${label} must be a TRON Base58Check address.`);
-  }
-  decodeTronBase58CheckPayload(normalized, label);
-  return normalized;
-};
-
-const getTronAccountFromGateway = (
-  input: TronAccountInput,
-): Promise<Record<string, unknown>> =>
-  postTronJson(
-    input,
-    "/wallet/getaccount",
-    {
-      address: normalizeTronGatewayAddress(
-        input.address,
-        "TRON account address",
-      ),
-      visible: true,
-    },
-    "TRON account",
-  );
-
-const normalizeTronFunctionSelector = (value: string): string => {
-  const normalized = trimString(value);
-  if (!/^[A-Za-z_$][A-Za-z0-9_$]*\([^)]*\)$/u.test(normalized)) {
-    throw new Error(
-      "TRON function selector must be a Solidity function signature.",
-    );
-  }
-  return normalized;
-};
-
-const normalizeTronHexParameter = (
-  value: string | undefined,
-  label: string,
-): string => {
-  const normalized = trimString(value ?? "").replace(/^0x/iu, "");
-  if (!normalized) {
-    return "";
-  }
-  if (!/^[0-9a-fA-F]+$/u.test(normalized) || normalized.length % 2 !== 0) {
-    throw new Error(`${label} must be canonical hex.`);
-  }
-  return normalized.toLowerCase();
-};
-
-const normalizeTronSafeInteger = (
-  value: number | string | undefined,
-  label: string,
-  fallback: number,
-): number => {
-  if (value === undefined || value === "") {
-    return fallback;
-  }
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) {
-    throw new Error(`${label} must be a non-negative safe integer.`);
-  }
-  return parsed;
-};
-
-const normalizeTronContractParameter = (
-  input: {
-    callData?: string;
-    parameter?: string;
-  },
-  label: string,
-): string => {
-  const callData = normalizeTronHexParameter(
-    input.callData,
-    `${label} call data`,
-  );
-  const parameter = normalizeTronHexParameter(
-    input.parameter,
-    `${label} parameter`,
-  );
-  if (callData && parameter) {
-    throw new Error(`${label} must provide either callData or parameter.`);
-  }
-  if (parameter) {
-    return parameter;
-  }
-  if (callData && callData.length < 8) {
-    throw new Error(`${label} call data must include a 4-byte selector.`);
-  }
-  return callData ? callData.slice(8) : "";
-};
-
-const TRON_BROADCAST_SECRET_KEY_PATTERN =
-  /(?:private[_-]?key|mnemonic|recovery[_-]?phrase|seed[_-]?phrase|secret)/iu;
-const TRON_BROADCAST_SIGNING_HELPER_KEY_PATTERN =
-  /^(?:signatures?|privateSignature|private_signature|signatureB64|signature_b64|signedTransaction|signed_transaction|walletSignature|wallet_signature)$/iu;
-const SECP256K1_ORDER =
-  0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
-const SECP256K1_HALF_ORDER = SECP256K1_ORDER >> 1n;
-
-const assertNoSecretLikeTransactionFields = (
-  value: unknown,
-  path = "TRON transaction",
-  options: { allowTopLevelSignature?: boolean } = {},
-  seen = new WeakSet<object>(),
-): void => {
-  if (isSecretLikeTextValue(value)) {
-    throw new Error(
-      `${path} must not contain recovery phrases or private key material before TRON gateway submission.`,
-    );
-  }
-  if (Array.isArray(value)) {
-    if (seen.has(value)) {
-      return;
-    }
-    seen.add(value);
-    value.forEach((entry, index) => {
-      assertNoSecretLikeTransactionFields(
-        entry,
-        `${path}[${index}]`,
-        options,
-        seen,
-      );
-    });
-    return;
-  }
-  if (!isPlainRecord(value)) {
-    return;
-  }
-  if (seen.has(value)) {
-    return;
-  }
-  seen.add(value);
-  for (const [key, child] of Object.entries(value)) {
-    if (TRON_BROADCAST_SECRET_KEY_PATTERN.test(key)) {
-      throw new Error(`${path}.${key} must not be sent to the TRON gateway.`);
-    }
-    const allowedTopLevelSignature =
-      options.allowTopLevelSignature &&
-      path === "TRON broadcast transaction" &&
-      key === "signature";
-    if (
-      !allowedTopLevelSignature &&
-      TRON_BROADCAST_SIGNING_HELPER_KEY_PATTERN.test(key)
-    ) {
-      throw new Error(
-        `${path}.${key} must not include nested signatures or signing helper payloads before TRON gateway submission.`,
-      );
-    }
-    assertNoSecretLikeTransactionFields(child, `${path}.${key}`, options, seen);
-  }
-};
-
-const normalizeTronSignatureHex = (value: unknown, label: string): string => {
-  const normalized = trimString(value).replace(/^0x/iu, "").toLowerCase();
-  if (!/^[0-9a-f]{130}$/u.test(normalized)) {
-    throw new Error(`${label} must be a 65-byte secp256k1 signature.`);
-  }
-  return normalized;
-};
-
-const normalizeTronPayloadHex = (value: unknown, label: string): string => {
-  const text = trimString(value);
-  if (text.startsWith("T")) {
-    return decodeTronBase58CheckPayload(text, label).toString("hex");
-  }
-  const normalized = text.replace(/^0x/iu, "").toLowerCase();
-  if (!/^41[0-9a-f]{40}$/u.test(normalized)) {
-    throw new Error(`${label} must be a TRON mainnet address payload.`);
-  }
-  if (/^410{40}$/u.test(normalized)) {
-    throw new Error(`${label} must be non-zero.`);
-  }
-  return normalized;
-};
-
-const bytesToBigInt = (bytes: Uint8Array): bigint =>
-  BigInt(`0x${Buffer.from(bytes).toString("hex")}`);
-
-const recoverTronSignatureOwnerPayload = (
-  signatureHex: string,
-  rawDataHex: string,
-): string => {
-  const signature = Buffer.from(signatureHex, "hex");
-  const recoveryId = signature[64];
-  if (
-    !(
-      (recoveryId >= 0 && recoveryId <= 3) ||
-      (recoveryId >= 27 && recoveryId <= 30)
-    )
-  ) {
-    throw new Error(
-      "TRON broadcast signature must be a canonical recoverable signature.",
-    );
-  }
-  const r = bytesToBigInt(signature.subarray(0, 32));
-  const s = bytesToBigInt(signature.subarray(32, 64));
-  if (r <= 0n || r >= SECP256K1_ORDER || s <= 0n || s > SECP256K1_HALF_ORDER) {
-    throw new Error("TRON broadcast signature must be canonical.");
-  }
-  const normalizedRecoveryId = recoveryId >= 27 ? recoveryId - 27 : recoveryId;
-  try {
-    const rawDataHash = createHash("sha256")
-      .update(Buffer.from(rawDataHex, "hex"))
-      .digest();
-    const publicKey = secp256k1.Signature.fromCompact(
-      Uint8Array.from(signature.subarray(0, 64)),
-    )
-      .addRecoveryBit(normalizedRecoveryId)
-      .recoverPublicKey(Uint8Array.from(rawDataHash))
-      .toRawBytes(false);
-    const addressHash = keccak_256(publicKey.slice(1));
-    return `41${Buffer.from(addressHash.slice(-20)).toString("hex")}`;
-  } catch (error) {
-    throw new Error(
-      `TRON broadcast signature could not recover the transaction owner: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-};
-
-type TronBroadcastTriggerBinding = {
-  ownerPayload: string;
-  contractPayload: string;
-  dataHex: string;
-};
-
-const normalizeTronContractType = (value: unknown): string =>
-  trimString(value)
-    .replace(/[^a-z0-9]/giu, "")
-    .toLowerCase();
-
-const readTronRawDataTriggerBinding = (
-  rawData: Record<string, unknown>,
-  options: { canonicalizeDecodedFields?: boolean } = {},
-): TronBroadcastTriggerBinding => {
-  const contracts = rawData.contract;
-  if (!Array.isArray(contracts) || contracts.length !== 1) {
-    throw new Error(
-      "TRON broadcast transaction raw_data must include exactly one contract.",
-    );
-  }
-  const [contract] = contracts;
-  if (!isPlainRecord(contract)) {
-    throw new Error(
-      "TRON broadcast transaction raw_data.contract[0] must be an object.",
-    );
-  }
-  const parameter = contract.parameter;
-  if (!isPlainRecord(parameter)) {
-    throw new Error(
-      "TRON broadcast transaction raw_data.contract[0] must include parameter.",
-    );
-  }
-  const value = parameter.value;
-  if (!isPlainRecord(value)) {
-    throw new Error(
-      "TRON broadcast transaction raw_data.contract[0] must include parameter.value.",
-    );
-  }
-  const type = normalizeTronContractType(
-    contract.type ?? contract.contractType,
-  );
-  const typeUrl = normalizeTronContractType(
-    parameter.type_url ?? parameter.typeUrl,
-  );
-  if (
-    type !== "triggersmartcontract" &&
-    !typeUrl.endsWith("triggersmartcontract")
-  ) {
-    throw new Error(
-      "TRON broadcast transaction raw_data.contract[0] must be a TriggerSmartContract call.",
-    );
-  }
-  const ownerPayload = normalizeTronPayloadHex(
-    value.owner_address ?? value.ownerAddress,
-    "TRON broadcast transaction raw_data.contract[0].owner_address",
-  );
-  const contractPayload = normalizeTronPayloadHex(
-    value.contract_address ?? value.contractAddress,
-    "TRON broadcast transaction raw_data.contract[0].contract_address",
-  );
-  const dataHex = normalizeTronHexParameter(
-    trimString(value.data ?? value.call_data ?? value.callData),
-    "TRON broadcast transaction raw_data.contract[0].data",
-  );
-  if (!dataHex) {
-    throw new Error(
-      "TRON broadcast transaction raw_data.contract[0] must include smart-contract call data.",
-    );
-  }
-  if (options.canonicalizeDecodedFields) {
-    value.owner_address = ownerPayload;
-    value.contract_address = contractPayload;
-    value.data = dataHex;
-    delete value.ownerAddress;
-    delete value.contractAddress;
-    delete value.call_data;
-    delete value.callData;
-  }
-  return { ownerPayload, contractPayload, dataHex };
-};
-
-const normalizeTronBroadcastTransaction = (
-  transaction: unknown,
-): Record<string, unknown> => {
-  if (!isPlainRecord(transaction)) {
-    throw new Error("TRON broadcast transaction must be an object.");
-  }
-  const normalized = snapshotSccpJsonDataValue(
-    transaction,
-    "TRON broadcast transaction must contain only enumerable string-keyed data properties with JSON-compatible values.",
-  ) as Record<string, unknown>;
-  assertNoSecretLikeTransactionFields(
-    normalized,
-    "TRON broadcast transaction",
-    {
-      allowTopLevelSignature: true,
-    },
-  );
-  const txId = normalizeTronTxId(
-    trimString(normalized.txID ?? normalized.txid),
-  );
-  const signatures = normalized.signature;
-  if (!Array.isArray(signatures) || signatures.length !== 1) {
-    throw new Error(
-      "TRON broadcast transaction must include exactly one signature.",
-    );
-  }
-  const signature = normalizeTronSignatureHex(signatures[0], "TRON signature");
-  normalized.signature = [signature];
-
-  const rawData = normalized.raw_data;
-  const rawDataHex = trimString(normalized.raw_data_hex);
-  if (!isPlainRecord(rawData)) {
-    throw new Error(
-      "TRON broadcast transaction must include decoded raw_data.",
-    );
-  }
-  if (!rawDataHex) {
-    throw new Error("TRON broadcast transaction must include raw_data_hex.");
-  }
-  normalized.txID = txId;
-  const canonicalRawDataHex = normalizeTronHexParameter(
-    rawDataHex,
-    "TRON raw_data_hex",
-  );
-  if (!canonicalRawDataHex) {
-    throw new Error("TRON raw_data_hex is required when provided.");
-  }
-  const expectedTxId = createHash("sha256")
-    .update(Buffer.from(canonicalRawDataHex, "hex"))
-    .digest("hex");
-  if (expectedTxId !== txId) {
-    throw new Error("TRON txID must match raw_data_hex.");
-  }
-  const triggerBinding = readTronRawDataTriggerBinding(rawData, {
-    canonicalizeDecodedFields: normalized.visible !== true,
-  });
-  try {
-    parseTronTriggerSmartContractRawData(canonicalRawDataHex, {
-      expectedOwnerAddress: triggerBinding.ownerPayload,
-      expectedContractAddress: triggerBinding.contractPayload,
-      expectedCallData: triggerBinding.dataHex,
-    });
-  } catch (error) {
-    throw new Error(
-      `TRON broadcast raw_data_hex does not match decoded TriggerSmartContract: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  const recoveredOwnerPayload = recoverTronSignatureOwnerPayload(
-    signature,
-    canonicalRawDataHex,
-  );
-  if (recoveredOwnerPayload !== triggerBinding.ownerPayload) {
-    throw new Error(
-      "TRON broadcast signature does not recover to the transaction owner.",
-    );
-  }
-  normalized.raw_data_hex = canonicalRawDataHex;
-  return normalized;
-};
-
-const broadcastTronTransactionToGateway = async (
-  input: TronBroadcastInput,
-): Promise<Record<string, unknown>> => {
-  const transaction = normalizeTronBroadcastTransaction(input.transaction);
-  const payload = await postTronJson(
-    input,
-    "/wallet/broadcasttransaction",
-    transaction,
-    "Broadcast TRON transaction",
-  );
-  if (payload.result !== true) {
-    const code = trimString(payload.code);
-    const message = trimString(payload.message);
-    const detail = [code, message].filter(Boolean).join(": ");
-    throw new Error(
-      detail
-        ? `Broadcast TRON transaction was rejected by the TRON node: ${detail}`
-        : "Broadcast TRON transaction was rejected by the TRON node.",
-    );
-  }
-  return payload;
-};
-
-const triggerTronSmartContractFromGateway = (
-  input: TronTriggerSmartContractInput,
-): Promise<Record<string, unknown>> => {
-  const parameter = normalizeTronContractParameter(
-    input,
-    "TRON smart-contract",
-  );
-  return postTronJson(
-    input,
-    "/wallet/triggersmartcontract",
-    {
-      owner_address: normalizeTronGatewayAddress(
-        input.ownerAddress,
-        "TRON owner address",
-      ),
-      contract_address: normalizeTronGatewayAddress(
-        input.contractAddress,
-        "TRON contract address",
-      ),
-      function_selector: normalizeTronFunctionSelector(input.functionSelector),
-      parameter,
-      fee_limit: normalizeTronSafeInteger(
-        input.feeLimit,
-        "TRON fee limit",
-        100_000_000,
-      ),
-      call_value: normalizeTronSafeInteger(
-        input.callValue,
-        "TRON call value",
-        0,
-      ),
-      visible: true,
-      ...(input.permissionId !== undefined && input.permissionId !== ""
-        ? {
-            permission_id: normalizeTronSafeInteger(
-              input.permissionId,
-              "TRON permission id",
-              0,
-            ),
-          }
-        : {}),
-    },
-    "Trigger TRON smart contract",
-  ).then((payload) => {
-    assertTronGatewayAccepted(payload, "Trigger TRON smart contract");
-    return payload;
-  });
-};
-
-const triggerTronConstantContractFromGateway = (
-  input: TronConstantContractInput,
-): Promise<Record<string, unknown>> => {
-  const parameter = normalizeTronContractParameter(
-    input,
-    "TRON constant-contract",
-  );
-  return postTronJson(
-    input,
-    "/wallet/triggerconstantcontract",
-    {
-      owner_address: normalizeTronGatewayAddress(
-        input.ownerAddress,
-        "TRON owner address",
-      ),
-      contract_address: normalizeTronGatewayAddress(
-        input.contractAddress,
-        "TRON contract address",
-      ),
-      function_selector: normalizeTronFunctionSelector(input.functionSelector),
-      parameter,
-      visible: true,
-    },
-    "Trigger TRON constant contract",
-  ).then((payload) => {
-    assertTronGatewayAccepted(payload, "Trigger TRON constant contract");
-    return payload;
-  });
-};
-
-const DEFAULT_BSC_TESTNET_RPC_URL = "https://bsc-testnet-rpc.publicnode.com";
-
-const isLoopbackEvmRpcHost = (hostname: string): boolean => {
-  const normalized = hostname
-    .trim()
-    .toLowerCase()
-    .replace(/^\[/u, "")
-    .replace(/\]$/u, "")
-    .replace(/\.$/u, "");
-  return (
-    normalized === "localhost" ||
-    normalized.endsWith(".localhost") ||
-    normalized === "127.0.0.1" ||
-    normalized === "::1" ||
-    /^127(?:\.\d{1,3}){3}$/u.test(normalized)
-  );
-};
-
-const normalizeEvmRpcUrl = (endpoint?: string): string => {
-  const normalized = normalizeBaseUrl(
-    trimString(endpoint) || DEFAULT_BSC_TESTNET_RPC_URL,
-  );
-  let parsed: URL;
-  try {
-    parsed = new URL(normalized);
-  } catch {
-    throw new Error(
-      "EVM RPC endpoint must be a valid HTTPS or loopback HTTP URL.",
-    );
-  }
-  if (parsed.username || parsed.password) {
-    throw new Error("EVM RPC endpoint must not include credentials.");
-  }
-  if (parsed.search || parsed.hash) {
-    throw new Error("EVM RPC endpoint must not include query or hash.");
-  }
-  const loopback = isLoopbackEvmRpcHost(parsed.hostname);
-  if (parsed.protocol === "http:" && loopback) {
-    return normalized;
-  }
-  if (parsed.protocol !== "https:") {
-    throw new Error(
-      "EVM RPC endpoint must use HTTPS unless it is loopback HTTP.",
-    );
-  }
-  if (isPrivateTronGatewayHost(parsed.hostname) && !loopback) {
-    throw new Error("EVM RPC endpoint must not target a private network.");
-  }
-  return normalized;
-};
-
-const normalizeEvmHash = (value: unknown, label: string): string => {
-  const normalized = trimString(value).toLowerCase();
-  if (!/^0x[0-9a-f]{64}$/u.test(normalized)) {
-    throw new Error(`${label} must be a 32-byte hex value.`);
-  }
-  return normalized;
-};
-
-const normalizeEvmNonZeroHash = (value: unknown, label: string): string => {
-  const normalized = normalizeEvmHash(value, label);
-  if (/^0x0{64}$/u.test(normalized)) {
-    throw new Error(`${label} must be non-zero.`);
-  }
-  return normalized;
-};
-
-const normalizeEvmAddressHex = (value: unknown, label: string): string => {
-  const normalized = trimString(value).toLowerCase();
-  if (!/^0x[0-9a-f]{40}$/u.test(normalized)) {
-    throw new Error(`${label} must be a 20-byte EVM address.`);
-  }
-  if (/^0x0{40}$/u.test(normalized)) {
-    throw new Error(`${label} must be non-zero.`);
-  }
-  return normalized;
-};
-
-const normalizeEvmDataHex = (value: unknown, label: string): string => {
-  const normalized = trimString(value).toLowerCase();
-  if (!/^0x(?:[0-9a-f]{2})*$/u.test(normalized)) {
-    throw new Error(`${label} must be hex-encoded bytes.`);
-  }
-  return normalized;
-};
-
-const normalizeEvmBlockTag = (
-  value: unknown,
-  label = "EVM block tag",
-): string => {
-  const normalized =
-    value === undefined ? "latest" : trimString(value).toLowerCase();
-  if (/^(?:latest|earliest|pending|safe|finalized)$/u.test(normalized)) {
-    return normalized;
-  }
-  if (/^0x(?:0|[1-9a-f][0-9a-f]*)$/u.test(normalized)) {
-    return normalized;
-  }
-  throw new Error(`${label} must be a standard EVM block tag or quantity.`);
-};
-
-const normalizeEvmQuantity = (value: unknown, label: string): string => {
-  const normalized = trimString(value).toLowerCase();
-  if (!/^0x(?:0|[1-9a-f][0-9a-f]*)$/u.test(normalized)) {
-    throw new Error(`${label} must be an EVM hex quantity.`);
-  }
-  return normalized;
-};
-
-const normalizeEvmTopic = (value: unknown, label: string): string => {
-  if (value === null || value === undefined) {
-    throw new Error(`${label} is required.`);
-  }
-  return normalizeEvmHash(value, label);
-};
-
-const EVM_READ_RPC_METHODS = new Set([
-  "eth_chainId",
-  "net_version",
-  "web3_clientVersion",
-  "eth_getBalance",
-  "eth_getCode",
-  "eth_call",
-  "eth_getTransactionReceipt",
-  "eth_getTransactionByHash",
-  "eth_getBlockByHash",
-  "eth_getBlockReceipts",
-  "eth_getLogs",
-]);
-
-const normalizeEvmRpcParamsSnapshot = (
-  params: unknown[] | undefined,
-): unknown[] => {
-  if (params === undefined) {
-    return [];
-  }
-  if (!Array.isArray(params)) {
-    throw new Error("EVM RPC params must be an array when provided.");
-  }
-  return snapshotSccpJsonDataValue(
-    params,
-    "EVM RPC params must contain only enumerable string-keyed data properties with JSON-compatible values.",
-  );
-};
-
-const requireExactEvmRpcParams = (
-  method: string,
-  params: unknown[],
-  count: number,
-): void => {
-  if (params.length !== count) {
-    throw new Error(`EVM RPC ${method} requires exactly ${count} params.`);
-  }
-};
-
-const normalizeEvmRpcCallObject = (value: unknown): Record<string, string> => {
-  if (!isPlainRecord(value)) {
-    throw new Error("EVM RPC eth_call params[0] must be an object.");
-  }
-  const allowedKeys = new Set([
-    "from",
-    "to",
-    "gas",
-    "gasPrice",
-    "maxFeePerGas",
-    "maxPriorityFeePerGas",
-    "value",
-    "data",
-  ]);
-  for (const key of Object.keys(value)) {
-    if (!allowedKeys.has(key)) {
-      throw new Error(`EVM RPC eth_call params[0] unsupported field ${key}.`);
-    }
-  }
-  const call: Record<string, string> = {
-    to: normalizeEvmAddressHex(value.to, "EVM RPC eth_call to"),
-    data: normalizeEvmDataHex(value.data, "EVM RPC eth_call data"),
-  };
-  if (value.from !== undefined) {
-    call.from = normalizeEvmAddressHex(value.from, "EVM RPC eth_call from");
-  }
-  for (const key of [
-    "gas",
-    "gasPrice",
-    "maxFeePerGas",
-    "maxPriorityFeePerGas",
-    "value",
-  ] as const) {
-    if (value[key] !== undefined) {
-      call[key] = normalizeEvmQuantity(value[key], `EVM RPC eth_call ${key}`);
-    }
-  }
-  return call;
-};
-
-const normalizeEvmRpcLogAddress = (value: unknown): string | string[] => {
-  if (Array.isArray(value)) {
-    if (value.length === 0 || value.length > 64) {
-      throw new Error(
-        "EVM RPC eth_getLogs address arrays must contain 1 to 64 addresses.",
-      );
-    }
-    return value.map((address, index) =>
-      normalizeEvmAddressHex(
-        address,
-        `EVM RPC eth_getLogs address ${index + 1}`,
-      ),
-    );
-  }
-  return normalizeEvmAddressHex(value, "EVM RPC eth_getLogs address");
-};
-
-const normalizeEvmRpcLogTopics = (
-  value: unknown,
-): Array<string | string[] | null> => {
-  if (!Array.isArray(value) || value.length > 4) {
-    throw new Error(
-      "EVM RPC eth_getLogs topics must be an array of at most four items.",
-    );
-  }
-  return value.map((topic, index) => {
-    if (topic === null) {
-      return null;
-    }
-    if (Array.isArray(topic)) {
-      if (topic.length === 0 || topic.length > 64) {
-        throw new Error(
-          `EVM RPC eth_getLogs topic ${index + 1} arrays must contain 1 to 64 topics.`,
-        );
-      }
-      return topic.map((entry, innerIndex) =>
-        normalizeEvmTopic(
-          entry,
-          `EVM RPC eth_getLogs topic ${index + 1}.${innerIndex + 1}`,
-        ),
-      );
-    }
-    return normalizeEvmTopic(topic, `EVM RPC eth_getLogs topic ${index + 1}`);
-  });
-};
-
-const normalizeEvmRpcLogsFilter = (value: unknown): Record<string, unknown> => {
-  if (!isPlainRecord(value)) {
-    throw new Error("EVM RPC eth_getLogs params[0] must be a filter object.");
-  }
-  const allowedKeys = new Set([
-    "address",
-    "fromBlock",
-    "toBlock",
-    "blockHash",
-    "topics",
-  ]);
-  for (const key of Object.keys(value)) {
-    if (!allowedKeys.has(key)) {
-      throw new Error(`EVM RPC eth_getLogs unsupported filter field ${key}.`);
-    }
-  }
-  if (
-    value.blockHash !== undefined &&
-    (value.fromBlock !== undefined || value.toBlock !== undefined)
-  ) {
-    throw new Error(
-      "EVM RPC eth_getLogs blockHash must not be combined with fromBlock or toBlock.",
-    );
-  }
-  const filter: Record<string, unknown> = {};
-  if (value.address !== undefined) {
-    filter.address = normalizeEvmRpcLogAddress(value.address);
-  }
-  if (value.fromBlock !== undefined) {
-    filter.fromBlock = normalizeEvmBlockTag(
-      value.fromBlock,
-      "EVM RPC eth_getLogs fromBlock",
-    );
-  }
-  if (value.toBlock !== undefined) {
-    filter.toBlock = normalizeEvmBlockTag(
-      value.toBlock,
-      "EVM RPC eth_getLogs toBlock",
-    );
-  }
-  if (value.blockHash !== undefined) {
-    filter.blockHash = normalizeEvmNonZeroHash(
-      value.blockHash,
-      "EVM RPC eth_getLogs blockHash",
-    );
-  }
-  if (value.topics !== undefined) {
-    filter.topics = normalizeEvmRpcLogTopics(value.topics);
-  }
-  return filter;
-};
-
-const normalizeEvmRpcParams = (
-  method: string,
-  params: unknown[] | undefined,
-): unknown[] => {
-  const cloned = normalizeEvmRpcParamsSnapshot(params);
-  switch (method) {
-    case "eth_chainId":
-    case "net_version":
-    case "web3_clientVersion":
-      requireExactEvmRpcParams(method, cloned, 0);
-      return [];
-    case "eth_getBalance":
-    case "eth_getCode":
-      requireExactEvmRpcParams(method, cloned, 2);
-      return [
-        normalizeEvmAddressHex(cloned[0], `EVM RPC ${method} address`),
-        normalizeEvmBlockTag(cloned[1], `EVM RPC ${method} block tag`),
-      ];
-    case "eth_call":
-      requireExactEvmRpcParams(method, cloned, 2);
-      return [
-        normalizeEvmRpcCallObject(cloned[0]),
-        normalizeEvmBlockTag(cloned[1], "EVM RPC eth_call block tag"),
-      ];
-    case "eth_getTransactionReceipt":
-    case "eth_getTransactionByHash":
-      requireExactEvmRpcParams(method, cloned, 1);
-      return [normalizeEvmNonZeroHash(cloned[0], `EVM RPC ${method} hash`)];
-    case "eth_getBlockByHash":
-      requireExactEvmRpcParams(method, cloned, 2);
-      if (typeof cloned[1] !== "boolean") {
-        throw new Error(
-          "EVM RPC eth_getBlockByHash params[1] must be a boolean.",
-        );
-      }
-      return [
-        normalizeEvmNonZeroHash(cloned[0], "EVM RPC eth_getBlockByHash hash"),
-        cloned[1],
-      ];
-    case "eth_getBlockReceipts":
-      requireExactEvmRpcParams(method, cloned, 1);
-      return [
-        /^0x[0-9a-f]{64}$/iu.test(String(cloned[0] ?? "").trim())
-          ? normalizeEvmNonZeroHash(
-              cloned[0],
-              "EVM RPC eth_getBlockReceipts block hash",
-            )
-          : normalizeEvmBlockTag(
-              cloned[0],
-              "EVM RPC eth_getBlockReceipts block tag",
-            ),
-      ];
-    case "eth_getLogs":
-      requireExactEvmRpcParams(method, cloned, 1);
-      return [normalizeEvmRpcLogsFilter(cloned[0])];
-    default:
-      throw new Error("EVM RPC bridge only allows read-only methods.");
-  }
-};
-
-const callEvmRpcOnGateway = async (
-  input: EvmRpcCallInput,
-): Promise<unknown> => {
-  const method = trimString(input.method);
-  if (!/^[a-z][a-z0-9_]{1,64}$/iu.test(method)) {
-    throw new Error("EVM RPC method name is invalid.");
-  }
-  if (!EVM_READ_RPC_METHODS.has(method)) {
-    throw new Error("EVM RPC bridge only allows read-only methods.");
-  }
-  const payload = await postJson(
-    normalizeEvmRpcUrl(input.endpoint),
-    `EVM RPC ${method}`,
-    {
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params: normalizeEvmRpcParams(method, input.params),
-    },
-  );
-  if (isPlainRecord(payload.error)) {
-    const code = trimString(payload.error.code);
-    const message = trimString(payload.error.message);
-    const detail = [code, message].filter(Boolean).join(": ");
-    throw new Error(
-      detail
-        ? `EVM RPC ${method} failed: ${detail}`
-        : `EVM RPC ${method} failed.`,
-    );
-  }
-  return payload.result;
-};
-
-const requireEvmRpcStringResult = async (
-  input: EvmRpcCallInput,
-  label: string,
-): Promise<string> => {
-  const result = await callEvmRpcOnGateway(input);
-  if (typeof result !== "string") {
-    throw new Error(`${label} did not return a string result.`);
-  }
-  return result;
-};
-
-const snapshotEvmRpcWrapperInput = <T>(input: T, label: string): T => {
-  const normalized = snapshotSccpJsonDataValue(
-    input,
-    `${label} must contain only enumerable string-keyed data properties with JSON-compatible values.`,
-  );
-  if (!isPlainRecord(normalized)) {
-    throw new Error(`${label} must be an object.`);
-  }
-  return normalized;
-};
-
-const getEvmChainIdFromRpc = (input?: EvmRpcInput): Promise<string> => {
-  const normalizedInput =
-    input === undefined
-      ? undefined
-      : snapshotEvmRpcWrapperInput(input, "EVM chain id input");
-  return requireEvmRpcStringResult(
-    {
-      endpoint: normalizedInput?.endpoint,
-      method: "eth_chainId",
-      params: [],
-    },
-    "EVM chain id",
-  ).then((chainId) => normalizeEvmQuantity(chainId, "EVM chain id"));
-};
-
-const getEvmBalanceFromRpc = (input: EvmAddressInput): Promise<string> => {
-  const normalizedInput = snapshotEvmRpcWrapperInput(
-    input,
-    "EVM balance input",
-  );
-  return requireEvmRpcStringResult(
-    {
-      endpoint: normalizedInput.endpoint,
-      method: "eth_getBalance",
-      params: [
-        normalizeEvmAddressHex(normalizedInput.address, "EVM balance address"),
-        normalizeEvmBlockTag(normalizedInput.blockTag),
-      ],
-    },
-    "EVM balance",
-  ).then((balance) => normalizeEvmQuantity(balance, "EVM balance"));
-};
-
-const getEvmCodeFromRpc = (input: EvmAddressInput): Promise<string> => {
-  const normalizedInput = snapshotEvmRpcWrapperInput(input, "EVM code input");
-  return requireEvmRpcStringResult(
-    {
-      endpoint: normalizedInput.endpoint,
-      method: "eth_getCode",
-      params: [
-        normalizeEvmAddressHex(normalizedInput.address, "EVM code address"),
-        normalizeEvmBlockTag(normalizedInput.blockTag),
-      ],
-    },
-    "EVM code",
-  ).then((code) => normalizeEvmDataHex(code, "EVM code"));
-};
-
-const callEvmContractFromRpc = (input: EvmCallInput): Promise<string> => {
-  const normalizedInput = snapshotEvmRpcWrapperInput(input, "EVM call input");
-  const call: Record<string, string> = {
-    to: normalizeEvmAddressHex(normalizedInput.to, "EVM call target"),
-    data: normalizeEvmDataHex(normalizedInput.data, "EVM call data"),
-  };
-  if (normalizedInput.from !== undefined) {
-    call.from = normalizeEvmAddressHex(normalizedInput.from, "EVM call sender");
-  }
-  if (normalizedInput.value !== undefined) {
-    call.value = normalizeEvmQuantity(normalizedInput.value, "EVM call value");
-  }
-  return requireEvmRpcStringResult(
-    {
-      endpoint: normalizedInput.endpoint,
-      method: "eth_call",
-      params: [call, normalizeEvmBlockTag(normalizedInput.blockTag)],
-    },
-    "EVM contract call",
-  ).then((result) => normalizeEvmDataHex(result, "EVM contract call result"));
-};
-
-const getEvmTransactionReceiptFromRpc = async (
-  input: EvmTransactionInput,
-): Promise<Record<string, unknown> | null> => {
-  const normalizedInput = snapshotEvmRpcWrapperInput(
-    input,
-    "EVM transaction receipt input",
-  );
-  const result = await callEvmRpcOnGateway({
-    endpoint: normalizedInput.endpoint,
-    method: "eth_getTransactionReceipt",
-    params: [
-      normalizeEvmNonZeroHash(normalizedInput.txHash, "EVM transaction hash"),
-    ],
-  });
-  if (result === null) {
-    return null;
-  }
-  if (!isPlainRecord(result)) {
-    throw new Error("EVM transaction receipt must be an object or null.");
-  }
-  return result;
-};
-
-const getEvmTransactionFromRpc = async (
-  input: EvmTransactionInput,
-): Promise<Record<string, unknown> | null> => {
-  const normalizedInput = snapshotEvmRpcWrapperInput(
-    input,
-    "EVM transaction input",
-  );
-  const result = await callEvmRpcOnGateway({
-    endpoint: normalizedInput.endpoint,
-    method: "eth_getTransactionByHash",
-    params: [
-      normalizeEvmNonZeroHash(normalizedInput.txHash, "EVM transaction hash"),
-    ],
-  });
-  if (result === null) {
-    return null;
-  }
-  if (!isPlainRecord(result)) {
-    throw new Error("EVM transaction must be an object or null.");
-  }
-  return result;
-};
-
-const getEvmBlockByHashFromRpc = async (input: {
-  endpoint?: string;
-  blockHash: string;
-  fullTransactions?: boolean;
-}): Promise<Record<string, unknown> | null> => {
-  const normalizedInput = snapshotEvmRpcWrapperInput(input, "EVM block input");
-  const result = await callEvmRpcOnGateway({
-    endpoint: normalizedInput.endpoint,
-    method: "eth_getBlockByHash",
-    params: [
-      normalizeEvmNonZeroHash(normalizedInput.blockHash, "EVM block hash"),
-      normalizedInput.fullTransactions === true,
-    ],
-  });
-  if (result === null) {
-    return null;
-  }
-  if (!isPlainRecord(result)) {
-    throw new Error("EVM block must be an object or null.");
-  }
-  return result;
-};
-
-const getEvmLogsFromRpc = async (
-  input: EvmLogsInput,
-): Promise<Record<string, unknown>[]> => {
-  const normalizedInput = snapshotEvmRpcWrapperInput(input, "EVM logs input");
-  const filter: Record<string, unknown> = {};
-  if (
-    normalizedInput.blockHash !== undefined &&
-    (normalizedInput.fromBlock !== undefined ||
-      normalizedInput.toBlock !== undefined)
-  ) {
-    throw new Error(
-      "EVM eth_getLogs blockHash must not be combined with fromBlock or toBlock.",
-    );
-  }
-  if (normalizedInput.address !== undefined) {
-    filter.address = normalizeEvmRpcLogAddress(normalizedInput.address);
-  }
-  if (normalizedInput.blockHash !== undefined) {
-    filter.blockHash = normalizeEvmNonZeroHash(
-      normalizedInput.blockHash,
-      "EVM blockHash",
-    );
-  }
-  if (normalizedInput.fromBlock !== undefined) {
-    filter.fromBlock = normalizeEvmBlockTag(
-      normalizedInput.fromBlock,
-      "EVM fromBlock",
-    );
-  }
-  if (normalizedInput.toBlock !== undefined) {
-    filter.toBlock = normalizeEvmBlockTag(
-      normalizedInput.toBlock,
-      "EVM toBlock",
-    );
-  }
-  if (normalizedInput.topics !== undefined) {
-    filter.topics = normalizeEvmRpcLogTopics(normalizedInput.topics);
-  }
-  const result = await callEvmRpcOnGateway({
-    endpoint: normalizedInput.endpoint,
-    method: "eth_getLogs",
-    params: [filter],
-  });
-  if (!Array.isArray(result)) {
-    throw new Error("EVM logs response must be an array.");
-  }
-  for (const [index, entry] of result.entries()) {
-    if (!isPlainRecord(entry)) {
-      throw new Error(
-        `EVM logs response entry ${index + 1} must be an object.`,
-      );
-    }
-  }
-  return result as Record<string, unknown>[];
-};
-
-const DEFAULT_SOLANA_TESTNET_RPC_URL = "https://api.testnet.solana.com";
-const SOLANA_SPL_TOKEN_PROGRAM_ID = new PublicKey(
-  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-);
-const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
-  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
-);
-const SOLANA_BASE58_ALPHABET =
-  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-const SOLANA_ALLOWED_RPC_METHODS = new Set([
-  "getHealth",
-  "getBalance",
-  "getTokenAccountsByOwner",
-  "getSignatureStatuses",
-  "getTransaction",
-  "getLatestBlockhash",
-  "getAccountInfo",
-  "sendTransaction",
-]);
-
-const normalizeSolanaRpcUrl = (endpoint?: string): string => {
-  const normalized = normalizeBaseUrl(
-    trimString(endpoint) || DEFAULT_SOLANA_TESTNET_RPC_URL,
-  );
-  let parsed: URL;
-  try {
-    parsed = new URL(normalized);
-  } catch {
-    throw new Error("Solana RPC endpoint must be a valid URL.");
-  }
-  if (parsed.username || parsed.password) {
-    throw new Error("Solana RPC endpoint must not include credentials.");
-  }
-  if (parsed.search || parsed.hash) {
-    throw new Error("Solana RPC endpoint must not include query or hash.");
-  }
-  const loopback = isLoopbackEvmRpcHost(parsed.hostname);
-  if (
-    parsed.protocol !== "https:" &&
-    !(loopback && parsed.protocol === "http:")
-  ) {
-    throw new Error("Solana RPC endpoint must use HTTPS or loopback HTTP.");
-  }
-  return normalized;
-};
-
-const decodeSolanaBase58 = (value: string, label: string): Buffer => {
-  let decodedValue = 0n;
-  for (const char of value) {
-    const index = SOLANA_BASE58_ALPHABET.indexOf(char);
-    if (index < 0) {
-      throw new Error(`${label} must be valid Solana Base58.`);
-    }
-    decodedValue = decodedValue * 58n + BigInt(index);
-  }
-  const hexValue =
-    decodedValue === 0n
-      ? ""
-      : decodedValue
-          .toString(16)
-          .padStart(
-            decodedValue.toString(16).length +
-              (decodedValue.toString(16).length % 2),
-            "0",
-          );
-  const body = hexValue ? Buffer.from(hexValue, "hex") : Buffer.alloc(0);
-  const leadingZeros = value.match(/^1*/u)?.[0].length ?? 0;
-  return Buffer.concat([Buffer.alloc(leadingZeros), body]);
-};
-
-const normalizeSolanaRpcAddress = (value: unknown, label: string): string => {
-  const normalized = trimString(value);
-  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(normalized)) {
-    throw new Error(`${label} must be a Solana Base58 address.`);
-  }
-  const decoded = decodeSolanaBase58(normalized, label);
-  if (decoded.length !== 32 || decoded.every((byte) => byte === 0)) {
-    throw new Error(`${label} must be a non-zero 32-byte Solana address.`);
-  }
-  return normalized;
-};
-
-const normalizeSolanaRpcHexBytes = (
-  value: unknown,
-  label: string,
-  options: { allowEmpty?: boolean; maxBytes?: number } = {},
-): string => {
-  const normalized = trimString(value).replace(/^0x/iu, "").toLowerCase();
-  const maxBytes = options.maxBytes ?? 1232;
-  if (
-    (!normalized && options.allowEmpty !== true) ||
-    normalized.length % 2 !== 0 ||
-    !/^[0-9a-f]*$/u.test(normalized) ||
-    normalized.length / 2 > maxBytes
-  ) {
-    throw new Error(`${label} must be hex-encoded bytes.`);
-  }
-  return normalized;
-};
-
-const normalizeSolanaBooleanMeta = (
-  value: unknown,
-  fallback: boolean,
-  label: string,
-): boolean => {
-  if (value === undefined || value === null || value === "") {
-    return fallback;
-  }
-  if (typeof value === "boolean") {
-    return value;
-  }
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true") {
-      return true;
-    }
-    if (normalized === "false") {
-      return false;
-    }
-  }
-  throw new Error(`${label} must be boolean.`);
-};
-
-const normalizeSolanaRpcSignature = (value: unknown): string => {
-  const normalized = trimString(value);
-  if (!/^[1-9A-HJ-NP-Za-km-z]{64,88}$/u.test(normalized)) {
-    throw new Error("Solana transaction signature must be Base58.");
-  }
-  const decoded = decodeSolanaBase58(
-    normalized,
-    "Solana transaction signature",
-  );
-  if (decoded.length !== 64 || decoded.every((byte) => byte === 0)) {
-    throw new Error(
-      "Solana transaction signature must be a non-zero 64-byte value.",
-    );
-  }
-  return normalized;
-};
-
-const normalizeSolanaTransactionB64 = (value: unknown): string => {
-  const normalized = trimString(value);
-  if (
-    !normalized ||
-    normalized.length > 32 * 1024 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
-      normalized,
-    )
-  ) {
-    throw new Error("Solana transaction must be base64-encoded bytes.");
-  }
-  const bytes = Buffer.from(normalized, "base64");
-  if (bytes.length === 0 || bytes.length > 1232) {
-    throw new Error("Solana transaction bytes are outside Solana size limits.");
-  }
-  return normalized;
-};
-
-const callSolanaRpcOnGateway = async (
-  input: SolanaRpcCallInput,
-): Promise<unknown> => {
-  const method = trimString(input.method);
-  if (!SOLANA_ALLOWED_RPC_METHODS.has(method)) {
-    throw new Error(`Unsupported Solana RPC method: ${method || "(empty)"}.`);
-  }
-  const params = Array.isArray(input.params)
-    ? (snapshotSccpJsonDataValue(
-        input.params,
-        "Solana RPC params must be JSON-compatible.",
-      ) as unknown[])
-    : [];
-  const payload = await postJson(
-    normalizeSolanaRpcUrl(input.endpoint),
-    `Solana ${method}`,
-    {
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params,
-    },
-  );
-  if (payload.error !== undefined && payload.error !== null) {
-    const error = isPlainRecord(payload.error) ? payload.error : {};
-    const message = trimString(error.message ?? payload.error);
-    throw new Error(
-      message
-        ? `Solana ${method} failed: ${message}`
-        : `Solana ${method} failed.`,
-    );
-  }
-  return payload.result ?? null;
-};
-
-const getSolanaBalanceFromRpc = async (
-  input: SolanaAddressInput,
-): Promise<string> => {
-  const result = await callSolanaRpcOnGateway({
-    endpoint: input.endpoint,
-    method: "getBalance",
-    params: [
-      normalizeSolanaRpcAddress(input.address, "Solana address"),
-      { commitment: "confirmed" },
-    ],
-  });
-  if (!isPlainRecord(result)) {
-    throw new Error("Solana getBalance response must be an object.");
-  }
-  const value = Number(result.value);
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error("Solana balance must be a non-negative integer.");
-  }
-  return value.toString(10);
-};
-
-const getSolanaTokenBalanceFromRpc = async (
-  input: SolanaTokenBalanceInput,
-): Promise<Record<string, unknown>> => {
-  const ownerAddress = normalizeSolanaRpcAddress(
-    input.ownerAddress,
-    "Solana owner address",
-  );
-  const mintAddress = normalizeSolanaRpcAddress(
-    input.mintAddress,
-    "Solana mint address",
-  );
-  const result = await callSolanaRpcOnGateway({
-    endpoint: input.endpoint,
-    method: "getTokenAccountsByOwner",
-    params: [
-      ownerAddress,
-      { mint: mintAddress },
-      { encoding: "jsonParsed", commitment: "confirmed" },
-    ],
-  });
-  if (!isPlainRecord(result) || !Array.isArray(result.value)) {
-    throw new Error("Solana token account response must include value array.");
-  }
-  let amount = 0n;
-  let decimals: number | null = null;
-  const accounts: Array<{
-    pubkey: string;
-    amount: string;
-    decimals: number | null;
-  }> = [];
-  for (const entry of result.value) {
-    const pubkey = trimString(isPlainRecord(entry) ? entry.pubkey : null);
-    const account = isPlainRecord(entry) ? entry.account : null;
-    const data = isPlainRecord(account) ? account.data : null;
-    const parsed = isPlainRecord(data) ? data.parsed : null;
-    const info = isPlainRecord(parsed) ? parsed.info : null;
-    const tokenAmount = isPlainRecord(info) ? info.tokenAmount : null;
-    if (!isPlainRecord(tokenAmount)) {
-      continue;
-    }
-    const rawAmount = trimString(tokenAmount.amount);
-    if (!/^(?:0|[1-9]\d*)$/u.test(rawAmount)) {
-      throw new Error("Solana SPL token amount must be an unsigned integer.");
-    }
-    const accountAmount = BigInt(rawAmount);
-    amount += accountAmount;
-    const nextDecimals = Number(tokenAmount.decimals);
-    const accountDecimals =
-      Number.isSafeInteger(nextDecimals) && nextDecimals >= 0
-        ? nextDecimals
-        : null;
-    if (Number.isSafeInteger(nextDecimals) && nextDecimals >= 0) {
-      decimals = decimals === null ? nextDecimals : decimals;
-    }
-    accounts.push({
-      pubkey: normalizeSolanaRpcAddress(
-        pubkey,
-        "Solana SPL token account address",
-      ),
-      amount: accountAmount.toString(10),
-      decimals: accountDecimals,
-    });
-  }
-  return {
-    ownerAddress,
-    mintAddress,
-    amount: amount.toString(10),
-    decimals,
-    accountCount: result.value.length,
-    accounts,
-    raw: result,
-  };
-};
-
-const prepareSolanaAssociatedTokenAccountFromRpc = async (
-  input: SolanaAssociatedTokenAccountInput,
-): Promise<SolanaPreparedAssociatedTokenAccount> => {
-  const payerAddress = new PublicKey(
-    normalizeSolanaRpcAddress(input.payerAddress, "Solana payer address"),
-  );
-  const ownerAddress = new PublicKey(
-    normalizeSolanaRpcAddress(input.ownerAddress, "Solana token owner address"),
-  );
-  const mintAddress = new PublicKey(
-    normalizeSolanaRpcAddress(input.mintAddress, "Solana mint address"),
-  );
-  const [associatedTokenAddress] = PublicKey.findProgramAddressSync(
-    [
-      ownerAddress.toBuffer(),
-      SOLANA_SPL_TOKEN_PROGRAM_ID.toBuffer(),
-      mintAddress.toBuffer(),
-    ],
-    SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID,
-  );
-  const accountInfo = await callSolanaRpcOnGateway({
-    endpoint: input.endpoint,
-    method: "getAccountInfo",
-    params: [
-      associatedTokenAddress.toBase58(),
-      { encoding: "base64", commitment: "confirmed" },
-    ],
-  });
-  if (!isPlainRecord(accountInfo)) {
-    throw new Error("Solana getAccountInfo response must be an object.");
-  }
-  const value = accountInfo.value;
-  if (value !== null && value !== undefined) {
-    if (!isPlainRecord(value)) {
-      throw new Error("Solana associated token account info is invalid.");
-    }
-    const owner = normalizeSolanaRpcAddress(
-      value.owner,
-      "Solana associated token account owner",
-    );
-    if (owner !== SOLANA_SPL_TOKEN_PROGRAM_ID.toBase58()) {
-      throw new Error(
-        "Solana associated token account is not owned by the SPL token program.",
-      );
-    }
-    return {
-      associatedTokenAddress: associatedTokenAddress.toBase58(),
-      exists: true,
-      createInstruction: null,
-    };
-  }
-  return {
-    associatedTokenAddress: associatedTokenAddress.toBase58(),
-    exists: false,
-    createInstruction: {
-      programId: SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID.toBase58(),
-      accounts: [
-        {
-          pubkey: payerAddress.toBase58(),
-          isSigner: true,
-          isWritable: true,
-        },
-        {
-          pubkey: associatedTokenAddress.toBase58(),
-          isSigner: false,
-          isWritable: true,
-        },
-        {
-          pubkey: ownerAddress.toBase58(),
-          isSigner: false,
-          isWritable: false,
-        },
-        {
-          pubkey: mintAddress.toBase58(),
-          isSigner: false,
-          isWritable: false,
-        },
-        {
-          pubkey: SystemProgram.programId.toBase58(),
-          isSigner: false,
-          isWritable: false,
-        },
-        {
-          pubkey: SOLANA_SPL_TOKEN_PROGRAM_ID.toBase58(),
-          isSigner: false,
-          isWritable: false,
-        },
-      ],
-      dataHex: "0x01",
-    },
-  };
-};
-
-const getSolanaSignatureStatusFromRpc = async (
-  input: SolanaTransactionInput,
-): Promise<Record<string, unknown> | null> => {
-  const signature = normalizeSolanaRpcSignature(input.signature);
-  const result = await callSolanaRpcOnGateway({
-    endpoint: input.endpoint,
-    method: "getSignatureStatuses",
-    params: [[signature], { searchTransactionHistory: true }],
-  });
-  if (!isPlainRecord(result) || !Array.isArray(result.value)) {
-    throw new Error(
-      "Solana signature status response must include value array.",
-    );
-  }
-  const [status] = result.value;
-  return isPlainRecord(status) ? status : null;
-};
-
-const getSolanaTransactionFromRpc = async (
-  input: SolanaTransactionInput,
-): Promise<Record<string, unknown> | null> => {
-  const signature = normalizeSolanaRpcSignature(input.signature);
-  const result = await callSolanaRpcOnGateway({
-    endpoint: input.endpoint,
-    method: "getTransaction",
-    params: [
-      signature,
-      {
-        commitment: "finalized",
-        encoding: "json",
-        maxSupportedTransactionVersion: 0,
-      },
-    ],
-  });
-  return isPlainRecord(result) ? result : null;
-};
-
-const buildSolanaTransactionFromInstructions = async (
-  input: SolanaBuildTransactionInput,
-): Promise<string> => {
-  const feePayer = new PublicKey(
-    normalizeSolanaRpcAddress(input.feePayer, "Solana fee payer"),
-  );
-  if (!Array.isArray(input.instructions) || input.instructions.length === 0) {
-    throw new Error(
-      "Solana transaction must include at least one instruction.",
-    );
-  }
-  if (input.instructions.length > 8) {
-    throw new Error("Solana transaction instruction count is too large.");
-  }
-  const instructions = input.instructions.map((instruction, index) => {
-    if (!isPlainRecord(instruction)) {
-      throw new Error(`Solana instruction ${index + 1} must be an object.`);
-    }
-    const programId = new PublicKey(
-      normalizeSolanaRpcAddress(
-        instruction.programId,
-        `Solana instruction ${index + 1} program id`,
-      ),
-    );
-    const accounts = Array.isArray(instruction.accounts)
-      ? instruction.accounts
-      : [];
-    if (accounts.length > 32) {
-      throw new Error(
-        `Solana instruction ${index + 1} account list is too large.`,
-      );
-    }
-    const keys = accounts.map((account, accountIndex) => {
-      if (!isPlainRecord(account)) {
-        throw new Error(
-          `Solana instruction ${index + 1} account ${accountIndex + 1} must be an object.`,
-        );
-      }
-      return {
-        pubkey: new PublicKey(
-          normalizeSolanaRpcAddress(
-            account.pubkey,
-            `Solana instruction ${index + 1} account ${accountIndex + 1}`,
-          ),
-        ),
-        isSigner: normalizeSolanaBooleanMeta(
-          account.isSigner ?? account.signer,
-          false,
-          `Solana instruction ${index + 1} account ${accountIndex + 1} isSigner`,
-        ),
-        isWritable: normalizeSolanaBooleanMeta(
-          account.isWritable ?? account.writable,
-          false,
-          `Solana instruction ${index + 1} account ${accountIndex + 1} isWritable`,
-        ),
-      };
-    });
-    return new TransactionInstruction({
-      programId,
-      keys,
-      data: Buffer.from(
-        normalizeSolanaRpcHexBytes(
-          instruction.dataHex,
-          `Solana instruction ${index + 1} data`,
-          { maxBytes: 1100 },
-        ),
-        "hex",
-      ),
-    });
-  });
-  let recentBlockhash = trimString(input.recentBlockhash);
-  if (recentBlockhash) {
-    recentBlockhash = normalizeSolanaRpcAddress(
-      recentBlockhash,
-      "Solana recent blockhash",
-    );
-  } else {
-    const result = await callSolanaRpcOnGateway({
-      endpoint: input.endpoint,
-      method: "getLatestBlockhash",
-      params: [{ commitment: "confirmed" }],
-    });
-    const value = isPlainRecord(result) ? result.value : null;
-    if (!isPlainRecord(value)) {
-      throw new Error("Solana latest blockhash response is invalid.");
-    }
-    recentBlockhash = normalizeSolanaRpcAddress(
-      value.blockhash,
-      "Solana recent blockhash",
-    );
-  }
-  const transaction = new Transaction({
-    feePayer,
-    recentBlockhash,
-  });
-  transaction.add(...instructions);
-  return transaction
-    .serialize({
-      requireAllSignatures: false,
-      verifySignatures: false,
-    })
-    .toString("base64");
-};
-
-const broadcastSolanaTransactionToRpc = async (
-  input: SolanaBroadcastInput,
-): Promise<string> => {
-  const controlled = bindSignedSolanaTransactionForBroadcast({
-    expectedUnsignedTransactionB64: normalizeSolanaTransactionB64(
-      input.expectedUnsignedTransactionB64,
-    ),
-    signedTransactionB64: normalizeSolanaTransactionB64(input.transactionB64),
-  });
-  const result = await callSolanaRpcOnGateway({
-    endpoint: input.endpoint,
-    method: "sendTransaction",
-    params: [
-      controlled.transactionB64,
-      {
-        encoding: "base64",
-        preflightCommitment: "confirmed",
-        skipPreflight: false,
-      },
-    ],
-  });
-  const signature = normalizeSolanaRpcSignature(result);
-  const broadcastSignature = decodeSolanaBase58(
-    signature,
-    "Solana broadcast transaction signature",
-  );
-  if (
-    broadcastSignature.length !== controlled.signatureBytes.length ||
-    broadcastSignature.some(
-      (byte, index) => byte !== controlled.signatureBytes[index],
-    )
-  ) {
-    throw new Error(
-      "Solana RPC returned a signature for a different transaction.",
-    );
-  }
-  return signature;
-};
-
 const fetchExplorerAssetDefinitionSnapshot = async (
   toriiUrlRaw: string,
   assetDefinitionId: string,
+  networkPrefix: number,
   signal?: AbortSignal,
 ) => {
   const endpoint = buildNexusEndpoint(
@@ -10942,12 +5326,16 @@ const fetchExplorerAssetDefinitionSnapshot = async (
     undefined,
     signal,
   );
-  return normalizeExplorerAssetDefinitionSnapshotPayload(payload);
+  return normalizeExplorerAssetDefinitionSnapshotPayload(payload, {
+    expectedDefinitionId: assetDefinitionId,
+    networkPrefix,
+  });
 };
 
 const fetchExplorerAssetDefinitionEconometrics = async (
   toriiUrlRaw: string,
   assetDefinitionId: string,
+  networkPrefix: number,
   signal?: AbortSignal,
 ) => {
   const endpoint = buildNexusEndpoint(
@@ -10960,25 +5348,10 @@ const fetchExplorerAssetDefinitionEconometrics = async (
     undefined,
     signal,
   );
-  return normalizeExplorerAssetDefinitionEconometricsPayload(payload);
-};
-
-const fetchTransactionRecordPayload = async (
-  toriiUrl: string,
-  hashHex: string,
-): Promise<Record<string, unknown> | null> => {
-  const endpoint = buildNexusEndpoint(
-    toriiUrl,
-    `/v1/transactions/${encodeURIComponent(hashHex)}`,
-  );
-  try {
-    return await fetchJson(endpoint, `Transaction ${hashHex}`);
-  } catch (error) {
-    if (isApiRequestError(error) && error.status === 404) {
-      return null;
-    }
-    throw error;
-  }
+  return normalizeExplorerAssetDefinitionEconometricsPayload(payload, {
+    expectedDefinitionId: assetDefinitionId,
+    networkPrefix,
+  });
 };
 
 const normalizeRejectionReasonValue = (value: unknown): string | null => {
@@ -11068,63 +5441,13 @@ const buildTransactionFinalityFailureError = async (
   );
 };
 
-const readCommittedTransactionFee = (
-  payload: unknown,
-): TransactionFeeLike | null => {
-  const fee = readTransactionFee(payload);
-  if (!fee) {
-    return null;
-  }
-  const amount = trimString(
-    fee.amount ?? fee.quantity ?? fee.fee_amount ?? fee.feeAmount,
-  );
-  return amount ? fee : null;
-};
-
-const fetchCommittedTransactionFee = async (
-  toriiUrl: string,
-  hashHex: string,
-  statusPayload: unknown,
-  transactionRecordPayload?: unknown,
-): Promise<TransactionFeeLike | null> => {
-  const statusFee = readCommittedTransactionFee(statusPayload);
-  if (statusFee) {
-    return statusFee;
-  }
-
-  const recordFee = readCommittedTransactionFee(transactionRecordPayload);
-  if (recordFee) {
-    return recordFee;
-  }
-
-  try {
-    const record = await fetchTransactionRecordPayload(toriiUrl, hashHex);
-    const fee = readCommittedTransactionFee(record);
-    if (fee) {
-      return fee;
-    }
-  } catch {
-    // Fee enrichment is best-effort; finality already succeeded.
-  }
-
-  try {
-    const explorerDetail = await fetchExplorerTransactionDetail(
-      toriiUrl,
-      hashHex,
-    );
-    return readCommittedTransactionFee(explorerDetail);
-  } catch {
-    return null;
-  }
-};
-
 const transactionSubmissionResult = (submission: {
   hash: string;
-  fee?: TransactionFeeView | null;
+  feeQuote?: TransactionFeeQuoteView;
   finality: TransactionFinalityProof;
 }): TransactionSubmissionResultView => ({
   hash: submission.hash,
-  ...(submission.fee ? { fee: submission.fee } : {}),
+  ...(submission.feeQuote ? { feeQuote: submission.feeQuote } : {}),
   finality: submission.finality,
 });
 
@@ -11136,14 +5459,16 @@ const waitForTransactionFinalizedInBlock = async (
     signal?: AbortSignal;
   } = {},
 ) => {
-  const client = getClient(toriiUrl);
   const signal = options.signal;
   const evidence = await waitForFinalizedTransaction({
     hashHex,
     timeoutMs: options.timeoutMs ?? CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS,
     intervalMs: CONFIDENTIAL_TX_FINALITY_INTERVAL_MS,
     getGlobalStatus: () =>
-      client.getTransactionStatus(hashHex, { scope: "global", signal }),
+      fetchFirstReleaseTransactionStatus(toriiUrl, hashHex, {
+        scope: "global",
+        signal,
+      }),
     getExplorerTransaction: () =>
       fetchJson(
         buildNexusEndpoint(
@@ -11180,14 +5505,7 @@ const waitForTransactionFinalizedInBlock = async (
         payload,
       ),
   });
-  const fee = await fetchCommittedTransactionFee(
-    toriiUrl,
-    hashHex,
-    evidence.statusPayload,
-    evidence.transactionPayload,
-  );
   return {
-    fee,
     finality: evidence.proof,
   };
 };
@@ -11195,12 +5513,14 @@ const waitForTransactionFinalizedInBlock = async (
 const submitSignedTransactionAndWaitForFinalizedBlock = async (
   toriiUrl: string,
   signedTransaction: Buffer,
-  options: { nativeBinding?: unknown; requireNativeEncoding?: boolean } = {},
+  options: {
+    feeQuote?: TransactionFeeQuoteView;
+  } = {},
 ) => {
+  const { feeQuote } = options;
   const submission = await submitSignedTransactionAsVersioned(
     toriiUrl,
     signedTransaction,
-    options,
   );
   const finalized = await waitForTransactionFinalizedInBlock(
     toriiUrl,
@@ -11208,14 +5528,13 @@ const submitSignedTransactionAndWaitForFinalizedBlock = async (
   );
   return {
     ...submission,
-    ...(finalized.fee ? { fee: finalized.fee } : {}),
+    ...(feeQuote ? { feeQuote } : {}),
     finality: finalized.finality,
   };
 };
 
 const hashSignedTransactionHex = (signedTransaction: Buffer) => {
-  const hash = hashSignedTransaction(signedTransaction, { encoding: "hex" });
-  return Buffer.isBuffer(hash) ? hash.toString("hex") : hash;
+  return hashFirstReleaseSignedTransaction(signedTransaction).toString("hex");
 };
 
 const readPipelineSubmissionRoute = (
@@ -11255,112 +5574,119 @@ const attachPipelineSubmissionRoute = (
   return { value, route };
 };
 
+const parseNativeTransactionReceiptJson = (value: unknown): unknown => {
+  if (typeof value !== "string") {
+    throw new Error(
+      "Native transaction receipt decoder did not return JSON text.",
+    );
+  }
+  const bytes = Buffer.from(value, "utf8");
+  if (
+    bytes.length < 1 ||
+    bytes.length > PIPELINE_TRANSACTION_RECEIPT_MAX_BYTES
+  ) {
+    throw new Error(
+      "Native transaction receipt JSON is outside its byte limit.",
+    );
+  }
+  if (bytes.toString("utf8") !== value) {
+    throw new Error(
+      "Native transaction receipt JSON is not canonical UTF-8 text.",
+    );
+  }
+  return parseStrictJson(value, "Native transaction receipt");
+};
+
 const readPipelineSubmissionResponse = async (
-  response: Pick<Response, "headers" | "json" | "arrayBuffer">,
+  response: Pick<Response, "status" | "headers" | "arrayBuffer">,
   options: {
     nativeBinding?: unknown;
     route: Record<string, number> | null;
   },
 ) => {
-  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  if (contentType.includes("application/json")) {
-    const payload = await response.json().catch(() => null);
-    return attachPipelineSubmissionRoute(payload, options.route);
+  if (response.status === 204) {
+    return attachPipelineSubmissionRoute(null, options.route);
   }
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
   if (contentType.includes("application/x-norito")) {
-    const body = Buffer.from(await response.arrayBuffer());
+    const body = await readBoundedResponseBytes(response, {
+      label: "Transaction submission receipt",
+      maximumBytes: PIPELINE_TRANSACTION_RECEIPT_MAX_BYTES,
+      allowEmpty: true,
+    });
     if (body.length === 0) {
       return attachPipelineSubmissionRoute(null, options.route);
     }
     const native = options.nativeBinding as
       | IrohaNativeTransactionCodec
       | undefined;
-    if (typeof native?.decodeTransactionReceiptJson === "function") {
-      try {
-        const decoded = native.decodeTransactionReceiptJson(body);
-        const decodedText = Buffer.isBuffer(decoded)
-          ? decoded.toString("utf8")
-          : decoded instanceof ArrayBuffer || ArrayBuffer.isView(decoded)
-            ? binaryToBuffer(decoded).toString("utf8")
-            : String(decoded);
-        return attachPipelineSubmissionRoute(
-          JSON.parse(decodedText),
-          options.route,
-        );
-      } catch {
-        return attachPipelineSubmissionRoute(null, options.route);
-      }
+    if (typeof native?.decodeTransactionReceiptJson !== "function") {
+      throw new Error(
+        "Cannot decode a non-empty Norito transaction receipt: the native binding does not expose decodeTransactionReceiptJson.",
+      );
+    }
+    let decoded: string;
+    try {
+      decoded = native.decodeTransactionReceiptJson(body);
+    } catch (cause) {
+      throw new Error(
+        "Failed to decode the non-empty Norito transaction receipt.",
+        { cause },
+      );
+    }
+    try {
+      return attachPipelineSubmissionRoute(
+        parseNativeTransactionReceiptJson(decoded),
+        options.route,
+      );
+    } catch (cause) {
+      throw new Error(
+        "Native transaction receipt decoder returned invalid JSON.",
+        { cause },
+      );
     }
   }
-  return attachPipelineSubmissionRoute(null, options.route);
+  const payload = await readBoundedJsonResponse(response, {
+    label: "Transaction submission receipt",
+    maximumBytes: PIPELINE_TRANSACTION_RECEIPT_MAX_BYTES,
+    requireApplicationJson: true,
+    allowEmpty: true,
+  });
+  return attachPipelineSubmissionRoute(payload, options.route);
 };
 
 const submitSignedTransactionAsVersioned = async (
   toriiUrl: string,
   signedTransaction: Buffer,
-  options: { nativeBinding?: unknown; requireNativeEncoding?: boolean } = {},
 ) => {
   const signedTransactionBuffer = binaryToBuffer(signedTransaction);
-  if (options.nativeBinding || options.requireNativeEncoding) {
-    const pipelinePayload = encodeSignedTransactionForPipeline(
-      signedTransactionBuffer,
-      options,
-    );
-    const response = await nodeFetch(
-      buildNexusEndpoint(toriiUrl, "/v1/pipeline/transactions"),
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-norito",
-          Accept: "application/x-norito, application/json",
-        },
-        body: pipelinePayload as unknown as BodyInit,
+  const pipelinePayload = encodeSignedTransactionForPipeline(
+    signedTransactionBuffer,
+    { nativeBinding: irohaNativeBinding },
+  );
+  const response = await nodeFetch(
+    buildNexusEndpoint(toriiUrl, "/v1/pipeline/transactions"),
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-norito",
+        Accept: "application/x-norito, application/json",
       },
-    );
-    if (!response.ok) {
-      throw await createApiRequestError(response, "Transaction submission");
-    }
-    const route = readPipelineSubmissionRoute(response);
-    const submission = await readPipelineSubmissionResponse(response, {
-      nativeBinding: options.nativeBinding,
-      route,
-    });
-    return {
-      hash: hashSignedTransactionHex(signedTransactionBuffer),
-      submission,
-    };
+      body: pipelinePayload as unknown as BodyInit,
+      redirect: "error",
+    },
+  );
+  if (![200, 201, 202, 204].includes(response.status)) {
+    throw await createApiRequestError(response, "Transaction submission");
   }
-
-  const client = getClient(toriiUrl);
-  const submission = await client.submitTransaction(signedTransactionBuffer);
+  const route = readPipelineSubmissionRoute(response);
+  const submission = await readPipelineSubmissionResponse(response, {
+    nativeBinding: irohaNativeBinding,
+    route,
+  });
   return {
     hash: hashSignedTransactionHex(signedTransactionBuffer),
     submission,
-  };
-};
-
-const submitTransactionEntrypointAndWaitForFinalizedBlock = async (
-  toriiUrl: string,
-  transactionEntrypoint: Buffer,
-  hashHex: string,
-) => {
-  const client = getClient(toriiUrl);
-  const transactionEntrypointBuffer = binaryToBuffer(transactionEntrypoint);
-  const submission = await submitTransactionEntrypoint(
-    client,
-    transactionEntrypointBuffer,
-    {
-      hashHex,
-    },
-  );
-  const finalized = await waitForTransactionFinalizedInBlock(
-    toriiUrl,
-    submission.hash,
-  );
-  return {
-    ...submission,
-    ...(finalized.fee ? { fee: finalized.fee } : {}),
-    finality: finalized.finality,
   };
 };
 
@@ -11385,32 +5711,34 @@ const fetchConfidentialAssetPolicy = async (
 const fetchAccountAssetsList = async (input: {
   toriiUrl: string;
   accountId: string;
-  networkPrefix?: number;
+  networkPrefix: number;
   assetDefinitionId?: string;
   limit?: number;
   offset?: number;
 }) => {
+  const pageRequest = requireFirstReleasePagination(input, {
+    defaultLimit: 50,
+    label: "Account assets",
+  });
   const normalizedBaseUrl = `${normalizeBaseUrl(input.toriiUrl)}/`;
-  const normalizedAccountId = encodeURIComponent(
-    normalizeCanonicalAccountIdLiteral(
-      input.accountId,
-      "accountId",
-      input.networkPrefix,
-    ),
+  const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
+    input.accountId,
+    "accountId",
+    input.networkPrefix,
   );
   const endpoint = new URL(
-    `v1/accounts/${normalizedAccountId}/assets`,
+    `v1/accounts/${encodeURIComponent(normalizedAccountId)}/assets`,
     normalizedBaseUrl,
   );
-  endpoint.searchParams.set("limit", String(input.limit ?? 50));
-  const assetDefinitionId = extractAssetDefinitionId(
-    input.assetDefinitionId,
-  ).trim();
-  if (assetDefinitionId) {
+  endpoint.searchParams.set("limit", String(pageRequest.limit));
+  endpoint.searchParams.set("offset", String(pageRequest.offset));
+  endpoint.searchParams.set("count_mode", "exact");
+  if (input.assetDefinitionId !== undefined) {
+    const assetDefinitionId = normalizeFirstReleaseAssetDefinitionId(
+      input.assetDefinitionId,
+      "assetDefinitionId",
+    );
     endpoint.searchParams.set("asset", assetDefinitionId);
-  }
-  if (input.offset !== undefined) {
-    endpoint.searchParams.set("offset", String(input.offset));
   }
   const response = await fetchGetResponse(
     endpoint.toString(),
@@ -11419,8 +5747,24 @@ const fetchAccountAssetsList = async (input: {
   if (!response.ok) {
     throw await createApiRequestError(response, "Account assets");
   }
-  const payload = (await response.json()) as unknown;
-  return normalizeAccountAssetListPayload(payload);
+  const payload = await readBoundedJsonObjectResponse(
+    response,
+    "Account assets",
+  );
+  const page = normalizeAccountAssetListPayload(payload, {
+    expectedAccountId: normalizedAccountId,
+    expectedAssetDefinitionId: input.assetDefinitionId,
+    networkPrefix: input.networkPrefix,
+    maximumItems: pageRequest.limit,
+  });
+  assertFirstReleasePageWindow(page, pageRequest, "Account assets");
+  assertFirstReleaseHasMore(
+    payload.has_more,
+    page,
+    pageRequest,
+    "Account assets",
+  );
+  return page;
 };
 
 const fetchGovernanceCouncilCurrent = async (
@@ -11525,37 +5869,38 @@ const fetchConfidentialAssetPolicyForAccount = async (input: {
   };
 };
 
-const listAllAccountTransactionsForPrivateKaigi = async (input: {
+const listAllAccountTransactionsForConfidentialBackup = async (input: {
   toriiUrl: string;
   accountId: string;
-  privateKeyHex?: string;
+  networkPrefix: number;
 }) => {
-  const client = getClient(input.toriiUrl);
   const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
     input.accountId,
     "accountId",
+    input.networkPrefix,
   );
-  const normalizedPrivateKeyHex =
-    (await resolveOptionalPrivateKeyHex({
-      accountId: normalizedAccountId,
-      privateKeyHex: input.privateKeyHex,
-    })) ?? "";
-  const canonicalAuth = normalizedPrivateKeyHex
-    ? {
-        accountId: normalizedAccountId,
-        privateKey: hexToBuffer(normalizedPrivateKeyHex, "privateKeyHex"),
-      }
-    : null;
   const items: Array<Record<string, unknown>> = [];
   let offset = 0;
   let total = Number.POSITIVE_INFINITY;
+  let pages = 0;
 
   while (offset < total) {
-    const page = await client.listAccountTransactions(normalizedAccountId, {
-      limit: PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE,
+    if (
+      offset >= FIRST_RELEASE_ACCOUNT_TRANSACTION_SCAN_MAX_ITEMS ||
+      pages >= FIRST_RELEASE_ACCOUNT_TRANSACTION_SCAN_MAX_PAGES
+    ) {
+      throw new Error(
+        "Account transaction history exceeded its finite first-release scan budget.",
+      );
+    }
+    const page = await fetchFirstReleaseAccountTransactions({
+      toriiUrl: input.toriiUrl,
+      accountId: normalizedAccountId,
+      networkPrefix: input.networkPrefix,
+      limit: CONFIDENTIAL_WALLET_BACKUP_ACCOUNT_TX_PAGE_SIZE,
       offset,
-      ...(canonicalAuth ? { canonicalAuth } : {}),
     });
+    pages += 1;
     if (
       !page ||
       typeof page !== "object" ||
@@ -11570,15 +5915,23 @@ const listAllAccountTransactionsForPrivateKaigi = async (input: {
         "Account transaction response did not match the first-release page contract.",
       );
     }
-    const pageItems = page.items as Array<Record<string, unknown>>;
+    if (page.total > FIRST_RELEASE_ACCOUNT_TRANSACTION_SCAN_MAX_ITEMS) {
+      throw new Error(
+        "Account transaction history exceeded its finite first-release scan budget.",
+      );
+    }
+    const pageItems: Array<Record<string, unknown>> = page.items.map(
+      (item) => ({
+        ...item,
+      }),
+    );
     items.push(...pageItems);
     total = page.total;
     offset += pageItems.length;
-    if (
-      pageItems.length === 0 ||
-      pageItems.length < PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE
-    ) {
-      break;
+    if (pageItems.length === 0 && offset < total) {
+      throw new Error(
+        "Account transaction pagination stopped before the exact history was complete.",
+      );
     }
   }
 
@@ -11588,12 +5941,12 @@ const listAllAccountTransactionsForPrivateKaigi = async (input: {
 const listAllAccountTransactions = async (input: {
   toriiUrl: string;
   accountId: string;
-  privateKeyHex?: string;
+  networkPrefix: number;
 }) =>
-  listAllAccountTransactionsForPrivateKaigi({
+  listAllAccountTransactionsForConfidentialBackup({
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
-    privateKeyHex: input.privateKeyHex,
+    networkPrefix: input.networkPrefix,
   });
 
 const fetchAssetDefinition = async (
@@ -11609,105 +5962,25 @@ const fetchAssetDefinition = async (
     label,
   );
 
-const fetchPrivateKaigiAssetDefinition = async (
+const fetchConfidentialAssetDefinition = async (
   toriiUrlRaw: string,
   assetDefinitionId: string,
 ) =>
   fetchAssetDefinition(
     toriiUrlRaw,
     assetDefinitionId,
-    "Private Kaigi XOR asset definition",
-  );
-
-const fetchConfidentialAssetRootWindow = async (
-  toriiUrlRaw: string,
-  assetDefinitionId: string,
-) => {
-  const endpoint = buildNexusEndpoint(toriiUrlRaw, "/v1/zk/roots");
-  const response = await nodeFetch(endpoint, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      asset_id: assetDefinitionId,
-      max: PRIVATE_KAIGI_ROOT_LOOKBACK,
-    }),
-  });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(
-      detail ||
-        `Confidential asset root request failed with status ${response.status} (${response.statusText})`,
-    );
-  }
-  const payload = ensureObjectResponse(
-    (await response.json()) as unknown,
-    "Confidential asset roots",
-  );
-  const recentRootsHex = Array.isArray(payload.roots)
-    ? payload.roots
-        .map((value) =>
-          String(value ?? "")
-            .trim()
-            .toLowerCase(),
-        )
-        .filter((value) => /^[0-9a-f]{64}$/.test(value))
-    : [];
-  const latestRootHex = String(
-    payload.latest ?? recentRootsHex[recentRootsHex.length - 1] ?? "",
-  )
-    .trim()
-    .toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(latestRootHex)) {
-    throw new Error(
-      "Confidential asset root response did not include a recent 32-byte root.",
-    );
-  }
-  return {
-    latestRootHex,
-    recentRootsHex:
-      recentRootsHex.length > 0 ? recentRootsHex : [latestRootHex],
-  };
-};
-
-const fetchPrivateKaigiRoots = async (
-  toriiUrlRaw: string,
-  assetDefinitionId: string,
-) =>
-  (await fetchConfidentialAssetRootWindow(toriiUrlRaw, assetDefinitionId))
-    .latestRootHex;
-
-const fetchConfidentialAssetDefinition = async (
-  toriiUrlRaw: string,
-  assetDefinitionId: string,
-) => fetchPrivateKaigiAssetDefinition(toriiUrlRaw, assetDefinitionId);
-
-const fetchConfidentialAssetRoots = async (
-  toriiUrlRaw: string,
-  assetDefinitionId: string,
-) => fetchPrivateKaigiRoots(toriiUrlRaw, assetDefinitionId);
-
-const fetchExplorerTransactionDetail = async (
-  toriiUrlRaw: string,
-  hashHex: string,
-) =>
-  fetchJson(
-    buildNexusEndpoint(
-      toriiUrlRaw,
-      `/v1/explorer/transactions/${encodeURIComponent(hashHex.trim())}`,
-    ),
-    "Explorer transaction detail",
+    "Confidential asset definition",
   );
 
 const fetchConfidentialNoteIndexTransactions = async (input: {
   toriiUrl: string;
   assetDefinitionIds: string[];
 }): Promise<WalletConfidentialTransactionLike[]> => {
+  assertFirstReleaseConfidentialScanTargets(input.assetDefinitionIds);
   const byHash = new Map<string, WalletConfidentialTransactionLike>();
   let noteIndexOrder = 0;
   for (const assetDefinitionId of input.assetDefinitionIds) {
+    let budget = { pages: 0, items: 0 };
     let cursor: string | null = "";
     const seenCursors = new Set<string>();
     while (cursor !== null) {
@@ -11724,7 +5997,7 @@ const fetchConfidentialNoteIndexTransactions = async (input: {
         "/v1/confidential/notes",
         {
           asset_definition_id: assetDefinitionId,
-          limit: CONFIDENTIAL_NOTE_INDEX_PAGE_SIZE,
+          limit: FIRST_RELEASE_CONFIDENTIAL_NOTE_PAGE_SIZE,
           ...(cursor ? { cursor } : {}),
         },
       );
@@ -11733,14 +6006,22 @@ const fetchConfidentialNoteIndexTransactions = async (input: {
         "Confidential note index",
       );
       if (!response.ok) {
-        const detail = await readApiErrorDetail(response);
+        const detail = await readBoundedApiErrorDetail(response);
         throw new Error(
           detail ||
             `Confidential note index request failed with status ${response.status} (${response.statusText})`,
         );
       }
       const page = parseConfidentialNoteIndexPage(
-        (await response.json()) as unknown,
+        await readBoundedJsonResponse(response, {
+          label: "Confidential note index",
+          maximumBytes: MAX_TORII_JSON_RESPONSE_BYTES,
+          requireApplicationJson: true,
+        }),
+      );
+      budget = consumeFirstReleaseConfidentialNotePage(
+        budget,
+        page.items.length,
       );
       for (const item of page.items) {
         const normalized = {
@@ -11750,264 +6031,14 @@ const fetchConfidentialNoteIndexTransactions = async (input: {
         noteIndexOrder += 1;
         byHash.set(normalized.entrypoint_hash ?? "", normalized);
       }
+      assertFirstReleaseConfidentialNoteContinuation(
+        budget,
+        page.nextCursor !== null,
+      );
       cursor = page.nextCursor;
     }
   }
   return [...byHash.values()];
-};
-
-const confidentialNoteIndexIncludesEntrypointHash = async (input: {
-  toriiUrl: string;
-  assetDefinitionId: string;
-  hashHex: string;
-}) => {
-  const normalizedHash = trimString(input.hashHex).toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(normalizedHash)) {
-    throw new Error("Confidential relay wait requires a 32-byte hash.");
-  }
-  let cursor: string | null = "";
-  const seenCursors = new Set<string>();
-  while (cursor !== null) {
-    if (cursor) {
-      if (seenCursors.has(cursor)) {
-        throw new Error("Confidential note index returned a repeated cursor.");
-      }
-      seenCursors.add(cursor);
-    }
-    const endpoint = buildNexusEndpoint(
-      input.toriiUrl,
-      "/v1/confidential/notes",
-      {
-        asset_definition_id: input.assetDefinitionId,
-        limit: CONFIDENTIAL_NOTE_INDEX_PAGE_SIZE,
-        ...(cursor ? { cursor } : {}),
-      },
-    );
-    const response = await fetchGetResponse(
-      endpoint,
-      "Confidential note index",
-    );
-    if (!response.ok) {
-      const detail = await readApiErrorDetail(response);
-      throw new Error(
-        detail ||
-          `Confidential note index request failed with status ${response.status} (${response.statusText})`,
-      );
-    }
-    const page = parseConfidentialNoteIndexPage(
-      (await response.json()) as unknown,
-    );
-    for (const normalized of page.items) {
-      if (
-        normalized.result_ok !== false &&
-        typeof normalized.entrypoint_hash === "string" &&
-        normalized.entrypoint_hash === normalizedHash
-      ) {
-        return true;
-      }
-    }
-    cursor = page.nextCursor;
-  }
-  return false;
-};
-
-const waitForConfidentialRelayFinalizedBlock = async (input: {
-  toriiUrl: string;
-  assetDefinitionId: string;
-  hashHex: string;
-}) => {
-  const finalized = await waitForTransactionFinalizedInBlock(
-    input.toriiUrl,
-    input.hashHex,
-  );
-  try {
-    await confidentialNoteIndexIncludesEntrypointHash({
-      toriiUrl: input.toriiUrl,
-      assetDefinitionId: input.assetDefinitionId,
-      hashHex: input.hashHex,
-    });
-  } catch {
-    // The transaction has final block proof. Confidential note indexing is
-    // reconciled independently by the wallet scanner.
-  }
-  return finalized;
-};
-
-const submitConfidentialRelayTransfer = async (input: {
-  toriiUrl: string;
-  assetDefinitionId: string;
-  signedTransaction: Buffer | ArrayBuffer | ArrayBufferView;
-}): Promise<{
-  hash: string;
-  relayAuthority: string;
-  sourceHash: string;
-  fee?: TransactionFeeView | null;
-  finality: TransactionFinalityProof;
-}> => {
-  const endpoint = buildNexusEndpoint(
-    input.toriiUrl,
-    "/v1/confidential/relay/submit",
-  );
-  const response = await nodeFetch(endpoint, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      signed_tx_hex: binaryToBuffer(input.signedTransaction).toString("hex"),
-    }),
-  });
-  if (!response.ok) {
-    const detail = await readApiErrorDetail(response);
-    throw new Error(
-      detail ||
-        `Anonymous shielded relay request failed with status ${response.status} (${response.statusText})`,
-    );
-  }
-  const payload = ensureObjectResponse(
-    (await response.json()) as unknown,
-    "Anonymous shielded relay",
-  );
-  const hash = trimString(payload.tx_hash_hex);
-  if (!/^[0-9a-f]{64}$/u.test(hash)) {
-    throw new Error("Anonymous shielded relay returned an invalid hash.");
-  }
-  const sourceHash = trimString(payload.source_tx_hash_hex);
-  if (sourceHash && !/^[0-9a-f]{64}$/u.test(sourceHash)) {
-    throw new Error(
-      "Anonymous shielded relay returned an invalid source hash.",
-    );
-  }
-  const finalized = await waitForConfidentialRelayFinalizedBlock({
-    toriiUrl: input.toriiUrl,
-    assetDefinitionId: input.assetDefinitionId,
-    hashHex: hash,
-  });
-  return {
-    hash,
-    relayAuthority: trimString(payload.relay_authority),
-    sourceHash,
-    ...(finalized.fee ? { fee: finalized.fee } : {}),
-    finality: finalized.finality,
-  };
-};
-
-const readAssetDefinitionConfidentialPolicy = (
-  assetDefinition: Record<string, unknown>,
-  label: string,
-): AssetDefinitionConfidentialPolicyView => {
-  const policy = normalizeAssetDefinitionConfidentialPolicy(assetDefinition);
-  if (!policy) {
-    throw new Error(
-      `${label} asset is missing the top-level confidential_policy.`,
-    );
-  }
-  return policy;
-};
-
-const TORII_VERIFIER_BACKEND_LABELS = new Set<ToriiVerifierBackendLabelV1>([
-  "halo2/ipa",
-  "halo2/pasta/kaigi-roster-v1",
-  "halo2/pasta/kaigi-usage-v1",
-  "halo2/pasta/ivm-execution-v1",
-  "halo2/pasta/kagemusha-topup-shield-merkle16-axiom-poseidon-v3",
-  "halo2/pasta/confidential-transfer-2x2-merkle16-axiom-poseidon-v3",
-  "halo2/pasta/confidential-unshield-full-merkle16-axiom-poseidon-v3",
-  "halo2/pasta/confidential-unshield-change-merkle16-axiom-poseidon-v4",
-  "stark/fri",
-  "stark/fri/sha256-goldilocks",
-  "stark/fri/poseidon2-goldilocks",
-  "stark/fri/sha256_goldilocks.v1",
-]);
-
-const readConfidentialVkRef = (
-  policy: Record<string, unknown>,
-  key: "vk_transfer" | "vk_unshield" | "vk_shield",
-  label: string,
-) => {
-  const rawVk = String(policy[key] ?? "").trim();
-  const match = /^([^:]+)::(.+)$/.exec(rawVk);
-  if (!match) {
-    throw new Error(`${label} asset is missing confidential_policy.${key}.`);
-  }
-  const backend = match[1] as ToriiVerifierBackendLabelV1;
-  if (!TORII_VERIFIER_BACKEND_LABELS.has(backend)) {
-    throw new Error(
-      `${label} asset confidential_policy.${key} uses an unsupported verifier backend.`,
-    );
-  }
-  return {
-    backend,
-    name: match[2],
-  };
-};
-
-const readPrivateKaigiVkTransferRef = (
-  assetDefinition: Record<string, unknown>,
-) => {
-  const policy = readAssetDefinitionConfidentialPolicy(
-    assetDefinition,
-    "Private Kaigi XOR",
-  );
-  return readConfidentialVkRef(policy, "vk_transfer", "Private Kaigi XOR");
-};
-
-const readConfidentialAllowUnshield = (
-  assetDefinition: Record<string, unknown>,
-) => {
-  const policy = readAssetDefinitionConfidentialPolicy(
-    assetDefinition,
-    "Confidential",
-  );
-  return policy.allow_unshield ?? confidentialModeSupportsShield(policy.mode);
-};
-
-const readConfidentialVkUnshieldRef = (
-  assetDefinition: Record<string, unknown>,
-) =>
-  readConfidentialVkRef(
-    readAssetDefinitionConfidentialPolicy(assetDefinition, "Confidential"),
-    "vk_unshield",
-    "Confidential",
-  );
-
-const readConfidentialVkTransferRef = (
-  assetDefinition: Record<string, unknown>,
-) =>
-  readConfidentialVkRef(
-    readAssetDefinitionConfidentialPolicy(assetDefinition, "Confidential"),
-    "vk_transfer",
-    "Confidential",
-  );
-
-const mergeConfidentialPolicyWithAssetDefinition = (
-  policy: ConfidentialAssetPolicyView,
-  assetDefinition: Record<string, unknown>,
-): ConfidentialAssetPolicyView => {
-  const assetPolicy = readAssetDefinitionConfidentialPolicy(
-    assetDefinition,
-    "Confidential",
-  );
-  return {
-    ...policy,
-    current_mode: assetPolicy.mode,
-    effective_mode: assetPolicy.mode,
-    allow_shield:
-      assetPolicy.allow_shield ??
-      confidentialModeSupportsShield(assetPolicy.mode),
-    allow_unshield:
-      assetPolicy.allow_unshield ??
-      confidentialModeSupportsShield(assetPolicy.mode),
-    vk_transfer: assetPolicy.vk_transfer ?? policy.vk_transfer,
-    vk_unshield: assetPolicy.vk_unshield ?? policy.vk_unshield,
-    vk_shield: assetPolicy.vk_shield ?? policy.vk_shield,
-    vk_set_hash: assetPolicy.vk_set_hash ?? policy.vk_set_hash,
-    poseidon_params_id:
-      assetPolicy.poseidon_params_id ?? policy.poseidon_params_id,
-    pedersen_params_id:
-      assetPolicy.pedersen_params_id ?? policy.pedersen_params_id,
-  };
 };
 
 const resolveTrackedConfidentialAssetIds = (input: {
@@ -12031,10 +6062,13 @@ const resolveConfidentialAssetBalance = async (input: {
   chainId: string;
   networkPrefix: number;
   accountId: string;
-  privateKeyHex?: string;
   assetDefinitionId: string;
   endpointScope?: EndpointIdentityScopeInput | null;
 }): Promise<ConfidentialAssetBalanceResponse> => {
+  const networkId = resolveFirstReleaseNetworkIdForConfiguredIdentity({
+    chainId: input.chainId,
+    networkPrefix: input.networkPrefix,
+  });
   const endpointScope =
     input.endpointScope ??
     (await inspectEndpointDerivedScope({
@@ -12044,7 +6078,7 @@ const resolveConfidentialAssetBalance = async (input: {
     }));
   const decryptionContext = await resolveConfidentialWalletDecryptionContext({
     accountId: input.accountId,
-    privateKeyHex: input.privateKeyHex,
+    networkPrefix: input.networkPrefix,
     operationLabel: "Confidential balance lookup",
   });
   const { requestedAssetDefinitionId, resolvedAssetDefinitionId } =
@@ -12072,7 +6106,7 @@ const resolveConfidentialAssetBalance = async (input: {
   });
   const ledger = collectWalletConfidentialLedger(displayTransactions, {
     privateKeyHex: decryptionContext.privateKeyHex,
-    chainId: input.chainId,
+    networkId,
     assetDefinitionIds: trackedAssetIds,
     receiveKeys: decryptionContext.receiveKeys,
     markUnrecognizedTransfersInexact: false,
@@ -12094,7 +6128,7 @@ const resolveConfidentialAssetBalance = async (input: {
     committedTransactions,
     {
       privateKeyHex: decryptionContext.privateKeyHex,
-      chainId: input.chainId,
+      networkId,
       assetDefinitionIds: trackedAssetIds,
       receiveKeys: decryptionContext.receiveKeys,
       markUnrecognizedTransfersInexact: false,
@@ -12118,722 +6152,6 @@ const resolveConfidentialAssetBalance = async (input: {
   };
 };
 
-const resolveConfidentialTransferMaterials = async (input: {
-  toriiUrl: string;
-  chainId: string;
-  networkPrefix: number;
-  accountId: string;
-  privateKeyHex?: string;
-  assetDefinitionId: string;
-  endpointScope?: EndpointIdentityScopeInput | null;
-}) => {
-  const decryptionContext = await resolveConfidentialWalletDecryptionContext({
-    accountId: input.accountId,
-    privateKeyHex: input.privateKeyHex,
-    operationLabel: "Shielded transfer",
-  });
-  const client = getClient(input.toriiUrl);
-  const balance = await resolveConfidentialAssetBalance({
-    ...input,
-    accountId: decryptionContext.accountId,
-    privateKeyHex: decryptionContext.privateKeyHex,
-  });
-  const trackedAssetIds = resolveTrackedConfidentialAssetIds({
-    requestedAssetDefinitionId: input.assetDefinitionId,
-    resolvedAssetId: balance.resolvedAssetId,
-  });
-  const [noteIndexTransactions, assetDefinition, rootWindow] =
-    await Promise.all([
-      fetchConfidentialNoteIndexTransactions({
-        toriiUrl: input.toriiUrl,
-        assetDefinitionIds: trackedAssetIds,
-      }),
-      fetchConfidentialAssetDefinition(input.toriiUrl, balance.resolvedAssetId),
-      fetchConfidentialAssetRootWindow(input.toriiUrl, balance.resolvedAssetId),
-    ]);
-  const ledger = collectWalletConfidentialLedger(noteIndexTransactions, {
-    privateKeyHex: decryptionContext.privateKeyHex,
-    chainId: input.chainId,
-    assetDefinitionIds: trackedAssetIds,
-    receiveKeys: decryptionContext.receiveKeys,
-    markUnrecognizedTransfersInexact: false,
-  });
-  const vkTransferRef = readConfidentialVkTransferRef(assetDefinition);
-  const verifyingKey = await client.getVerifyingKeyTyped(
-    vkTransferRef.backend,
-    vkTransferRef.name,
-  );
-  return {
-    resolvedAssetId: balance.resolvedAssetId,
-    trackedAssetIds,
-    ledger,
-    latestRootHex: rootWindow.latestRootHex,
-    recentRootHexes: rootWindow.recentRootsHex,
-    verifyingKey: verifyingKey as unknown as Record<string, unknown>,
-  };
-};
-
-const resolveConfidentialUnshieldMaterials = async (input: {
-  toriiUrl: string;
-  chainId: string;
-  networkPrefix: number;
-  accountId: string;
-  privateKeyHex?: string;
-  assetDefinitionId: string;
-  endpointScope?: EndpointIdentityScopeInput | null;
-}) => {
-  const decryptionContext = await resolveConfidentialWalletDecryptionContext({
-    accountId: input.accountId,
-    privateKeyHex: input.privateKeyHex,
-    operationLabel: "Confidential public exit",
-  });
-  const client = getClient(input.toriiUrl);
-  const balance = await resolveConfidentialAssetBalance({
-    ...input,
-    accountId: decryptionContext.accountId,
-    privateKeyHex: decryptionContext.privateKeyHex,
-  });
-  const trackedAssetIds = resolveTrackedConfidentialAssetIds({
-    requestedAssetDefinitionId: input.assetDefinitionId,
-    resolvedAssetId: balance.resolvedAssetId,
-  });
-  const [noteIndexTransactions, assetDefinition, latestRootHex] =
-    await Promise.all([
-      fetchConfidentialNoteIndexTransactions({
-        toriiUrl: input.toriiUrl,
-        assetDefinitionIds: trackedAssetIds,
-      }),
-      fetchConfidentialAssetDefinition(input.toriiUrl, balance.resolvedAssetId),
-      fetchConfidentialAssetRoots(input.toriiUrl, balance.resolvedAssetId),
-    ]);
-  if (!readConfidentialAllowUnshield(assetDefinition)) {
-    throw new Error("Confidential unshield is not enabled for this asset.");
-  }
-  const ledger = collectWalletConfidentialLedger(noteIndexTransactions, {
-    privateKeyHex: decryptionContext.privateKeyHex,
-    chainId: input.chainId,
-    assetDefinitionIds: trackedAssetIds,
-    receiveKeys: decryptionContext.receiveKeys,
-    markUnrecognizedTransfersInexact: false,
-  });
-  const vkUnshieldRef = readConfidentialVkUnshieldRef(assetDefinition);
-  const verifyingKey = await client.getVerifyingKeyTyped(
-    vkUnshieldRef.backend,
-    vkUnshieldRef.name,
-  );
-  return {
-    resolvedAssetId: balance.resolvedAssetId,
-    trackedAssetIds,
-    ledger,
-    latestRootHex,
-    verifyingKey: verifyingKey as unknown as Record<string, unknown>,
-  };
-};
-
-const readInlineVerifyingKeyRecord = (value: Record<string, unknown>) => {
-  const record = isPlainRecord(value.record)
-    ? (value.record as Record<string, unknown>)
-    : {};
-  const inlineKey = isPlainRecord(record.inline_key)
-    ? (record.inline_key as Record<string, unknown>)
-    : isPlainRecord(value.inline_key)
-      ? (value.inline_key as Record<string, unknown>)
-      : null;
-  if (!inlineKey) {
-    throw new Error("Confidential verifying key inline_key is unavailable.");
-  }
-  return {
-    record,
-    inlineKey,
-  };
-};
-
-const normalizeConfidentialCircuitId = (value: unknown): string =>
-  trimString(value)
-    .toLowerCase()
-    .replace(/^halo2\/pasta\/(?!ipa\/)/, "halo2/pasta/ipa/")
-    .replace(/^halo2\/pasta\/ipa\/ipa\//, "halo2/pasta/ipa/");
-
-const isConfidentialUnshieldV2CircuitId = (circuitId: string): boolean =>
-  CONFIDENTIAL_UNSHIELD_V2_CIRCUIT_IDS.has(circuitId);
-
-const isConfidentialUnshieldV3CircuitId = (circuitId: string): boolean =>
-  CONFIDENTIAL_UNSHIELD_V3_CIRCUIT_IDS.has(circuitId);
-
-const readConfidentialVerifyingKeyContext = (
-  value: Record<string, unknown>,
-) => {
-  const { record, inlineKey } = readInlineVerifyingKeyRecord(value);
-  const id =
-    isPlainRecord(value.id) && !Array.isArray(value.id)
-      ? (value.id as Record<string, unknown>)
-      : {};
-  const backend = trimString(id.backend) || "halo2/ipa";
-  const circuitId = normalizeConfidentialCircuitId(
-    record.circuit_id ?? record.circuitId,
-  );
-  return {
-    record,
-    inlineKey,
-    backend,
-    circuitId,
-    proofVerifyingKey: {
-      id: {
-        backend,
-        name: trimString(id.name),
-      },
-      record,
-      inline_key: inlineKey,
-    },
-  };
-};
-
-const uranaiPrivateTradeProofSchema =
-  "uranai.irohaconnect.private-trade-proof.v1" as const;
-
-const privateTradeProofName = (prefix: string, parts: string[]) =>
-  `${prefix}-${createHash("sha256")
-    .update(parts.join("|"))
-    .digest("hex")
-    .slice(0, 48)}`;
-
-// This legacy internal builder is intentionally not exposed to the renderer.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const buildUranaiPrivateTradeProofEnvelope = async (
-  input: UranaiPrivateTradeProofInput,
-): Promise<UranaiPrivateTradeProofResponse> => {
-  const writeConnection = await assertWriteConnectionMatchesEndpoint({
-    toriiUrl: input.toriiUrl,
-    chainId: input.chainId,
-    networkPrefix: input.networkPrefix,
-    feature: "confidentialTransfers",
-  });
-  const chainId = writeConnection.chainId;
-  const accountId = normalizeCompatAccountIdLiteral(
-    input.accountId,
-    "accountId",
-    writeConnection.networkPrefix,
-  );
-  const collateralIn = trimString(input.collateralIn);
-  const privacyFee = trimString(input.privacyFee || "0");
-  if (!/^\d+$/.test(collateralIn) || BigInt(collateralIn) <= 0n) {
-    throw new Error(
-      "Uranai private trade collateral must be a positive whole-number amount.",
-    );
-  }
-  if (!/^\d+$/.test(privacyFee)) {
-    throw new Error(
-      "Uranai private trade privacy fee must be a whole-number amount.",
-    );
-  }
-  const spendAmount = (BigInt(collateralIn) + BigInt(privacyFee)).toString();
-  if (!isPositiveWholeAmount(spendAmount)) {
-    throw new Error(
-      "Uranai private trade spend amount must be greater than zero.",
-    );
-  }
-  const signingMaterial = assertEd25519SigningMaterial(
-    await resolveSigningMaterial({
-      accountId,
-      privateKeyHex: input.privateKeyHex,
-      signingAlgorithm: input.signingAlgorithm,
-      operationLabel: "Uranai private trade proof",
-    }),
-    "Uranai private trade proof",
-  );
-  const privateKeyHex = signingMaterial.privateKeyHex;
-  const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
-  const materials = await resolveConfidentialUnshieldMaterials({
-    toriiUrl: input.toriiUrl,
-    chainId,
-    networkPrefix: writeConnection.networkPrefix,
-    accountId,
-    privateKeyHex,
-    assetDefinitionId: input.assetDefinitionId,
-    endpointScope: writeConnection.endpointScope,
-  });
-  if (BigInt(materials.ledger.spendableQuantity) < BigInt(spendAmount)) {
-    throw new Error(
-      `Shielded spendable balance is ${materials.ledger.spendableQuantity} in ${materials.resolvedAssetId}, but ${spendAmount} is required.`,
-    );
-  }
-
-  const verifyingKeyContext = readConfidentialVerifyingKeyContext(
-    materials.verifyingKey,
-  );
-  let proofEnvelope:
-    | ReturnType<typeof buildConfidentialUnshieldProofV2>
-    | ReturnType<typeof buildConfidentialUnshieldProofV3>;
-  let outputCommitments: ReadonlyArray<Buffer> = [];
-
-  if (isConfidentialUnshieldV2CircuitId(verifyingKeyContext.circuitId)) {
-    const selection = selectWalletConfidentialNotesForExactAmount(
-      materials.ledger.notes,
-      spendAmount,
-    );
-    proofEnvelope = buildConfidentialUnshieldProofV2({
-      chainId,
-      assetDefinitionId: materials.resolvedAssetId,
-      spendKey: privateKey,
-      treeCommitments: materials.ledger.treeCommitmentsHex,
-      inputs: selection.selected.map((note) => ({
-        amount: note.amount,
-        rhoHex: note.rho_hex,
-        diversifierHex: note.diversifier_hex,
-        leafIndex: note.leaf_index,
-      })),
-      publicAmount: spendAmount,
-      rootHintHex: materials.latestRootHex,
-      verifyingKey: verifyingKeyContext.proofVerifyingKey,
-    });
-  } else if (isConfidentialUnshieldV3CircuitId(verifyingKeyContext.circuitId)) {
-    const selection = selectWalletConfidentialNotes(
-      materials.ledger.notes,
-      spendAmount,
-    );
-    const changeOutputs: Array<{
-      note: ReturnType<typeof createWalletConfidentialNote>;
-    }> = [];
-    if (selection.change !== "0") {
-      const changeDescriptor = await createStoredConfidentialReceiveDescriptor({
-        accountId,
-        privateKeyHex,
-        operationLabel: "Uranai private trade proof",
-      });
-      changeOutputs.push({
-        note: createWalletConfidentialNote({
-          assetDefinitionId: materials.resolvedAssetId,
-          amount: selection.change,
-          ownerTagHex: changeDescriptor.ownerTagHex,
-          diversifierHex: changeDescriptor.diversifierHex,
-        }),
-      });
-    }
-    const unshieldV3Proof = buildConfidentialUnshieldProofV3({
-      chainId,
-      assetDefinitionId: materials.resolvedAssetId,
-      spendKey: privateKey,
-      treeCommitments: materials.ledger.treeCommitmentsHex,
-      inputs: selection.selected.map((note) => ({
-        amount: note.amount,
-        rhoHex: note.rho_hex,
-        diversifierHex: note.diversifier_hex,
-        leafIndex: note.leaf_index,
-      })),
-      outputs: changeOutputs.map(({ note }) => ({
-        amount: note.amount,
-        rhoHex: note.rho_hex,
-      })),
-      publicAmount: spendAmount,
-      rootHintHex: materials.latestRootHex,
-      verifyingKey: verifyingKeyContext.proofVerifyingKey,
-    });
-    proofEnvelope = unshieldV3Proof;
-    outputCommitments = unshieldV3Proof.outputCommitments;
-  } else {
-    throw new Error(
-      `Unsupported confidential verifier circuit ${verifyingKeyContext.circuitId || "(missing circuit id)"}.`,
-    );
-  }
-
-  const nullifiersHex = proofEnvelope.nullifiers.map((entry) => toHex(entry));
-  const outputCommitmentsHex = outputCommitments.map((entry) => toHex(entry));
-  const proofEnv = Buffer.from(proofEnvelope.proof).toString("base64");
-  const proofHash = createHash("sha256")
-    .update(Buffer.from(proofEnvelope.proof))
-    .digest("hex");
-  const contextParts = [
-    accountId,
-    materials.resolvedAssetId,
-    spendAmount,
-    trimString(input.marketId),
-    String(input.outcomeIndex ?? ""),
-    materials.latestRootHex,
-    proofHash,
-  ];
-
-  return {
-    schema: uranaiPrivateTradeProofSchema,
-    accountId,
-    assetDefinitionId: input.assetDefinitionId,
-    resolvedAssetId: materials.resolvedAssetId,
-    spendAmount,
-    inputNullifier: privateTradeProofName("nf", [
-      ...contextParts,
-      ...nullifiersHex,
-    ]),
-    outputNoteCommitment: outputCommitmentsHex[0]
-      ? privateTradeProofName("note", [outputCommitmentsHex[0]])
-      : privateTradeProofName("note", contextParts),
-    positionCommitment: privateTradeProofName("pos", contextParts),
-    proofEnv,
-    proofEnvEncoding: "base64",
-    rootHintHex: materials.latestRootHex,
-    nullifiersHex,
-    outputCommitmentsHex,
-  };
-};
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- retained for a future explicit consolidation UI action.
-const submitConfidentialSelfConsolidation = async (input: {
-  toriiUrl: string;
-  chainId: string;
-  networkPrefix: number;
-  endpointScope: EndpointIdentityScopeInput;
-  accountId: string;
-  privateKeyHex?: string;
-  assetDefinitionId: string;
-  notes: Array<WalletSpendableConfidentialNote>;
-}) => {
-  if (input.notes.length !== 2) {
-    throw new Error("Confidential consolidation requires exactly two notes.");
-  }
-  const materials = await resolveConfidentialTransferMaterials({
-    toriiUrl: input.toriiUrl,
-    chainId: input.chainId,
-    networkPrefix: input.networkPrefix,
-    accountId: input.accountId,
-    privateKeyHex: input.privateKeyHex,
-    assetDefinitionId: input.assetDefinitionId,
-    endpointScope: input.endpointScope,
-  });
-  const signingMaterial = assertEd25519SigningMaterial(
-    await resolveSigningMaterial({
-      accountId: input.accountId,
-      privateKeyHex: input.privateKeyHex,
-      operationLabel: "Confidential consolidation",
-    }),
-    "Confidential consolidation",
-  );
-  const privateKeyHex = signingMaterial.privateKeyHex;
-  const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
-  const receiveDescriptor = await createStoredConfidentialReceiveDescriptor({
-    accountId: input.accountId,
-    privateKeyHex,
-    operationLabel: "Confidential consolidation",
-  });
-  const totalAmount = input.notes
-    .reduce((sum, note) => sum + BigInt(note.amount), 0n)
-    .toString();
-  const output = {
-    note: createWalletConfidentialNote({
-      assetDefinitionId: materials.resolvedAssetId,
-      amount: totalAmount,
-      ownerTagHex: receiveDescriptor.ownerTagHex,
-      diversifierHex: receiveDescriptor.diversifierHex,
-    }),
-    receiveKeyId: receiveDescriptor.receiveKeyId,
-    recipientPublicKeyBase64Url: receiveDescriptor.receivePublicKeyBase64Url,
-  };
-  const verifyingKeyContext = readConfidentialVerifyingKeyContext(
-    materials.verifyingKey,
-  );
-  const proofEnvelope = buildConfidentialTransferProofV2({
-    chainId: input.chainId.trim(),
-    assetDefinitionId: materials.resolvedAssetId,
-    spendKey: privateKey,
-    treeCommitments: materials.ledger.treeCommitmentsHex,
-    inputs: input.notes.map((note) => ({
-      amount: note.amount,
-      rhoHex: note.rho_hex,
-      diversifierHex: note.diversifier_hex,
-      leafIndex: note.leaf_index,
-    })),
-    outputs: [
-      {
-        amount: output.note.amount,
-        rhoHex: output.note.rho_hex,
-        ownerTagHex: output.note.owner_tag_hex,
-      },
-    ],
-    rootHintHex: materials.latestRootHex,
-    verifyingKey: verifyingKeyContext.proofVerifyingKey,
-  });
-  const metadata = buildWalletConfidentialMetadataV3({
-    baseMetadata: withRequiredGasAssetMetadata(undefined, input.toriiUrl),
-    outputs: [output],
-  });
-  const tx = await quoteAndSignInstructionTransaction({
-    toriiUrl: input.toriiUrl,
-    chainId: input.chainId,
-    networkPrefix: input.networkPrefix,
-    authority: input.accountId,
-    instructions: [
-      buildZkTransferInstruction({
-        assetDefinitionId: materials.resolvedAssetId,
-        inputs: proofEnvelope.nullifiers,
-        outputs: proofEnvelope.outputCommitments,
-        proof: {
-          backend: verifyingKeyContext.backend,
-          proof: Buffer.from(proofEnvelope.proof),
-          verifyingKeyRef: verifyingKeyContext.proofVerifyingKey.id,
-        },
-        rootHint: Buffer.from(materials.latestRootHex, "hex"),
-      }),
-    ],
-    metadata,
-    privateKey,
-    privateKeyAlgorithm: signingMaterial.signingAlgorithm,
-  });
-  const submission = await submitConfidentialRelayTransfer({
-    toriiUrl: input.toriiUrl,
-    assetDefinitionId: materials.resolvedAssetId,
-    signedTransaction: tx.signedTransaction,
-  });
-  upsertConfidentialWalletShadowTransaction({
-    toriiUrl: input.toriiUrl,
-    accountId: input.accountId,
-    endpointScope: input.endpointScope,
-    txHash: submission.hash,
-    authority: submission.relayAuthority || "confidential-relay",
-    metadata,
-    instructions: [
-      {
-        zk: {
-          ZkTransfer: {
-            asset: materials.resolvedAssetId,
-            inputs: proofEnvelope.nullifiers.map((entry) =>
-              entry.toString("hex"),
-            ),
-            outputs: [output.note.commitment_hex],
-          },
-        },
-      },
-    ],
-    createdAtMs: output.note.created_at_ms,
-  });
-  const latestRootHex = await fetchConfidentialAssetRoots(
-    input.toriiUrl,
-    materials.resolvedAssetId,
-  );
-  return {
-    hash: submission.hash,
-    finality: submission.finality,
-    output,
-    resolvedAssetId: materials.resolvedAssetId,
-    latestRootHex,
-  };
-};
-
-const computePrivateKaigiFeeAmount = (input: {
-  enabled: boolean;
-  baseFee: string;
-  perByteFee: string;
-  perInstructionFee: string;
-  perGasUnitFee: string;
-  txByteLength: number;
-  gasUsed: number;
-}) => {
-  if (!input.enabled) {
-    return "0";
-  }
-  let fee = parseDecimalAmount(input.baseFee, "baseFee");
-  fee = addDecimalAmounts(
-    fee,
-    multiplyDecimalAmountByInteger(
-      parseDecimalAmount(input.perByteFee, "perByteFee"),
-      input.txByteLength,
-    ),
-  );
-  fee = addDecimalAmounts(
-    fee,
-    multiplyDecimalAmountByInteger(
-      parseDecimalAmount(input.perInstructionFee, "perInstructionFee"),
-      1,
-    ),
-  );
-  fee = addDecimalAmounts(
-    fee,
-    multiplyDecimalAmountByInteger(
-      parseDecimalAmount(input.perGasUnitFee, "perGasUnitFee"),
-      input.gasUsed,
-    ),
-  );
-  return formatDecimalAmount(fee);
-};
-
-const resolveTransparentAssetBalance = (
-  items: Array<{
-    asset_id: string;
-    asset_definition_id?: string | null;
-    quantity: string;
-  }>,
-  assetDefinitionId: string,
-) =>
-  items.find((asset) => {
-    const returnedDefinitionId =
-      trimString(asset.asset_definition_id) ||
-      extractAssetDefinitionId(asset.asset_id).trim();
-    return returnedDefinitionId === assetDefinitionId;
-  })?.quantity ?? "0";
-
-async function resolvePrivateKaigiConfidentialXorContext(
-  input: {
-    toriiUrl: string;
-    chainId: string;
-    networkPrefix: number;
-    accountId: string;
-    assetDefinitionId: string;
-    endpointScope?: EndpointIdentityScopeInput | null;
-  },
-  options: {
-    includeFeeMaterials: true;
-  },
-): Promise<PrivateKaigiConfidentialXorFeeContext>;
-async function resolvePrivateKaigiConfidentialXorContext(
-  input: {
-    toriiUrl: string;
-    chainId: string;
-    networkPrefix: number;
-    accountId: string;
-    assetDefinitionId: string;
-    endpointScope?: EndpointIdentityScopeInput | null;
-  },
-  options?: {
-    includeFeeMaterials?: boolean;
-  },
-): Promise<PrivateKaigiConfidentialXorContext>;
-async function resolvePrivateKaigiConfidentialXorContext(
-  input: {
-    toriiUrl: string;
-    chainId: string;
-    networkPrefix: number;
-    accountId: string;
-    assetDefinitionId: string;
-    endpointScope?: EndpointIdentityScopeInput | null;
-  },
-  options?: {
-    includeFeeMaterials?: boolean;
-  },
-): Promise<
-  PrivateKaigiConfidentialXorContext | PrivateKaigiConfidentialXorFeeContext
-> {
-  const endpointScope =
-    input.endpointScope ??
-    (await inspectEndpointDerivedScope({
-      toriiUrl: input.toriiUrl,
-      chainId: input.chainId,
-      networkPrefix: input.networkPrefix,
-    }));
-  const assetDefinitionId = normalizeFirstReleaseAssetDefinitionId(
-    input.assetDefinitionId,
-  );
-  const { policy, requestedAssetDefinitionId, resolvedAssetDefinitionId } =
-    await fetchConfidentialAssetPolicyForAccount({
-      toriiUrl: input.toriiUrl,
-      accountId: input.accountId,
-      assetDefinitionId,
-    });
-  const policyMode = String(
-    policy.effective_mode ?? policy.current_mode ?? "",
-  ).trim();
-  const resolvedAssetId = resolvedAssetDefinitionId;
-  const trackedAssetIds = [requestedAssetDefinitionId, resolvedAssetId].filter(
-    (value, index, items) =>
-      value && items.findIndex((candidate) => candidate === value) === index,
-  );
-  const [assetsResponse, transactions] = await Promise.all([
-    fetchAccountAssetsList({
-      toriiUrl: input.toriiUrl,
-      accountId: input.accountId,
-      limit: 200,
-    }),
-    listAllAccountTransactionsForPrivateKaigi({
-      toriiUrl: input.toriiUrl,
-      accountId: input.accountId,
-    }),
-  ]);
-  const shieldedBalance = deriveOnChainShieldedBalance(transactions, {
-    assetDefinitionIds: trackedAssetIds,
-    accountIds: [
-      input.accountId,
-      normalizeCanonicalAccountIdLiteral(input.accountId, "accountId"),
-      normalizeCompatAccountIdLiteral(input.accountId, "accountId"),
-    ],
-  });
-  const shadowKeys = getPrivateKaigiShadowKeys({
-    toriiUrl: input.toriiUrl,
-    accountId: input.accountId,
-    assetDefinitionId: resolvedAssetId,
-    endpointScope,
-  });
-  const shadowState = readPrivateKaigiShadowState(shadowKeys);
-  let effectiveShieldedBalance: string | null = shieldedBalance.quantity;
-  if (shieldedBalance.exact && shieldedBalance.quantity !== null) {
-    syncPrivateKaigiShadowState(shadowState, shieldedBalance.quantity);
-    writePrivateKaigiShadowState(shadowKeys, shadowState);
-    effectiveShieldedBalance = computePrivateKaigiEffectiveShieldedBalance({
-      onChainShieldedBalance: shieldedBalance.quantity,
-      shadowState,
-    });
-  }
-  const state: PrivateKaigiConfidentialXorState = {
-    assetDefinitionId,
-    resolvedAssetId,
-    policyMode,
-    shieldedBalance: effectiveShieldedBalance,
-    shieldedBalanceExact: shieldedBalance.exact,
-    transparentBalance: resolveTransparentAssetBalance(
-      assetsResponse.items ?? [],
-      resolvedAssetId,
-    ),
-    canSelfShield:
-      confidentialModeSupportsShield(policyMode) &&
-      compareDecimalStrings(
-        resolveTransparentAssetBalance(
-          assetsResponse.items ?? [],
-          resolvedAssetId,
-        ),
-        "0",
-      ) > 0,
-    ...(shieldedBalance.exact
-      ? {}
-      : {
-          message:
-            "Shielded XOR balance is unavailable after confidential transfers. This wallet does not scan confidential notes yet.",
-        }),
-  };
-
-  if (!options?.includeFeeMaterials) {
-    return { state };
-  }
-
-  const client = getClient(input.toriiUrl);
-  const [assetDefinition, latestRootHex, lifecycle, pipelinePreflight] =
-    await Promise.all([
-      fetchPrivateKaigiAssetDefinition(input.toriiUrl, resolvedAssetId),
-      fetchPrivateKaigiRoots(input.toriiUrl, resolvedAssetId),
-      fetchNexusLifecycle(input.toriiUrl),
-      fetchJson(
-        buildNexusEndpoint(input.toriiUrl, "/v1/pipeline/preflight"),
-        "Pipeline preflight",
-      ),
-    ]);
-  const feeSchedule = readPrivateKaigiFeeSchedule(lifecycle, pipelinePreflight);
-  if (!feeSchedule.enabled) {
-    throw new Error(
-      "Private Kaigi is unavailable because the live Nexus lifecycle is disabled.",
-    );
-  }
-  if (feeSchedule.feeAssetDefinitionId !== resolvedAssetId) {
-    throw new Error(
-      `Private Kaigi fee asset ${feeSchedule.feeAssetDefinitionId} does not exactly match the configured confidential asset ${resolvedAssetId}.`,
-    );
-  }
-  const vkTransferRef = readPrivateKaigiVkTransferRef(assetDefinition);
-  const verifyingKey = await client.getVerifyingKeyTyped(
-    vkTransferRef.backend,
-    vkTransferRef.name,
-  );
-
-  return {
-    state,
-    latestRootHex,
-    verifyingKey: readPrivateKaigiTransferVerifyingKey(verifyingKey),
-    feeSchedule,
-  };
-}
-
 const quoteAndSignInstructionTransaction = async (input: {
   toriiUrl: string;
   chainId: string;
@@ -12841,32 +6159,55 @@ const quoteAndSignInstructionTransaction = async (input: {
   networkPrefix: number;
   instructions: object[];
   privateKey: Buffer;
-  privateKeyAlgorithm: string;
+  privateKeyAlgorithm: CryptoAlgorithm;
   metadata?: Record<string, unknown>;
   creationTimeMs?: number;
   ttlMs?: number;
   nonce?: number;
 }) => {
-  const request = buildCanonicalInstructionFeeQuoteRequest({
-    chainId: input.chainId,
-    authority: input.authority,
-    networkPrefix: input.networkPrefix,
-    instructions: input.instructions,
-    privateKey: input.privateKey,
-    metadata: input.metadata,
-    creationTimeMs: input.creationTimeMs,
-    ttlMs: input.ttlMs,
-    nonce: input.nonce,
-  });
-  const quote = await getClient(input.toriiUrl).quoteFees(request.payload, {
-    canonicalAuth: request.canonicalAuth,
-  });
-  return signQuotedTransactionPayload({
-    payload: request.payload,
-    quotedFeePayment: quote.intent,
-    privateKey: input.privateKey,
-    privateKeyAlgorithm: input.privateKeyAlgorithm,
-  });
+  try {
+    const networkId = resolveFirstReleaseTransactionNetworkId({
+      toriiUrl: normalizeBaseUrl(input.toriiUrl),
+      chainId: input.chainId,
+      networkPrefix: input.networkPrefix,
+    });
+    const request = buildCanonicalInstructionFeeQuoteRequest({
+      networkId,
+      authority: input.authority,
+      networkPrefix: input.networkPrefix,
+      instructions: input.instructions,
+      privateKey: input.privateKey,
+      metadata: input.metadata,
+      creationTimeMs: input.creationTimeMs,
+      ttlMs: input.ttlMs,
+      nonce: input.nonce,
+    });
+    const quote = await fetchFirstReleaseAuthorityFeeQuote({
+      toriiUrl: input.toriiUrl,
+      networkPrefix: input.networkPrefix,
+      payload: request.payload,
+      auth: {
+        accountId: request.canonicalAuth.accountId,
+        networkId,
+        privateKey: request.canonicalAuth.privateKey,
+      },
+    });
+    const signed = signFirstReleaseAuthorityTransaction({
+      networkId,
+      draft: request.draft,
+      quote,
+      privateKey: input.privateKey,
+      privateKeyAlgorithm: input.privateKeyAlgorithm,
+    });
+    return {
+      ...signed,
+      feeQuote: transactionFeeQuoteView(quote),
+    };
+  } finally {
+    // This helper owns the caller-created transient key for the complete
+    // authenticated quote/sign sequence.
+    input.privateKey.fill(0);
+  }
 };
 
 const submitInstructionTransaction = async (input: {
@@ -12874,8 +6215,6 @@ const submitInstructionTransaction = async (input: {
   chainId: string;
   authorityAccountId: string;
   networkPrefix: number;
-  privateKeyHex?: string;
-  signingAlgorithm?: string;
   instruction:
     | Record<string, unknown>
     | ((authority: string) => Record<string, unknown>);
@@ -12897,8 +6236,7 @@ const submitInstructionTransaction = async (input: {
   });
   const signingMaterial = await resolveSigningMaterial({
     accountId: wireInput.authority,
-    privateKeyHex: input.privateKeyHex,
-    signingAlgorithm: input.signingAlgorithm,
+    networkPrefix: writeConnection.networkPrefix,
     operationLabel: "Transaction submission",
   });
   const privateKey = hexToBuffer(
@@ -12918,22 +6256,13 @@ const submitInstructionTransaction = async (input: {
   const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
     input.toriiUrl,
     tx.signedTransaction,
+    { feeQuote: tx.feeQuote },
   );
   return transactionSubmissionResult(submission);
 };
 
 const GOVERNANCE_REVIEW_TTL_MS = 2 * 60 * 1000;
 const GOVERNANCE_REVIEW_LIMIT = 24;
-
-type PreparedPlainReferendumBallot = {
-  contractFingerprint: string;
-  artifactSha256: string;
-  referendumId: string;
-  amount: string;
-  durationBlocks: string;
-  direction: "Aye" | "Nay" | "Abstain";
-  citizenSnapshot: BondedGovernanceCitizenSnapshot;
-};
 
 type BondedGovernanceCitizenSnapshot = Readonly<{
   accountId: string;
@@ -12946,13 +6275,20 @@ type PreparedGovernanceAction = {
   toriiUrl: string;
   chainId: string;
   networkPrefix: number;
+  networkId: NetworkId;
   accountId: string;
-  signingAlgorithm: string;
+  signingAlgorithm: CryptoAlgorithm;
   governanceCapabilitiesFingerprint: string;
-  plainReferendumBallot: PreparedPlainReferendumBallot | null;
-  payload: ReturnType<typeof buildTransactionPayload>;
-  quote: FeeQuoteResponse;
+  draft: FirstReleaseAuthorityTransactionDraft;
+  quote: FirstReleaseAuthorityFeeQuoteResponse;
 };
+
+type GovernancePrepareAuthentication = Readonly<{
+  accountId: string;
+  networkId: NetworkId;
+  privateKey: Buffer;
+  signingAlgorithm: CryptoAlgorithm;
+}>;
 
 const preparedGovernanceActions = new Map<string, PreparedGovernanceAction>();
 
@@ -12988,8 +6324,7 @@ const governanceRequestJson = async (
   if (!response.ok) {
     throw await createApiRequestError(response, `Governance ${path}`);
   }
-  const payload = (await response.json()) as unknown;
-  return ensureObjectResponse(payload, `Governance ${path}`);
+  return readBoundedJsonObjectResponse(response, `Governance ${path}`);
 };
 
 const fetchGovernanceCapabilities = async (
@@ -13016,10 +6351,10 @@ const assertGovernanceWriteCapabilities = async (
   });
   const capabilities = await fetchGovernanceCapabilities(context.toriiUrl);
   if (
-    context.chainId.trim() !== capabilities.chainId ||
+    context.chainId.trim() !== TAIRA_GOVERNANCE_CHAIN_ID ||
     (context.networkPrefix !== undefined &&
       context.networkPrefix !== capabilities.networkPrefix) ||
-    capabilities.chainId !== TAIRA_GOVERNANCE_CHAIN_ID ||
+    capabilities.networkId !== TAIRA_GOVERNANCE_NETWORK_ID ||
     capabilities.networkPrefix !== TAIRA_GOVERNANCE_NETWORK_PREFIX
   ) {
     throw new Error(
@@ -13073,20 +6408,50 @@ const assertCurrentBondedGovernanceCitizen = async (
   return snapshot;
 };
 
-const governanceListLimit = (value: number | undefined) => {
-  const normalized = value ?? 20;
-  if (!Number.isInteger(normalized) || normalized < 1 || normalized > 100) {
-    throw new Error("Governance proposal limit must be between 1 and 100.");
+const resolveValidationFeeProposalFingerprint: GovernanceProposalIdResolver = ({
+  proposer,
+  kind,
+}) => {
+  if (kind.type === "ValidationFeePolicy") {
+    return computeFirstReleaseValidationFeePolicyFingerprint({
+      proposalOperator: proposer,
+      networkPrefix: TAIRA_GOVERNANCE_NETWORK_PREFIX,
+      policy: kind.policy as unknown as Record<string, unknown>,
+      payoutLifecycleProposalId: kind.payoutLifecycleProposalId,
+    });
   }
-  return normalized;
+  return computeFirstReleaseValidationFeePayoutLifecycleFingerprint({
+    proposalOperator: proposer,
+    networkPrefix: TAIRA_GOVERNANCE_NETWORK_PREFIX,
+    payoutBinding: kind.payoutBinding as unknown as Record<string, unknown>,
+  });
 };
 
 const fetchGovernanceProposalList = async (
   input: GovernanceProposalListInput,
 ): Promise<GovernanceProposalList> => {
+  const { limit } = requireFirstReleasePagination(
+    { limit: input.limit },
+    {
+      defaultLimit: 20,
+      maximumLimit: 100,
+      label: "Governance proposals",
+    },
+  );
+  const cursor = input.cursor ?? null;
+  if (
+    cursor !== null &&
+    (typeof cursor !== "string" || !/^[0-9a-f]{96}$/u.test(cursor))
+  ) {
+    throw new Error(
+      "Governance proposal cursor must be the exact 96-character lowercase V1 token.",
+    );
+  }
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (cursor !== null) query.set("cursor", cursor);
   const payload = await governanceRequestJson(
     input.toriiUrl,
-    VALIDATION_FEE_PROPOSALS_PATH,
+    `${VALIDATION_FEE_PROPOSALS_PATH}?${query.toString()}`,
     { allowNotFound: true },
   );
   if (!payload) {
@@ -13094,22 +6459,11 @@ const fetchGovernanceProposalList = async (
       "This Torii endpoint does not expose the typed validation-fee proposal catalog. Load a proposal with its exact 32-byte ID instead.",
     );
   }
-  const limit = governanceListLimit(input.limit);
-  const normalized = normalizeGovernanceProposalList(payload);
-  const status = input.status?.trim().toLowerCase();
-  const kind = input.kind?.trim().toLowerCase();
-  const proposer = input.proposer?.trim();
-  return {
-    items: normalized.items
-      .filter(
-        (proposal) =>
-          (!status || proposal.status.toLowerCase() === status) &&
-          (!kind || proposal.kindType.toLowerCase() === kind) &&
-          (!proposer || proposal.proposer === proposer),
-      )
-      .slice(0, limit),
-    nextCursor: null,
-  };
+  const normalized = normalizeGovernanceProposalList(
+    payload,
+    resolveValidationFeeProposalFingerprint,
+  );
+  return normalized;
 };
 
 const fetchGovernanceProposalDetail = async (
@@ -13119,15 +6473,15 @@ const fetchGovernanceProposalDetail = async (
   if (!proposalId) {
     throw new Error("proposalId must be 32-byte hex.");
   }
+  if (input.networkPrefix !== TAIRA_GOVERNANCE_NETWORK_PREFIX) {
+    throw new Error(
+      "Typed validation-fee proposal reads require the exact Taira network prefix.",
+    );
+  }
   const rawId = proposalId.slice(2);
-  const typedDetailPath = input.accountId?.trim()
-    ? `${validationFeeProposalPath(rawId)}?account_id=${encodeURIComponent(
-        normalizeCompatAccountIdLiteral(input.accountId, "accountId"),
-      )}`
-    : validationFeeProposalPath(rawId);
   const typedDetail = await governanceRequestJson(
     input.toriiUrl,
-    typedDetailPath,
+    validationFeeProposalPath(rawId),
     { allowNotFound: true },
   );
   if (!typedDetail) {
@@ -13135,7 +6489,11 @@ const fetchGovernanceProposalDetail = async (
       `Typed validation-fee proposal ${proposalId} was not found.`,
     );
   }
-  return normalizeGovernanceProposalDetail(typedDetail, proposalId);
+  return normalizeGovernanceProposalDetail(
+    typedDetail,
+    proposalId,
+    resolveValidationFeeProposalFingerprint,
+  );
 };
 
 const fetchGovernanceValidationFeePolicy = async (input: {
@@ -13163,41 +6521,16 @@ const fetchGovernanceValidationFeePolicy = async (input: {
   }
   const capabilities = await fetchGovernanceCapabilities(endpoint);
   if (
-    capabilities.chainId !== chainId ||
+    capabilities.networkId !== TAIRA_GOVERNANCE_NETWORK_ID ||
     capabilities.networkPrefix !== networkPrefix
   ) {
     throw new Error(
       "Validation-fee policy proof does not match the active endpoint governance identity.",
     );
   }
-  return (await ipcRenderer.invoke(
-    GOVERNANCE_VALIDATION_FEE_POLICY_IPC_CHANNEL,
-  )) as GovernanceValidationFeePolicyView;
-};
-
-const fetchGovernancePlainReferendumContract = async (
-  observedIdentity: GovernancePlainReferendumObservedIdentity,
-): Promise<LoadedGovernancePlainReferendumContract> => {
-  const loaded = (await ipcRenderer.invoke(
-    GOVERNANCE_PLAIN_REFERENDUM_IPC_CHANNEL,
-    observedIdentity,
-  )) as unknown;
-  if (
-    !isPlainRecord(loaded) ||
-    !isPlainRecord(loaded.contract) ||
-    typeof loaded.contractFingerprint !== "string" ||
-    !/^[0-9a-f]{64}$/u.test(loaded.contractFingerprint) ||
-    typeof loaded.artifactSha256 !== "string" ||
-    !/^[0-9a-f]{64}$/u.test(loaded.artifactSha256) ||
-    !isPlainRecord(loaded.source) ||
-    typeof loaded.source.descriptorUrl !== "string" ||
-    typeof loaded.source.artifactUrl !== "string"
-  ) {
-    throw new Error(
-      "The main process returned a malformed PLAIN referendum contract.",
-    );
-  }
-  return loaded as LoadedGovernancePlainReferendumContract;
+  return parseGovernanceValidationFeePolicyView(
+    await ipcRenderer.invoke(GOVERNANCE_VALIDATION_FEE_POLICY_IPC_CHANNEL),
+  );
 };
 
 const normalizeGovernanceWireId = normalizeGovernanceDraftWireId;
@@ -13305,9 +6638,6 @@ const decodeGovernanceDraftInstruction = (
     ProposeValidationFeePolicy: VALIDATION_FEE_POLICY_DRAFT_WIRE_ID,
     ProposeValidationFeePayoutLifecycle:
       VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID,
-    CastPlainBallot: GOVERNANCE_BALLOT_WIRE_IDS.CastPlainBallot,
-    CastParliamentBallot: GOVERNANCE_BALLOT_WIRE_IDS.CastParliamentBallot,
-    EnactReferendum: "iroha_data_model::isi::governance::EnactReferendum",
   };
   const expectedWireId = reviewedWireIds[expectedVariant];
   if (!expectedWireId || wireId !== expectedWireId) {
@@ -13316,12 +6646,7 @@ const decodeGovernanceDraftInstruction = (
     );
   }
   const payloadHex = normalizeGovernanceDraftPayloadHex(item.payload_hex);
-  const decoded = noritoDecodeInstruction(Buffer.from(payloadHex, "hex"));
-  if (!isPlainRecord(decoded)) {
-    throw new Error(
-      "Governance draft instruction did not decode to an object.",
-    );
-  }
+  const decoded = decodeFirstReleaseInstruction(Buffer.from(payloadHex, "hex"));
   const variant = governanceInstructionVariant(decoded);
   if (variant.variant !== expectedVariant) {
     throw new Error(
@@ -13362,28 +6687,15 @@ const prunePreparedGovernanceActions = () => {
   }
 };
 
-const governanceFeeView = (
-  quote: FeeQuoteResponse,
-): GovernancePreparedActionView["fee"] => ({
-  payer: quote.intent.payer,
-  components: quote.components.map((component) => ({
-    kind: component.kind.kind,
-    assetDefinitionId: component.asset_definition_id,
-    maxAmount: component.max_amount,
-  })),
-  nextBlockHeight: String(quote.observation.next_block_height),
-});
-
 const prepareGovernanceDecodedAction = async (input: {
   context: GovernancePrepareContext;
   operation: GovernanceWriteOperation;
   title: string;
   proposalId?: string | null;
-  referendumId?: string | null;
-  plainReferendumBallot?: PreparedPlainReferendumBallot | null;
   draft: Record<string, unknown>;
   expectedVariant: string;
   validate: (decoded: Record<string, unknown>) => void;
+  authentication?: GovernancePrepareAuthentication;
 }): Promise<GovernancePreparedActionView> => {
   const chainId = normalizeNonEmptyString(input.context.chainId, "chainId");
   const governanceCapabilities = await assertGovernanceWriteCapabilities(
@@ -13406,24 +6718,54 @@ const prepareGovernanceDecodedAction = async (input: {
     input.expectedVariant,
   );
   input.validate(decoded);
-  const signingMaterial = await resolveSigningMaterial({
-    accountId,
-    operationLabel: input.title,
-  });
-  const privateKey = hexToBuffer(
-    signingMaterial.privateKeyHex,
-    "privateKeyHex",
-  );
-  const payload = buildTransactionPayload({
+  const networkId = resolveFirstReleaseTransactionNetworkId({
+    toriiUrl: normalizeBaseUrl(input.context.toriiUrl),
     chainId,
-    authority: accountId,
-    instructions: [decoded],
-    feePayment: { payer: "authority", chargeLimits: [] },
-    metadata: {},
+    networkPrefix: writeConnection.networkPrefix,
   });
-  const quote = await getClient(input.context.toriiUrl).quoteFees(payload, {
-    canonicalAuth: { accountId, privateKey },
-  });
+  const authentication = input.authentication;
+  if (
+    authentication &&
+    (authentication.accountId !== accountId ||
+      !authentication.networkId.equals(networkId) ||
+      !Buffer.isBuffer(authentication.privateKey) ||
+      authentication.privateKey.length === 0)
+  ) {
+    throw new Error(
+      "Governance draft authentication differs from the reviewed account or network.",
+    );
+  }
+  const signingMaterial = authentication
+    ? null
+    : await resolveSigningMaterial({
+        accountId,
+        networkPrefix: writeConnection.networkPrefix,
+        operationLabel: input.title,
+      });
+  const signingAlgorithm =
+    authentication?.signingAlgorithm ?? signingMaterial!.signingAlgorithm;
+  const privateKey = authentication
+    ? authentication.privateKey
+    : hexToBuffer(signingMaterial!.privateKeyHex, "privateKeyHex");
+  let draft: FirstReleaseAuthorityTransactionDraft;
+  let quote: FirstReleaseAuthorityFeeQuoteResponse;
+  try {
+    draft = buildFirstReleaseAuthorityTransactionDraft({
+      networkId,
+      networkPrefix: writeConnection.networkPrefix,
+      authority: accountId,
+      instructions: [decoded],
+      metadata: {},
+    });
+    quote = await fetchFirstReleaseAuthorityFeeQuote({
+      toriiUrl: input.context.toriiUrl,
+      networkPrefix: writeConnection.networkPrefix,
+      payload: draft.payload,
+      auth: { accountId, networkId, privateKey },
+    });
+  } finally {
+    if (!authentication) privateKey.fill(0);
+  }
   const reviewId = randomBytes(24).toString("base64url");
   const proposalId =
     canonicalGovernanceProposalId(
@@ -13435,9 +6777,8 @@ const prepareGovernanceDecodedAction = async (input: {
     operation: input.operation,
     title: input.title,
     proposalId,
-    referendumId: input.referendumId?.trim() || null,
     decodedInstruction: decoded,
-    fee: governanceFeeView(quote),
+    fee: transactionFeeQuoteView(quote),
     expiresAtMs,
   };
   prunePreparedGovernanceActions();
@@ -13446,11 +6787,11 @@ const prepareGovernanceDecodedAction = async (input: {
     toriiUrl: input.context.toriiUrl,
     chainId,
     networkPrefix: writeConnection.networkPrefix,
+    networkId,
     accountId,
-    signingAlgorithm: signingMaterial.signingAlgorithm,
+    signingAlgorithm,
     governanceCapabilitiesFingerprint,
-    plainReferendumBallot: input.plainReferendumBallot ?? null,
-    payload,
+    draft,
     quote,
   });
   return view;
@@ -13461,7 +6802,17 @@ const assertGovernanceExactKeys = (
   expected: readonly string[],
   label: string,
 ): void => {
-  const actual = Object.keys(value).sort();
+  const ownKeys = Reflect.ownKeys(value);
+  if (
+    ownKeys.some((key) => typeof key !== "string") ||
+    ownKeys.some((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return !descriptor?.enumerable || !("value" in descriptor);
+    })
+  ) {
+    throw new Error(`${label} must contain enumerable JSON data fields.`);
+  }
+  const actual = (ownKeys as string[]).sort();
   const sortedExpected = [...expected].sort();
   if (
     actual.length !== sortedExpected.length ||
@@ -13518,6 +6869,16 @@ const prepareGovernanceProposalAction = async (
 ) => {
   const capabilities = await assertGovernanceWriteCapabilities(input);
   await assertCurrentBondedGovernanceCitizen(input, capabilities);
+  const proposalOperator = normalizeCanonicalAccountIdLiteral(
+    input.accountId,
+    "accountId",
+    capabilities.networkPrefix,
+  );
+  const networkId = resolveFirstReleaseTransactionNetworkId({
+    toriiUrl: normalizeBaseUrl(input.toriiUrl),
+    chainId: TAIRA_GOVERNANCE_CHAIN_ID,
+    networkPrefix: capabilities.networkPrefix,
+  });
   if (!isPlainRecord(input.payload)) {
     throw new Error("Governance proposal payload must be an object.");
   }
@@ -13526,60 +6887,38 @@ const prepareGovernanceProposalAction = async (
     input.kind === "ValidationFeePolicy"
       ? buildValidationFeePolicyDraftRequest(
           input.payload,
-          capabilities.validationFeePlainElectorateRules,
+          proposalOperator,
+          networkId.toString(),
         )
       : null;
   const validationFeePayoutLifecycleRequest: ValidationFeePayoutLifecycleDraftRequest | null =
     input.kind === "ValidationFeePayoutLifecycle"
       ? buildValidationFeePayoutLifecycleDraftRequest(
           input.payload,
-          capabilities.validationFeePlainElectorateRules,
+          proposalOperator,
         )
       : null;
-  if (validationFeeRequest) {
-    assertValidationFeeDraftWindowAgainstCapabilities(
-      validationFeeRequest.referendum_window,
-      capabilities,
-    );
-  }
-  if (validationFeePayoutLifecycleRequest) {
-    assertValidationFeeDraftWindowAgainstCapabilities(
-      validationFeePayoutLifecycleRequest.referendum_window,
-      capabilities,
-    );
-  }
-  if (
-    computeValidationFeePolicyProposalFingerprintV1.length !== 3 ||
-    computeValidationFeePayoutLifecycleProposalFingerprintV1.length !== 2
-  ) {
-    throw new Error(
-      "The Iroha SDK does not expose the exact rules-bound validation-fee proposal fingerprint API.",
-    );
-  }
   const expectedValidationFeeProposalId = validationFeeRequest
-    ? (
-        computeValidationFeePolicyProposalFingerprintV1 as unknown as (
-          policy: Record<string, unknown>,
-          payoutLifecycleProposalId: string | null,
-          plainElectorateRules: Record<string, unknown>,
-        ) => string
-      )(
-        validationFeeRequest.proposal.payload.policy,
-        validationFeeRequest.proposal.payload.payout_lifecycle_proposal_id,
-        validationFeeRequest.plain_electorate_rules,
-      )
+    ? computeFirstReleaseValidationFeePolicyFingerprint({
+        proposalOperator,
+        networkPrefix: capabilities.networkPrefix,
+        policy: validationFeeRequest.proposal.payload.policy,
+        payoutLifecycleProposalId:
+          validationFeeRequest.proposal.payload.payout_lifecycle_proposal_id ===
+          null
+            ? null
+            : validationFeeRequest.proposal.payload
+                .payout_lifecycle_proposal_id,
+      })
     : null;
   const expectedValidationFeePayoutLifecycleProposalId =
     validationFeePayoutLifecycleRequest
-      ? (
-          computeValidationFeePayoutLifecycleProposalFingerprintV1 as unknown as (
-            payoutBinding: Record<string, unknown>,
-            plainElectorateRules: Record<string, unknown>,
-          ) => string
-        )(
-          validationFeePayoutLifecycleRequest.proposal.payload.payout_binding,
-          validationFeePayoutLifecycleRequest.plain_electorate_rules,
-        )
+      ? computeFirstReleaseValidationFeePayoutLifecycleFingerprint({
+          proposalOperator,
+          networkPrefix: capabilities.networkPrefix,
+          payoutBinding:
+            validationFeePayoutLifecycleRequest.proposal.payload.payout_binding,
+        })
       : null;
   const requestPayload =
     validationFeeRequest ?? validationFeePayoutLifecycleRequest;
@@ -13588,286 +6927,84 @@ const prepareGovernanceProposalAction = async (
       "This proposal kind is not advertised by the Taira governance capabilities.",
     );
   }
-  const draft = await governanceRequestJson(input.toriiUrl, endpoint.path, {
-    method: "POST",
-    body: requestPayload,
+  // The explicit renderer "Decode and quote" action authorizes only these
+  // route-scoped authenticated reads. Transaction signing still happens only
+  // after the separate review confirmation below.
+  const signingMaterial = await resolveSigningMaterial({
+    accountId: proposalOperator,
+    networkPrefix: capabilities.networkPrefix,
+    operationLabel: `Authenticate ${input.kind} draft`,
   });
-  if (!draft)
-    throw new Error("Governance proposal endpoint returned no draft.");
-  if (validationFeeRequest) {
-    assertValidationFeePolicyDraftResponse(
-      draft,
-      validationFeeRequest,
-      expectedValidationFeeProposalId as string,
-    );
-  } else if (validationFeePayoutLifecycleRequest) {
-    assertValidationFeePayoutLifecycleDraftResponse(
-      draft,
-      validationFeePayoutLifecycleRequest,
-      expectedValidationFeePayoutLifecycleProposalId as string,
-    );
-  }
-  return prepareGovernanceDecodedAction({
-    context: input,
-    operation: "propose",
-    title: `Propose ${input.kind}`,
-    proposalId: trimString(draft.proposal_id),
-    draft,
-    expectedVariant: endpoint.wireId,
-    validate(decoded) {
-      if (validationFeeRequest) {
-        assertValidationFeePolicyDecodedInstruction(
-          decoded,
-          validationFeeRequest,
-        );
-      } else if (validationFeePayoutLifecycleRequest) {
-        assertValidationFeePayoutLifecycleDecodedInstruction(
-          decoded,
-          validationFeePayoutLifecycleRequest,
-        );
-      }
-    },
-  });
-};
-
-const assertWritableGovernanceProposalKind = (
-  proposal: GovernanceProposalDetail,
-): void => {
-  if (
-    proposal.kind.type !== "ValidationFeePayoutLifecycle" &&
-    proposal.kind.type !== "ValidationFeePolicy"
-  ) {
-    throw new Error(
-      "This proposal kind is not advertised by the Taira governance capabilities and remains inspect-only.",
-    );
-  }
-};
-
-const prepareGovernancePlainBallotAction = async (
-  input: GovernancePlainBallotPrepareInput,
-) => {
-  const capabilities = await assertGovernanceWriteCapabilities(input);
-  const accountId = normalizeCanonicalAccountIdLiteral(
-    input.accountId,
-    "accountId",
-    capabilities.networkPrefix,
+  const privateKey = hexToBuffer(
+    signingMaterial.privateKeyHex,
+    "privateKeyHex",
   );
-  const plainReferendum = await fetchGovernancePlainReferendumContract({
-    chainId: TAIRA_GOVERNANCE_CHAIN_ID,
-    networkPrefix: TAIRA_GOVERNANCE_NETWORK_PREFIX,
-    genesisHash: capabilities.genesisHash,
-  });
-  const reviewedCitizen = plainReferendum.contract.eligibleCitizens.find(
-    (citizen) => citizen.accountId === accountId,
-  );
-  if (!reviewedCitizen) {
-    throw new Error(
-      "The active account is outside the immutable eligible-citizen snapshot.",
-    );
-  }
-  const citizenSnapshot: BondedGovernanceCitizenSnapshot = Object.freeze({
-    accountId: reviewedCitizen.accountId,
-    amount: reviewedCitizen.amount,
-    bondedHeight: reviewedCitizen.bondedHeight,
-  });
-  await assertCurrentBondedGovernanceCitizen(
-    {
+  try {
+    const response = await canonicalToriiJsonRequest({
       toriiUrl: input.toriiUrl,
-      chainId: input.chainId,
-      accountId,
-      networkPrefix: input.networkPrefix,
-    },
-    capabilities,
-    citizenSnapshot,
-  );
-  const referendumId = normalizeNonEmptyString(
-    input.referendumId,
-    "referendumId",
-  );
-  const durationBlocks = normalizeGovernancePositiveInteger(
-    input.durationBlocks,
-    "durationBlocks",
-    GOVERNANCE_U64_MAX,
-  );
-  const amount = normalizeGovernancePositiveInteger(
-    input.amount,
-    "amount",
-    GOVERNANCE_U128_MAX,
-  );
-  if (compareDecimalStrings(amount, capabilities.minBondAmount) < 0) {
-    throw new Error(
-      "Citizen ballot amount is below the Taira governance minimum bond.",
+      path: endpoint.path,
+      method: "POST",
+      label: "Governance validation-fee proposal draft",
+      auth: {
+        accountId: proposalOperator,
+        networkId,
+        privateKey,
+      },
+      body: requestPayload,
+    });
+    if (!response.ok) {
+      throw await createApiRequestError(
+        response,
+        "Governance validation-fee proposal draft",
+      );
+    }
+    const draft = await readBoundedJsonObjectResponse(
+      response,
+      "Governance validation-fee proposal draft",
     );
+    if (validationFeeRequest) {
+      assertValidationFeePolicyDraftResponse(
+        draft,
+        validationFeeRequest,
+        expectedValidationFeeProposalId as string,
+      );
+    } else if (validationFeePayoutLifecycleRequest) {
+      assertValidationFeePayoutLifecycleDraftResponse(
+        draft,
+        validationFeePayoutLifecycleRequest,
+        expectedValidationFeePayoutLifecycleProposalId as string,
+      );
+    }
+    return await prepareGovernanceDecodedAction({
+      context: input,
+      operation: "propose",
+      title: `Propose ${input.kind}`,
+      proposalId: trimString(draft.proposal_id),
+      draft,
+      expectedVariant: endpoint.wireId,
+      authentication: {
+        accountId: proposalOperator,
+        networkId,
+        privateKey,
+        signingAlgorithm: signingMaterial.signingAlgorithm,
+      },
+      validate(decoded) {
+        if (validationFeeRequest) {
+          assertValidationFeePolicyDecodedInstruction(
+            decoded,
+            validationFeeRequest,
+          );
+        } else if (validationFeePayoutLifecycleRequest) {
+          assertValidationFeePayoutLifecycleDecodedInstruction(
+            decoded,
+            validationFeePayoutLifecycleRequest,
+          );
+        }
+      },
+    });
+  } finally {
+    privateKey.fill(0);
   }
-  if (BigInt(durationBlocks) < BigInt(capabilities.convictionStepBlocks)) {
-    throw new Error(
-      "Citizen ballot lock duration is below the Taira conviction minimum.",
-    );
-  }
-  const proposalId = canonicalGovernanceProposalId(input.proposalId);
-  if (!proposalId) throw new Error("proposalId must be 32-byte hex.");
-  const proposal = await fetchGovernanceProposalDetail({
-    toriiUrl: input.toriiUrl,
-    proposalId,
-    accountId,
-  });
-  if (proposal.kind.type !== "ValidationFeePolicy") {
-    throw new Error(
-      "The immutable public electorate is only valid for its validation-fee policy proposal.",
-    );
-  }
-  assertPlainGovernanceProposalWrite(proposal);
-  if (
-    !proposal.referendum ||
-    proposal.referendum.id !== referendumId ||
-    !isReferendumPlainVoteOpen(proposal)
-  ) {
-    throw new Error("The reviewed PLAIN referendum is not open.");
-  }
-  assertGovernancePlainReferendumBallotBinding(plainReferendum, {
-    chainId: normalizeNonEmptyString(input.chainId, "chainId"),
-    proposalId,
-    referendumId,
-    accountId,
-    hStart: proposal.referendum.hStart,
-    hEnd: proposal.referendum.hEnd,
-    mode: proposal.referendum.mode,
-    amount,
-    durationBlocks,
-    direction: input.direction,
-    hasExistingLock: proposal.locks.some((lock) => lock.owner === accountId),
-  });
-  if (!plainBallotLockCoversReferendum(proposal, durationBlocks)) {
-    throw new Error(
-      "Citizen ballot lock duration must cover the referendum end height.",
-    );
-  }
-  const draftRoute = validationFeePlainBallotDraftPath(proposalId.slice(2));
-  if (plainReferendum.contract.ballot.draftRoute !== draftRoute) {
-    throw new Error(
-      "The hash-bound validation-fee ballot route differs from the selected proposal.",
-    );
-  }
-  const body = {
-    version: plainReferendum.contract.ballot.requestVersion,
-    owner: accountId,
-    direction: input.direction.toUpperCase(),
-  };
-  const draft = await governanceRequestJson(input.toriiUrl, draftRoute, {
-    method: "POST",
-    body,
-  });
-  if (!draft) throw new Error("Governance ballot endpoint returned no draft.");
-  assertGovernancePlainReferendumBallotDraft(draft, plainReferendum, {
-    owner: accountId,
-    direction: input.direction,
-  });
-  return prepareGovernanceDecodedAction({
-    context: input,
-    operation: "plain-ballot",
-    title: "Submit citizen ballot",
-    proposalId,
-    referendumId,
-    plainReferendumBallot: {
-      contractFingerprint: plainReferendum.contractFingerprint,
-      artifactSha256: plainReferendum.artifactSha256,
-      referendumId,
-      amount,
-      durationBlocks,
-      direction: input.direction,
-      citizenSnapshot,
-    },
-    draft,
-    expectedVariant: "CastPlainBallot",
-    validate(decoded) {
-      assertGovernanceDecodedVariant(decoded, "CastPlainBallot", {
-        referendum_id: referendumId,
-        owner: accountId,
-        amount,
-        duration_blocks: durationBlocks,
-        direction: String(normalizeBallotDirectionCode(input.direction)),
-      });
-    },
-  });
-};
-
-const prepareGovernanceParliamentBallotAction = async (
-  input: GovernanceParliamentBallotPrepareInput,
-) => {
-  const capabilities = await assertGovernanceWriteCapabilities(input);
-  const accountId = normalizeCompatAccountIdLiteral(
-    input.accountId,
-    "accountId",
-    capabilities.networkPrefix,
-  );
-  const proposalId = canonicalGovernanceProposalId(input.proposalId);
-  if (!proposalId) throw new Error("proposalId must be 32-byte hex.");
-  const proposal = await fetchGovernanceProposalDetail({
-    toriiUrl: input.toriiUrl,
-    proposalId,
-    accountId,
-  });
-  assertWritableGovernanceProposalKind(proposal);
-  assertPlainGovernanceProposalWrite(proposal);
-  if (proposal.referendum?.status !== "Proposed") {
-    throw new Error(
-      "Parliament body ballots close when the citizen referendum opens.",
-    );
-  }
-  const bodyName = normalizeNonEmptyString(input.body, "body");
-  if (!isAccountInParliamentRoster(proposal, accountId, bodyName)) {
-    throw new Error(
-      "The active account is not a seated member of this Parliament body.",
-    );
-  }
-  if (
-    proposal.parliamentOutcomes.find((outcome) => outcome.body === bodyName)
-      ?.currentAccountDecision
-  ) {
-    throw new Error(
-      "The active account already cast its ballot for this Parliament body.",
-    );
-  }
-  const body = {
-    authority: accountId,
-    chain_id: normalizeNonEmptyString(input.chainId, "chainId"),
-    proposal_id: proposalId,
-    body: bodyName,
-    decision: input.decision,
-  };
-  const draft = await governanceRequestJson(
-    input.toriiUrl,
-    "/v1/gov/parliament/ballots",
-    { method: "POST", body },
-  );
-  if (!draft) {
-    throw new Error("Parliament ballot endpoint returned no draft.");
-  }
-  assertGovernanceBallotDraftResponse(draft, "CastParliamentBallot");
-  return prepareGovernanceDecodedAction({
-    context: input,
-    operation: "parliament-ballot",
-    title: "Submit Parliament stage ballot",
-    proposalId,
-    draft,
-    expectedVariant: "CastParliamentBallot",
-    validate(decoded) {
-      assertGovernanceDecodedVariant(decoded, "CastParliamentBallot", {
-        proposal_id: proposalId,
-        body: bodyName,
-        decision: input.decision,
-      });
-    },
-  });
-};
-
-const prepareGovernanceEnactAction = async (
-  input: GovernanceEnactPrepareInput,
-) => {
-  await assertGovernanceWriteCapabilities(input);
-  throw new Error(
-    "Validation-fee finalization and enactment are operator-only typed workflows; the public wallet does not expose a generic enact action.",
-  );
 };
 
 const confirmPreparedGovernanceAction = async (input: {
@@ -13899,90 +7036,18 @@ const confirmPreparedGovernanceAction = async (input: {
       "Governance capabilities changed after review. Prepare the action again.",
     );
   }
-  const accountId =
-    prepared.view.operation === "plain-ballot"
-      ? normalizeCanonicalAccountIdLiteral(
-          input.accountId,
-          "accountId",
-          governanceCapabilities.networkPrefix,
-        )
-      : normalizeCompatAccountIdLiteral(
-          input.accountId,
-          "accountId",
-          governanceCapabilities.networkPrefix,
-        );
+  const accountId = normalizeCanonicalAccountIdLiteral(
+    input.accountId,
+    "accountId",
+    governanceCapabilities.networkPrefix,
+  );
   if (accountId !== prepared.accountId) {
     preparedGovernanceActions.delete(reviewId);
     throw new Error("Active account changed after governance review.");
   }
-  if (prepared.view.operation === "plain-ballot") {
-    try {
-      const ballot = prepared.plainReferendumBallot;
-      if (!ballot || !prepared.view.proposalId) {
-        throw new Error(
-          "Governance ballot review is missing its immutable electorate binding.",
-        );
-      }
-      const plainReferendum = await fetchGovernancePlainReferendumContract({
-        chainId: TAIRA_GOVERNANCE_CHAIN_ID,
-        networkPrefix: TAIRA_GOVERNANCE_NETWORK_PREFIX,
-        genesisHash: governanceCapabilities.genesisHash,
-      });
-      if (
-        plainReferendum.contractFingerprint !== ballot.contractFingerprint ||
-        plainReferendum.artifactSha256 !== ballot.artifactSha256
-      ) {
-        throw new Error(
-          "The immutable PLAIN referendum contract changed after review.",
-        );
-      }
-      await assertCurrentBondedGovernanceCitizen(
-        {
-          toriiUrl: prepared.toriiUrl,
-          chainId: prepared.chainId,
-          accountId,
-          networkPrefix: prepared.networkPrefix,
-        },
-        governanceCapabilities,
-        ballot.citizenSnapshot,
-      );
-      const proposal = await fetchGovernanceProposalDetail({
-        toriiUrl: prepared.toriiUrl,
-        proposalId: prepared.view.proposalId,
-        accountId,
-      });
-      if (
-        proposal.kind.type !== "ValidationFeePolicy" ||
-        !proposal.referendum ||
-        proposal.referendum.id !== ballot.referendumId ||
-        !isReferendumPlainVoteOpen(proposal)
-      ) {
-        throw new Error(
-          "The reviewed validation-fee PLAIN referendum is no longer open.",
-        );
-      }
-      assertGovernancePlainReferendumBallotBinding(plainReferendum, {
-        chainId: prepared.chainId,
-        proposalId: prepared.view.proposalId,
-        referendumId: ballot.referendumId,
-        accountId,
-        hStart: proposal.referendum.hStart,
-        hEnd: proposal.referendum.hEnd,
-        mode: proposal.referendum.mode,
-        amount: ballot.amount,
-        durationBlocks: ballot.durationBlocks,
-        direction: ballot.direction,
-        hasExistingLock: proposal.locks.some(
-          (lock) => lock.owner === accountId,
-        ),
-      });
-    } catch (error) {
-      preparedGovernanceActions.delete(reviewId);
-      throw error;
-    }
-  }
   const signingMaterial = await resolveSigningMaterial({
     accountId,
+    networkPrefix: prepared.networkPrefix,
     operationLabel: prepared.view.title,
   });
   if (signingMaterial.signingAlgorithm !== prepared.signingAlgorithm) {
@@ -13992,249 +7057,28 @@ const confirmPreparedGovernanceAction = async (input: {
     );
   }
   preparedGovernanceActions.delete(reviewId);
-  const signed = signQuotedTransactionPayload({
-    payload: prepared.payload,
-    quotedFeePayment: prepared.quote.intent,
-    privateKey: hexToBuffer(signingMaterial.privateKeyHex, "privateKeyHex"),
-    privateKeyAlgorithm: signingMaterial.signingAlgorithm,
-  });
+  const signed = withPrivateKeyBuffer(
+    signingMaterial.privateKeyHex,
+    "privateKeyHex",
+    (privateKey) =>
+      signFirstReleaseAuthorityTransaction({
+        networkId: prepared.networkId,
+        draft: prepared.draft,
+        quote: prepared.quote,
+        privateKey,
+        privateKeyAlgorithm: signingMaterial.signingAlgorithm,
+      }),
+  );
   const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
     prepared.toriiUrl,
     signed.signedTransaction,
+    { feeQuote: transactionFeeQuoteView(prepared.quote) },
   );
   return {
     ...transactionSubmissionResult(submission),
     operation: prepared.view.operation,
     proposalId: prepared.view.proposalId,
-    referendumId: prepared.view.referendumId,
     status: "finalized",
-  };
-};
-
-const createPrivateKaigiNonce = () => {
-  let value = randomBytes(4).readUInt32BE(0);
-  if (value === 0) {
-    value = 1;
-  }
-  return value;
-};
-
-// Bootstrap with a deterministic zeroed envelope so we can obtain the
-// action hash and initial byte size before the real fee spend is derived.
-const buildPrivateKaigiBootstrapFeeSpendDto = (input: {
-  assetDefinitionId: string;
-  anchorRootHex: string;
-}) => ({
-  asset_definition_id: input.assetDefinitionId,
-  anchor_root: canonicalHashLiteralFromHex(
-    input.anchorRootHex,
-    "privateKaigi.bootstrap.anchorRootHex",
-  ),
-  nullifiers: [Array.from({ length: 32 }, () => 0)],
-  output_commitments: [Array.from({ length: 32 }, () => 0)],
-  encrypted_change_payloads: [[0]],
-  proof: Buffer.alloc(25).toString("base64"),
-});
-
-const buildPrivateKaigiArtifactsDto = (input: {
-  commitmentHex: string;
-  nullifierHex: string;
-  issuedAtMs: number;
-  rosterRootHex: string;
-  proofBase64: string;
-}) => ({
-  commitment: {
-    commitment: canonicalHashLiteralFromHex(
-      input.commitmentHex,
-      "privateKaigi.commitment",
-    ),
-  },
-  nullifier: {
-    digest: canonicalHashLiteralFromHex(
-      input.nullifierHex,
-      "privateKaigi.nullifier",
-    ),
-    issued_at_ms: input.issuedAtMs,
-  },
-  roster_root: canonicalHashLiteralFromHex(
-    input.rosterRootHex,
-    "privateKaigi.rosterRoot",
-  ),
-  proof: normalizeBase64String(input.proofBase64, "privateKaigi.proof"),
-});
-
-const buildPrivateKaigiFeeSpendDto = (input: {
-  asset_definition_id: string;
-  anchor_root: Buffer | ArrayBuffer | ArrayBufferView;
-  nullifiers: ReadonlyArray<Buffer | ArrayBuffer | ArrayBufferView>;
-  output_commitments: ReadonlyArray<Buffer | ArrayBuffer | ArrayBufferView>;
-  encrypted_change_payloads: ReadonlyArray<
-    Buffer | ArrayBuffer | ArrayBufferView
-  >;
-  proof: Buffer | ArrayBuffer | ArrayBufferView;
-}) => ({
-  asset_definition_id: input.asset_definition_id,
-  anchor_root: canonicalHashLiteralFromBuffer(
-    binaryToBuffer(input.anchor_root),
-  ),
-  nullifiers: input.nullifiers.map((entry) => toJsonByteArray(entry)),
-  output_commitments: input.output_commitments.map((entry) =>
-    toJsonByteArray(entry),
-  ),
-  encrypted_change_payloads: input.encrypted_change_payloads.map((entry) =>
-    toJsonByteArray(entry),
-  ),
-  proof: binaryToBuffer(input.proof).toString("base64"),
-});
-
-const buildFundedPrivateKaigiEntrypoint = async (input: {
-  chainId: string;
-  context: PrivateKaigiConfidentialXorFeeContext;
-  action: "create" | "join" | "end";
-  proofByteLength: number;
-  buildEntrypoint: (options: {
-    feeSpend: Record<string, unknown>;
-    creationTimeMs: number;
-    nonce: number;
-  }) => {
-    transactionEntrypoint: Buffer;
-    hash: Buffer;
-    actionHash: Buffer;
-  };
-}) => {
-  const context = input.context;
-  if (!confidentialModeSupportsShield(context.state.policyMode)) {
-    throw new Error(
-      `Private Kaigi requires confidential XOR shielding support, but the effective mode is ${context.state.policyMode}.`,
-    );
-  }
-  if (
-    !context.state.shieldedBalanceExact ||
-    context.state.shieldedBalance === null
-  ) {
-    throw new Error(
-      context.state.message ||
-        "Shielded XOR balance is unavailable for private Kaigi fee payment.",
-    );
-  }
-
-  const creationTimeMs = Date.now();
-  const nonce = createPrivateKaigiNonce();
-  const provisional = input.buildEntrypoint({
-    feeSpend: buildPrivateKaigiBootstrapFeeSpendDto({
-      assetDefinitionId: context.state.resolvedAssetId,
-      anchorRootHex: context.latestRootHex,
-    }),
-    creationTimeMs,
-    nonce,
-  });
-  const gasUsed = computePrivateKaigiInstructionGas({
-    action: input.action,
-    proofByteLength: input.proofByteLength,
-  });
-
-  let feeAmount = "0";
-  let finalEntrypoint = provisional;
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const envelope = buildPrivateKaigiFeeSpend({
-      chainId: input.chainId.trim(),
-      assetDefinitionId: context.state.resolvedAssetId,
-      actionHash: provisional.actionHash,
-      anchorRootHex: context.latestRootHex,
-      feeAmount,
-      verifyingKey: context.verifyingKey.proofVerifyingKey,
-    });
-    finalEntrypoint = input.buildEntrypoint({
-      feeSpend: buildPrivateKaigiFeeSpendDto(envelope),
-      creationTimeMs,
-      nonce,
-    });
-    const nextFeeAmount = computePrivateKaigiFeeAmount({
-      ...context.feeSchedule,
-      txByteLength: finalEntrypoint.transactionEntrypoint.length,
-      gasUsed,
-    });
-    if (nextFeeAmount === feeAmount) {
-      feeAmount = nextFeeAmount;
-      break;
-    }
-    feeAmount = nextFeeAmount;
-  }
-
-  if (compareDecimalStrings(context.state.shieldedBalance, feeAmount) < 0) {
-    throw new Error(
-      `Private Kaigi needs ${feeAmount} shielded XOR in ${context.state.resolvedAssetId}, but only ${context.state.shieldedBalance} is available. Self-shield XOR first.`,
-    );
-  }
-
-  return {
-    transactionEntrypoint: finalEntrypoint.transactionEntrypoint,
-    hashHex: Buffer.from(finalEntrypoint.hash).toString("hex"),
-    feeAmount,
-    resolvedAssetId: context.state.resolvedAssetId,
-  };
-};
-
-const readShieldedRecipientDescriptor = (
-  input: TransferAssetInput,
-): {
-  ownerTagHex: string;
-  diversifierHex: string;
-  receiveKeyId: string;
-  receivePublicKeyBase64Url: string;
-} | null => {
-  const nestedRecipient = isPlainRecord(input.shieldedRecipient)
-    ? input.shieldedRecipient
-    : null;
-  const receiveKeyId = trimString(
-    nestedRecipient?.receiveKeyId ?? input.shieldedReceiveKeyId,
-  );
-  const receivePublicKeyBase64Url = trimString(
-    nestedRecipient?.receivePublicKeyBase64Url ??
-      input.shieldedReceivePublicKeyBase64Url,
-  );
-  const ownerTagHex = trimString(
-    nestedRecipient?.ownerTagHex ?? input.shieldedOwnerTagHex,
-  ).toLowerCase();
-  const diversifierHex = trimString(
-    nestedRecipient?.diversifierHex ?? input.shieldedDiversifierHex,
-  ).toLowerCase();
-  if (
-    !receiveKeyId &&
-    !receivePublicKeyBase64Url &&
-    !ownerTagHex &&
-    !diversifierHex
-  ) {
-    return null;
-  }
-  if (!/^[0-9a-f]{64}$/.test(ownerTagHex)) {
-    throw new Error(
-      "Shielded recipient QR is missing a valid owner tag. Ask the recipient to refresh their Receive QR code.",
-    );
-  }
-  if (!/^[0-9a-f]{64}$/.test(diversifierHex)) {
-    throw new Error(
-      "Shielded recipient QR is missing a valid diversifier. Ask the recipient to refresh their Receive QR code.",
-    );
-  }
-  if (!receiveKeyId || !receivePublicKeyBase64Url) {
-    throw new Error(
-      "Shielded recipient QR is missing its receive key. Ask the recipient to refresh their Receive QR code.",
-    );
-  }
-  if (!/^[A-Za-z0-9_-]{8,128}$/.test(receiveKeyId)) {
-    throw new Error("Shielded recipient receive key id is invalid.");
-  }
-  if (!/^[A-Za-z0-9_-]+$/.test(receivePublicKeyBase64Url)) {
-    throw new Error(
-      "Shielded recipient QR is missing a valid receive public key.",
-    );
-  }
-  return {
-    receiveKeyId,
-    receivePublicKeyBase64Url,
-    ownerTagHex,
-    diversifierHex,
   };
 };
 
@@ -14251,7 +7095,7 @@ const assertIrohaConnectWalletContext = async (
     toriiUrl: normalizeBaseUrl(context.toriiUrl),
     chainId: writeConnection.chainId,
     networkPrefix: writeConnection.networkPrefix,
-    accountId: normalizeCompatAccountIdLiteral(
+    accountId: normalizeCanonicalAccountIdLiteral(
       context.accountId,
       "accountId",
       writeConnection.networkPrefix,
@@ -14269,12 +7113,9 @@ const signExactIrohaConnectMessage = async (
   }
   const signingMaterial = await resolveSigningMaterial({
     accountId: verifiedContext.accountId,
+    networkPrefix: verifiedContext.networkPrefix,
     operationLabel: "IrohaConnect signing",
   });
-  const privateKey = hexToBuffer(
-    signingMaterial.privateKeyHex,
-    "privateKeyHex",
-  );
   const algorithmCode = getConnectSigningAlgorithmCode(
     signingMaterial.signingAlgorithm,
   );
@@ -14283,17 +7124,23 @@ const signExactIrohaConnectMessage = async (
       "IrohaConnect current v1 wallet signatures require Ed25519.",
     );
   }
-  const signature = Buffer.from(
-    sign(Buffer.from(message), privateKey, {
-      algorithm: signingMaterial.signingAlgorithm,
-    }),
+  return withPrivateKeyBuffer(
+    signingMaterial.privateKeyHex,
+    "privateKeyHex",
+    (privateKey) => {
+      const signature = Buffer.from(
+        sign(Buffer.from(message), privateKey, {
+          algorithm: signingMaterial.signingAlgorithm,
+        }),
+      );
+      return {
+        algorithmCode,
+        algorithmLabel: signingAlgorithmLabel(signingMaterial.signingAlgorithm),
+        signatureHex: toHex(signature),
+        signatureBase64: signature.toString("base64"),
+      };
+    },
   );
-  return {
-    algorithmCode,
-    algorithmLabel: signingAlgorithmLabel(signingMaterial.signingAlgorithm),
-    signatureHex: toHex(signature),
-    signatureBase64: signature.toString("base64"),
-  };
 };
 
 const irohaConnectBoundary = new IrohaConnectBoundary({
@@ -14307,36 +7154,48 @@ const irohaConnectBoundary = new IrohaConnectBoundary({
 });
 
 const api: IrohaBridge = {
-  getRuntimeConfig() {
-    return getRuntimeConfigSnapshot();
-  },
   async ping(config) {
-    const client = getClient(config.toriiUrl);
-    return client.getHealth().catch(() => null);
+    const { toriiUrl } = requireFirstReleaseIpcInput(config, "toriiConfig");
+    return fetchFirstReleaseHealth(toriiUrl).catch(() => null);
   },
   async getChainMetadata(config) {
-    return fetchChainMetadata(config.toriiUrl);
+    const { toriiUrl } = requireFirstReleaseIpcInput(config, "toriiConfig");
+    return fetchChainMetadata(toriiUrl);
   },
   async inspectEndpoint(config) {
-    return inspectEndpointIdentity(config);
+    return inspectEndpointIdentity(
+      requireFirstReleaseIpcInput(config, "endpointInspection"),
+    );
   },
   async getSigningAlgorithms(config) {
-    return resolveSigningAlgorithmOptions(config);
-  },
-  generateKeyPair(input = {}) {
-    const signingAlgorithm = normalizeBridgeSigningAlgorithm(
-      input.signingAlgorithm,
+    return resolveSigningAlgorithmOptions(
+      requireFirstReleaseIpcInput(config, "toriiConfig"),
     );
-    const seedHex = trimString(input.seedHex);
-    const { publicKey, privateKey } = generateSdkKeyPair({
-      algorithm: signingAlgorithm,
-      ...(seedHex ? { seed: hexToBuffer(seedHex, "seedHex") } : {}),
-    });
-    return {
-      publicKeyHex: toHex(publicKey),
-      privateKeyHex: toHex(privateKey),
-      signingAlgorithm,
-    };
+  },
+  generateKeyPair(input) {
+    const exactInput = requireFirstReleaseIpcInput(input, "generateKeyPair");
+    const signingAlgorithm = normalizeRequiredBridgeSigningAlgorithm(
+      exactInput.signingAlgorithm,
+    );
+    const seedHex = exactInput.seedHex;
+    const seed = seedHex === undefined ? null : hexToBuffer(seedHex, "seedHex");
+    try {
+      const { publicKey, privateKey } = generateSdkKeyPair({
+        algorithm: signingAlgorithm,
+        ...(seed === null ? {} : { seed }),
+      });
+      try {
+        return {
+          publicKeyHex: toHex(publicKey),
+          privateKeyHex: toHex(privateKey),
+          signingAlgorithm,
+        };
+      } finally {
+        privateKey.fill(0);
+      }
+    } finally {
+      seed?.fill(0);
+    }
   },
   generateKaigiSignalKeyPair() {
     return generateKaigiX25519KeyPair();
@@ -14344,69 +7203,106 @@ const api: IrohaBridge = {
   async isSecureVaultAvailable() {
     return await isSecureVaultAvailable();
   },
-  async storeAccountSecret({ accountId, privateKeyHex, signingAlgorithm }) {
+  async storeAccountSecret(input) {
+    const { accountId, networkPrefix, privateKeyHex, signingAlgorithm } =
+      requireFirstReleaseIpcInput(input, "storeAccountSecret");
+    const normalizedPrivateKeyHex = normalizePrivateKeyHex(privateKeyHex);
+    const normalizedSigningAlgorithm =
+      normalizeRequiredBridgeSigningAlgorithm(signingAlgorithm);
+    const publicKeyHex = withPrivateKeyBuffer(
+      normalizedPrivateKeyHex,
+      "privateKeyHex",
+      (privateKey) =>
+        toHex(
+          publicKeyFromPrivate(privateKey, {
+            algorithm: normalizedSigningAlgorithm,
+          }),
+        ),
+    );
+    const boundAccountId = requireAccountIdBoundToPublicKey({
+      accountId,
+      networkPrefix,
+      publicKeyHex,
+      signingAlgorithm: normalizedSigningAlgorithm,
+    });
     await storeAccountSecretInVault({
-      accountId: normalizeCompatAccountIdLiteral(accountId, "accountId"),
-      privateKeyHex,
-      signingAlgorithm: normalizeBridgeSigningAlgorithm(signingAlgorithm),
+      accountId: boundAccountId,
+      privateKeyHex: normalizedPrivateKeyHex,
+      signingAlgorithm: normalizedSigningAlgorithm,
     });
   },
-  async listAccountSecretFlags({ accountIds }) {
+  async listAccountSecretFlags(input) {
+    const { accountIds, networkPrefix } = requireFirstReleaseIpcInput(
+      input,
+      "listAccountSecretFlags",
+    );
+    const accountIdInputs = requireFirstReleaseInputArray(
+      accountIds,
+      "accountIds",
+      256,
+    );
     return await listAccountSecretFlagsFromVault(
-      (Array.isArray(accountIds) ? accountIds : []).map((accountId) =>
-        normalizeCompatAccountIdLiteral(accountId, "accountId"),
+      accountIdInputs.map((accountId) =>
+        normalizeCanonicalAccountIdLiteral(
+          requireFirstReleaseInputText(accountId, "accountIds entry", 1_024),
+          "accountId",
+          networkPrefix,
+        ),
       ),
     );
   },
-  async copyTextToClipboard({ text }) {
-    const value = String(text ?? "");
-    if (!value) {
+  async copyTextToClipboard(input) {
+    const { text } = requireFirstReleaseIpcInput(input, "copyTextToClipboard");
+    if (typeof text !== "string" || text.length === 0) {
       throw new Error("Clipboard text is required.");
     }
-    clipboard.writeText(value);
+    if (
+      Buffer.byteLength(text, "utf8") > FIRST_RELEASE_CLIPBOARD_TEXT_MAX_BYTES
+    ) {
+      throw new Error("Clipboard text exceeds the first-release byte limit.");
+    }
+    clipboard.writeText(text);
   },
-  deriveAccountAddress({
-    domain,
-    publicKeyHex,
-    networkPrefix,
-    signingAlgorithm,
-  }) {
+  deriveAccountAddress(input) {
+    const { domain, publicKeyHex, networkPrefix, signingAlgorithm } =
+      requireFirstReleaseIpcInput(input, "deriveAccountAddress");
+    hexToBuffer(publicKeyHex, "publicKeyHex");
     return deriveAccountAddressView({
       domain,
       publicKeyHex,
       networkPrefix,
-      signingAlgorithm: normalizeBridgeSigningAlgorithm(signingAlgorithm),
+      signingAlgorithm:
+        normalizeRequiredBridgeSigningAlgorithm(signingAlgorithm),
     });
   },
   derivePublicKey(input) {
-    const privateKeyHex =
-      typeof input === "string" ? input : input.privateKeyHex;
-    const signingAlgorithm =
-      typeof input === "string"
-        ? DEFAULT_SIGNING_ALGORITHM
-        : normalizeBridgeSigningAlgorithm(input.signingAlgorithm);
-    const publicKey = publicKeyFromPrivate(
-      hexToBuffer(privateKeyHex, "privateKeyHex"),
-      { algorithm: signingAlgorithm },
+    const { privateKeyHex, signingAlgorithm: signingAlgorithmInput } =
+      requireFirstReleaseIpcInput(input, "derivePublicKey");
+    const signingAlgorithm = normalizeRequiredBridgeSigningAlgorithm(
+      signingAlgorithmInput,
+    );
+    const publicKey = withPrivateKeyBuffer(
+      privateKeyHex,
+      "privateKeyHex",
+      (privateKey) =>
+        publicKeyFromPrivate(privateKey, { algorithm: signingAlgorithm }),
     );
     return { publicKeyHex: toHex(publicKey), signingAlgorithm };
   },
-  deriveConfidentialOwnerTag(input) {
-    return {
-      ownerTagHex: deriveWalletConfidentialOwnerTagHex(input),
-    };
-  },
-  deriveConfidentialReceiveAddress(privateKeyHex) {
-    return deriveWalletConfidentialReceiveAddress({ privateKeyHex });
-  },
   async resolveAccountAlias(input) {
-    return resolveAccountAliasSelector(input);
+    return resolveAccountAliasSelector(
+      requireFirstReleaseIpcInput(input, "resolveAccountAlias"),
+    );
   },
-  async createConfidentialPaymentAddress({ accountId, privateKeyHex }) {
+  async createConfidentialPaymentAddress(input) {
+    const { accountId, networkPrefix } = requireFirstReleaseIpcInput(
+      input,
+      "createConfidentialPaymentAddress",
+    );
     await assertSecureVaultAvailable("Confidential payment address creation");
     const descriptor = await createStoredConfidentialReceiveDescriptor({
       accountId,
-      privateKeyHex,
+      networkPrefix,
       operationLabel: "Confidential payment address creation",
     });
     return {
@@ -14418,18 +7314,20 @@ const api: IrohaBridge = {
       recoveryHint: "one-time-receive-key",
     };
   },
-  async exportConfidentialWalletBackup({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    accountId,
-    mnemonic,
-  }) {
+  async exportConfidentialWalletBackup(input) {
+    const { toriiUrl, chainId, networkPrefix, accountId, mnemonic } =
+      requireFirstReleaseIpcInput(input, "exportConfidentialWalletBackup");
     await assertSecureVaultAvailable("Confidential wallet backup export");
-    const normalizedAccountId = normalizeCompatAccountIdLiteral(
+    const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
       accountId,
       "accountId",
+      networkPrefix,
     );
+    if (normalizedAccountId !== accountId) {
+      throw new Error(
+        "accountId must be the canonical active-network I105 literal.",
+      );
+    }
     const normalizedChainId = trimString(chainId);
     if (!normalizedChainId) {
       throw new Error("chainId is required.");
@@ -14439,6 +7337,11 @@ const api: IrohaBridge = {
       chainId: normalizedChainId,
       networkPrefix,
     });
+    if (!endpointScope) {
+      throw new Error(
+        "Confidential wallet backup export requires verified endpoint identity so shadow state cannot be omitted.",
+      );
+    }
     const receiveKeys =
       await listConfidentialReceiveKeysForAccount(normalizedAccountId);
     const shadowState = readConfidentialWalletShadowState(
@@ -14447,10 +7350,12 @@ const api: IrohaBridge = {
         accountId: normalizedAccountId,
         endpointScope,
       }),
+      { requireDurable: true },
     );
     const accountTransactions = await listAllAccountTransactions({
       toriiUrl,
       accountId: normalizedAccountId,
+      networkPrefix,
     }).catch(() => [] as Array<Record<string, unknown>>);
     const scanWatermarkBlock = accountTransactions.reduce<number | null>(
       (highest, transaction) => {
@@ -14472,6 +7377,7 @@ const api: IrohaBridge = {
       scanWatermarkBlock,
       stateBox: encryptConfidentialWalletBackupState(
         {
+          schema: "iroha-demo-confidential-wallet-state/v1",
           receiveKeys: receiveKeys.map((record) => ({
             keyId: record.keyId,
             ownerTagHex: record.ownerTagHex,
@@ -14486,29 +7392,38 @@ const api: IrohaBridge = {
       ),
     };
   },
-  async importConfidentialWalletBackup({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    accountId,
-    mnemonic,
-    confidentialWallet,
-  }) {
-    if (!confidentialWallet) {
-      return;
-    }
-    if (confidentialWallet.schema !== CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2) {
-      return;
-    }
+  async importConfidentialWalletBackup(input) {
+    const {
+      toriiUrl,
+      chainId,
+      networkPrefix,
+      accountId,
+      mnemonic,
+      confidentialWallet,
+    } = requireFirstReleaseIpcInput(input, "importConfidentialWalletBackup");
+    const backup =
+      parseConfidentialWalletBackupMetadataInput(confidentialWallet);
     await assertSecureVaultAvailable("Confidential wallet backup restore");
-    const normalizedAccountId = normalizeCompatAccountIdLiteral(
+    const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
       accountId,
       "accountId",
+      networkPrefix,
     );
-    const backupAccountId = normalizeCompatAccountIdLiteral(
-      confidentialWallet.accountId,
+    if (normalizedAccountId !== accountId) {
+      throw new Error(
+        "accountId must be the canonical active-network I105 literal.",
+      );
+    }
+    const backupAccountId = normalizeCanonicalAccountIdLiteral(
+      backup.accountId,
       "confidentialWallet.accountId",
+      networkPrefix,
     );
+    if (backupAccountId !== backup.accountId) {
+      throw new Error(
+        "Confidential wallet backup account must use canonical active-network I105.",
+      );
+    }
     if (backupAccountId !== normalizedAccountId) {
       throw new Error(
         "Confidential wallet backup does not match the restored account.",
@@ -14518,7 +7433,7 @@ const api: IrohaBridge = {
     if (!normalizedChainId) {
       throw new Error("chainId is required.");
     }
-    if (confidentialWallet.chainId !== normalizedChainId) {
+    if (backup.chainId !== normalizedChainId) {
       throw new Error(
         "Confidential wallet backup does not match the active chain.",
       );
@@ -14528,67 +7443,105 @@ const api: IrohaBridge = {
       chainId: normalizedChainId,
       networkPrefix,
     });
+    if (!endpointScope) {
+      throw new Error(
+        "Confidential wallet backup restore requires verified endpoint identity so shadow state can be retained.",
+      );
+    }
     const decryptedState = decryptConfidentialWalletBackupState(
-      confidentialWallet.stateBox,
+      backup.stateBox,
       mnemonic,
     );
+    const existingReceiveKeys =
+      await listConfidentialReceiveKeysForAccount(normalizedAccountId);
+    const existingReceiveKeysById = new Map(
+      existingReceiveKeys.map((record) => [record.keyId, record]),
+    );
+    const mergedReceiveKeyIds = new Set(existingReceiveKeysById.keys());
     for (const receiveKey of decryptedState.receiveKeys) {
-      await storeConfidentialReceiveKeyInVault({
-        ...receiveKey,
-        accountId: normalizedAccountId,
-      });
+      const existing = existingReceiveKeysById.get(receiveKey.keyId);
+      if (
+        existing &&
+        (existing.ownerTagHex !== receiveKey.ownerTagHex ||
+          existing.diversifierHex !== receiveKey.diversifierHex ||
+          existing.publicKeyBase64Url !== receiveKey.publicKeyBase64Url ||
+          existing.privateKeyBase64Url !== receiveKey.privateKeyBase64Url ||
+          existing.createdAtMs !== receiveKey.createdAtMs)
+      ) {
+        throw new Error(
+          "Confidential wallet backup conflicts with an existing receive key; no new keys were stored.",
+        );
+      }
+      mergedReceiveKeyIds.add(receiveKey.keyId);
+    }
+    if (mergedReceiveKeyIds.size > SECURE_VAULT_MAX_RECEIVE_KEYS_PER_ACCOUNT) {
+      throw new Error(
+        "Confidential wallet backup exceeds the per-account receive-key capacity; no new keys were stored.",
+      );
     }
     const shadowKeys = getConfidentialWalletShadowKeys({
       toriiUrl,
       accountId: normalizedAccountId,
       endpointScope,
     });
-    const existingShadowState = readConfidentialWalletShadowState(shadowKeys);
-    writeConfidentialWalletShadowState(shadowKeys, {
+    const existingShadowState = readConfidentialWalletShadowState(shadowKeys, {
+      requireDurable: true,
+    });
+    const mergedShadowState = prepareConfidentialWalletShadowState({
+      schema: CONFIDENTIAL_WALLET_SHADOW_SCHEMA,
       transactions: [
         ...existingShadowState.transactions,
         ...decryptedState.shadowTransactions,
       ],
-    });
+    }).normalized;
+    await storeConfidentialReceiveKeysInVault(
+      decryptedState.receiveKeys.map((receiveKey) => ({
+        ...receiveKey,
+        accountId: normalizedAccountId,
+      })),
+    );
+    writeConfidentialWalletShadowState(shadowKeys, mergedShadowState);
   },
   async registerAccount(input) {
+    const exactInput = requireFirstReleaseIpcInput(input, "registerAccount");
+    const registrationMetadata = requireFirstReleaseJsonObject(
+      exactInput.metadata ?? {},
+      "Account registration metadata",
+    );
+    const requestedAccountId = normalizeCanonicalAccountIdLiteral(
+      exactInput.accountId,
+      "accountId",
+      exactInput.networkPrefix,
+    );
+    const authorityAccountId = normalizeCanonicalAccountIdLiteral(
+      exactInput.authorityAccountId,
+      "authorityAccountId",
+      exactInput.networkPrefix,
+    );
     const writeConnection = await assertWriteConnectionMatchesEndpoint({
-      toriiUrl: input.toriiUrl,
-      chainId: input.chainId,
-      networkPrefix: input.networkPrefix,
+      toriiUrl: exactInput.toriiUrl,
+      chainId: exactInput.chainId,
+      networkPrefix: exactInput.networkPrefix,
       feature: "accountRegistration",
     });
-    const domainId = input.domainId.trim();
-    if (!domainId) {
-      throw new Error("domainId is required.");
-    }
-    const authorityAccountId = normalizeCompatAccountIdLiteral(
-      input.authorityAccountId,
-      "authorityAccountId",
-      writeConnection.networkPrefix,
-    );
     const authoritySigningMaterial = await resolveSigningMaterial({
       accountId: authorityAccountId,
-      privateKeyHex: input.authorityPrivateKeyHex,
-      signingAlgorithm: input.authoritySigningAlgorithm,
+      networkPrefix: writeConnection.networkPrefix,
       operationLabel: "Create on-chain account",
     });
     const tx = await quoteAndSignInstructionTransaction({
-      toriiUrl: input.toriiUrl,
+      toriiUrl: exactInput.toriiUrl,
       chainId: writeConnection.chainId,
       networkPrefix: writeConnection.networkPrefix,
       authority: authorityAccountId,
       instructions: [
-        buildRegisterAccountInstruction({
-          accountId: normalizeCompatAccountIdLiteral(
-            input.accountId,
-            "accountId",
-            writeConnection.networkPrefix,
-          ),
-          metadata: input.metadata ?? {},
+        buildFirstReleaseRegisterAccountInstruction({
+          accountId: requestedAccountId,
+          networkPrefix: writeConnection.networkPrefix,
+          metadata: registrationMetadata,
         }),
       ],
-      metadata: withRequiredGasAssetMetadata(undefined, input.toriiUrl),
+      metadata: withRequiredGasAssetMetadata(undefined, exactInput.toriiUrl),
       privateKey: hexToBuffer(
         authoritySigningMaterial.privateKeyHex,
         "authorityPrivateKeyHex",
@@ -14596,943 +7549,195 @@ const api: IrohaBridge = {
       privateKeyAlgorithm: authoritySigningMaterial.signingAlgorithm,
     });
     const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
-      input.toriiUrl,
+      exactInput.toriiUrl,
       tx.signedTransaction,
+      { feeQuote: tx.feeQuote },
     );
     return transactionSubmissionResult(submission);
   },
-  async transferAsset(input) {
+  async transferAsset(rendererInput) {
+    const input = requireFirstReleaseIpcInput(rendererInput, "transferAsset");
+    const transferMemo =
+      input.memo === undefined
+        ? undefined
+        : requireFirstReleaseInputText(input.memo, "memo", 1_024);
+    if (transferMemo && transferMemo.normalize("NFC") !== transferMemo) {
+      throw new Error("memo must be NFC-normalized canonical text.");
+    }
+    const accountId = normalizeCanonicalAccountIdLiteral(
+      input.accountId,
+      "accountId",
+      input.networkPrefix,
+    );
+    const destinationLiteral = requireFirstReleaseInputText(
+      input.destinationAccountId,
+      "destinationAccountId",
+      2_048,
+    );
+    const assetDefinitionId = normalizeFirstReleaseAssetDefinitionId(
+      input.assetDefinitionId,
+    );
+    const quantity = requireFirstReleaseTransferQuantity(input.quantity);
     const writeConnection = await assertWriteConnectionMatchesEndpoint({
       toriiUrl: input.toriiUrl,
       chainId: input.chainId,
       networkPrefix: input.networkPrefix,
-      feature:
-        input.shielded || input.unshield
-          ? "confidentialTransfers"
-          : "assetTransfers",
+      feature: "assetTransfers",
     });
-    const assetDefinitionId = normalizeFirstReleaseAssetDefinitionId(
-      input.assetDefinitionId,
+    const destinationAccountId = (
+      await resolveAccountAliasSelector({
+        toriiUrl: input.toriiUrl,
+        alias: destinationLiteral,
+        networkPrefix: writeConnection.networkPrefix,
+      })
+    ).accountId;
+    const sourceAssetHoldingLiteral = buildAssetHoldingIdLiteral({
+      assetDefinitionId,
+      accountId,
+    });
+    if (!sourceAssetHoldingLiteral) {
+      throw new Error(
+        `Unable to build the source holding for canonical asset definition "${assetDefinitionId}".`,
+      );
+    }
+    const sourceAssetHoldingId = normalizeAssetHoldingId(
+      sourceAssetHoldingLiteral,
+      "sourceAssetHoldingId",
     );
-    const chainId = writeConnection.chainId;
-    const networkPrefix = writeConnection.networkPrefix;
-    const accountId = normalizeCompatAccountIdLiteral(
-      input.accountId,
-      "accountId",
-      networkPrefix,
-    );
-    const destinationAccountIdLiteral = trimString(input.destinationAccountId);
-    const destinationAccountId = destinationAccountIdLiteral
-      ? (
-          await resolveAccountAliasSelector({
-            toriiUrl: input.toriiUrl,
-            alias: destinationAccountIdLiteral,
-            networkPrefix,
-          })
-        ).accountId
-      : "";
     const signingMaterial = await resolveSigningMaterial({
       accountId,
-      privateKeyHex: input.privateKeyHex,
-      signingAlgorithm: input.signingAlgorithm,
-      operationLabel: input.unshield
-        ? "Confidential public exit"
-        : input.shielded
-          ? "Shielded transfer"
-          : "Transfer",
+      networkPrefix: writeConnection.networkPrefix,
+      operationLabel: "Transfer",
     });
-    const privateKeyHex = signingMaterial.privateKeyHex;
-
-    if (input.unshield) {
-      assertEd25519SigningMaterial(signingMaterial, "Confidential public exit");
-      await assertSecureVaultAvailable("Confidential public exit");
-      if (!destinationAccountId) {
-        throw new Error("destinationAccountId is required.");
-      }
-      const { policy, resolvedAssetDefinitionId } =
-        await fetchConfidentialAssetPolicyForAccount({
-          toriiUrl: input.toriiUrl,
-          accountId,
-          assetDefinitionId,
-        });
-      const effectiveMode = policy.effective_mode || policy.current_mode;
-      const resolvedAssetId = resolvedAssetDefinitionId;
-      const normalizedUnshieldMode = String(effectiveMode ?? "")
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z]/g, "");
-      if (
-        normalizedUnshieldMode === "transparentonly" ||
-        normalizedUnshieldMode === "shieldedonly"
-      ) {
-        throw new Error(
-          `Confidential public exit is unavailable for ${resolvedAssetId}; effective mode is ${effectiveMode}.`,
-        );
-      }
-      const normalizedAmount = String(input.quantity).trim();
-      if (!isPositiveWholeAmount(normalizedAmount)) {
-        throw new Error(
-          "Unshield amount must be a whole number greater than zero (base units).",
-        );
-      }
-      const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
-      const materials = await resolveConfidentialUnshieldMaterials({
-        toriiUrl: input.toriiUrl,
-        chainId,
-        networkPrefix,
-        accountId,
-        privateKeyHex,
-        assetDefinitionId: resolvedAssetId,
-        endpointScope: writeConnection.endpointScope,
-      });
-      if (
-        BigInt(materials.ledger.spendableQuantity) < BigInt(normalizedAmount)
-      ) {
-        throw new Error(
-          `Shielded spendable balance is ${materials.ledger.spendableQuantity} in ${materials.resolvedAssetId}, but ${normalizedAmount} is required. Create a fresh shielded balance with this wallet first.`,
-        );
-      }
-      let refreshedMaterials = materials;
-      let verifyingKeyContext = readConfidentialVerifyingKeyContext(
-        refreshedMaterials.verifyingKey,
-      );
-      while (isConfidentialUnshieldV3CircuitId(verifyingKeyContext.circuitId)) {
-        const candidateSelection = selectWalletConfidentialNotes(
-          refreshedMaterials.ledger.notes,
-          normalizedAmount,
-        );
-        if (candidateSelection.selected.length <= 2) {
-          break;
-        }
-        const consolidation = await submitConfidentialSelfConsolidation({
-          toriiUrl: input.toriiUrl,
-          chainId,
-          networkPrefix,
-          endpointScope: writeConnection.endpointScope,
-          accountId,
-          privateKeyHex,
-          assetDefinitionId: refreshedMaterials.resolvedAssetId,
-          notes: candidateSelection.selected.slice(
-            0,
-            2,
-          ) as WalletSpendableConfidentialNote[],
-        });
-        const leafIndex = refreshedMaterials.ledger.treeCommitmentsHex.length;
-        const nullifierHex = deriveWalletConfidentialNullifierHex({
-          privateKeyHex,
-          assetDefinitionId: consolidation.output.note.asset_definition_id,
-          chainId,
-          rhoHex: consolidation.output.note.rho_hex,
-        });
-        const selectedNullifiers = new Set(
-          candidateSelection.selected
-            .slice(0, 2)
-            .map((note) => note.nullifier_hex),
-        );
-        refreshedMaterials = {
-          ...refreshedMaterials,
-          resolvedAssetId: consolidation.resolvedAssetId,
-          latestRootHex: consolidation.latestRootHex,
-          ledger: {
-            ...refreshedMaterials.ledger,
-            notes: [
-              ...refreshedMaterials.ledger.notes.filter(
-                (note) => !selectedNullifiers.has(note.nullifier_hex),
-              ),
-              {
-                ...consolidation.output.note,
-                nullifier_hex: nullifierHex,
-                source_tx_hash: consolidation.hash,
-                leaf_index: leafIndex,
-              },
-            ],
-            treeCommitmentsHex: [
-              ...refreshedMaterials.ledger.treeCommitmentsHex,
-              consolidation.output.note.commitment_hex,
-            ],
-          },
-        };
-        verifyingKeyContext = readConfidentialVerifyingKeyContext(
-          refreshedMaterials.verifyingKey,
-        );
-      }
-      let selectedNotes: WalletSpendableConfidentialNote[];
-      let changeOutputs: Array<{
-        note: ReturnType<typeof createWalletConfidentialNote>;
-        receiveKeyId: string;
-        recipientPublicKeyBase64Url: string;
-      }> = [];
-      let proofEnvelope:
-        | ReturnType<typeof buildConfidentialUnshieldProofV2>
-        | ReturnType<typeof buildConfidentialUnshieldProofV3>;
-      if (isConfidentialUnshieldV2CircuitId(verifyingKeyContext.circuitId)) {
-        const selection = selectWalletConfidentialNotesForExactAmount(
-          refreshedMaterials.ledger.notes,
-          normalizedAmount,
-        );
-        selectedNotes = selection.selected;
-        proofEnvelope = buildConfidentialUnshieldProofV2({
-          chainId,
-          assetDefinitionId: refreshedMaterials.resolvedAssetId,
-          spendKey: privateKey,
-          treeCommitments: refreshedMaterials.ledger.treeCommitmentsHex,
-          inputs: selection.selected.map((note) => ({
-            amount: note.amount,
-            rhoHex: note.rho_hex,
-            diversifierHex: note.diversifier_hex,
-            leafIndex: note.leaf_index,
-          })),
-          publicAmount: normalizedAmount,
-          rootHintHex: refreshedMaterials.latestRootHex,
-          verifyingKey: verifyingKeyContext.proofVerifyingKey,
-        });
-      } else if (
-        isConfidentialUnshieldV3CircuitId(verifyingKeyContext.circuitId)
-      ) {
-        const selection = selectWalletConfidentialNotes(
-          refreshedMaterials.ledger.notes,
-          normalizedAmount,
-        );
-        if (selection.selected.length > 2) {
-          throw new Error(
-            "Unable to reduce the shielded spend to a one- or two-note unshield. Try again after consolidation commits.",
-          );
-        }
-        selectedNotes = selection.selected;
-        if (selection.change !== "0") {
-          const changeDescriptor =
-            await createStoredConfidentialReceiveDescriptor({
-              accountId,
-              privateKeyHex,
-              operationLabel: "Confidential public exit",
-            });
-          changeOutputs = [
-            {
-              note: createWalletConfidentialNote({
-                assetDefinitionId: refreshedMaterials.resolvedAssetId,
-                amount: selection.change,
-                ownerTagHex: changeDescriptor.ownerTagHex,
-                diversifierHex: changeDescriptor.diversifierHex,
-              }),
-              receiveKeyId: changeDescriptor.receiveKeyId,
-              recipientPublicKeyBase64Url:
-                changeDescriptor.receivePublicKeyBase64Url,
-            },
-          ];
-        }
-        proofEnvelope = buildConfidentialUnshieldProofV3({
-          chainId,
-          assetDefinitionId: refreshedMaterials.resolvedAssetId,
-          spendKey: privateKey,
-          treeCommitments: refreshedMaterials.ledger.treeCommitmentsHex,
-          inputs: selection.selected.map((note) => ({
-            amount: note.amount,
-            rhoHex: note.rho_hex,
-            diversifierHex: note.diversifier_hex,
-            leafIndex: note.leaf_index,
-          })),
-          outputs: changeOutputs.map(({ note }) => ({
-            amount: note.amount,
-            rhoHex: note.rho_hex,
-          })),
-          publicAmount: normalizedAmount,
-          rootHintHex: refreshedMaterials.latestRootHex,
-          verifyingKey: verifyingKeyContext.proofVerifyingKey,
-        });
-      } else {
-        throw new Error(
-          `Unsupported confidential unshield verifier circuit ${verifyingKeyContext.circuitId || "(missing circuit id)"}.`,
-        );
-      }
-      const confidentialExitMetadata = withRequiredGasAssetMetadata(
-        extractConfidentialFeeMetadata(
-          input.metadata,
-          "Confidential public exit",
-        ),
-        input.toriiUrl,
-      );
-      const metadata =
-        changeOutputs.length > 0
-          ? buildWalletConfidentialMetadataV3({
-              baseMetadata: confidentialExitMetadata,
-              outputs: changeOutputs,
-            })
-          : confidentialExitMetadata;
-      const tx = await quoteAndSignInstructionTransaction({
-        toriiUrl: input.toriiUrl,
-        chainId,
-        networkPrefix,
-        authority: accountId,
-        instructions: [
-          buildUnshieldInstruction({
-            assetDefinitionId: refreshedMaterials.resolvedAssetId,
-            destinationAccountId,
-            publicAmount: normalizedAmount,
-            inputs: proofEnvelope.nullifiers,
-            outputs:
-              "outputCommitments" in proofEnvelope
-                ? proofEnvelope.outputCommitments
-                : [],
-            proof: {
-              backend: verifyingKeyContext.backend,
-              proof: Buffer.from(proofEnvelope.proof),
-              verifyingKeyRef: verifyingKeyContext.proofVerifyingKey.id,
-            },
-            rootHint: Buffer.from(refreshedMaterials.latestRootHex, "hex"),
-          }),
-        ],
-        metadata,
-        privateKey,
-        privateKeyAlgorithm: signingMaterial.signingAlgorithm,
-      });
-      const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
-        input.toriiUrl,
-        tx.signedTransaction,
-      );
-      upsertConfidentialWalletShadowTransaction({
-        toriiUrl: input.toriiUrl,
-        accountId,
-        endpointScope: writeConnection.endpointScope,
-        txHash: submission.hash,
-        authority: accountId,
-        metadata: isPlainRecord(metadata) ? metadata : {},
-        instructions: [
-          {
-            zk: {
-              Unshield: {
-                asset: refreshedMaterials.resolvedAssetId,
-                to: destinationAccountId,
-                public_amount: normalizedAmount,
-                inputs: proofEnvelope.nullifiers.map((entry) =>
-                  entry.toString("hex"),
-                ),
-                outputs: changeOutputs.map(({ note }) => note.commitment_hex),
-              },
-            },
-          },
-        ],
-        createdAtMs: Math.min(
-          ...[
-            ...selectedNotes.map((note) => note.created_at_ms),
-            ...changeOutputs.map(({ note }) => note.created_at_ms),
-            Date.now(),
-          ],
-        ),
-      });
-      return transactionSubmissionResult(submission);
-    }
-
-    if (input.shielded) {
-      assertEd25519SigningMaterial(
-        signingMaterial,
-        destinationAccountId === accountId
-          ? "Private balance creation"
-          : "Shielded transfer",
-      );
-      await assertSecureVaultAvailable(
-        destinationAccountId === accountId
-          ? "Private balance creation"
-          : "Shielded transfer",
-      );
-      const { policy, resolvedAssetDefinitionId } =
-        await fetchConfidentialAssetPolicyForAccount({
-          toriiUrl: input.toriiUrl,
-          accountId,
-          assetDefinitionId,
-        });
-      const effectiveMode = policy.effective_mode || policy.current_mode;
-      const resolvedAssetId = resolvedAssetDefinitionId;
-      if (!confidentialModeSupportsShield(effectiveMode)) {
-        throw new Error(
-          `Shielded transfer is unavailable for ${resolvedAssetId}; effective mode is ${effectiveMode}.`,
-        );
-      }
-      const normalizedAmount = String(input.quantity).trim();
-      if (!isPositiveWholeAmount(normalizedAmount)) {
-        throw new Error(
-          "Shielded amount must be a whole number greater than zero (base units).",
-        );
-      }
-
-      const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
-      const confidentialBaseMetadata = withConfidentialGasMetadata(
-        resolvedAssetId,
-        extractConfidentialFeeMetadata(
-          input.metadata,
-          destinationAccountId === accountId
-            ? "Private balance creation"
-            : "Shielded transfer",
-        ),
-      );
-      const confidentialTransactionMetadata = withRequiredGasAssetMetadata(
-        confidentialBaseMetadata,
-        input.toriiUrl,
-      );
-
-      if (destinationAccountId === accountId) {
-        const selfReceiveDescriptor =
-          await createStoredConfidentialReceiveDescriptor({
-            accountId,
-            privateKeyHex,
-            operationLabel: "Private balance creation",
-          });
-        const note = createWalletConfidentialNote({
-          assetDefinitionId: resolvedAssetId,
-          amount: normalizedAmount,
-          ownerTagHex: selfReceiveDescriptor.ownerTagHex,
-          diversifierHex: selfReceiveDescriptor.diversifierHex,
-        });
-        const metadata = buildWalletConfidentialMetadataV3({
-          baseMetadata: confidentialTransactionMetadata,
-          outputs: [
-            {
-              note,
-              receiveKeyId: selfReceiveDescriptor.receiveKeyId,
-              recipientPublicKeyBase64Url:
-                selfReceiveDescriptor.receivePublicKeyBase64Url,
-            },
-          ],
-        });
-        const tx = await quoteAndSignInstructionTransaction({
-          toriiUrl: input.toriiUrl,
-          chainId,
-          networkPrefix,
-          authority: accountId,
-          instructions: [
-            buildShieldInstruction({
-              assetDefinitionId: resolvedAssetId,
-              fromAccountId: accountId,
-              amount: normalizedAmount,
-              noteCommitment: Buffer.from(note.commitment_hex, "hex"),
-              encryptedPayload: {
-                version: 1,
-                ephemeralPublicKey: randomBytes(32),
-                nonce: randomBytes(24),
-                ciphertext: Buffer.from(
-                  JSON.stringify({
-                    schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA,
-                    commitment_hex: note.commitment_hex,
-                  }),
-                  "utf8",
-                ),
-              },
-            }),
-          ],
-          metadata,
-          privateKey,
-          privateKeyAlgorithm: signingMaterial.signingAlgorithm,
-        });
-        const submission = await submitSignedTransactionAsVersioned(
-          input.toriiUrl,
-          tx.signedTransaction,
-        );
-        const finalized = await waitForTransactionFinalizedInBlock(
-          input.toriiUrl,
-          submission.hash,
-        );
-        const finalizedSubmission = {
-          ...submission,
-          ...(finalized.fee ? { fee: finalized.fee } : {}),
-          finality: finalized.finality,
-        };
-        upsertConfidentialWalletShadowTransaction({
-          toriiUrl: input.toriiUrl,
-          accountId,
-          endpointScope: writeConnection.endpointScope,
-          txHash: submission.hash,
-          authority: accountId,
-          metadata,
-          instructions: [
-            {
-              zk: {
-                Shield: {
-                  asset: resolvedAssetId,
-                  from: accountId,
-                  amount: normalizedAmount,
-                  note_commitment: note.commitment_hex,
-                },
-              },
-            },
-          ],
-          createdAtMs: note.created_at_ms,
-        });
-        appendPrivateKaigiShieldCredit({
-          toriiUrl: input.toriiUrl,
-          accountId,
-          amount: normalizedAmount,
-          assetDefinitionId: resolvedAssetId,
-          endpointScope: writeConnection.endpointScope,
-        });
-        return transactionSubmissionResult(finalizedSubmission);
-      }
-
-      let materials = await resolveConfidentialTransferMaterials({
-        toriiUrl: input.toriiUrl,
-        chainId,
-        networkPrefix,
-        accountId,
-        privateKeyHex,
-        assetDefinitionId: resolvedAssetId,
-        endpointScope: writeConnection.endpointScope,
-      });
-      const recipientDescriptor = readShieldedRecipientDescriptor(input);
-      if (!recipientDescriptor) {
-        throw new Error(
-          "Shielded recipient QR is required for private recipient sends.",
-        );
-      }
-      let orderedOutputs: Array<{
-        note: ReturnType<typeof createWalletConfidentialNote>;
-        receiveKeyId: string;
-        recipientPublicKeyBase64Url: string;
-      }> = [];
-      let proofEnvelope!: ReturnType<typeof buildConfidentialTransferProofV2>;
-      let selectedRootHintHex = materials.latestRootHex;
-      let transferVerifyingKeyContext: ReturnType<
-        typeof readConfidentialVerifyingKeyContext
-      > | null = null;
-      for (
-        let attempt = 1;
-        attempt <= CONFIDENTIAL_TRANSFER_ROOT_RETRY_ATTEMPTS;
-        attempt += 1
-      ) {
-        if (
-          BigInt(materials.ledger.spendableQuantity) < BigInt(normalizedAmount)
-        ) {
-          throw new Error(
-            `Shielded spendable balance is ${materials.ledger.spendableQuantity} in ${materials.resolvedAssetId}, but ${normalizedAmount} is required. Create a fresh shielded balance with this wallet first.`,
-          );
-        }
-        const selection = selectWalletConfidentialNotes(
-          materials.ledger.notes,
-          normalizedAmount,
-        );
-        const outputs: Array<{
-          note: ReturnType<typeof createWalletConfidentialNote>;
-          receiveKeyId: string;
-          recipientPublicKeyBase64Url: string;
-        }> = [
-          {
-            note: createWalletConfidentialNote({
-              assetDefinitionId: materials.resolvedAssetId,
-              amount: normalizedAmount,
-              ownerTagHex: recipientDescriptor.ownerTagHex,
-              diversifierHex: recipientDescriptor.diversifierHex,
-            }),
-            receiveKeyId: recipientDescriptor.receiveKeyId,
-            recipientPublicKeyBase64Url:
-              recipientDescriptor.receivePublicKeyBase64Url,
-          },
-        ];
-        if (selection.change !== "0") {
-          const changeDescriptor =
-            await createStoredConfidentialReceiveDescriptor({
-              accountId,
-              privateKeyHex,
-              operationLabel: "Shielded transfer",
-            });
-          outputs.push({
-            note: createWalletConfidentialNote({
-              assetDefinitionId: materials.resolvedAssetId,
-              amount: selection.change,
-              ownerTagHex: changeDescriptor.ownerTagHex,
-              diversifierHex: changeDescriptor.diversifierHex,
-            }),
-            receiveKeyId: changeDescriptor.receiveKeyId,
-            recipientPublicKeyBase64Url:
-              changeDescriptor.receivePublicKeyBase64Url,
-          });
-        }
-        orderedOutputs = [...outputs].sort((left, right) =>
-          left.note.commitment_hex.localeCompare(right.note.commitment_hex),
-        );
-        const verifyingKeyContext = readConfidentialVerifyingKeyContext(
-          materials.verifyingKey,
-        );
-        transferVerifyingKeyContext = verifyingKeyContext;
-        const proofVerifyingKey = verifyingKeyContext.proofVerifyingKey;
-        const candidateRootHintHexes = [
-          ...new Set([
-            materials.latestRootHex,
-            ...[...materials.recentRootHexes].reverse(),
-          ]),
-        ];
-        let rootMismatchError: unknown = null;
-        let proofBuilt = false;
-        for (const candidateRootHintHex of candidateRootHintHexes) {
-          try {
-            proofEnvelope = buildConfidentialTransferProofV2({
-              chainId,
-              assetDefinitionId: materials.resolvedAssetId,
-              spendKey: privateKey,
-              treeCommitments: materials.ledger.treeCommitmentsHex,
-              inputs: selection.selected.map((note) => ({
-                amount: note.amount,
-                rhoHex: note.rho_hex,
-                diversifierHex: note.diversifier_hex,
-                leafIndex: note.leaf_index,
-              })),
-              outputs: orderedOutputs.map(({ note }) => ({
-                amount: note.amount,
-                rhoHex: note.rho_hex,
-                ownerTagHex: note.owner_tag_hex,
-              })),
-              rootHintHex: candidateRootHintHex,
-              verifyingKey: proofVerifyingKey,
-            });
-            selectedRootHintHex = candidateRootHintHex;
-            proofBuilt = true;
-            break;
-          } catch (error) {
-            if (!isConfidentialRootHintMismatchError(error)) {
-              throw error;
-            }
-            rootMismatchError = error;
-          }
-        }
-        if (proofBuilt) {
-          break;
-        }
-        if (
-          attempt >= CONFIDENTIAL_TRANSFER_ROOT_RETRY_ATTEMPTS ||
-          !isConfidentialRootHintMismatchError(rootMismatchError)
-        ) {
-          throw rootMismatchError;
-        }
-        try {
-          await waitForMs(CONFIDENTIAL_TRANSFER_ROOT_RETRY_DELAY_MS);
-          materials = await resolveConfidentialTransferMaterials({
-            toriiUrl: input.toriiUrl,
-            chainId,
-            networkPrefix,
-            accountId,
-            privateKeyHex,
-            assetDefinitionId: resolvedAssetId,
-            endpointScope: writeConnection.endpointScope,
-          });
-        } catch (error) {
-          if (
-            attempt >= CONFIDENTIAL_TRANSFER_ROOT_RETRY_ATTEMPTS ||
-            !isConfidentialRootHintMismatchError(error)
-          ) {
-            throw error;
-          }
-        }
-      }
-      if (!transferVerifyingKeyContext) {
-        throw new Error("Confidential transfer verifier material is missing.");
-      }
-      const metadata = buildWalletConfidentialMetadataV3({
-        baseMetadata: stripConfidentialFeeSponsor(
-          confidentialTransactionMetadata,
-        ),
-        outputs: orderedOutputs,
-      });
-      const tx = await quoteAndSignInstructionTransaction({
-        toriiUrl: input.toriiUrl,
-        chainId,
-        networkPrefix,
-        authority: accountId,
-        instructions: [
-          buildZkTransferInstruction({
-            assetDefinitionId: materials.resolvedAssetId,
-            inputs: proofEnvelope.nullifiers,
-            outputs: proofEnvelope.outputCommitments,
-            proof: {
-              backend: transferVerifyingKeyContext.backend,
-              proof: Buffer.from(proofEnvelope.proof),
-              verifyingKeyRef: transferVerifyingKeyContext.proofVerifyingKey.id,
-            },
-            rootHint: Buffer.from(selectedRootHintHex, "hex"),
-          }),
-        ],
-        metadata,
-        privateKey,
-        privateKeyAlgorithm: signingMaterial.signingAlgorithm,
-      });
-      const shadowMetadata = metadata;
-      const shadowInstructions = [
-        {
-          zk: {
-            ZkTransfer: {
-              asset: materials.resolvedAssetId,
-              inputs: proofEnvelope.nullifiers.map((entry) =>
-                entry.toString("hex"),
-              ),
-              outputs: orderedOutputs.map(({ note }) => note.commitment_hex),
-            },
-          },
-        },
-      ];
-      const submission = await submitConfidentialRelayTransfer({
-        toriiUrl: input.toriiUrl,
-        assetDefinitionId: materials.resolvedAssetId,
-        signedTransaction: tx.signedTransaction,
-      });
-      upsertConfidentialWalletShadowTransaction({
-        toriiUrl: input.toriiUrl,
-        accountId,
-        endpointScope: writeConnection.endpointScope,
-        txHash: submission.hash,
-        authority: submission.relayAuthority || "confidential-relay",
-        metadata: shadowMetadata,
-        instructions: shadowInstructions,
-        createdAtMs: Math.min(
-          ...orderedOutputs.map(({ note }) => note.created_at_ms),
-          Date.now(),
-        ),
-      });
-      if (destinationAccountId && destinationAccountId !== accountId) {
-        upsertConfidentialWalletShadowTransaction({
-          toriiUrl: input.toriiUrl,
-          accountId: destinationAccountId,
-          endpointScope: writeConnection.endpointScope,
-          txHash: submission.hash,
-          authority: submission.relayAuthority || "confidential-relay",
-          metadata: shadowMetadata,
-          instructions: shadowInstructions,
-          createdAtMs: Math.min(
-            ...orderedOutputs.map(({ note }) => note.created_at_ms),
-            Date.now(),
-          ),
-        });
-      }
-      return transactionSubmissionResult(submission);
-    }
-
-    if (!destinationAccountId) {
-      throw new Error("destinationAccountId is required.");
-    }
-    const configuredAssetDefinitionId = assetDefinitionId;
-    const buildSourceAssetHoldingId = (assetReference: string) => {
-      const sourceAssetHoldingLiteral = buildAssetHoldingIdLiteral({
-        assetDefinitionId: assetReference,
-        accountId,
-      });
-      if (!sourceAssetHoldingLiteral) {
-        return null;
-      }
-      try {
-        return normalizeAssetHoldingId(
-          sourceAssetHoldingLiteral,
-          "sourceAssetHoldingId",
-        );
-      } catch {
-        return null;
-      }
-    };
-    const sourceAssetHoldingId = buildSourceAssetHoldingId(
-      configuredAssetDefinitionId,
-    );
-    if (!sourceAssetHoldingId) {
-      throw new Error(
-        `Unable to build the source holding for canonical asset definition "${configuredAssetDefinitionId}".`,
-      );
-    }
-
     const tx = await quoteAndSignInstructionTransaction({
       toriiUrl: input.toriiUrl,
-      chainId,
-      networkPrefix,
+      chainId: writeConnection.chainId,
+      networkPrefix: writeConnection.networkPrefix,
       authority: accountId,
       instructions: [
-        buildTransferAssetInstruction({
+        buildFirstReleaseTransferAssetInstruction({
           sourceAssetHoldingId,
-          quantity: input.quantity,
+          quantity,
           destinationAccountId,
+          networkPrefix: writeConnection.networkPrefix,
         }),
       ],
-      metadata: withRequiredGasAssetMetadata(input.metadata, input.toriiUrl),
-      privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
+      metadata: withRequiredGasAssetMetadata(
+        transferMemo === undefined ? undefined : { memo: transferMemo },
+        input.toriiUrl,
+      ),
+      privateKey: hexToBuffer(signingMaterial.privateKeyHex, "privateKeyHex"),
       privateKeyAlgorithm: signingMaterial.signingAlgorithm,
     });
     const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
       input.toriiUrl,
       tx.signedTransaction,
+      { feeQuote: tx.feeQuote },
     );
     return transactionSubmissionResult(submission);
   },
   setIrohaConnectContext(input) {
-    irohaConnectBoundary.setContext(input);
+    const context = requireFirstReleaseIpcInput(input, "irohaConnectContext");
+    irohaConnectBoundary.setContext(context);
   },
   resetIrohaConnectBoundary() {
     irohaConnectBoundary.reset();
   },
   prepareIrohaConnectSession(input) {
-    return irohaConnectBoundary.prepareSession(input);
+    const exactInput = requireFirstReleaseIpcInput(
+      input,
+      "irohaConnectPrepareSession",
+    );
+    const context = requireFirstReleaseIpcInput(
+      exactInput.context,
+      "irohaConnectContext",
+    );
+    return irohaConnectBoundary.prepareSession({
+      ...exactInput,
+      context,
+    });
   },
   approveIrohaConnectSession(input) {
-    return irohaConnectBoundary.approveSession(input);
+    const exactInput = requireFirstReleaseIpcInput(
+      input,
+      "irohaConnectApproveSession",
+    );
+    return irohaConnectBoundary.approveSession(exactInput);
   },
   processIrohaConnectFrame(input) {
-    return irohaConnectBoundary.processFrame(input);
+    const exactInput = requireFirstReleaseIpcInput(
+      input,
+      "irohaConnectProcessFrame",
+    );
+    return irohaConnectBoundary.processFrame(exactInput);
   },
   approveIrohaConnectRequest(input) {
-    return irohaConnectBoundary.approveRequest(input);
+    const exactInput = requireFirstReleaseIpcInput(
+      input,
+      "irohaConnectApproveRequest",
+    );
+    return irohaConnectBoundary.approveRequest(exactInput);
   },
   rejectIrohaConnectRequest(input) {
-    return irohaConnectBoundary.rejectRequest(input);
+    const exactInput = requireFirstReleaseIpcInput(
+      input,
+      "irohaConnectRejectRequest",
+    );
+    return irohaConnectBoundary.rejectRequest(exactInput);
   },
-  closeIrohaConnectSession({ sessionToken }) {
+  closeIrohaConnectSession(input) {
+    const { sessionToken } = requireFirstReleaseIpcInput(
+      input,
+      "irohaConnectCloseSession",
+    );
     irohaConnectBoundary.closeSession(sessionToken);
   },
-  async getConfidentialAssetPolicy({ toriiUrl, accountId, assetDefinitionId }) {
+  async getConfidentialAssetPolicy(input) {
+    const { toriiUrl, accountId, assetDefinitionId } =
+      requireFirstReleaseIpcInput(input, "confidentialAssetPolicy");
     const { policy, resolvedAssetDefinitionId } =
       await fetchConfidentialAssetPolicyForAccount({
         toriiUrl,
         accountId,
         assetDefinitionId,
       });
-    try {
-      const assetDefinition = await fetchConfidentialAssetDefinition(
-        toriiUrl,
-        resolvedAssetDefinitionId,
-      );
-      return mergeConfidentialPolicyWithAssetDefinition(
-        policy,
-        assetDefinition,
-      );
-    } catch {
-      return policy;
-    }
-  },
-  async getConfidentialTransferExecutionContext({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    accountId,
-    privateKeyHex,
-    assetDefinitionId,
-  }) {
-    const { policy, resolvedAssetDefinitionId } =
-      await fetchConfidentialAssetPolicyForAccount({
-        toriiUrl,
-        accountId,
-        assetDefinitionId,
-      });
-    const materials = await resolveConfidentialTransferMaterials({
+    const assetDefinition = await fetchConfidentialAssetDefinition(
       toriiUrl,
-      chainId,
-      networkPrefix,
-      accountId,
-      privateKeyHex,
-      assetDefinitionId: resolvedAssetDefinitionId,
-    });
-    const verifyingKeyContext = readConfidentialVerifyingKeyContext(
-      materials.verifyingKey,
+      resolvedAssetDefinitionId,
     );
-    return {
-      resolvedAssetId: resolvedAssetDefinitionId,
-      effectiveMode:
-        trimString(policy.effective_mode) || trimString(policy.current_mode),
-      backend: verifyingKeyContext.backend,
-      circuitId: verifyingKeyContext.circuitId,
-    };
+    return assertConfidentialPolicyProjectionAgreement(policy, assetDefinition);
   },
-  getConfidentialAssetBalance({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    accountId,
-    privateKeyHex,
-    assetDefinitionId,
-  }) {
+  getConfidentialAssetBalance(input) {
+    const { toriiUrl, chainId, networkPrefix, accountId, assetDefinitionId } =
+      requireFirstReleaseIpcInput(input, "confidentialAssetBalance");
     return resolveConfidentialAssetBalance({
       toriiUrl,
       chainId,
       networkPrefix,
       accountId,
-      privateKeyHex,
       assetDefinitionId,
     });
   },
-  scanConfidentialWallet({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    accountId,
-    privateKeyHex,
-    assetDefinitionId,
-  }) {
+  scanConfidentialWallet(input) {
+    const { toriiUrl, chainId, networkPrefix, accountId, assetDefinitionId } =
+      requireFirstReleaseIpcInput(input, "confidentialAssetBalance");
     return resolveConfidentialAssetBalance({
       toriiUrl,
       chainId,
       networkPrefix,
       accountId,
-      privateKeyHex,
       assetDefinitionId,
     });
   },
-  getConfidentialWalletState({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    accountId,
-    privateKeyHex,
-    assetDefinitionId,
-  }) {
-    return resolveConfidentialAssetBalance({
+  fetchAccountAssets(input) {
+    const {
       toriiUrl,
-      chainId,
-      networkPrefix,
       accountId,
-      privateKeyHex,
+      networkPrefix,
       assetDefinitionId,
-    });
-  },
-  async getPrivateKaigiConfidentialXorState({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    accountId,
-    assetDefinitionId,
-  }) {
-    return (
-      await resolvePrivateKaigiConfidentialXorContext({
-        toriiUrl,
-        chainId,
-        networkPrefix,
-        accountId,
-        assetDefinitionId,
-      })
-    ).state;
-  },
-  async selfShieldPrivateKaigiXor({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    accountId,
-    assetDefinitionId,
-    privateKeyHex,
-    amount,
-  }) {
-    const normalizedAmount = ceilDecimalToIntegerString(
-      amount || PRIVATE_KAIGI_DEFAULT_SELF_SHIELD_AMOUNT,
-    );
-    if (compareDecimalStrings(normalizedAmount, "0") <= 0) {
-      throw new Error("amount must be greater than zero.");
-    }
-    return api.transferAsset({
-      toriiUrl,
-      chainId,
-      networkPrefix,
-      assetDefinitionId:
-        normalizeFirstReleaseAssetDefinitionId(assetDefinitionId),
-      accountId,
-      destinationAccountId: accountId,
-      quantity: normalizedAmount,
-      privateKeyHex,
-      shielded: true,
-    });
-  },
-  fetchAccountAssets({
-    toriiUrl,
-    accountId,
-    networkPrefix,
-    assetDefinitionId,
-    limit = 50,
-    offset,
-  }) {
+      limit = 50,
+      offset,
+    } = requireFirstReleaseIpcInput(input, "accountAssets");
     return fetchAccountAssetsList({
       toriiUrl,
       accountId,
@@ -15542,128 +7747,148 @@ const api: IrohaBridge = {
       offset,
     });
   },
-  async fetchAccountTransactions({
-    toriiUrl,
-    accountId,
-    networkPrefix,
-    privateKeyHex,
-    limit = 20,
-    offset,
-  }) {
-    const client = getClient(toriiUrl);
+  async fetchAccountTransactions(input) {
+    const {
+      toriiUrl,
+      accountId,
+      networkPrefix,
+      limit = 20,
+      offset,
+    } = requireFirstReleaseIpcInput(input, "accountTransactions");
     const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
       accountId,
       "accountId",
       networkPrefix,
     );
-    const normalizedPrivateKeyHex =
-      (await resolveOptionalPrivateKeyHex({
-        accountId: normalizedAccountId,
-        privateKeyHex,
-      })) ?? "";
-    const canonicalAuth = normalizedPrivateKeyHex
-      ? {
-          accountId: normalizedAccountId,
-          privateKey: hexToBuffer(normalizedPrivateKeyHex, "privateKeyHex"),
-        }
-      : null;
-    return client.listAccountTransactions(normalizedAccountId, {
+    return fetchFirstReleaseAccountTransactions({
+      toriiUrl,
+      accountId: normalizedAccountId,
+      networkPrefix,
       limit,
       offset,
-      ...(canonicalAuth ? { canonicalAuth } : {}),
     });
   },
-  listAccountPermissions({ toriiUrl, accountId, limit = 200, offset }) {
-    const client = getClient(toriiUrl);
-    return client.listAccountPermissions(
-      normalizeCanonicalAccountIdLiteral(accountId, "accountId"),
-      {
-        limit,
-        offset,
-      },
-    );
+  listAccountPermissions(input) {
+    const {
+      toriiUrl,
+      networkPrefix,
+      accountId,
+      limit = 200,
+      offset,
+    } = requireFirstReleaseIpcInput(input, "accountPermissions");
+    return fetchFirstReleaseAccountPermissions({
+      toriiUrl,
+      accountId: normalizeCanonicalAccountIdLiteral(
+        accountId,
+        "accountId",
+        networkPrefix,
+      ),
+      limit,
+      offset,
+    });
   },
-  getGovernanceCapabilities({ toriiUrl }) {
+  getGovernanceCapabilities(input) {
+    const { toriiUrl } = requireFirstReleaseIpcInput(
+      input,
+      "governanceCapabilities",
+    );
     return fetchGovernanceCapabilities(toriiUrl);
   },
-  getGovernanceCitizenStatus({ toriiUrl, accountId, networkPrefix }) {
+  getGovernanceCitizenStatus(input) {
+    const { toriiUrl, accountId, networkPrefix } = requireFirstReleaseIpcInput(
+      input,
+      "governanceCitizenStatus",
+    );
     return fetchGovernanceCitizenStatus(toriiUrl, accountId, networkPrefix);
   },
-  getGovernanceCitizenCount(config) {
-    return fetchGovernanceCitizenCount(config.toriiUrl);
+  getGovernanceCitizenCount(input) {
+    const { toriiUrl } = requireFirstReleaseIpcInput(
+      input,
+      "governanceCitizenCount",
+    );
+    return fetchGovernanceCitizenCount(toriiUrl);
   },
-  getGovernanceProposal({ toriiUrl, proposalId }) {
-    const client = getClient(toriiUrl);
-    return client.getGovernanceProposalTyped(proposalId);
-  },
-  getGovernanceReferendum({ toriiUrl, referendumId }) {
-    const client = getClient(toriiUrl);
-    return client.getGovernanceReferendumTyped(referendumId);
-  },
-  getGovernanceTally({ toriiUrl, referendumId }) {
-    const client = getClient(toriiUrl);
-    return client.getGovernanceTallyTyped(referendumId);
-  },
-  getGovernanceLocks({ toriiUrl, referendumId }) {
-    const client = getClient(toriiUrl);
-    return client.getGovernanceLocksTyped(referendumId);
-  },
-  getGovernanceUnlockStats({ toriiUrl }) {
-    const client = getClient(toriiUrl);
-    return client.getGovernanceUnlockStats().then((payload) => {
-      if (!payload) {
-        throw new Error(
-          "Governance unlock stats endpoint returned no payload.",
-        );
-      }
-      return normalizeGovernanceUnlockStatsPayload(payload);
+  async getGovernanceUnlockStats(input) {
+    const { toriiUrl, chainId, networkPrefix, accountId } =
+      requireFirstReleaseIpcInput(input, "governanceUnlockStats");
+    const networkId = resolveFirstReleaseTransactionNetworkId({
+      toriiUrl: normalizeBaseUrl(toriiUrl),
+      chainId,
+      networkPrefix,
     });
+    const authority = normalizeCanonicalAccountIdLiteral(
+      accountId,
+      "accountId",
+      networkPrefix,
+    );
+    const signingMaterial = await resolveSigningMaterial({
+      accountId: authority,
+      networkPrefix,
+      operationLabel: "Governance unlock statistics",
+    });
+    const payload = await withPrivateKeyBufferAsync(
+      signingMaterial.privateKeyHex,
+      "privateKeyHex",
+      (privateKey) =>
+        fetchFirstReleaseGovernanceUnlockStats({
+          toriiUrl,
+          auth: {
+            accountId: authority,
+            networkId,
+            privateKey,
+          },
+        }),
+    );
+    return normalizeGovernanceUnlockStatsPayload(payload);
   },
-  getGovernanceCouncilCurrent(config) {
-    return fetchGovernanceCouncilCurrent(config.toriiUrl);
+  getGovernanceCouncilCurrent(input) {
+    const { toriiUrl } = requireFirstReleaseIpcInput(
+      input,
+      "governanceCouncilCurrent",
+    );
+    return fetchGovernanceCouncilCurrent(toriiUrl);
   },
   listGovernanceProposals(input) {
-    return fetchGovernanceProposalList(input);
+    return fetchGovernanceProposalList(
+      requireFirstReleaseIpcInput(input, "governanceProposalList"),
+    );
   },
   getGovernanceProposalDetail(input) {
-    return fetchGovernanceProposalDetail(input);
+    return fetchGovernanceProposalDetail(
+      requireFirstReleaseIpcInput(input, "governanceProposalDetail"),
+    );
   },
   getGovernanceCurrentValidationFeePolicy(input) {
-    return fetchGovernanceValidationFeePolicy(input);
-  },
-  getGovernancePlainReferendumContract(input) {
-    return fetchGovernancePlainReferendumContract(input);
+    return fetchGovernanceValidationFeePolicy(
+      requireFirstReleaseIpcInput(input, "governanceValidationFeePolicy"),
+    );
   },
   prepareGovernanceCitizenRegistration(input) {
-    return prepareGovernanceCitizenRegistrationAction(input);
+    return prepareGovernanceCitizenRegistrationAction(
+      requireFirstReleaseIpcInput(input, "governanceCitizenRegistration"),
+    );
   },
   prepareGovernanceProposal(input) {
-    return prepareGovernanceProposalAction(input);
-  },
-  prepareGovernancePlainBallot(input) {
-    return prepareGovernancePlainBallotAction(input);
-  },
-  prepareGovernanceParliamentBallot(input) {
-    return prepareGovernanceParliamentBallotAction(input);
-  },
-  prepareGovernanceEnact(input) {
-    return prepareGovernanceEnactAction(input);
+    return prepareGovernanceProposalAction(
+      requireFirstReleaseIpcInput(input, "governanceProposalPrepare"),
+    );
   },
   confirmGovernanceAction(input) {
-    return confirmPreparedGovernanceAction(input);
+    return confirmPreparedGovernanceAction(
+      requireFirstReleaseIpcInput(input, "governanceConfirm"),
+    );
   },
   getExplorerMetrics(config) {
-    const client = getClient(config.toriiUrl);
-    return client.getExplorerMetrics().catch(() => null);
+    const { toriiUrl } = requireFirstReleaseIpcInput(config, "toriiConfig");
+    return fetchFirstReleaseExplorerMetrics(toriiUrl).catch(() => null);
   },
-  async getNetworkStats({ toriiUrl, assetDefinitionId }) {
-    const client = getClient(toriiUrl);
-    const normalizedAssetDefinitionId =
-      extractAssetDefinitionId(assetDefinitionId).trim() ||
-      trimString(assetDefinitionId);
-    if (!normalizedAssetDefinitionId) {
-      throw new Error("assetDefinitionId is required.");
-    }
+  async getNetworkStats(input) {
+    const { toriiUrl, assetDefinitionId, networkPrefix } =
+      requireFirstReleaseIpcInput(input, "networkStats");
+    const normalizedAssetDefinitionId = normalizeFirstReleaseAssetDefinitionId(
+      assetDefinitionId,
+      "assetDefinitionId",
+    );
 
     const warnings: string[] = [];
     const [
@@ -15675,10 +7900,10 @@ const api: IrohaBridge = {
       econometricsResult,
     ] = await Promise.allSettled([
       withNetworkStatsTimeout("Explorer metrics", (signal) =>
-        client.getExplorerMetrics({ signal }),
+        fetchFirstReleaseExplorerMetrics(toriiUrl, signal),
       ),
       withNetworkStatsTimeout("Runtime status telemetry", (signal) =>
-        fetchRuntimeStatusSnapshot(client, toriiUrl, signal),
+        fetchRuntimeStatusSnapshot(toriiUrl, signal),
       ),
       withNetworkStatsTimeout(
         "Sumeragi consensus telemetry",
@@ -15700,6 +7925,7 @@ const api: IrohaBridge = {
         fetchExplorerAssetDefinitionSnapshot(
           toriiUrl,
           normalizedAssetDefinitionId,
+          networkPrefix,
           signal,
         ),
       ),
@@ -15707,6 +7933,7 @@ const api: IrohaBridge = {
         fetchExplorerAssetDefinitionEconometrics(
           toriiUrl,
           normalizedAssetDefinitionId,
+          networkPrefix,
           signal,
         ),
       ),
@@ -15766,159 +7993,170 @@ const api: IrohaBridge = {
       partial: warnings.length > 0,
     };
   },
-  async getExplorerAccountQr({ toriiUrl, accountId }) {
-    const client = getClient(toriiUrl);
+  async getExplorerAccountQr(input) {
+    const { toriiUrl, accountId, networkPrefix } = requireFirstReleaseIpcInput(
+      input,
+      "explorerAccountQr",
+    );
     const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
       accountId,
       "accountId",
+      networkPrefix,
     );
-    const fetchFallback = async () => {
-      const baseUrl = normalizeBaseUrl(toriiUrl);
-      const endpoint = `${baseUrl}/v1/explorer/accounts/${encodeURIComponent(normalizedAccountId)}/qr`;
-      const response = await fetchGetResponse(endpoint, "Explorer account QR");
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error(
-          detail ||
-            `Explorer QR request failed with status ${response.status} (${response.statusText})`,
-        );
-      }
-      const payload = (await response.json()) as Record<string, unknown>;
-      return assertExplorerAccountQrMatchesRequestedAccount(
-        payload,
-        normalizedAccountId,
-      );
-    };
-
-    try {
-      const payload = await client.getExplorerAccountQr(normalizedAccountId);
-      return assertExplorerAccountQrMatchesRequestedAccount(
-        payload as unknown as Record<string, unknown>,
-        normalizedAccountId,
-      );
-    } catch (error) {
-      if (!String(error).includes("Digest method not supported")) {
-        throw error;
-      }
-      return fetchFallback();
-    }
+    const payload = await fetchFirstReleaseExplorerAccountQr(
+      toriiUrl,
+      normalizedAccountId,
+    );
+    return assertExplorerAccountQrMatchesRequestedAccount(
+      payload as unknown as Record<string, unknown>,
+      normalizedAccountId,
+    );
   },
   getVpnAvailability(input) {
-    return ipcRenderer.invoke("vpn:getAvailability", input);
+    const exactInput = requireFirstReleaseIpcInput(input, "vpnAvailability");
+    return ipcRenderer
+      .invoke("vpn:getAvailability", exactInput)
+      .then(parseFirstReleaseVpnAvailabilityIpcResponse);
   },
   getVpnProfile(input) {
-    return ipcRenderer.invoke("vpn:getProfile", input);
+    const exactInput = requireFirstReleaseIpcInput(input, "vpnAvailability");
+    return ipcRenderer
+      .invoke("vpn:getProfile", exactInput)
+      .then(parseFirstReleaseVpnProfileIpcResponse);
   },
   async getVpnStatus(input) {
-    if (!input?.accountId) {
-      return await ipcRenderer.invoke("vpn:getStatus", input);
+    if (input === undefined) {
+      return parseFirstReleaseVpnStatusIpcResponse(
+        await ipcRenderer.invoke("vpn:getStatus"),
+      );
     }
+    const exactInput = requireFirstReleaseIpcInput(
+      input,
+      "vpnAuthenticatedContext",
+    );
     const signingMaterial = await resolveOptionalSigningMaterial({
-      accountId: input.accountId,
-      privateKeyHex: input.privateKeyHex,
-      signingAlgorithm: input.signingAlgorithm,
+      accountId: exactInput.accountId,
+      networkPrefix: exactInput.networkPrefix,
     });
-    return await ipcRenderer.invoke("vpn:getStatus", {
-      ...input,
-      ...(signingMaterial ?? {}),
-    });
+    return parseFirstReleaseVpnStatusIpcResponse(
+      await ipcRenderer.invoke("vpn:getStatus", {
+        ...exactInput,
+        ...(signingMaterial ?? {}),
+      }),
+    );
   },
   async connectVpn(input) {
+    const exactInput = requireFirstReleaseIpcInput(input, "vpnConnect");
     const writeConnection = await assertWriteConnectionMatchesEndpoint({
-      toriiUrl: input.toriiUrl,
-      chainId: input.chainId,
-      networkPrefix: input.networkPrefix,
+      toriiUrl: exactInput.toriiUrl,
+      chainId: exactInput.chainId,
+      networkPrefix: exactInput.networkPrefix,
       feature: "vpnSessions",
     });
-    const accountId = normalizeCompatAccountIdLiteral(
-      input.accountId,
+    const accountId = normalizeCanonicalAccountIdLiteral(
+      exactInput.accountId,
       "accountId",
       writeConnection.networkPrefix,
     );
     return await runVpnConnectAfterProfileCheck({
-      loadProfile: () =>
-        ipcRenderer.invoke("vpn:getProfile", {
-          toriiUrl: input.toriiUrl,
-        }),
+      loadProfile: async () =>
+        parseFirstReleaseVpnProfileIpcResponse(
+          await ipcRenderer.invoke("vpn:getProfile", {
+            toriiUrl: exactInput.toriiUrl,
+          }),
+        ),
       resolveSigningMaterial: () =>
         resolveSigningMaterial({
           accountId,
-          privateKeyHex: input.privateKeyHex,
-          signingAlgorithm: input.signingAlgorithm,
+          networkPrefix: writeConnection.networkPrefix,
           operationLabel: "VPN connect",
         }),
-      invokeController: (signingMaterial) =>
-        ipcRenderer.invoke("vpn:connect", {
-          ...input,
-          accountId,
-          ...signingMaterial,
-        }),
+      invokeController: async (signingMaterial) =>
+        parseFirstReleaseVpnStatusIpcResponse(
+          await ipcRenderer.invoke("vpn:connect", {
+            ...exactInput,
+            accountId,
+            ...signingMaterial,
+          }),
+        ),
     });
   },
   async disconnectVpn(input) {
-    if (!input) {
-      return await ipcRenderer.invoke("vpn:disconnectLocal");
+    if (input === undefined) {
+      return parseFirstReleaseVpnStatusIpcResponse(
+        await ipcRenderer.invoke("vpn:disconnectLocal"),
+      );
     }
+    const exactInput = requireFirstReleaseIpcInput(
+      input,
+      "vpnAuthenticatedContext",
+    );
     return await runVpnDisconnectWithLocalFallback({
       resolveAuthenticatedInput: async () => {
         const writeConnection = await assertWriteConnectionMatchesEndpoint({
-          toriiUrl: input.toriiUrl,
-          chainId: input.chainId,
-          networkPrefix: input.networkPrefix,
+          toriiUrl: exactInput.toriiUrl,
+          chainId: exactInput.chainId,
+          networkPrefix: exactInput.networkPrefix,
           feature: "vpnSessions",
         });
-        const accountId = normalizeCompatAccountIdLiteral(
-          input.accountId,
+        const accountId = normalizeCanonicalAccountIdLiteral(
+          exactInput.accountId,
           "accountId",
           writeConnection.networkPrefix,
         );
         const signingMaterial = await resolveSigningMaterial({
           accountId,
-          privateKeyHex: input.privateKeyHex,
-          signingAlgorithm: input.signingAlgorithm,
+          networkPrefix: writeConnection.networkPrefix,
           operationLabel: "VPN disconnect",
         });
         return {
-          ...input,
+          ...exactInput,
           accountId,
           ...signingMaterial,
         };
       },
-      invokeAuthenticatedController: (authenticatedInput) =>
-        ipcRenderer.invoke("vpn:disconnect", authenticatedInput),
-      invokeLocalController: () => ipcRenderer.invoke("vpn:disconnectLocal"),
+      invokeAuthenticatedController: async (authenticatedInput) =>
+        parseFirstReleaseVpnStatusIpcResponse(
+          await ipcRenderer.invoke("vpn:disconnect", authenticatedInput),
+        ),
+      invokeLocalController: async () =>
+        parseFirstReleaseVpnStatusIpcResponse(
+          await ipcRenderer.invoke("vpn:disconnectLocal"),
+        ),
     });
   },
   async repairVpn() {
     return await runLocalVpnRepair({
-      invokeController: () => ipcRenderer.invoke("vpn:repair"),
+      invokeController: async () =>
+        parseFirstReleaseVpnStatusIpcResponse(
+          await ipcRenderer.invoke("vpn:repair"),
+        ),
     });
   },
   async listVpnReceipts(input) {
-    if (!input?.accountId) {
-      return await ipcRenderer.invoke("vpn:listReceipts", input);
+    if (input === undefined) {
+      return parseFirstReleaseVpnReceiptListIpcResponse(
+        await ipcRenderer.invoke("vpn:listReceipts"),
+      );
     }
+    const exactInput = requireFirstReleaseIpcInput(
+      input,
+      "vpnAuthenticatedContext",
+    );
     const signingMaterial = await resolveOptionalSigningMaterial({
-      accountId: input.accountId,
-      privateKeyHex: input.privateKeyHex,
-      signingAlgorithm: input.signingAlgorithm,
+      accountId: exactInput.accountId,
+      networkPrefix: exactInput.networkPrefix,
     });
-    return await ipcRenderer.invoke("vpn:listReceipts", {
-      ...input,
-      ...(signingMaterial ?? {}),
-    });
+    return parseFirstReleaseVpnReceiptListIpcResponse(
+      await ipcRenderer.invoke("vpn:listReceipts", {
+        ...exactInput,
+        ...(signingMaterial ?? {}),
+      }),
+    );
   },
-  getOfflineReadiness(input) {
-    return getOfflineReadinessFromTorii(input);
-  },
-  async onboardAccount({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    alias,
-    accountId,
-    identity,
-  }) {
+  async onboardAccount(input) {
+    const { toriiUrl, chainId, networkPrefix, alias, accountId, identity } =
+      requireFirstReleaseIpcInput(input, "onboardAccount");
     const writeConnection = await assertWriteConnectionMatchesEndpoint({
       toriiUrl,
       chainId,
@@ -15931,6 +8169,7 @@ const api: IrohaBridge = {
       "accountId",
       writeConnection.networkPrefix,
     );
+    const normalizedAlias = requireFirstReleaseInputText(alias, "alias", 256);
     const response = await nodeFetch(`${baseUrl}/v1/accounts/onboard`, {
       method: "POST",
       headers: {
@@ -15938,35 +8177,20 @@ const api: IrohaBridge = {
         Accept: "application/json",
       },
       body: JSON.stringify({
-        alias,
+        alias: normalizedAlias,
         account_id: normalizedAccountId,
-        identity: identity ?? undefined,
+        ...(identity === undefined
+          ? {}
+          : {
+              identity: requireFirstReleaseJsonObject(
+                identity,
+                "Account onboarding identity",
+              ),
+            }),
       }),
     });
     if (!response.ok) {
-      const contentType = response.headers.get("content-type") ?? "";
-      let detail = "";
-      if (contentType.includes("application/json")) {
-        const payload = (await response.json().catch(() => null)) as Record<
-          string,
-          unknown
-        > | null;
-        if (payload && typeof payload === "object") {
-          detail = String(
-            payload.detail ?? payload.message ?? payload.error ?? "",
-          ).trim();
-        }
-      } else {
-        const text = await response.text().catch(() => "");
-        // Filter binary-like responses to avoid leaking unreadable bytes to the UI.
-        const hasControlChars = Array.from(text).some((character) => {
-          const code = character.charCodeAt(0);
-          return (code >= 0 && code <= 8) || (code >= 14 && code <= 31);
-        });
-        if (!hasControlChars) {
-          detail = text.trim();
-        }
-      }
+      const detail = await readBoundedApiErrorDetail(response);
       throw new Error(
         formatOnboardingError({
           status: response.status,
@@ -15975,8 +8199,8 @@ const api: IrohaBridge = {
         }),
       );
     }
-    const payload = ensureObjectResponse(
-      (await response.json()) as unknown,
+    const payload = await readBoundedJsonObjectResponse(
+      response,
       "Account onboarding",
     );
     const responseAccountId = normalizeCanonicalAccountIdLiteral(
@@ -16006,32 +8230,26 @@ const api: IrohaBridge = {
       finality: finalized.finality,
     };
   },
-  async requestFaucetFunds(
-    { toriiUrl, chainId, accountId, networkPrefix, requestId },
-    onStatus,
-  ) {
-    const faucetConnection = await assertFaucetChallengeConnectionAvailable({
-      toriiUrl,
-      chainId,
-      networkPrefix,
-    });
-    const baseUrl = normalizeBaseUrl(toriiUrl);
-    const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
-      accountId,
-      "accountId",
-      faucetConnection.networkPrefix,
+  async requestFaucetFunds(input, onStatus) {
+    const { toriiUrl, chainId, accountId, networkPrefix, requestId } =
+      requireFirstReleaseIpcInput(input, "faucetRequest");
+    const reservation = reserveFirstReleaseFaucetRequest(
+      faucetRequestControllers,
+      requestId,
     );
-    const normalizedRequestId = trimString(requestId);
-    const abortController = normalizedRequestId ? new AbortController() : null;
-    if (normalizedRequestId && abortController) {
-      faucetRequestControllers
-        .get(normalizedRequestId)
-        ?.abort(createFaucetAbortError());
-      faucetRequestControllers.set(normalizedRequestId, abortController);
-    }
-
     try {
-      const signal = abortController?.signal;
+      const faucetConnection = await assertFaucetChallengeConnectionAvailable({
+        toriiUrl,
+        chainId,
+        networkPrefix,
+      });
+      const baseUrl = normalizeBaseUrl(toriiUrl);
+      const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
+        accountId,
+        "accountId",
+        faucetConnection.networkPrefix,
+      );
+      const signal = reservation.controller.signal;
       throwIfAborted(signal);
       await assertFaucetEndpointFinalizing(baseUrl, signal);
       const result = await requestFaucetFundsWithPuzzle({
@@ -16080,22 +8298,14 @@ const api: IrohaBridge = {
         ...result,
         status: "FINALIZED",
         finality: finalized.finality,
-        ...(finalized.fee ? { fee: finalized.fee } : {}),
       };
     } finally {
-      if (
-        normalizedRequestId &&
-        faucetRequestControllers.get(normalizedRequestId) === abortController
-      ) {
-        faucetRequestControllers.delete(normalizedRequestId);
-      }
+      reservation.release();
     }
   },
-  async cancelFaucetRequest({ requestId }) {
-    const normalizedRequestId = trimString(requestId);
-    if (!normalizedRequestId) {
-      return { canceled: false };
-    }
+  async cancelFaucetRequest(input) {
+    const { requestId } = requireFirstReleaseIpcInput(input, "faucetCancel");
+    const normalizedRequestId = requireFirstReleaseFaucetRequestId(requestId);
     const controller = faucetRequestControllers.get(normalizedRequestId);
     if (!controller) {
       return { canceled: false };
@@ -16104,32 +8314,32 @@ const api: IrohaBridge = {
     faucetRequestControllers.delete(normalizedRequestId);
     return { canceled: true };
   },
-  async createKaigiMeeting({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    assetDefinitionId,
-    hostAccountId,
-    privateKeyHex,
-    callId,
-    title,
-    scheduledStartMs,
-    meetingCode,
-    inviteSecretBase64Url,
-    hostDisplayName,
-    hostParticipantId,
-    hostKaigiPublicKeyBase64Url,
-    offerDescription,
-    privacyMode,
-    peerIdentityReveal,
-  }) {
+  async createKaigiMeeting(input) {
+    const {
+      toriiUrl,
+      chainId,
+      networkPrefix,
+      hostAccountId,
+      callId,
+      title,
+      scheduledStartMs,
+      meetingCode,
+      inviteSecretBase64Url,
+      hostDisplayName,
+      hostParticipantId,
+      hostKaigiPublicKeyBase64Url,
+      offerDescription,
+      privacyMode,
+    } = requireFirstReleaseIpcInput(input, "kaigiCreate");
+    const resolvedPrivacyMode =
+      requireFirstReleaseKaigiMeetingPrivacy(privacyMode);
     const writeConnection = await assertWriteConnectionMatchesEndpoint({
       toriiUrl,
       chainId,
       networkPrefix,
       feature: "kaigiMeetings",
     });
-    const authority = normalizeCompatAccountIdLiteral(
+    const authority = normalizeCanonicalAccountIdLiteral(
       hostAccountId,
       "hostAccountId",
       writeConnection.networkPrefix,
@@ -16141,151 +8351,60 @@ const api: IrohaBridge = {
     );
     const createdAtMs = Date.now();
     const expiresAtMs = normalizedScheduledStartMs + 24 * 60 * 60 * 1000;
-    const resolvedPrivacyMode = normalizeKaigiMeetingPrivacy(privacyMode);
-    const privateKaigiAssetDefinitionId =
-      resolvedPrivacyMode === "private"
-        ? normalizeFirstReleaseAssetDefinitionId(assetDefinitionId)
-        : null;
-    const resolvedPeerIdentityReveal =
-      normalizeKaigiPeerIdentityReveal(peerIdentityReveal);
-    const normalizedHostParticipantId =
-      normalizeKaigiParticipantId(hostParticipantId);
+    if (!Number.isSafeInteger(expiresAtMs)) {
+      throw new Error("Kaigi meeting expiry exceeds the safe timestamp range.");
+    }
     const inviteSecret = requireKaigiInviteSecretBase64Url(
       inviteSecretBase64Url,
       "inviteSecretBase64Url",
     );
-    const resolvedRelayManifest = await discoverKaigiRelayManifest(
-      getClient(toriiUrl),
-      expiresAtMs,
-    );
-    const privateKaigiContext = privateKaigiAssetDefinitionId
-      ? await resolvePrivateKaigiConfidentialXorContext(
-          {
-            toriiUrl,
-            chainId,
-            networkPrefix: writeConnection.networkPrefix,
-            accountId: authority,
-            assetDefinitionId: privateKaigiAssetDefinitionId,
-            endpointScope: writeConnection.endpointScope,
-          },
-          { includeFeeMaterials: true },
-        )
-      : null;
-    const encryptedOffer = encryptKaigiPayloadWithSecret(
+    const offerPayload = normalizeFirstReleaseKaigiCallOfferPayload(
       {
         schema: KAIGI_CALL_OFFER_SCHEMA,
         callId: normalizedCallId,
-        ...(resolvedPrivacyMode === "transparent"
-          ? { hostAccountId: authority }
-          : {}),
-        hostDisplayName: String(hostDisplayName ?? "").trim() || "Host",
-        hostParticipantId: normalizedHostParticipantId,
-        hostKaigiPublicKeyBase64Url: normalizeBase64UrlString(
-          hostKaigiPublicKeyBase64Url,
-          "hostKaigiPublicKeyBase64Url",
-        ),
+        hostAccountId: authority,
+        hostDisplayName,
+        hostParticipantId,
+        hostKaigiPublicKeyBase64Url,
         createdAtMs,
-        description: normalizeKaigiOfferDescription(offerDescription),
-      } satisfies KaigiCallOfferPayload,
+        description: offerDescription,
+      },
+      {
+        callId: normalizedCallId,
+        privacyMode: resolvedPrivacyMode,
+        hostAccountId: authority,
+        createdAtMs,
+        networkPrefix: writeConnection.networkPrefix,
+      },
+    );
+    const encryptedOffer = encryptKaigiPayloadWithSecret(
+      offerPayload,
       inviteSecret,
     );
     const signingMaterial = await resolveSigningMaterial({
       accountId: authority,
-      privateKeyHex,
+      networkPrefix: writeConnection.networkPrefix,
       operationLabel: "Kaigi meeting creation",
     });
     const resolvedPrivateKeyHex = signingMaterial.privateKeyHex;
-    const hostCreateProof =
-      resolvedPrivacyMode === "private"
-        ? buildKaigiRosterJoinProof({
-            seed: deriveKaigiHostActionSeed({
-              callId: normalizedCallId,
-              hostAccountId: authority,
-              privateKeyHex: resolvedPrivateKeyHex,
-            }),
-          })
-        : null;
     const callMetadata = {
-      kaigi_call: {
-        schema: KAIGI_CALL_METADATA_SCHEMA,
-        meetingCode:
-          String(meetingCode ?? "").trim() ||
-          normalizeKaigiMeetingCode(null, normalizedCallId),
-        expiresAtMs,
-        live: true,
-        privacyMode: resolvedPrivacyMode,
-        peerIdentityReveal: resolvedPeerIdentityReveal,
-        encryptedOffer,
-      } satisfies KaigiCallMetadata,
+      kaigi_call: normalizeFirstReleaseKaigiCallMetadata(
+        {
+          schema: KAIGI_CALL_METADATA_SCHEMA,
+          meetingCode,
+          expiresAtMs,
+          live: true,
+          privacyMode: resolvedPrivacyMode,
+          encryptedOffer,
+        },
+        {
+          callId: normalizedCallId,
+          privacyMode: resolvedPrivacyMode,
+          scheduledStartMs: normalizedScheduledStartMs,
+          live: true,
+        },
+      ),
     };
-
-    if (
-      resolvedPrivacyMode === "private" &&
-      hostCreateProof &&
-      privateKaigiAssetDefinitionId &&
-      privateKaigiContext
-    ) {
-      const entrypoint = await buildFundedPrivateKaigiEntrypoint({
-        chainId,
-        context: privateKaigiContext,
-        action: "create",
-        proofByteLength: Buffer.from(hostCreateProof.proofBase64, "base64")
-          .length,
-        buildEntrypoint: ({ feeSpend, creationTimeMs, nonce }) =>
-          buildPrivateCreateKaigiTransaction({
-            chainId: chainId.trim(),
-            call: {
-              id: toPrivateKaigiCallIdDto(normalizedCallId, "callId"),
-              title: title?.trim() || null,
-              description: null,
-              max_participants: null,
-              gas_rate_per_minute: 0,
-              metadata: callMetadata,
-              scheduled_start_ms: normalizedScheduledStartMs,
-              privacy_mode: {
-                mode: "ZkRosterV1",
-                state: null,
-              },
-              room_policy: {
-                policy: "Authenticated",
-                state: null,
-              },
-              relay_manifest: {
-                expiry_ms: resolvedRelayManifest.expiryMs,
-                hops: resolvedRelayManifest.hops.map((hop) => ({
-                  relay_id: hop.relayId,
-                  hpke_public_key: hop.hpkePublicKey,
-                  weight: hop.weight,
-                })),
-              },
-            },
-            artifacts: buildPrivateKaigiArtifactsDto({
-              commitmentHex: hostCreateProof.commitmentHex,
-              nullifierHex: hostCreateProof.nullifierHex,
-              issuedAtMs: createdAtMs,
-              rosterRootHex: hostCreateProof.rosterRootHex,
-              proofBase64: hostCreateProof.proofBase64,
-            }),
-            feeSpend,
-            creationTimeMs,
-            nonce,
-          }),
-      });
-      const submission =
-        await submitTransactionEntrypointAndWaitForFinalizedBlock(
-          toriiUrl,
-          entrypoint.transactionEntrypoint,
-          entrypoint.hashHex,
-        );
-      appendPrivateKaigiFeeDebit({
-        toriiUrl,
-        accountId: authority,
-        amount: entrypoint.feeAmount,
-        assetDefinitionId: entrypoint.resolvedAssetId,
-        endpointScope: writeConnection.endpointScope,
-      });
-      return transactionSubmissionResult(submission);
-    }
 
     const tx = await quoteAndSignInstructionTransaction({
       toriiUrl,
@@ -16293,14 +8412,12 @@ const api: IrohaBridge = {
       networkPrefix: writeConnection.networkPrefix,
       authority,
       instructions: [
-        buildCreateKaigiInstruction({
-          id: normalizedCallId,
+        buildFirstReleaseCreateKaigiInstruction({
+          callId: normalizedCallId,
           host: authority,
-          title: title?.trim() || null,
+          networkPrefix: writeConnection.networkPrefix,
+          title: title ?? null,
           scheduledStartMs: normalizedScheduledStartMs,
-          privacyMode: "Transparent",
-          roomPolicy: "authenticated",
-          relayManifest: resolvedRelayManifest,
           metadata: callMetadata,
         }),
       ],
@@ -16311,36 +8428,39 @@ const api: IrohaBridge = {
     const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
       toriiUrl,
       tx.signedTransaction,
+      { feeQuote: tx.feeQuote },
     );
     return transactionSubmissionResult(submission);
   },
-  async getKaigiCall({ toriiUrl, callId, inviteSecretBase64Url }) {
+  async getKaigiCall(input) {
+    const { toriiUrl, networkPrefix, callId, inviteSecretBase64Url } =
+      requireFirstReleaseIpcInput(input, "kaigiGet");
     return fetchKaigiMeetingView({
       toriiUrl,
+      networkPrefix,
       callId,
       inviteSecretBase64Url,
     });
   },
-  async joinKaigiMeeting({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    assetDefinitionId,
-    participantAccountId,
-    privateKeyHex,
-    callId,
-    inviteSecretBase64Url,
-    participantId,
-    participantName,
-    answerDescription,
-  }) {
+  async joinKaigiMeeting(input) {
+    const {
+      toriiUrl,
+      chainId,
+      networkPrefix,
+      participantAccountId,
+      callId,
+      inviteSecretBase64Url,
+      participantId,
+      participantName,
+      answerDescription,
+    } = requireFirstReleaseIpcInput(input, "kaigiJoin");
     const writeConnection = await assertWriteConnectionMatchesEndpoint({
       toriiUrl,
       chainId,
       networkPrefix,
       feature: "kaigiMeetings",
     });
-    const authority = normalizeCompatAccountIdLiteral(
+    const authority = normalizeCanonicalAccountIdLiteral(
       participantAccountId,
       "participantAccountId",
       writeConnection.networkPrefix,
@@ -16350,15 +8470,9 @@ const api: IrohaBridge = {
       inviteSecretBase64Url,
       "inviteSecretBase64Url",
     );
-    const normalizedParticipantId = normalizeKaigiParticipantId(participantId);
-    const normalizedParticipantName = String(participantName ?? "").trim();
-    if (!normalizedParticipantName) {
-      throw new Error("participantName is required.");
-    }
-    const normalizedAnswerDescription =
-      normalizeKaigiAnswerDescription(answerDescription);
     const liveMeeting = await fetchKaigiMeetingView({
       toriiUrl,
+      networkPrefix: writeConnection.networkPrefix,
       callId: normalizedCallId,
       inviteSecretBase64Url: inviteSecret,
     });
@@ -16374,137 +8488,70 @@ const api: IrohaBridge = {
     ) {
       throw new Error("The live Kaigi meeting is no longer joinable.");
     }
-    const resolvedPrivacyMode = liveMeeting.privacyMode;
-    const revealWalletIdentity =
-      resolvedPrivacyMode === "transparent" ||
-      liveMeeting.peerIdentityReveal === "RevealAfterJoin";
-    const liveHostAccountId = liveMeeting.hostAccountId
-      ? normalizeCompatAccountIdLiteral(
-          liveMeeting.hostAccountId,
-          "liveMeeting.hostAccountId",
-          writeConnection.networkPrefix,
-        )
-      : null;
-    if (resolvedPrivacyMode === "transparent" && !liveHostAccountId) {
-      throw new Error(
-        "The live transparent Kaigi meeting is missing its host account.",
-      );
-    }
-    const privateKaigiAssetDefinitionId =
-      resolvedPrivacyMode === "private"
-        ? normalizeFirstReleaseAssetDefinitionId(assetDefinitionId)
-        : null;
-    const privateKaigiContext = privateKaigiAssetDefinitionId
-      ? await resolvePrivateKaigiConfidentialXorContext(
-          {
-            toriiUrl,
-            chainId,
-            networkPrefix: writeConnection.networkPrefix,
-            accountId: authority,
-            assetDefinitionId: privateKaigiAssetDefinitionId,
-            endpointScope: writeConnection.endpointScope,
-          },
-          { includeFeeMaterials: true },
-        )
-      : null;
+    const liveHostAccountId = normalizeCanonicalAccountIdLiteral(
+      liveMeeting.hostAccountId,
+      "liveMeeting.hostAccountId",
+      writeConnection.networkPrefix,
+    );
     const signingMaterial = await resolveSigningMaterial({
       accountId: authority,
-      privateKeyHex,
+      networkPrefix: writeConnection.networkPrefix,
       operationLabel: "Kaigi meeting join",
     });
     const resolvedPrivateKeyHex = signingMaterial.privateKeyHex;
     const createdAtMs = Date.now();
-    const answerPayload: KaigiChainAnswerPayload = {
-      schema: KAIGI_CHAIN_ANSWER_SCHEMA,
-      callId: normalizedCallId,
-      kind: "answer",
-      ...(revealWalletIdentity ? { participantAccountId: authority } : {}),
-      participantId: normalizedParticipantId,
-      participantName: normalizedParticipantName,
-      ...(revealWalletIdentity ? { walletIdentity: authority } : {}),
-      roomId: normalizedCallId,
-      createdAtMs,
-      description: normalizedAnswerDescription,
-    };
-    const metadata: Record<string, unknown> = {
-      kaigi_signal: {
+    const answerPayload = normalizeFirstReleaseKaigiChainAnswerPayload(
+      {
+        schema: KAIGI_CHAIN_ANSWER_SCHEMA,
+        callId: normalizedCallId,
+        kind: "answer",
+        participantAccountId: authority,
+        participantId,
+        participantName,
+        walletIdentity: authority,
+        roomId: normalizedCallId,
+        createdAtMs,
+        description: answerDescription,
+      },
+      {
+        callId: normalizedCallId,
+        createdAtMs,
+        participantAccountId: authority,
+        networkPrefix: writeConnection.networkPrefix,
+      },
+    );
+    const signalMetadata = normalizeFirstReleaseKaigiChainSignalMetadata(
+      {
         schema: KAIGI_CHAIN_SIGNAL_SCHEMA,
         callId: answerPayload.callId,
         signalKind: "answer",
-        ...(resolvedPrivacyMode === "transparent" && liveHostAccountId
-          ? { hostAccountId: liveHostAccountId }
-          : {}),
-        ...(revealWalletIdentity ? { participantAccountId: authority } : {}),
+        hostAccountId: liveHostAccountId,
+        participantAccountId: authority,
         createdAtMs,
         encryptedSignal: encryptKaigiPayload(
           answerPayload,
           liveMeeting.hostKaigiPublicKeyBase64Url,
         ),
-      } satisfies KaigiChainSignalMetadata,
+      },
+      {
+        callId: normalizedCallId,
+        createdAtMs,
+        networkPrefix: writeConnection.networkPrefix,
+      },
+    );
+    const metadata: Record<string, unknown> = {
+      kaigi_signal: signalMetadata,
     };
-    if (
-      resolvedPrivacyMode === "private" &&
-      privateKaigiAssetDefinitionId &&
-      privateKaigiContext
-    ) {
-      const joinProof = buildKaigiRosterJoinProof({
-        seed: deriveKaigiRosterJoinSeed({
-          callId: normalizedCallId,
-          participantAccountId: authority,
-          privateKeyHex: resolvedPrivateKeyHex,
-        }),
-        rosterRootHex: normalizeKaigiRosterRootHex(
-          liveMeeting.rosterRootHex,
-          "liveMeeting.rosterRootHex",
-        ),
-      });
-      const entrypoint = await buildFundedPrivateKaigiEntrypoint({
-        chainId,
-        context: privateKaigiContext,
-        action: "join",
-        proofByteLength: Buffer.from(joinProof.proofBase64, "base64").length,
-        buildEntrypoint: ({ feeSpend, creationTimeMs, nonce }) =>
-          buildPrivateJoinKaigiTransaction({
-            chainId: chainId.trim(),
-            callId: normalizedCallId,
-            artifacts: buildPrivateKaigiArtifactsDto({
-              commitmentHex: joinProof.commitmentHex,
-              nullifierHex: joinProof.nullifierHex,
-              issuedAtMs: createdAtMs,
-              rosterRootHex: joinProof.rosterRootHex,
-              proofBase64: joinProof.proofBase64,
-            }),
-            feeSpend,
-            metadata,
-            creationTimeMs,
-            nonce,
-          }),
-      });
-      const submission =
-        await submitTransactionEntrypointAndWaitForFinalizedBlock(
-          toriiUrl,
-          entrypoint.transactionEntrypoint,
-          entrypoint.hashHex,
-        );
-      appendPrivateKaigiFeeDebit({
-        toriiUrl,
-        accountId: authority,
-        amount: entrypoint.feeAmount,
-        assetDefinitionId: entrypoint.resolvedAssetId,
-        endpointScope: writeConnection.endpointScope,
-      });
-      return transactionSubmissionResult(submission);
-    }
-
     const tx = await quoteAndSignInstructionTransaction({
       toriiUrl,
       chainId: chainId.trim(),
       networkPrefix: writeConnection.networkPrefix,
       authority,
       instructions: [
-        buildJoinKaigiInstruction({
+        buildFirstReleaseJoinKaigiInstruction({
           callId: answerPayload.callId,
           participant: authority,
+          networkPrefix: writeConnection.networkPrefix,
         }),
       ],
       metadata: withRequiredGasAssetMetadata(metadata, toriiUrl),
@@ -16514,12 +8561,19 @@ const api: IrohaBridge = {
     const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
       toriiUrl,
       tx.signedTransaction,
+      { feeQuote: tx.feeQuote },
     );
     return transactionSubmissionResult(submission);
   },
-  async watchKaigiCallEvents({ toriiUrl, callId }, onEvent) {
-    const client = getClient(toriiUrl);
+  async watchKaigiCallEvents(input, onEvent) {
+    const { toriiUrl, callId } = requireFirstReleaseIpcInput(
+      input,
+      "kaigiWatch",
+    );
     const normalizedCallId = normalizeKaigiCallId(callId, "callId");
+    if (kaigiCallWatchers.size >= MAX_ACTIVE_KAIGI_CALL_WATCHERS) {
+      throw new Error("Too many active Kaigi call watchers.");
+    }
     const subscriptionId = randomBytes(16).toString("hex");
     const controller = new AbortController();
     kaigiCallWatchers.set(subscriptionId, controller);
@@ -16527,19 +8581,19 @@ const api: IrohaBridge = {
     void (async () => {
       let terminalEventSeen = false;
       try {
-        for await (const event of client.streamKaigiCallEvents(
-          normalizedCallId,
-          {
-            signal: controller.signal,
-          },
-        )) {
+        for await (const event of streamFirstReleaseSseJson({
+          url: buildNexusEndpoint(
+            toriiUrl,
+            `/v1/kaigi/calls/${encodeURIComponent(normalizedCallId)}/events`,
+          ),
+          signal: controller.signal,
+        })) {
           if (controller.signal.aborted) {
             break;
           }
-          const normalizedEvent = normalizeKaigiCallEvent(event.data);
-          if (!normalizedEvent || normalizedEvent.callId !== normalizedCallId) {
-            continue;
-          }
+          const normalizedEvent = toFirstReleaseKaigiUiEvent(
+            normalizeFirstReleaseKaigiCallEvent(event, normalizedCallId),
+          );
           terminalEventSeen = normalizedEvent.kind === "ended";
           await onEvent(normalizedEvent);
         }
@@ -16564,116 +8618,159 @@ const api: IrohaBridge = {
 
     return subscriptionId;
   },
-  stopWatchingKaigiCallEvents(subscriptionId) {
-    const key = String(subscriptionId ?? "").trim();
-    if (!key) {
-      return;
+  stopWatchingKaigiCallEvents(input) {
+    const { subscriptionId } = requireFirstReleaseIpcInput(
+      input,
+      "kaigiStopWatch",
+    );
+    if (
+      typeof subscriptionId !== "string" ||
+      !/^[0-9a-f]{32}$/u.test(subscriptionId)
+    ) {
+      throw new Error("Kaigi watcher ID must be canonical lowercase hex.");
     }
-    const watcher = kaigiCallWatchers.get(key);
+    const watcher = kaigiCallWatchers.get(subscriptionId);
     if (!watcher) {
       return;
     }
     watcher.abort();
-    kaigiCallWatchers.delete(key);
+    kaigiCallWatchers.delete(subscriptionId);
   },
-  async pollKaigiMeetingSignals({
-    toriiUrl,
-    callId,
-    hostKaigiKeys,
-    afterTimestampMs,
-    limit = 50,
-    offset,
-  }) {
-    const client = getClient(toriiUrl);
-    const normalizedCallId = normalizeKaigiCallId(callId, "callId");
-    const signalsResponse = await client.listKaigiCallSignals(
-      normalizedCallId,
+  async pollKaigiMeetingSignals(input) {
+    const {
+      toriiUrl,
+      chainId,
+      networkPrefix,
+      accountId,
+      callId,
+      hostKaigiKeys,
+      afterTimestampMs,
+      limit = 50,
+    } = requireFirstReleaseIpcInput(input, "kaigiPoll");
+    const pageLimit = requireFirstReleasePagination(
+      { limit },
       {
-        ...(afterTimestampMs === undefined
-          ? {}
-          : {
-              afterTimestampMs: normalizeTimestampMs(
-                afterTimestampMs,
-                "afterTimestampMs",
-              ),
-            }),
-        limit,
-        offset,
+        defaultLimit: 50,
+        maximumLimit: 500,
+        label: "Kaigi meeting signals",
       },
+    ).limit;
+    const normalizedCallId = normalizeKaigiCallId(callId, "callId");
+    const authority = normalizeCanonicalAccountIdLiteral(
+      accountId,
+      "accountId",
+      networkPrefix,
     );
-    const signals = (signalsResponse.items ?? [])
-      .flatMap((item) => {
-        try {
-          const record =
-            item && typeof item === "object" && !Array.isArray(item)
-              ? (item as unknown as Record<string, unknown>)
-              : null;
-          if (!record) {
-            return [];
-          }
-          const chainSignal = parseKaigiChainSignalMetadata({
-            metadata: record.metadata,
-          });
-          if (!chainSignal || chainSignal.callId !== normalizedCallId) {
-            return [];
-          }
-          const decrypted = parseKaigiChainAnswerPayload(
-            decryptKaigiPayload(chainSignal.encryptedSignal, hostKaigiKeys),
-          );
-          const entrypointHash = String(record.entrypoint_hash ?? "").trim();
-          if (!entrypointHash) {
-            return [];
-          }
-          const authority = normalizeOptionalCompatAccountIdLiteral(
-            record.authority ?? decrypted.participantAccountId,
-            "transaction.authority",
-          );
-          const timestampMs = Number(record.timestamp_ms);
-          return [
-            {
-              entrypointHash,
-              ...(authority ? { authority } : {}),
-              ...(Number.isFinite(timestampMs) && timestampMs > 0
-                ? { timestampMs }
-                : {}),
-              callId: decrypted.callId,
-              ...(decrypted.participantAccountId
-                ? { participantAccountId: decrypted.participantAccountId }
-                : {}),
-              participantId: decrypted.participantId,
-              participantName: decrypted.participantName,
-              ...(decrypted.walletIdentity
-                ? { walletIdentity: decrypted.walletIdentity }
-                : {}),
-              ...(decrypted.roomId ? { roomId: decrypted.roomId } : {}),
-              createdAtMs: decrypted.createdAtMs,
-              answerDescription: decrypted.description,
-            } satisfies KaigiMeetingSignalRecord,
-          ];
-        } catch (_error) {
-          return [];
+    const signingMaterial = await resolveSigningMaterial({
+      accountId: authority,
+      networkPrefix,
+      operationLabel: "Kaigi meeting signal polling",
+    });
+    const signalsResponse = await withPrivateKeyBufferAsync(
+      signingMaterial.privateKeyHex,
+      "privateKeyHex",
+      (privateKey) =>
+        fetchFirstReleaseKaigiSignals({
+          toriiUrl,
+          callId: normalizedCallId,
+          auth: {
+            accountId: authority,
+            networkId: resolveFirstReleaseTransactionNetworkId({
+              toriiUrl: normalizeBaseUrl(toriiUrl),
+              chainId,
+              networkPrefix,
+            }),
+            privateKey,
+          },
+          ...(afterTimestampMs === undefined
+            ? {}
+            : {
+                afterTimestampMs: normalizeTimestampMs(
+                  afterTimestampMs,
+                  "afterTimestampMs",
+                ),
+              }),
+          limit: pageLimit,
+        }),
+    );
+    if (signalsResponse.items.length > pageLimit) {
+      throw new Error("Kaigi call signals returned more items than requested.");
+    }
+    const signals = signalsResponse.items
+      .map((record) => {
+        const createdAtMs = normalizeTimestampMs(
+          record.created_at_ms,
+          "Kaigi signal.created_at_ms",
+        );
+        const chainSignal = normalizeFirstReleaseKaigiChainSignalMetadata(
+          record.metadata,
+          {
+            callId: normalizedCallId,
+            createdAtMs,
+            networkPrefix,
+          },
+        );
+        if (typeof record.authority !== "string") {
+          throw new Error("Kaigi signal.authority must be an account ID.");
         }
+        const carrierAuthority = normalizeCanonicalAccountIdLiteral(
+          record.authority,
+          "Kaigi signal.authority",
+          networkPrefix,
+        );
+        if (carrierAuthority !== chainSignal.participantAccountId) {
+          throw new Error("Kaigi signal authority is cross-wired.");
+        }
+        const decrypted = normalizeFirstReleaseKaigiChainAnswerPayload(
+          decryptKaigiPayload<unknown>(
+            chainSignal.encryptedSignal,
+            hostKaigiKeys,
+          ),
+          {
+            callId: normalizedCallId,
+            createdAtMs,
+            participantAccountId: chainSignal.participantAccountId,
+            networkPrefix,
+          },
+        );
+        return {
+          entrypointHash: record.entrypoint_hash,
+          authority: carrierAuthority,
+          timestampMs: normalizeTimestampMs(
+            record.timestamp_ms,
+            "Kaigi signal.timestamp_ms",
+          ),
+          callId: decrypted.callId,
+          participantAccountId: decrypted.participantAccountId,
+          participantId: decrypted.participantId,
+          participantName: decrypted.participantName,
+          ...(decrypted.walletIdentity === undefined
+            ? {}
+            : { walletIdentity: decrypted.walletIdentity }),
+          roomId: decrypted.roomId,
+          createdAtMs: decrypted.createdAtMs,
+          answerDescription: decrypted.description,
+        } satisfies KaigiMeetingSignalRecord;
       })
       .sort((left, right) => left.createdAtMs - right.createdAtMs);
     return signals;
   },
-  async endKaigiMeeting({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    assetDefinitionId,
-    hostAccountId,
-    privateKeyHex,
-    callId,
-    endedAtMs,
-  }) {
+  async endKaigiMeeting(input) {
+    const {
+      toriiUrl,
+      chainId,
+      networkPrefix,
+      hostAccountId,
+      callId,
+      endedAtMs,
+    } = requireFirstReleaseIpcInput(input, "kaigiEnd");
     const writeConnection = await assertWriteConnectionMatchesEndpoint({
       toriiUrl,
       chainId,
       networkPrefix,
       feature: "kaigiMeetings",
     });
-    const authority = normalizeCompatAccountIdLiteral(
+    const authority = normalizeCanonicalAccountIdLiteral(
       hostAccountId,
       "hostAccountId",
       writeConnection.networkPrefix,
@@ -16683,102 +8780,30 @@ const api: IrohaBridge = {
       endedAtMs === undefined
         ? Date.now()
         : normalizeTimestampMs(endedAtMs, "endedAtMs");
-    const client = getClient(toriiUrl);
-    const callPayload = (await client.getKaigiCall(
+    const callPayload = await fetchFirstReleaseKaigiCall(
+      toriiUrl,
       normalizedCallId,
-    )) as KaigiCallView;
-    const resolvedPrivacyMode = normalizeKaigiMeetingPrivacy(
-      callPayload.privacy_mode,
     );
-    const privateKaigiAssetDefinitionId =
-      resolvedPrivacyMode === "private"
-        ? normalizeFirstReleaseAssetDefinitionId(assetDefinitionId)
-        : null;
-    const privateKaigiContext = privateKaigiAssetDefinitionId
-      ? await resolvePrivateKaigiConfidentialXorContext(
-          {
-            toriiUrl,
-            chainId,
-            networkPrefix: writeConnection.networkPrefix,
-            accountId: authority,
-            assetDefinitionId: privateKaigiAssetDefinitionId,
-            endpointScope: writeConnection.endpointScope,
-          },
-          { includeFeeMaterials: true },
-        )
-      : null;
+    if (!callPayload) {
+      throw new Error("Kaigi meeting was not found.");
+    }
+    requireFirstReleaseKaigiMeetingPrivacy(
+      callPayload.privacy_mode,
+      "kaigi call.privacy_mode",
+    );
     const signingMaterial = await resolveSigningMaterial({
       accountId: authority,
-      privateKeyHex,
+      networkPrefix: writeConnection.networkPrefix,
       operationLabel: "Kaigi meeting end",
     });
     const resolvedPrivateKeyHex = signingMaterial.privateKeyHex;
-    const hostEndProof =
-      resolvedPrivacyMode === "private"
-        ? buildKaigiRosterJoinProof({
-            seed: deriveKaigiHostActionSeed({
-              callId: normalizedCallId,
-              hostAccountId: authority,
-              privateKeyHex: resolvedPrivateKeyHex,
-            }),
-            rosterRootHex: normalizeKaigiRosterRootHex(
-              callPayload.roster_root_hex,
-              "kaigi call.roster_root_hex",
-            ),
-          })
-        : null;
-
-    if (
-      resolvedPrivacyMode === "private" &&
-      hostEndProof &&
-      privateKaigiAssetDefinitionId &&
-      privateKaigiContext
-    ) {
-      const entrypoint = await buildFundedPrivateKaigiEntrypoint({
-        chainId,
-        context: privateKaigiContext,
-        action: "end",
-        proofByteLength: Buffer.from(hostEndProof.proofBase64, "base64").length,
-        buildEntrypoint: ({ feeSpend, creationTimeMs, nonce }) =>
-          buildPrivateEndKaigiTransaction({
-            chainId: chainId.trim(),
-            callId: normalizedCallId,
-            endedAtMs: resolvedEndedAtMs,
-            artifacts: buildPrivateKaigiArtifactsDto({
-              commitmentHex: hostEndProof.commitmentHex,
-              nullifierHex: hostEndProof.nullifierHex,
-              issuedAtMs: resolvedEndedAtMs,
-              rosterRootHex: hostEndProof.rosterRootHex,
-              proofBase64: hostEndProof.proofBase64,
-            }),
-            feeSpend,
-            creationTimeMs,
-            nonce,
-          }),
-      });
-      const submission =
-        await submitTransactionEntrypointAndWaitForFinalizedBlock(
-          toriiUrl,
-          entrypoint.transactionEntrypoint,
-          entrypoint.hashHex,
-        );
-      appendPrivateKaigiFeeDebit({
-        toriiUrl,
-        accountId: authority,
-        amount: entrypoint.feeAmount,
-        assetDefinitionId: entrypoint.resolvedAssetId,
-        endpointScope: writeConnection.endpointScope,
-      });
-      return transactionSubmissionResult(submission);
-    }
-
     const tx = await quoteAndSignInstructionTransaction({
       toriiUrl,
       chainId: chainId.trim(),
       networkPrefix: writeConnection.networkPrefix,
       authority,
       instructions: [
-        buildEndKaigiInstruction({
+        buildFirstReleaseEndKaigiInstruction({
           callId: normalizedCallId,
           endedAtMs: resolvedEndedAtMs,
         }),
@@ -16790,19 +8815,26 @@ const api: IrohaBridge = {
     const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
       toriiUrl,
       tx.signedTransaction,
+      { feeQuote: tx.feeQuote },
     );
     return transactionSubmissionResult(submission);
   },
   getSumeragiStatus(config) {
+    const { toriiUrl } = requireFirstReleaseIpcInput(config, "toriiConfig");
     return fetchJson(
-      buildNexusEndpoint(config.toriiUrl, "/v1/sumeragi/status"),
+      buildNexusEndpoint(toriiUrl, "/v1/sumeragi/status"),
       "Sumeragi status",
     );
   },
   async getNexusLifecycle(config) {
-    return fetchNexusLifecycle(config.toriiUrl);
+    const { toriiUrl } = requireFirstReleaseIpcInput(config, "toriiConfig");
+    return fetchNexusLifecycle(toriiUrl);
   },
-  async getNexusPublicLaneValidators({ toriiUrl, laneId }) {
+  async getNexusPublicLaneValidators(input) {
+    const { toriiUrl, laneId } = requireFirstReleaseIpcInput(
+      input,
+      "publicLaneValidators",
+    );
     const endpoint = buildNexusEndpoint(
       toriiUrl,
       `/v1/nexus/public-lanes/${normalizeLaneId(laneId)}/validators`,
@@ -16810,31 +8842,37 @@ const api: IrohaBridge = {
     const payload = await fetchJson(endpoint, "Public lane validators");
     return normalizePublicLaneValidatorsPayload(payload);
   },
-  async getNexusPublicLaneStake({ toriiUrl, laneId, validator }) {
+  async getNexusPublicLaneStake(input) {
+    const { toriiUrl, networkPrefix, laneId, validator } =
+      requireFirstReleaseIpcInput(input, "publicLaneStake");
     const endpoint = buildNexusEndpoint(
       toriiUrl,
       `/v1/nexus/public-lanes/${normalizeLaneId(laneId)}/stake`,
       {
         validator: validator
-          ? normalizeCompatAccountIdLiteral(validator, "validator")
+          ? normalizeCanonicalAccountIdLiteral(
+              validator,
+              "validator",
+              networkPrefix,
+            )
           : undefined,
       },
     );
     const payload = await fetchJson(endpoint, "Public lane stake");
     return normalizePublicLaneStakePayload(payload);
   },
-  async getNexusPublicLaneRewards({
-    toriiUrl,
-    laneId,
-    account,
-    assetId,
-    uptoEpoch,
-  }) {
+  async getNexusPublicLaneRewards(input) {
+    const { toriiUrl, networkPrefix, laneId, account, assetId, uptoEpoch } =
+      requireFirstReleaseIpcInput(input, "publicLaneRewards");
     const endpoint = buildNexusEndpoint(
       toriiUrl,
       `/v1/nexus/public-lanes/${normalizeLaneId(laneId)}/rewards/pending`,
       {
-        account: normalizeCompatAccountIdLiteral(account, "account"),
+        account: normalizeCanonicalAccountIdLiteral(
+          account,
+          "account",
+          networkPrefix,
+        ),
         asset_id: assetId,
         upto_epoch:
           uptoEpoch === undefined
@@ -16846,9 +8884,9 @@ const api: IrohaBridge = {
     return normalizePublicLaneRewardsPayload(payload);
   },
   async getNexusStakingPolicy(config) {
-    const client = getClient(config.toriiUrl);
+    const { toriiUrl } = requireFirstReleaseIpcInput(config, "toriiConfig");
     try {
-      const payload = await client.getConfiguration();
+      const payload = await fetchFirstReleaseConfiguration(toriiUrl);
       const configuration = ensureObjectResponse(payload, "Configuration");
       return {
         unbondingDelayMs: readNexusUnbondingDelayMs(configuration),
@@ -16858,225 +8896,89 @@ const api: IrohaBridge = {
     }
   },
   listSubscriptionPlans(input) {
-    return listSubscriptionPlansFromTorii(input);
+    return listSubscriptionPlansFromTorii(
+      requireFirstReleaseIpcInput(input, "subscriptionListPlans"),
+    );
   },
   listSubscriptions(input) {
-    return listSubscriptionsFromTorii(input);
+    return listSubscriptionsFromTorii(
+      requireFirstReleaseIpcInput(input, "subscriptionList"),
+    );
   },
   getSubscription(input) {
-    return getSubscriptionFromTorii(input);
+    return getSubscriptionFromTorii(
+      requireFirstReleaseIpcInput(input, "subscriptionGet"),
+    );
   },
   createSubscription(input) {
-    return createSubscriptionOnTorii(input);
+    return createSubscriptionOnTorii(
+      requireFirstReleaseIpcInput(input, "subscriptionCreate"),
+    );
   },
   pauseSubscription(input) {
-    return postSubscriptionActionToTorii(input, "pause", "Pause subscription");
+    return postSubscriptionActionToTorii(
+      requireFirstReleaseIpcInput(input, "subscriptionPause"),
+      "pause",
+      "Pause subscription",
+    );
   },
   resumeSubscription(input) {
     return postSubscriptionActionToTorii(
-      input,
+      requireFirstReleaseIpcInput(input, "subscriptionResume"),
       "resume",
       "Resume subscription",
     );
   },
   cancelSubscription(input) {
     return postSubscriptionActionToTorii(
-      input,
+      requireFirstReleaseIpcInput(input, "subscriptionCancel"),
       "cancel",
       "Cancel subscription",
     );
   },
   keepSubscription(input) {
-    return postSubscriptionActionToTorii(input, "keep", "Keep subscription");
+    return postSubscriptionActionToTorii(
+      requireFirstReleaseIpcInput(input, "subscriptionKeep"),
+      "keep",
+      "Keep subscription",
+    );
   },
   chargeSubscriptionNow(input) {
     return postSubscriptionActionToTorii(
-      input,
+      requireFirstReleaseIpcInput(input, "subscriptionChargeNow"),
       "charge-now",
       "Charge subscription",
     );
   },
   reconcileSubscriptionMutation(input) {
-    return reconcileSubscriptionMutationOnTorii(input);
+    return reconcileSubscriptionMutationOnTorii(
+      requireFirstReleaseIpcInput(input, "subscriptionReconcile"),
+    );
   },
   getSoraCloudStatus(input) {
-    return getSoraCloudStatusFromTorii(input);
+    return getSoraCloudStatusFromTorii(
+      requireFirstReleaseIpcInput(input, "soraCloudStatus"),
+    );
   },
-  deploySoraCloudHf(input) {
-    return deploySoraCloudHfOnTorii(input);
+  getSoraCloudHfSharedLeaseStatus(input) {
+    return getSoraCloudHfSharedLeaseStatusFromTorii(
+      requireFirstReleaseIpcInput(input, "soraCloudHfSharedLeaseStatus"),
+    );
   },
-  reconcileSoraCloudHfLaunch(input) {
-    return reconcileSoraCloudHfLaunchOnTorii(input);
-  },
-  getSoraCloudHfStatus(input) {
-    return getSoraCloudHfStatusFromTorii(input);
-  },
-  getParameters({ toriiUrl }) {
+  getParameters(input) {
+    const { toriiUrl } = requireFirstReleaseIpcInput(input, "toriiConfig");
     return getParametersFromTorii({ toriiUrl });
   },
-  getSccpCapabilities({ toriiUrl }) {
-    return getSccpCapabilitiesFromTorii({ toriiUrl });
-  },
-  getSccpProofManifests({ toriiUrl }) {
-    return getSccpProofManifestsFromTorii({ toriiUrl });
-  },
-  getSccpSoraOutboundMaterial(input) {
-    return getSccpSoraOutboundMaterialFromTorii(input);
-  },
-  listSccpRecentMessages(input) {
-    return listSccpRecentMessagesFromTorii(input);
-  },
-  getSccpMessageProofBundle(input) {
-    return getSccpMessageProofBundleFromTorii(input);
-  },
-  getSccpMessageProofArtifact(input) {
-    const client = getClient(input.toriiUrl);
-    return client
-      .getSccpMessageBundle(input.messageId)
-      .then((response) => response as unknown as Record<string, unknown>);
-  },
-  getSccpMessageProofJob(input) {
-    const client = getClient(input.toriiUrl);
-    return client
-      .getSccpProofRequest(input.messageId)
-      .then((response) => response as unknown as Record<string, unknown>);
-  },
-  proveBscSccpProof(input) {
-    return proveBscSccpProofInNode(input);
-  },
-  proveBscSccpSourceProof(input) {
-    return proveBscSccpSourceProofInNode(input);
-  },
-  rebuildSccpMessageBundleSourceProofWithDeployment(input) {
-    return Promise.resolve(rebuildSccpSourceProofResultInNode(input));
-  },
-  buildTonSccpMessageBundleSourceProofWithDeployment(input) {
-    return Promise.resolve(buildTonSccpSourceProofResultInNode(input));
-  },
-  submitSccpBridgeProof(input) {
-    return submitSccpBridgeProofToTorii(input);
-  },
-  submitSccpBridgeMessage(input) {
-    return submitSccpBridgeMessageToTorii(input);
-  },
-  waitForSccpTransactionCommit(input) {
-    return waitForSccpTransactionCommitOnTorii(input);
-  },
-  deploySccpTairaInboundSettlementContract(input) {
-    return deploySccpTairaInboundSettlementContractToTorii(input);
-  },
-  deriveZkIvmPayload(input) {
-    return deriveZkIvmPayloadOnTorii(input);
-  },
-  startZkIvmProveJob(input) {
-    return startZkIvmProveJobOnTorii(input);
-  },
-  getZkIvmProveJob(input) {
-    return getZkIvmProveJobFromTorii(input);
-  },
-  cancelZkIvmProveJob(input) {
-    return cancelZkIvmProveJobOnTorii(input);
-  },
-  submitZkIvmProvedTransaction(input) {
-    return submitZkIvmProvedTransactionToTorii(input);
-  },
-  getTronTransaction(input) {
-    return getTronTransactionFromGateway(input);
-  },
-  getTronAccount(input) {
-    return getTronAccountFromGateway(input);
-  },
-  getTronTransactionReceipt(input) {
-    return getTronTransactionReceiptFromGateway(input);
-  },
-  getTronTransactionEvents(input) {
-    return getTronTransactionEventsFromGateway(input);
-  },
-  getTronSolidBlock(input) {
-    return getTronSolidBlockFromGateway(input);
-  },
-  getTronWitnesses(input) {
-    return getTronWitnessesFromGateway(input);
-  },
-  getTronFinalityData(input) {
-    return getTronFinalityDataFromGateway(input);
-  },
-  getSccpNileTestTronSigner() {
-    return getSccpNileTestTronSignerStatus();
-  },
-  signSccpNileTestTronTransaction(input) {
-    return signSccpNileTestTronTransaction(input);
-  },
-  broadcastTronTransaction(input) {
-    return broadcastTronTransactionToGateway(input);
-  },
-  triggerTronSmartContract(input) {
-    return triggerTronSmartContractFromGateway(input);
-  },
-  triggerTronConstantContract(input) {
-    return triggerTronConstantContractFromGateway(input);
-  },
-  callEvmRpc(input) {
-    return callEvmRpcOnGateway(input);
-  },
-  getEvmChainId(input) {
-    return getEvmChainIdFromRpc(input);
-  },
-  getEvmBalance(input) {
-    return getEvmBalanceFromRpc(input);
-  },
-  getEvmCode(input) {
-    return getEvmCodeFromRpc(input);
-  },
-  callEvmContract(input) {
-    return callEvmContractFromRpc(input);
-  },
-  getEvmTransactionReceipt(input) {
-    return getEvmTransactionReceiptFromRpc(input);
-  },
-  getEvmTransaction(input) {
-    return getEvmTransactionFromRpc(input);
-  },
-  getEvmBlockByHash(input) {
-    return getEvmBlockByHashFromRpc(input);
-  },
-  getEvmLogs(input) {
-    return getEvmLogsFromRpc(input);
-  },
-  callSolanaRpc(input) {
-    return callSolanaRpcOnGateway(input);
-  },
-  getSolanaBalance(input) {
-    return getSolanaBalanceFromRpc(input);
-  },
-  getSolanaTokenBalance(input) {
-    return getSolanaTokenBalanceFromRpc(input);
-  },
-  prepareSolanaAssociatedTokenAccount(input) {
-    return prepareSolanaAssociatedTokenAccountFromRpc(input);
-  },
-  getSolanaSignatureStatus(input) {
-    return getSolanaSignatureStatusFromRpc(input);
-  },
-  getSolanaTransaction(input) {
-    return getSolanaTransactionFromRpc(input);
-  },
-  buildSolanaTransaction(input) {
-    return buildSolanaTransactionFromInstructions(input);
-  },
-  broadcastSolanaTransaction(input) {
-    return broadcastSolanaTransactionToRpc(input);
-  },
-  bondPublicLaneStake({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    stakeAccountId,
-    validator,
-    amount,
-    privateKeyHex,
-  }) {
-    const normalizedStakeAccount = normalizeCompatAccountIdLiteral(
+  bondPublicLaneStake(input) {
+    const {
+      toriiUrl,
+      chainId,
+      networkPrefix,
+      stakeAccountId,
+      validator,
+      amount,
+    } = requireFirstReleaseIpcInput(input, "stakingBond");
+    const normalizedStakeAccount = normalizeCanonicalAccountIdLiteral(
       stakeAccountId,
       "stakeAccountId",
       networkPrefix,
@@ -17086,11 +8988,10 @@ const api: IrohaBridge = {
       chainId,
       networkPrefix,
       authorityAccountId: normalizedStakeAccount,
-      privateKeyHex,
       instruction: {
         BondPublicLaneStake: {
           stake_account: normalizedStakeAccount,
-          validator: normalizeCompatAccountIdLiteral(
+          validator: normalizeCanonicalAccountIdLiteral(
             validator,
             "validator",
             networkPrefix,
@@ -17100,24 +9001,24 @@ const api: IrohaBridge = {
       },
     });
   },
-  registerPublicLaneValidator({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    laneId,
-    validatorAccountId,
-    stakeAccountId,
-    peerId,
-    selfStake,
-    metadata,
-    privateKeyHex,
-  }) {
-    const normalizedValidator = normalizeCompatAccountIdLiteral(
+  registerPublicLaneValidator(input) {
+    const {
+      toriiUrl,
+      chainId,
+      networkPrefix,
+      laneId,
+      validatorAccountId,
+      stakeAccountId,
+      peerId,
+      selfStake,
+      metadata,
+    } = requireFirstReleaseIpcInput(input, "stakingRegisterValidator");
+    const normalizedValidator = normalizeCanonicalAccountIdLiteral(
       validatorAccountId,
       "validatorAccountId",
       networkPrefix,
     );
-    const normalizedStakeAccount = normalizeCompatAccountIdLiteral(
+    const normalizedStakeAccount = normalizeCanonicalAccountIdLiteral(
       stakeAccountId || validatorAccountId,
       "stakeAccountId",
       networkPrefix,
@@ -17127,7 +9028,6 @@ const api: IrohaBridge = {
       chainId,
       networkPrefix,
       authorityAccountId: normalizedValidator,
-      privateKeyHex,
       instruction: {
         RegisterPublicLaneValidator: {
           lane_id: normalizeLaneId(laneId),
@@ -17135,23 +9035,26 @@ const api: IrohaBridge = {
           stake_account: normalizedStakeAccount,
           peer_id: normalizeNonEmptyString(peerId, "peerId"),
           initial_stake: normalizeAmount(selfStake, "selfStake"),
-          metadata: isPlainRecord(metadata) ? metadata : {},
+          metadata: requireFirstReleaseJsonObject(
+            metadata ?? {},
+            "Register validator metadata",
+          ),
         },
       },
     });
   },
-  schedulePublicLaneUnbond({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    stakeAccountId,
-    validator,
-    amount,
-    requestId,
-    releaseAtMs,
-    privateKeyHex,
-  }) {
-    const normalizedStakeAccount = normalizeCompatAccountIdLiteral(
+  schedulePublicLaneUnbond(input) {
+    const {
+      toriiUrl,
+      chainId,
+      networkPrefix,
+      stakeAccountId,
+      validator,
+      amount,
+      requestId,
+      releaseAtMs,
+    } = requireFirstReleaseIpcInput(input, "stakingScheduleUnbond");
+    const normalizedStakeAccount = normalizeCanonicalAccountIdLiteral(
       stakeAccountId,
       "stakeAccountId",
       networkPrefix,
@@ -17161,11 +9064,10 @@ const api: IrohaBridge = {
       chainId,
       networkPrefix,
       authorityAccountId: normalizedStakeAccount,
-      privateKeyHex,
       instruction: {
         SchedulePublicLaneUnbond: {
           stake_account: normalizedStakeAccount,
-          validator: normalizeCompatAccountIdLiteral(
+          validator: normalizeCanonicalAccountIdLiteral(
             validator,
             "validator",
             networkPrefix,
@@ -17177,16 +9079,16 @@ const api: IrohaBridge = {
       },
     });
   },
-  finalizePublicLaneUnbond({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    stakeAccountId,
-    validator,
-    requestId,
-    privateKeyHex,
-  }) {
-    const normalizedStakeAccount = normalizeCompatAccountIdLiteral(
+  finalizePublicLaneUnbond(input) {
+    const {
+      toriiUrl,
+      chainId,
+      networkPrefix,
+      stakeAccountId,
+      validator,
+      requestId,
+    } = requireFirstReleaseIpcInput(input, "stakingFinalizeUnbond");
+    const normalizedStakeAccount = normalizeCanonicalAccountIdLiteral(
       stakeAccountId,
       "stakeAccountId",
       networkPrefix,
@@ -17196,11 +9098,10 @@ const api: IrohaBridge = {
       chainId,
       networkPrefix,
       authorityAccountId: normalizedStakeAccount,
-      privateKeyHex,
       instruction: {
         FinalizePublicLaneUnbond: {
           stake_account: normalizedStakeAccount,
-          validator: normalizeCompatAccountIdLiteral(
+          validator: normalizeCanonicalAccountIdLiteral(
             validator,
             "validator",
             networkPrefix,
@@ -17210,15 +9111,10 @@ const api: IrohaBridge = {
       },
     });
   },
-  claimPublicLaneRewards({
-    toriiUrl,
-    chainId,
-    networkPrefix,
-    stakeAccountId,
-    validator,
-    privateKeyHex,
-  }) {
-    const normalizedStakeAccount = normalizeCompatAccountIdLiteral(
+  claimPublicLaneRewards(input) {
+    const { toriiUrl, chainId, networkPrefix, stakeAccountId, validator } =
+      requireFirstReleaseIpcInput(input, "stakingClaimRewards");
+    const normalizedStakeAccount = normalizeCanonicalAccountIdLiteral(
       stakeAccountId,
       "stakeAccountId",
       networkPrefix,
@@ -17228,11 +9124,10 @@ const api: IrohaBridge = {
       chainId,
       networkPrefix,
       authorityAccountId: normalizedStakeAccount,
-      privateKeyHex,
       instruction: {
         ClaimPublicLaneRewards: {
           stake_account: normalizedStakeAccount,
-          validator: normalizeCompatAccountIdLiteral(
+          validator: normalizeCanonicalAccountIdLiteral(
             validator,
             "validator",
             networkPrefix,
@@ -17243,4 +9138,12 @@ const api: IrohaBridge = {
   },
 };
 
-contextBridge.exposeInMainWorld("iroha", api);
+const SETUP_SECRET_INPUT_METHODS = new Set<keyof IrohaBridge>([
+  "storeAccountSecret",
+  "derivePublicKey",
+]);
+
+contextBridge.exposeInMainWorld(
+  "iroha",
+  wrapRendererSigningBoundary(api, SETUP_SECRET_INPUT_METHODS),
+);

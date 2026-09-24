@@ -4,10 +4,7 @@ import type {
 } from "@/types/endpointInspection";
 
 export const normalizeEndpointOperation = (operation: string): string =>
-  operation
-    .trim()
-    .replace(/\{[^}]+\}/gu, "{}")
-    .replace(/\s+/gu, " ");
+  operation.trim().replace(/\s+/gu, " ");
 
 export const isEndpointFeatureOperationSupported = (
   inspection: EndpointInspection | null,

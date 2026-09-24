@@ -55,30 +55,6 @@ describe("endpoint write boundary", () => {
       },
       {
         source: between(
-          "const deploySoraCloudHfOnTorii",
-          "const getSoraCloudHfStatusFromTorii",
-        ),
-        feature: "soraCloudDeploy",
-        sensitive: "resolveSigningMaterial({",
-      },
-      {
-        source: between(
-          "const deriveZkIvmPayloadOnTorii",
-          "const startZkIvmProveJobOnTorii",
-        ),
-        feature: "zkProofJobs",
-        sensitive: "postJson(",
-      },
-      {
-        source: between(
-          "const buildUranaiPrivateTradeProofEnvelope",
-          "const submitConfidentialSelfConsolidation",
-        ),
-        feature: "confidentialTransfers",
-        sensitive: "resolveSigningMaterial({",
-      },
-      {
-        source: between(
           "const submitInstructionTransaction",
           "const GOVERNANCE_REVIEW_TTL_MS",
         ),
@@ -88,7 +64,7 @@ describe("endpoint write boundary", () => {
       {
         source: between(
           "const assertGovernanceWriteCapabilities",
-          "const governanceListLimit",
+          "const assertCurrentBondedGovernanceCitizen",
         ),
         feature: "governanceWrites",
         sensitive: "fetchGovernanceCapabilities(",
@@ -96,14 +72,14 @@ describe("endpoint write boundary", () => {
       {
         source: between(
           "async registerAccount(input)",
-          "async transferAsset(input)",
+          "async transferAsset(rendererInput)",
         ),
         feature: "accountRegistration",
         sensitive: "resolveSigningMaterial({",
       },
       {
         source: between(
-          "async transferAsset(input)",
+          "async transferAsset(rendererInput)",
           "setIrohaConnectContext(input)",
         ),
         feature: "assetTransfers",
@@ -126,12 +102,18 @@ describe("endpoint write boundary", () => {
         sensitive: "runVpnConnectAfterProfileCheck({",
       },
       {
-        source: between("async onboardAccount({", "async requestFaucetFunds("),
+        source: between(
+          "async onboardAccount(input)",
+          "async requestFaucetFunds(",
+        ),
         feature: "accountOnboarding",
         sensitive: "nodeFetch(",
       },
       {
-        source: between("async createKaigiMeeting({", "async getKaigiCall("),
+        source: between(
+          "async createKaigiMeeting(input)",
+          "async getKaigiCall(input)",
+        ),
         feature: "kaigiMeetings",
         sensitive: "resolveSigningMaterial({",
       },
@@ -181,7 +163,7 @@ describe("endpoint write boundary", () => {
 
   it("does not return account onboarding success before finalized-block proof", () => {
     const onboarding = between(
-      "async onboardAccount({",
+      "async onboardAccount(input)",
       "async requestFaucetFunds(",
     );
     const submit = onboarding.indexOf("nodeFetch(");
@@ -195,34 +177,7 @@ describe("endpoint write boundary", () => {
     expect(finalizedStatus).toBeGreaterThan(finality);
   });
 
-  it("preflights SoraCloud public inputs, write identity, and live baseline before vault access", () => {
-    const launch = between(
-      "const deploySoraCloudHfOnTorii",
-      "const getSoraCloudHfStatusFromTorii",
-    );
-    const orderedMarkers = [
-      "assertNoRendererSoraCloudSecrets(input)",
-      'normalizeSoraCloudHfToken(input.repoId, "repoId", 256)',
-      "normalizeAssetDefinitionId(",
-      "soraCloudXorQuantityFromNanos(baseFeeNanos)",
-      "assertWriteConnectionMatchesEndpoint({",
-      "normalizeCanonicalAccountIdLiteral(",
-      "fetchOptionalSoraCloudHfStatusPayload(statusInput)",
-      "resolveSigningMaterial({",
-      "buildSoraCloudHfDeployRequest({",
-      "executeSoraCloudHfDraftToCommit({",
-    ];
-    let previous = -1;
-    for (const marker of orderedMarkers) {
-      const index = launch.indexOf(marker);
-      expect(
-        index,
-        `missing SoraCloud boundary marker ${marker}`,
-      ).toBeGreaterThan(previous);
-      previous = index;
-    }
-    expect(launch).toContain("revision: resolvedRevision");
-
+  it("keeps SoraCloud shared-lease access read-only until an exact provenance encoder is exported", () => {
     const bridgeTypes = readFileSync(
       resolve(process.cwd(), "src/types/iroha.d.ts"),
       "utf8",
@@ -233,6 +188,14 @@ describe("endpoint write boundary", () => {
     );
     expect(soraCloudBridge).not.toContain("privateKeyHex");
     expect(soraCloudBridge).not.toContain("apiToken");
+    expect(soraCloudBridge).toContain("getSoraCloudHfSharedLeaseStatus");
+    expect(soraCloudBridge).not.toContain("deploySoraCloudHf");
+    expect(soraCloudBridge).not.toContain("joinSoraCloudHf");
+    expect(preload).toContain('"/v1/soracloud/hf/lease/status"');
+    expect(preload).not.toContain('"/v1/soracloud/hf/lease/join"');
+    expect(preload).not.toContain('"/v1/soracloud/hf/deploy"');
+    expect(preload).not.toContain('"/v1/soracloud/hf/status"');
+    expect(preload).not.toContain("resolveSoraCloudSigningMaterial");
   });
 
   it("does not expose renderer-callable signing, proof, or app-private-key oracles", () => {
@@ -263,7 +226,10 @@ describe("endpoint write boundary", () => {
     const handler = main.indexOf(
       "const registerIrohaConnectConfirmationHandler",
     );
-    const senderBinding = main.indexOf("owner !== mainWindow", handler);
+    const senderBinding = main.indexOf(
+      "assertTrustedMainFrameIpcEvent(event)",
+      handler,
+    );
     const nativeDialog = main.indexOf(
       "dialog.showMessageBox(owner",
       senderBinding,
@@ -286,7 +252,7 @@ describe("endpoint write boundary", () => {
     );
     const action = between(
       "const postSubscriptionActionToTorii",
-      "const normalizeSoraCloudStorageClass",
+      "const fetchSoraCloudHfSharedLeaseStatusPayload",
     );
 
     expect(create.indexOf('operation: "POST /v1/subscriptions"')).toBeLessThan(
@@ -306,7 +272,7 @@ describe("endpoint write boundary", () => {
     );
     const action = between(
       "const postSubscriptionActionToTorii",
-      "const normalizeSoraCloudStorageClass",
+      "const fetchSoraCloudHfSharedLeaseStatusPayload",
     );
     for (const source of [create, action]) {
       expect(source.indexOf("postJson(")).toBeLessThan(

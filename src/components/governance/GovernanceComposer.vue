@@ -32,32 +32,18 @@
       </button>
     </div>
 
-    <div class="plain-mode">
-      <span class="mode-mark" aria-hidden="true"></span>
-      <div>
-        <strong>{{ t("Plain voting") }}</strong>
-        <p>
-          {{ t("The first release submits only reviewable plain referenda.") }}
-        </p>
-      </div>
-      <label>
-        <input type="checkbox" disabled />
-        {{ t("ZK") }}
-      </label>
-    </div>
-
-    <form class="composer-form" @submit.prevent="governance.prepareProposal">
-      <p class="window-safety span-2">
+    <section class="protocol-notice">
+      <strong>{{ t("Mandatory private Parliament") }}</strong>
+      <p>
         {{
           t(
-            "Before review, the wallet refreshes Taira and rebases this exact {span}-block window with a {margin}-block submission safety margin above the 600-block minimum.",
-            {
-              span: governance.capabilities?.windowSpan ?? 3_600,
-              margin: governance.proposalReviewSafetyMarginBlocks,
-            },
+            "Every binding ballot uses the timed-OVN threshold protocol. Proposal-backed PLAIN ballots are not supported.",
           )
         }}
       </p>
+    </section>
+
+    <form class="composer-form" @submit.prevent="governance.prepareProposal">
       <template
         v-if="governance.composerKind === 'ValidationFeePayoutLifecycle'"
       >
@@ -67,16 +53,9 @@
             <strong>{{ t("Step 1 of 2") }}</strong>
           </div>
           <div>
-            <span>{{ t("Voting mode") }}</span>
-            <strong>{{ t("PLAIN / finalized evidence") }}</strong>
+            <span>{{ t("Proposal operator") }}</span>
+            <strong class="mono">{{ shortValue(governance.accountId) }}</strong>
           </div>
-          <p>
-            {{
-              t(
-                "Citizens must approve this exact payout lifecycle and retain genuine finalized PLAIN evidence before native governance enactment and the 0.10 SBD policy.",
-              )
-            }}
-          </p>
         </section>
         <label class="span-2">
           {{ t("Exact treasury payout binding") }}
@@ -85,20 +64,6 @@
             class="mono payload-editor"
             spellcheck="false"
           ></textarea>
-        </label>
-        <label>
-          {{ t("Referendum start height") }}
-          <input
-            v-model.trim="governance.validationFeeLifecycleWindowLower"
-            inputmode="numeric"
-          />
-        </label>
-        <label>
-          {{ t("Referendum end height") }}
-          <input
-            v-model.trim="governance.validationFeeLifecycleWindowUpper"
-            inputmode="numeric"
-          />
         </label>
         <ul
           v-if="governance.validationFeePayoutLifecycleErrors.length"
@@ -128,7 +93,7 @@
           <div>
             <span>{{ t("Registry head") }}</span>
             <strong class="mono">{{
-              shortHash(
+              shortValue(
                 governance.validationFeePolicy?.registryHead?.policyHash,
               )
             }}</strong>
@@ -136,10 +101,11 @@
           <p v-if="governance.policyError">{{ governance.policyError }}</p>
         </section>
 
-        <label>
-          {{ t("Chain ID") }}
+        <label class="span-2">
+          {{ t("Network ID") }}
           <input
-            v-model.trim="governance.validationFeeComposer.chain_id"
+            v-model.trim="governance.validationFeeComposer.network_id"
+            class="mono"
             disabled
           />
         </label>
@@ -150,11 +116,11 @@
             disabled
           />
         </label>
-        <label class="span-2">
-          {{ t("Genesis hash") }}
+        <label>
+          {{ t("Fee amount") }}
           <input
-            v-model.trim="governance.validationFeeComposer.genesis_hash"
-            class="mono"
+            v-model.trim="governance.validationFeeComposer.fee"
+            inputmode="decimal"
             disabled
           />
         </label>
@@ -170,6 +136,7 @@
           {{ t("Fee asset ID") }}
           <input
             v-model.trim="governance.validationFeeComposer.ds_asset_id"
+            class="mono"
             disabled
           />
         </label>
@@ -178,32 +145,7 @@
           <input
             v-model.number="governance.validationFeeComposer.ds_scale"
             type="number"
-            min="2"
-            max="2"
-            step="1"
             disabled
-          />
-        </label>
-        <label>
-          {{ t("Fee amount") }}
-          <input
-            v-model.trim="governance.validationFeeComposer.fee"
-            inputmode="decimal"
-            disabled
-          />
-        </label>
-        <label>
-          {{ t("Referendum start height") }}
-          <input
-            v-model.trim="governance.validationFeeWindowLower"
-            inputmode="numeric"
-          />
-        </label>
-        <label>
-          {{ t("Referendum end height") }}
-          <input
-            v-model.trim="governance.validationFeeWindowUpper"
-            inputmode="numeric"
           />
         </label>
         <label>
@@ -213,12 +155,6 @@
               governance.validationFeeComposer.effective_from_height
             "
             inputmode="numeric"
-          />
-        </label>
-        <label class="span-2">
-          {{ t("Treasury account") }}
-          <input
-            v-model.trim="governance.validationFeeComposer.treasury_account_id"
           />
         </label>
         <label>
@@ -232,15 +168,18 @@
             "
           />
         </label>
-        <label>
-          {{ t("Exemption classes (comma-separated)") }}
-          <input v-model="governance.validationFeeExemptions" disabled />
+        <label class="span-2">
+          {{ t("Treasury account") }}
+          <input
+            v-model.trim="governance.validationFeeComposer.treasury_account_id"
+            class="mono"
+          />
         </label>
         <label class="span-2">
           {{ t("Enacted treasury payout binding") }}
           <textarea
             v-model="governance.validationFeePayoutBindingJson"
-            class="mono"
+            class="mono payload-editor"
             spellcheck="false"
           ></textarea>
         </label>
@@ -300,9 +239,9 @@ const governance = useParliamentStore();
 const { t } = useAppI18n();
 const adapters = GOVERNANCE_KIND_ADAPTERS;
 const supportedKinds = computed(() => governance.supportedComposerKinds);
-const shortHash = (value: string | null | undefined) => {
-  if (!value) return t("Genesis policy");
-  return value.length > 20 ? `${value.slice(0, 10)}…${value.slice(-7)}` : value;
+const shortValue = (value: string | null | undefined) => {
+  if (!value) return t("Unavailable");
+  return value.length > 24 ? `${value.slice(0, 12)}…${value.slice(-8)}` : value;
 };
 const canPrepare = computed(() => {
   if (
@@ -312,13 +251,9 @@ const canPrepare = computed(() => {
   ) {
     return false;
   }
-  if (governance.composerKind === "ValidationFeePayoutLifecycle") {
-    return governance.validationFeePayoutLifecycleErrors.length === 0;
-  }
-  if (governance.composerKind === "ValidationFeePolicy") {
-    return governance.validationFeeComposerErrors.length === 0;
-  }
-  return governance.supportedComposerKinds.includes(governance.composerKind);
+  return governance.composerKind === "ValidationFeePayoutLifecycle"
+    ? governance.validationFeePayoutLifecycleErrors.length === 0
+    : governance.validationFeeComposerErrors.length === 0;
 });
 </script>
 
@@ -351,49 +286,40 @@ const canPrepare = computed(() => {
   background: var(--color-accent-soft);
 }
 
-.kind-selector strong {
+.kind-selector strong,
+.policy-provenance strong {
   font-size: 0.75rem;
 }
 
-.kind-selector span {
+.kind-selector span,
+.policy-provenance span {
   color: var(--color-text-muted);
   font-size: 0.64rem;
-  line-height: 1.4;
 }
 
-.plain-mode {
-  margin: 15px 0;
-  padding: 11px 12px;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 10px;
+.protocol-notice,
+.policy-provenance {
+  padding: 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
   background: var(--color-surface-inset);
 }
 
-.mode-mark {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-accent);
+.protocol-notice {
+  margin: 15px 0;
 }
 
-.plain-mode strong {
-  font-size: 0.72rem;
+.protocol-notice strong {
+  color: var(--color-accent);
+  font-size: 0.74rem;
 }
 
-.plain-mode p {
-  margin: 2px 0 0;
+.protocol-notice p,
+.policy-provenance p {
+  margin: 5px 0 0;
   color: var(--color-text-muted);
-  font-size: 0.62rem;
-}
-
-.plain-mode label {
-  display: flex;
-  align-items: center;
-  gap: 5px;
+  font-size: 0.64rem;
+  line-height: 1.5;
 }
 
 .composer-form {
@@ -402,11 +328,19 @@ const canPrepare = computed(() => {
   gap: 12px;
 }
 
-.window-safety {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: 0.64rem;
-  line-height: 1.5;
+.policy-provenance {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.policy-provenance > div {
+  display: grid;
+  gap: 4px;
+}
+
+.policy-provenance p {
+  grid-column: 1 / -1;
 }
 
 label {
@@ -427,69 +361,36 @@ textarea {
   font-size: 0.72rem;
 }
 
-textarea {
-  min-height: 88px;
+.payload-editor {
+  min-height: 120px;
   resize: vertical;
 }
 
-.payload-editor {
-  min-height: 210px;
+.validation-errors {
+  margin: 0;
+  padding: 11px 11px 11px 29px;
+  border: 1px solid
+    color-mix(in srgb, var(--color-danger) 35%, var(--color-border));
+  border-radius: var(--radius-control);
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 7%, transparent);
+  font-size: 0.65rem;
+  line-height: 1.5;
 }
 
 .mono {
   font-family: var(--mono-font);
 }
 
-.policy-provenance {
-  padding: 11px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-surface-soft);
-}
-
-.policy-provenance div {
-  display: grid;
-  gap: 4px;
-}
-
-.policy-provenance span {
-  color: var(--color-text-muted);
-  font-size: 0.63rem;
-}
-
-.policy-provenance strong {
-  overflow-wrap: anywhere;
-  font-size: 0.7rem;
-}
-
-.policy-provenance p {
-  grid-column: span 2;
-  margin: 0;
-  color: var(--color-warning);
-  font-size: 0.65rem;
-}
-
-.validation-errors {
-  margin: 0;
-  padding: 10px 10px 10px 27px;
-  border: 1px solid
-    color-mix(in srgb, var(--color-warning) 35%, var(--color-border));
-  border-radius: var(--radius-control);
-  color: var(--color-warning);
-  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
-  font-size: 0.67rem;
-}
-
-@media (max-width: 560px) {
+@media (max-width: 620px) {
   .kind-selector,
-  .composer-form {
+  .composer-form,
+  .policy-provenance {
     grid-template-columns: 1fr;
   }
 
-  .span-2 {
+  .span-2,
+  .policy-provenance p {
     grid-column: auto;
   }
 }

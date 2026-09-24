@@ -177,12 +177,7 @@
         </label>
         <p class="transaction-fee-note subscription-span-2">
           <span>{{ t("Fee") }}</span>
-          <strong>{{
-            formatTransactionFee(
-              transactionFeeHintForEndpoint(session.connection.toriiUrl),
-              t,
-            )
-          }}</strong>
+          <strong>{{ formatTransactionFee(null, t) }}</strong>
         </p>
         <button
           type="submit"
@@ -346,12 +341,7 @@
           </div>
           <p class="transaction-fee-note">
             <span>{{ t("Fee") }}</span>
-            <strong>{{
-              formatTransactionFee(
-                transactionFeeHintForEndpoint(session.connection.toriiUrl),
-                t,
-              )
-            }}</strong>
+            <strong>{{ formatTransactionFee(null, t) }}</strong>
           </p>
           <div class="subscription-actions">
             <button
@@ -467,7 +457,6 @@ import { deriveAssetSymbol } from "@/utils/assetId";
 import {
   appendTransactionFee,
   formatTransactionFee,
-  transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
 
 const subscriptions = useSubscriptionStore();
@@ -614,6 +603,7 @@ const currentSubscriptionContext = () => {
     networkPrefix: session.connection.networkPrefix,
     observedChainId: inspection?.observed?.chainId?.trim() ?? "",
     observedNetworkPrefix: inspection?.observed?.networkPrefix ?? null,
+    observedGenesisHash: inspection?.observed?.genesisHash ?? "",
     identityStatus: inspection?.identityStatus ?? "uninspected",
   };
 };
@@ -963,9 +953,8 @@ const subscribe = async () => {
         })} · ${t("Block {height}", {
           height: result.finality.blockHeight,
         })}`,
-        result,
+        result.feeQuote,
         t,
-        transactionFeeHintForEndpoint(context.toriiUrl),
       ),
       result,
     );
@@ -1044,9 +1033,8 @@ const runRecordAction = async (
         })} · ${t("Block {height}", {
           height: result.finality.blockHeight,
         })}`,
-        result,
+        result.feeQuote,
         t,
-        transactionFeeHintForEndpoint(context.toriiUrl),
       ),
       result,
     );
@@ -1090,9 +1078,8 @@ const reconcilePendingTransaction = async (
         `${message} · ${t("Block {height}", {
           height: result.finality.blockHeight,
         })}`,
-        result,
+        result.feeQuote,
         t,
-        transactionFeeHintForEndpoint(context.toriiUrl),
       ),
       result,
     );

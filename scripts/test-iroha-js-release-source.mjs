@@ -42,6 +42,7 @@ import {
   REVIEWED_NATIVE_SIZE,
   REVIEWED_SIGNING_INDEPENDENT_SHA256,
   SOURCE_MARKER_SCHEMA,
+  resolveCanonicalGitProgram,
   verifyInstalledReleaseDependencies,
 } from "./iroha-js-release-source.mjs";
 
@@ -116,7 +117,7 @@ try {
 }
 
 function git(args) {
-  const result = spawnSync("/usr/bin/git", args, {
+  const result = spawnSync(resolveCanonicalGitProgram(), args, {
     encoding: "utf8",
     env: {
       ...process.env,

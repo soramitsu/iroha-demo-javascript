@@ -376,6 +376,12 @@ describe("durable governance validation-fee finality", () => {
       }),
     ).not.toThrow();
 
+    const assetFrame = {
+      url: "iroha-app://renderer/assets/index.js#/parliament",
+    };
+    const queryFrame = {
+      url: "iroha-app://renderer/index.html?debug=1#/parliament",
+    };
     for (const rejected of [
       {
         ownerMatchesMainWindow: false,
@@ -391,6 +397,16 @@ describe("durable governance validation-fee finality", () => {
         ownerMatchesMainWindow: true,
         senderFrame: { url: "https://attacker.example" },
         mainFrame: topFrame,
+      },
+      {
+        ownerMatchesMainWindow: true,
+        senderFrame: assetFrame,
+        mainFrame: assetFrame,
+      },
+      {
+        ownerMatchesMainWindow: true,
+        senderFrame: queryFrame,
+        mainFrame: queryFrame,
       },
     ]) {
       expect(() =>
@@ -436,8 +452,9 @@ describe("durable governance validation-fee finality", () => {
     expect(main).toContain(
       "finalityStore: governanceValidationFeeFinalityStore",
     );
+    expect(main).toContain("fetcher: nodeFetch");
     expect(preload).toContain(
-      "ipcRenderer.invoke(\n    GOVERNANCE_VALIDATION_FEE_POLICY_IPC_CHANNEL",
+      "parseGovernanceValidationFeePolicyView(\n    await ipcRenderer.invoke(GOVERNANCE_VALIDATION_FEE_POLICY_IPC_CHANNEL)",
     );
     expect(preload).not.toContain("promoteValidationFeeFinality");
     expect(preload).not.toContain("trustScopeHash");

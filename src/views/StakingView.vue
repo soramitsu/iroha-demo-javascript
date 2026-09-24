@@ -331,12 +331,7 @@
           <div class="staking-action-footer">
             <p class="transaction-fee-note">
               <span>{{ t("Fee") }}</span>
-              <strong>{{
-                formatTransactionFee(
-                  transactionFeeHintForEndpoint(session.connection.toriiUrl),
-                  t,
-                )
-              }}</strong>
+              <strong>{{ formatTransactionFee(null, t) }}</strong>
             </p>
             <button
               data-ui-primary-action
@@ -388,12 +383,7 @@
           <div class="staking-action-footer">
             <p class="transaction-fee-note">
               <span>{{ t("Fee") }}</span>
-              <strong>{{
-                formatTransactionFee(
-                  transactionFeeHintForEndpoint(session.connection.toriiUrl),
-                  t,
-                )
-              }}</strong>
+              <strong>{{ formatTransactionFee(null, t) }}</strong>
             </p>
             <button
               data-ui-primary-action
@@ -537,12 +527,7 @@
           <div class="staking-action-footer">
             <p class="transaction-fee-note">
               <span>{{ t("Fee") }}</span>
-              <strong>{{
-                formatTransactionFee(
-                  transactionFeeHintForEndpoint(session.connection.toriiUrl),
-                  t,
-                )
-              }}</strong>
+              <strong>{{ formatTransactionFee(null, t) }}</strong>
             </p>
             <button
               data-ui-primary-action
@@ -704,12 +689,7 @@
         </div>
         <p class="transaction-fee-note">
           <span>{{ t("Fee") }}</span>
-          <strong>{{
-            formatTransactionFee(
-              transactionFeeHintForEndpoint(session.connection.toriiUrl),
-              t,
-            )
-          }}</strong>
+          <strong>{{ formatTransactionFee(null, t) }}</strong>
         </p>
       </section>
     </details>
@@ -766,7 +746,6 @@ import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 import {
   appendTransactionFee,
   formatTransactionFee,
-  transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
 import { assertFinalizedSubmissionResult } from "@/utils/transactionFinality";
 
@@ -1294,6 +1273,7 @@ const resetBootstrapState = () => {
 
 const loadLaneData = async () => {
   const toriiUrl = session.connection.toriiUrl;
+  const networkPrefix = session.connection.networkPrefix;
   const accountId = stakerAccountId.value;
   const currentLaneId = laneId.value;
   if (!toriiUrl || !accountId || currentLaneId === null) {
@@ -1326,6 +1306,7 @@ const loadLaneData = async () => {
       }),
       getNexusPublicLaneRewards({
         toriiUrl,
+        networkPrefix,
         laneId: currentLaneId,
         account: accountId,
       }),
@@ -1377,12 +1358,14 @@ const loadLaneData = async () => {
       nextValidator
         ? getNexusPublicLaneStake({
             toriiUrl,
+            networkPrefix,
             laneId: currentLaneId,
             validator: nextValidator,
           })
         : Promise.resolve(null),
       getNexusPublicLaneStake({
         toriiUrl,
+        networkPrefix,
         laneId: currentLaneId,
       }),
     ]);
@@ -1448,6 +1431,7 @@ const loadLaneData = async () => {
 
 const refresh = async () => {
   const toriiUrl = session.connection.toriiUrl;
+  const networkPrefix = session.connection.networkPrefix;
   const accountId = activeAccount.value?.accountId;
   if (!toriiUrl || !accountId) {
     refreshGeneration.value += 1;
@@ -1491,6 +1475,7 @@ const refresh = async () => {
       fetchAccountAssets({
         toriiUrl,
         accountId,
+        networkPrefix,
         limit: 200,
       }),
     ]);
@@ -1640,7 +1625,6 @@ const handleBond = () =>
       stakeAccountId: activeAccount.value.accountId,
       validator: selectedValidator.value,
       amount,
-      privateKeyHex: activeAccount.value.privateKeyHex,
     });
     assertFinalizedSubmissionResult(result);
     bondAmount.value = "";
@@ -1649,9 +1633,8 @@ const handleBond = () =>
         block: result.finality.blockHeight,
         hash: result.hash,
       }),
-      result,
+      result.feeQuote,
       t,
-      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
   });
 
@@ -1687,7 +1670,6 @@ const handleRegisterValidator = () =>
       peerId: operatorPeerId.value,
       selfStake: amount,
       metadata,
-      privateKeyHex: activeAccount.value.privateKeyHex,
     });
     assertFinalizedSubmissionResult(result);
     operatorSelfStake.value = "";
@@ -1697,9 +1679,8 @@ const handleRegisterValidator = () =>
         block: result.finality.blockHeight,
         hash: result.hash,
       }),
-      result,
+      result.feeQuote,
       t,
-      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
   });
 
@@ -1734,7 +1715,6 @@ const handleScheduleUnbond = () =>
       amount,
       requestId,
       releaseAtMs,
-      privateKeyHex: activeAccount.value.privateKeyHex,
     });
     assertFinalizedSubmissionResult(result);
     unbondAmount.value = "";
@@ -1748,9 +1728,8 @@ const handleScheduleUnbond = () =>
           hash: result.hash,
         },
       ),
-      result,
+      result.feeQuote,
       t,
-      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
   });
 
@@ -1770,7 +1749,6 @@ const handleFinalizeUnbond = () =>
       stakeAccountId: activeAccount.value.accountId,
       validator: selectedValidator.value,
       requestId: selectedFinalizeRequestId.value,
-      privateKeyHex: activeAccount.value.privateKeyHex,
     });
     assertFinalizedSubmissionResult(result);
     return appendTransactionFee(
@@ -1778,9 +1756,8 @@ const handleFinalizeUnbond = () =>
         block: result.finality.blockHeight,
         hash: result.hash,
       }),
-      result,
+      result.feeQuote,
       t,
-      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
   });
 
@@ -1798,7 +1775,6 @@ const handleClaimRewards = () =>
       networkPrefix: session.connection.networkPrefix,
       stakeAccountId: activeAccount.value.accountId,
       validator: selectedValidator.value,
-      privateKeyHex: activeAccount.value.privateKeyHex,
     });
     assertFinalizedSubmissionResult(result);
     return appendTransactionFee(
@@ -1806,9 +1782,8 @@ const handleClaimRewards = () =>
         block: result.finality.blockHeight,
         hash: result.hash,
       }),
-      result,
+      result.feeQuote,
       t,
-      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
   });
 
@@ -1842,6 +1817,7 @@ watch(
       return;
     }
     const toriiUrl = session.connection.toriiUrl;
+    const networkPrefix = session.connection.networkPrefix;
     const accountId = stakerAccountId.value;
     const currentLaneId = laneId.value;
     if (
@@ -1862,6 +1838,7 @@ watch(
     try {
       const nextStakeResponse = await getNexusPublicLaneStake({
         toriiUrl,
+        networkPrefix,
         laneId: currentLaneId,
         validator: next,
       });
@@ -2413,15 +2390,15 @@ watch(
 }
 
 .message.success {
-  border: 1px solid color-mix(in srgb, var(--qs-success) 40%, transparent);
-  background: var(--qs-success-soft);
-  color: var(--qs-success);
+  border: 1px solid color-mix(in srgb, var(--color-success) 40%, transparent);
+  background: var(--color-success-soft);
+  color: var(--color-success);
 }
 
 .message.error {
-  border: 1px solid color-mix(in srgb, var(--qs-danger) 42%, transparent);
-  background: var(--qs-danger-soft);
-  color: var(--qs-danger);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 42%, transparent);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
 }
 
 .mono {

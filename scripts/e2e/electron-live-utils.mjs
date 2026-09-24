@@ -165,12 +165,10 @@ export function resolveOptionalAliasRegistrationOutcome(status, detail) {
 const defaultOnboardingAlias = "e2e-onboarding-shared@universal";
 const defaultOnboardingPrivateKeyHex =
   "c1f4e0837b224bf67dd4bd8fb94f8f78e6d1856e6f6a2f89f5cb9184160a95c7";
-const defaultOnboardingOfflineBalance = "100";
 const defaultFundedDomain = "default";
 const deprecatedOnboardingEnvVarMap = {
   E2E_STATEFUL_ALIAS: "E2E_ONBOARDING_ALIAS",
   E2E_STATEFUL_PRIVATE_KEY_HEX: "E2E_ONBOARDING_PRIVATE_KEY_HEX",
-  E2E_STATEFUL_OFFLINE_BALANCE: "E2E_ONBOARDING_OFFLINE_BALANCE",
 };
 const deprecatedOnboardingEnvVarNames = Object.keys(
   deprecatedOnboardingEnvVarMap,
@@ -193,6 +191,15 @@ function normalizeFundedWalletDomain(domain) {
 }
 
 export function parseOnboardingEnvConfig(env = process.env) {
+  const unsupportedOfflineEnvVars = [
+    "E2E_ONBOARDING_OFFLINE_BALANCE",
+    "E2E_STATEFUL_OFFLINE_BALANCE",
+  ].filter((name) => String(env?.[name] ?? "").trim());
+  if (unsupportedOfflineEnvVars.length) {
+    throw new Error(
+      `Offline wallet E2E configuration is not supported in the first release: ${unsupportedOfflineEnvVars.join(", ")}.`,
+    );
+  }
   const deprecated = deprecatedOnboardingEnvVarNames.filter((name) =>
     String(env?.[name] ?? "").trim(),
   );
@@ -213,25 +220,14 @@ export function parseOnboardingEnvConfig(env = process.env) {
     String(env?.E2E_ONBOARDING_PRIVATE_KEY_HEX ?? "").trim() ||
     defaultOnboardingPrivateKeyHex
   ).toLowerCase();
-  const offlineBalance =
-    String(env?.E2E_ONBOARDING_OFFLINE_BALANCE ?? "").trim() ||
-    defaultOnboardingOfflineBalance;
-
   if (!/^[0-9a-f]{64}$/i.test(privateKeyHex)) {
     throw new Error(
       "E2E_ONBOARDING_PRIVATE_KEY_HEX must be a 64-character hexadecimal string.",
     );
   }
-  if (!Number.isFinite(Number(offlineBalance)) || Number(offlineBalance) <= 0) {
-    throw new Error(
-      "E2E_ONBOARDING_OFFLINE_BALANCE must be a positive numeric string.",
-    );
-  }
-
   return {
     alias,
     privateKeyHex,
-    offlineBalance,
   };
 }
 

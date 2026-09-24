@@ -1,80 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
-  ballotDirectionToCode,
-  canonicalizeProposalId,
-  extractProposalIdFromReferendum,
-  hasGovernancePermission,
   isRegisteredGovernanceCitizen,
-  isPositiveInteger,
-  isPositiveWholeNumberString,
-  isValidProposalId,
-  listGovernancePermissions,
-  parseParliamentHistory,
-  pushRecentValue,
   resolveGovernanceBondBalance,
   resolveGovernanceCitizenCount,
-  resolveXorBalance,
 } from "@/utils/parliament";
 
-describe("parliament utilities", () => {
-  it("prefers Torii-resolved XOR asset IDs, then exact XOR aliases, without guessing", () => {
-    expect(
-      resolveXorBalance(
-        [
-          {
-            asset_id: "norito:abcdef0123456789",
-            quantity: "7",
-          },
-          {
-            asset_id: "norito:9876543210fedcba",
-            quantity: "42",
-          },
-        ],
-        ["norito:9876543210fedcba"],
-      ),
-    ).toBe("42");
-
-    expect(
-      resolveXorBalance([
-        {
-          asset_id: "norito:abcdef0123456789##alice@wonderland",
-          quantity: "150",
-        },
-        {
-          asset_id: "XOR#wonderland##alice@wonderland",
-          quantity: "42",
-        },
-      ]),
-    ).toBe("0");
-
-    expect(
-      resolveXorBalance([
-        {
-          asset_id: "norito:abcdef0123456789xorfeed",
-          quantity: "21",
-        },
-      ]),
-    ).toBe("0");
-
-    expect(
-      resolveXorBalance([
-        {
-          asset_id: "norito:abcdef0123456789",
-          quantity: "7",
-        },
-      ]),
-    ).toBe("0");
-
-    expect(resolveXorBalance([])).toBe("0");
-  });
-
-  it("resolves governance bond balance from the configured citizenship asset exactly", () => {
+describe("current Parliament utilities", () => {
+  it("resolves the governance bond from only the configured citizenship asset", () => {
     expect(
       resolveGovernanceBondBalance(
         [
           {
             asset_id: "xor#universal##alice@wonderland",
-            quantity: "0",
+            quantity: "1",
           },
           {
             asset_id: "5PgFjEiWr1iqE2a7Wp1R2gB4eVEB#alice@wonderland",
@@ -82,143 +20,31 @@ describe("parliament utilities", () => {
           },
         ],
         "5PgFjEiWr1iqE2a7Wp1R2gB4eVEB",
-        ["xor#universal"],
       ),
     ).toBe("25000");
-
     expect(
       resolveGovernanceBondBalance(
-        [
-          {
-            asset_id: "xor#universal##alice@wonderland",
-            quantity: "25000",
-          },
-        ],
+        [{ asset_id: "xor#universal", quantity: "25000" }],
         "5PgFjEiWr1iqE2a7Wp1R2gB4eVEB",
-        ["xor#universal"],
       ),
     ).toBe("0");
-
-    expect(
-      resolveGovernanceBondBalance(
-        [
-          {
-            asset_id: "xor#universal##alice@wonderland",
-            quantity: "25000",
-          },
-        ],
-        null,
-        ["xor#universal"],
-      ),
-    ).toBe("25000");
+    expect(resolveGovernanceBondBalance([], null)).toBe("0");
   });
 
-  it("deduplicates and sorts permission names", () => {
-    const permissions = [
-      { name: "CanSubmitGovernanceBallot", payload: null },
-      { name: "CanManageParliament", payload: null },
-      { name: "CanSubmitGovernanceBallot", payload: null },
-    ];
-
-    expect(listGovernancePermissions(permissions)).toEqual([
-      "CanManageParliament",
-      "CanSubmitGovernanceBallot",
-    ]);
-    expect(
-      hasGovernancePermission(permissions, "CanSubmitGovernanceBallot"),
-    ).toBe(true);
-    expect(hasGovernancePermission(permissions, "CanEnactGovernance")).toBe(
-      false,
-    );
-  });
-
-  it("resolves citizen state and count from governance payloads", () => {
-    expect(
-      isRegisteredGovernanceCitizen({
-        state: "citizen",
-      }),
-    ).toBe(true);
-    expect(
-      isRegisteredGovernanceCitizen({
-        state: "not-citizen",
-      }),
-    ).toBe(false);
-    expect(
-      isRegisteredGovernanceCitizen({
-        state: "unavailable",
-      }),
-    ).toBe(false);
+  it("keeps unavailable citizenship distinct from not-citizen", () => {
+    expect(isRegisteredGovernanceCitizen({ state: "citizen" })).toBe(true);
+    expect(isRegisteredGovernanceCitizen({ state: "not-citizen" })).toBe(false);
+    expect(isRegisteredGovernanceCitizen({ state: "unavailable" })).toBe(false);
     expect(isRegisteredGovernanceCitizen(null)).toBe(false);
+  });
 
+  it("accepts only exact safe integer citizen counts", () => {
     expect(resolveGovernanceCitizenCount({ total: 12 })).toBe(12);
-    expect(resolveGovernanceCitizenCount({ total: 12.9 })).toBe(12);
     expect(resolveGovernanceCitizenCount({ total: 0 })).toBe(0);
+    expect(resolveGovernanceCitizenCount({ total: 12.9 })).toBeNull();
+    expect(
+      resolveGovernanceCitizenCount({ total: Number.MAX_VALUE }),
+    ).toBeNull();
     expect(resolveGovernanceCitizenCount(null)).toBeNull();
-  });
-
-  it("maps ballot directions to instruction codes", () => {
-    expect(ballotDirectionToCode("Aye")).toBe(0);
-    expect(ballotDirectionToCode("Nay")).toBe(1);
-    expect(ballotDirectionToCode("Abstain")).toBe(2);
-  });
-
-  it("normalizes and validates proposal ids", () => {
-    const raw = "A".repeat(64);
-    expect(canonicalizeProposalId(raw)).toBe(`0x${"a".repeat(64)}`);
-    expect(canonicalizeProposalId(`0x${raw}`)).toBe(`0x${"a".repeat(64)}`);
-    expect(isValidProposalId(`0x${"f".repeat(64)}`)).toBe(true);
-    expect(isValidProposalId("ref-1")).toBe(false);
-  });
-
-  it("extracts proposal id hints from referendum payloads", () => {
-    const direct = extractProposalIdFromReferendum({
-      proposal_id: `0x${"1".repeat(64)}`,
-    });
-    const nested = extractProposalIdFromReferendum({
-      proposal: {
-        id: `${"2".repeat(64)}`,
-      },
-    });
-    const invalid = extractProposalIdFromReferendum({
-      proposal_id: "ref-1",
-    });
-
-    expect(direct).toBe(`0x${"1".repeat(64)}`);
-    expect(nested).toBe(`0x${"2".repeat(64)}`);
-    expect(invalid).toBeNull();
-  });
-
-  it("deduplicates and bounds recent history entries", () => {
-    const recents = pushRecentValue(["ref-2", "ref-1"], "ref-2", 3);
-    expect(recents).toEqual(["ref-2", "ref-1"]);
-
-    const parsed = parseParliamentHistory({
-      referenda: ["ref-3", "ref-2", "ref-2", "ref-1"],
-      proposals: [
-        `0x${"a".repeat(64)}`,
-        `${"b".repeat(64)}`,
-        "not-a-proposal-id",
-        `0x${"a".repeat(64)}`,
-      ],
-    });
-    expect(parsed.referenda).toEqual(["ref-3", "ref-2", "ref-1"]);
-    expect(parsed.proposals).toEqual([
-      `0x${"a".repeat(64)}`,
-      `0x${"b".repeat(64)}`,
-    ]);
-  });
-
-  it("validates positive whole-number and integer inputs", () => {
-    expect(isPositiveWholeNumberString("10000")).toBe(true);
-    expect(isPositiveWholeNumberString(" 42 ")).toBe(true);
-    expect(isPositiveWholeNumberString("0")).toBe(false);
-    expect(isPositiveWholeNumberString("10.5")).toBe(false);
-    expect(isPositiveWholeNumberString("abc")).toBe(false);
-
-    expect(isPositiveInteger(1)).toBe(true);
-    expect(isPositiveInteger(7200)).toBe(true);
-    expect(isPositiveInteger(0)).toBe(false);
-    expect(isPositiveInteger(-5)).toBe(false);
-    expect(isPositiveInteger(1.2)).toBe(false);
   });
 });

@@ -120,12 +120,7 @@
       <div class="vpn-control-footer">
         <p v-if="canOperate" class="transaction-fee-note">
           <span>{{ t("Fee") }}</span>
-          <strong>{{
-            formatTransactionFee(
-              transactionFeeHintForEndpoint(session.connection.toriiUrl),
-              t,
-            )
-          }}</strong>
+          <strong>{{ formatTransactionFee(null, t) }}</strong>
         </p>
         <p
           v-if="!vpnSessionWritesAvailable"
@@ -334,7 +329,7 @@ import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
 import { useVpnStore } from "@/stores/vpn";
 import type {
-  VpnAuthContext,
+  VpnConnectionContext,
   VpnAvailability,
   VpnExitClass,
   VpnProfile,
@@ -343,10 +338,7 @@ import type {
 } from "@/types/iroha";
 import { getPublicAccountId } from "@/utils/accountId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
-import {
-  formatTransactionFee,
-  transactionFeeHintForEndpoint,
-} from "@/utils/transactionFee";
+import { formatTransactionFee } from "@/utils/transactionFee";
 
 const session = useSessionStore();
 const endpointStore = useEndpointStore();
@@ -388,11 +380,8 @@ const emptyStatus = (): VpnStatus => ({
 });
 
 const activeAccount = computed(() => session.activeAccount);
-const requestAccountId = computed(
-  () =>
-    getPublicAccountId(activeAccount.value, session.connection.networkPrefix) ||
-    activeAccount.value?.accountId ||
-    "",
+const requestAccountId = computed(() =>
+  getPublicAccountId(activeAccount.value, session.connection.networkPrefix),
 );
 const toriiUrl = computed(() => session.connection.toriiUrl);
 const availability = ref<VpnAvailability | null>(vpnStore.helperHealth);
@@ -431,7 +420,7 @@ const canOperate = computed(() =>
   Boolean(toriiUrl.value && requestAccountId.value),
 );
 
-const authContext = computed<Partial<VpnAuthContext> | undefined>(() => {
+const authContext = computed<VpnConnectionContext | undefined>(() => {
   if (!toriiUrl.value || !requestAccountId.value) {
     return undefined;
   }
@@ -481,7 +470,7 @@ const potentiallyLiveTunnel = computed(
       "connected",
       "disconnecting",
       "reconciling",
-      "remote-delete-pending",
+      "remote-expiry-pending",
     ].includes(status.value.state),
 );
 
@@ -612,8 +601,8 @@ const connectionStateLabel = computed(() => {
       return "VPN disconnecting";
     case "reconciling":
       return "VPN reconciling";
-    case "remote-delete-pending":
-      return "VPN remote cleanup pending";
+    case "remote-expiry-pending":
+      return "VPN remote lease expiry pending";
     case "repair-needed":
       return "VPN repair required";
     case "error":
@@ -868,7 +857,6 @@ const handleConnect = async () => {
       chainId: session.connection.chainId,
       accountId: requestAccountId.value,
       networkPrefix: session.connection.networkPrefix,
-      privateKeyHex: activeAccount.value.privateKeyHex,
       exitClass: selectedExitClass.value,
     });
     await refreshReceiptsOnly();
@@ -894,7 +882,6 @@ const handleDisconnect = async () => {
             chainId: session.connection.chainId,
             accountId: requestAccountId.value,
             networkPrefix: session.connection.networkPrefix,
-            privateKeyHex: activeAccount.value.privateKeyHex,
           })
         : await disconnectVpn();
     await refreshReceiptsOnly();

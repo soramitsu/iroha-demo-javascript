@@ -18,9 +18,36 @@ const getConfidentialAssetBalanceMock = vi.fn();
 const scanConfidentialWalletMock = vi.fn();
 const requestFaucetFundsMock = vi.fn();
 const cancelFaucetRequestMock = vi.fn();
-const getConfidentialAssetPolicyMock = vi.fn();
 const getGovernanceCitizenStatusMock = vi.fn();
-const transferAssetMock = vi.fn();
+const REKEYED_TAIRA_ACCOUNT_ID = "testuLegacyVisibleAccount1234567890";
+const REKEYED_MINAMOTO_ACCOUNT_ID = "sorauLegacyVisibleAccount1234567890";
+const ALICE_ACCOUNT_ID = "testuAliceCanonicalAccount1234567890";
+const BOB_ACCOUNT_ID = "testuBobCanonicalAccount1234567890";
+const XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const OTHER_ASSET_DEFINITION_ID = "61CtjvNd9T3THAR65GsMVHr82Bjc";
+const STALE_ASSET_DEFINITION_ID = "5PeSrQmLNwwKtruJvDZrbrm9RuMw";
+const CACHED_ASSET_DEFINITION_ID = "62Fk4FPcMuLvW5QjDGNF2a4jAmjM";
+const ALICE_XOR_HOLDING_ID = `${XOR_ASSET_DEFINITION_ID}#${ALICE_ACCOUNT_ID}`;
+const BOB_XOR_HOLDING_ID = `${XOR_ASSET_DEFINITION_ID}#${BOB_ACCOUNT_ID}`;
+const ALICE_OTHER_HOLDING_ID = `${OTHER_ASSET_DEFINITION_ID}#${ALICE_ACCOUNT_ID}`;
+
+const installAccountAddressDeriver = () => {
+  (window as unknown as { iroha: Record<string, unknown> }).iroha = {
+    deriveAccountAddress: (input: { networkPrefix: number }) => {
+      const accountId =
+        input.networkPrefix === 369
+          ? REKEYED_TAIRA_ACCOUNT_ID
+          : REKEYED_MINAMOTO_ACCOUNT_ID;
+      return {
+        accountId,
+        i105AccountId: accountId,
+        i105DefaultAccountId: REKEYED_MINAMOTO_ACCOUNT_ID,
+        publicKeyHex: "ab".repeat(32),
+        accountIdWarning: "",
+      };
+    },
+  };
+};
 
 type FaucetResponseFixture = {
   account_id: string;
@@ -46,8 +73,6 @@ vi.mock("@/services/iroha", () => ({
   getConfidentialAssetBalance: (input: unknown) =>
     getConfidentialAssetBalanceMock(input),
   scanConfidentialWallet: (input: unknown) => scanConfidentialWalletMock(input),
-  getConfidentialAssetPolicy: (input: unknown) =>
-    getConfidentialAssetPolicyMock(input),
   getGovernanceCitizenStatus: (input: unknown) =>
     getGovernanceCitizenStatusMock(input),
   requestFaucetFunds: (
@@ -62,13 +87,6 @@ vi.mock("@/services/iroha", () => ({
       }),
     ),
   cancelFaucetRequest: (input: unknown) => cancelFaucetRequestMock(input),
-  transferAsset: (input: unknown) =>
-    Promise.resolve(transferAssetMock(input)).then(
-      (result: { hash: string; finality?: unknown }) => ({
-        ...result,
-        finality: result.finality ?? finalityFor(result.hash),
-      }),
-    ),
 }));
 
 const t = (key: string, params?: Record<string, string | number>) =>
@@ -80,15 +98,13 @@ const endpointFeatures = (supported: boolean): EndpointFeatureMap => {
     "accountOnboarding",
     "assetTransfers",
     "faucetClaim",
-    "confidentialTransfers",
     "kaigiMeetings",
     "governanceWrites",
     "stakingWrites",
     "subscriptionWrites",
-    "soraCloudDeploy",
+    "soraCloudHfSharedLease",
     "vpnSessions",
     "irohaConnectSessions",
-    "zkProofJobs",
   ];
   return Object.fromEntries(
     features.map((feature) => [
@@ -117,7 +133,7 @@ const confidentialBalanceFixture = (
     trackedAssetIds: string[];
   }> = {},
 ) => ({
-  resolvedAssetId: "xor#universal",
+  resolvedAssetId: XOR_ASSET_DEFINITION_ID,
   quantity: "0",
   onChainQuantity: "0",
   spendableQuantity: "0",
@@ -126,7 +142,7 @@ const confidentialBalanceFixture = (
   scanStatus: "complete" as const,
   scanWatermarkBlock: null,
   recoveredNoteCount: 0,
-  trackedAssetIds: ["xor#universal"],
+  trackedAssetIds: [XOR_ASSET_DEFINITION_ID],
   ...overrides,
 });
 
@@ -135,6 +151,7 @@ describe("WalletView", () => {
     document.body.querySelector<HTMLDialogElement>("dialog.ui-dialog[open]");
 
   beforeEach(() => {
+    delete (window as unknown as { iroha?: unknown }).iroha;
     document.body
       .querySelectorAll("dialog.ui-dialog")
       .forEach((dialog) => dialog.remove());
@@ -144,9 +161,7 @@ describe("WalletView", () => {
     scanConfidentialWalletMock.mockReset();
     requestFaucetFundsMock.mockReset();
     cancelFaucetRequestMock.mockReset();
-    getConfidentialAssetPolicyMock.mockReset();
     getGovernanceCitizenStatusMock.mockReset();
-    transferAssetMock.mockReset();
     cancelFaucetRequestMock.mockResolvedValue({ canceled: true });
     fetchAccountAssetsMock.mockResolvedValue({
       items: [],
@@ -167,21 +182,9 @@ describe("WalletView", () => {
         scanWatermarkBlock: 42,
       }),
     );
-    getConfidentialAssetPolicyMock.mockImplementation(
-      async (input: { assetDefinitionId?: string }) => ({
-        asset_id: String(input?.assetDefinitionId ?? "xor#universal"),
-        block_height: 1,
-        current_mode: "Convertible",
-        effective_mode: "Convertible",
-        vk_set_hash: null,
-        poseidon_params_id: null,
-        pedersen_params_id: null,
-        pending_transition: null,
-      }),
-    );
     getGovernanceCitizenStatusMock.mockResolvedValue({
       state: "not-citizen",
-      accountId: "alice@wonderland",
+      accountId: "testuAliceCanonicalAccount1234567890",
       amount: null,
       bondedHeight: null,
       seatsInEpoch: null,
@@ -196,7 +199,7 @@ describe("WalletView", () => {
   });
 
   const mountView = (
-    assetDefinitionId = "xor#wonderland",
+    assetDefinitionId = XOR_ASSET_DEFINITION_ID,
     options?: {
       localOnly?: boolean;
       connection?: Partial<{
@@ -212,7 +215,6 @@ describe("WalletView", () => {
         i105AccountId: string;
         i105DefaultAccountId: string;
         publicKeyHex: string;
-        privateKeyHex: string;
         localOnly: boolean;
       }>;
     },
@@ -223,9 +225,8 @@ describe("WalletView", () => {
     const account = {
       displayName: "Alice",
       domain: "wonderland",
-      accountId: "alice@wonderland",
+      accountId: "testuAliceCanonicalAccount1234567890",
       publicKeyHex: "ab".repeat(32),
-      privateKeyHex: "cd".repeat(32),
       hasStoredSecret: true,
       localOnly: Boolean(options?.localOnly),
       ...options?.account,
@@ -238,9 +239,8 @@ describe("WalletView", () => {
         networkPrefix: 369,
         ...options?.connection,
       },
-      accounts: [account],
-      activeAccountId: account.accountId,
     });
+    session.addAccount(account);
     useEndpointStore().$patch({
       state: "ready",
       inspection: {
@@ -280,13 +280,12 @@ describe("WalletView", () => {
         {
           displayName: "Bob",
           domain: "wonderland",
-          accountId: "bob@wonderland",
+          accountId: "testuBobCanonicalAccount1234567890",
           publicKeyHex: "ef".repeat(32),
-          privateKeyHex: "12".repeat(32),
           hasStoredSecret: true,
         },
       ],
-      activeAccountId: "bob@wonderland",
+      activeAccountId: "testuBobCanonicalAccount1234567890",
     });
     await flushPromises();
   };
@@ -300,26 +299,26 @@ describe("WalletView", () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [
         {
-          asset_id: "xor#wonderland##bob@wonderland",
+          asset_id: BOB_XOR_HOLDING_ID,
           quantity: "20",
         },
       ],
       total: 1,
     });
 
-    const wrapper = mountView("xor#wonderland");
+    const wrapper = mountView(XOR_ASSET_DEFINITION_ID);
     await flushPromises();
 
     await switchToBob();
     await flushPromises();
 
-    expect(wrapper.text()).toContain("xor#wonderland##bob@wonderland");
+    expect(wrapper.text()).toContain(BOB_XOR_HOLDING_ID);
     expect(wrapper.text()).toContain("20");
 
     resolveAliceAssets({
       items: [
         {
-          asset_id: "xor#wonderland##alice@wonderland",
+          asset_id: ALICE_XOR_HOLDING_ID,
           quantity: "10",
         },
       ],
@@ -328,8 +327,8 @@ describe("WalletView", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.text()).toContain("xor#wonderland##bob@wonderland");
-    expect(wrapper.text()).not.toContain("xor#wonderland##alice@wonderland");
+    expect(wrapper.text()).toContain(BOB_XOR_HOLDING_ID);
+    expect(wrapper.text()).not.toContain(ALICE_XOR_HOLDING_ID);
   });
 
   it("ignores stale citizenship responses after the active account changes", async () => {
@@ -338,7 +337,7 @@ describe("WalletView", () => {
       async (input: { accountId: string }) => ({
         items: [
           {
-            asset_id: `xor#wonderland##${input.accountId}`,
+            asset_id: `${XOR_ASSET_DEFINITION_ID}#${input.accountId}`,
             quantity: "20",
           },
         ],
@@ -353,7 +352,7 @@ describe("WalletView", () => {
       )
       .mockResolvedValueOnce({
         state: "not-citizen",
-        accountId: "bob@wonderland",
+        accountId: "testuBobCanonicalAccount1234567890",
         amount: null,
         bondedHeight: null,
         seatsInEpoch: null,
@@ -371,7 +370,7 @@ describe("WalletView", () => {
 
     resolveAliceCitizenship({
       state: "citizen",
-      accountId: "alice@wonderland",
+      accountId: "testuAliceCanonicalAccount1234567890",
       amount: "10000",
       bondedHeight: "12",
       seatsInEpoch: "0",
@@ -390,18 +389,20 @@ describe("WalletView", () => {
 
     expect(fetchAccountAssetsMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        accountId: "alice@wonderland",
+        accountId: "testuAliceCanonicalAccount1234567890",
         networkPrefix: 369,
       }),
     );
     expect(fetchAccountTransactionsMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        accountId: "alice@wonderland",
+        accountId: "testuAliceCanonicalAccount1234567890",
         networkPrefix: 369,
-        privateKeyHex: "cd".repeat(32),
         limit: 25,
         offset: 0,
       }),
+    );
+    expect(fetchAccountTransactionsMock.mock.calls[0]?.[0]).not.toHaveProperty(
+      "privateKeyHex",
     );
   });
 
@@ -409,7 +410,7 @@ describe("WalletView", () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [
         {
-          asset_id: "xor#universal##alice@wonderland",
+          asset_id: ALICE_XOR_HOLDING_ID,
           quantity: "42",
         },
       ],
@@ -417,7 +418,7 @@ describe("WalletView", () => {
     });
     getGovernanceCitizenStatusMock.mockResolvedValueOnce({
       state: "citizen",
-      accountId: "alice@wonderland",
+      accountId: "testuAliceCanonicalAccount1234567890",
       amount: "10000",
       bondedHeight: "12",
       seatsInEpoch: "0",
@@ -437,7 +438,7 @@ describe("WalletView", () => {
     expect(panel.find(".wallet-citizenship-count").exists()).toBe(false);
     expect(getGovernanceCitizenStatusMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
-      accountId: "alice@wonderland",
+      accountId: "testuAliceCanonicalAccount1234567890",
       networkPrefix: 369,
     });
   });
@@ -446,7 +447,7 @@ describe("WalletView", () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [
         {
-          asset_id: "xor#wonderland##alice@wonderland",
+          asset_id: ALICE_XOR_HOLDING_ID,
           quantity: "20",
         },
       ],
@@ -454,7 +455,7 @@ describe("WalletView", () => {
     });
     getGovernanceCitizenStatusMock.mockResolvedValueOnce({
       state: "unavailable",
-      accountId: "alice@wonderland",
+      accountId: "testuAliceCanonicalAccount1234567890",
       amount: null,
       bondedHeight: null,
       seatsInEpoch: null,
@@ -579,56 +580,12 @@ describe("WalletView", () => {
     expect(faucetButton?.attributes("disabled")).toBeDefined();
   });
 
-  it("disables shielding and explains the endpoint prerequisite when writes are blocked", async () => {
-    fetchAccountAssetsMock.mockResolvedValueOnce({
-      items: [
-        {
-          asset_id: "xor#universal##alice@wonderland",
-          quantity: "20",
-        },
-      ],
-      total: 1,
-    });
-    const wrapper = mountView("xor#universal");
-    await flushPromises();
-
-    const endpoint = useEndpointStore();
-    endpoint.$patch({
-      state: "ready",
-      inspection: {
-        ...endpoint.inspection!,
-        observed: {
-          chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
-          networkPrefix: 369,
-        },
-        identityStatus: "mismatched",
-        accessMode: "read-only",
-        diagnostic: {
-          code: "endpoint_identity_mismatch",
-          message: "Archived Taira deployment; writes are blocked.",
-        },
-      },
-    });
-    await wrapper.get(".wallet-shield-input input").setValue("5");
-    await flushPromises();
-
-    const shieldButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes(t("Move to private balance")));
-    expect(shieldButton?.attributes("disabled")).toBeDefined();
-    expect(
-      wrapper.get('[data-testid="wallet-shield-endpoint-prerequisite"]').text(),
-    ).toContain("Archived Taira deployment; writes are blocked.");
-    await shieldButton?.trigger("click");
-    expect(transferAssetMock).not.toHaveBeenCalled();
-  });
-
   it("updates the visible balance while transaction and private reads continue independently", async () => {
     let resolveTransactions: (value: unknown) => void = () => {};
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [
         {
-          asset_id: "xor#universal##alice@wonderland",
+          asset_id: ALICE_XOR_HOLDING_ID,
           quantity: "42",
         },
       ],
@@ -640,7 +597,7 @@ describe("WalletView", () => {
       }),
     );
 
-    const wrapper = mountView("xor#universal");
+    const wrapper = mountView(XOR_ASSET_DEFINITION_ID);
     await flushPromises();
 
     expect(wrapper.get(".wallet-balance-value").text()).toBe("42");
@@ -657,7 +614,7 @@ describe("WalletView", () => {
       new Error("Account assets request timed out."),
     );
 
-    const wrapper = mountView("xor#universal");
+    const wrapper = mountView(XOR_ASSET_DEFINITION_ID);
     await flushPromises();
 
     expect(wrapper.get(".wallet-balance-value").text()).toBe(t("Unavailable"));
@@ -675,7 +632,7 @@ describe("WalletView", () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [
         {
-          asset_id: "xor#wonderland##alice@wonderland",
+          asset_id: ALICE_XOR_HOLDING_ID,
           quantity: "20",
         },
       ],
@@ -707,7 +664,7 @@ describe("WalletView", () => {
       .mockResolvedValueOnce({
         items: [
           {
-            asset_id: "xor#universal##alice@wonderland",
+            asset_id: ALICE_XOR_HOLDING_ID,
             quantity: "42",
           },
         ],
@@ -733,7 +690,7 @@ describe("WalletView", () => {
     document.body.append(routeHeaderTarget);
 
     try {
-      const wrapper = mountView("xor#universal");
+      const wrapper = mountView(XOR_ASSET_DEFINITION_ID);
       await flushPromises();
 
       routeHeaderTarget.querySelector<HTMLButtonElement>("button")!.click();
@@ -758,7 +715,7 @@ describe("WalletView", () => {
     fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
-          asset_id: "xor#universal##alice@wonderland",
+          asset_id: ALICE_XOR_HOLDING_ID,
           quantity: "42",
         },
       ],
@@ -780,7 +737,7 @@ describe("WalletView", () => {
     document.body.append(routeHeaderTarget);
 
     try {
-      const wrapper = mountView("xor#universal");
+      const wrapper = mountView(XOR_ASSET_DEFINITION_ID);
       await flushPromises();
 
       routeHeaderTarget.querySelector<HTMLButtonElement>("button")!.click();
@@ -805,19 +762,19 @@ describe("WalletView", () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [
         {
-          asset_id: "xor#wonderland##alice@wonderland",
+          asset_id: ALICE_XOR_HOLDING_ID,
           quantity: "42",
         },
       ],
       total: 1,
     });
 
-    const wrapper = mountView("xor#wonderland");
+    const wrapper = mountView(XOR_ASSET_DEFINITION_ID);
     await flushPromises();
 
     expect(fetchAccountAssetsMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        assetDefinitionId: "xor#wonderland",
+        assetDefinitionId: XOR_ASSET_DEFINITION_ID,
         limit: 8,
       }),
     );
@@ -825,7 +782,7 @@ describe("WalletView", () => {
 
     resolveCitizenship({
       state: "citizen",
-      accountId: "alice@wonderland",
+      accountId: "testuAliceCanonicalAccount1234567890",
       amount: "10000",
       bondedHeight: "12",
       seatsInEpoch: "0",
@@ -843,19 +800,19 @@ describe("WalletView", () => {
       .mockResolvedValueOnce({
         items: [
           {
-            asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland",
+            asset_id: ALICE_OTHER_HOLDING_ID,
             quantity: "25000",
           },
         ],
         total: 1,
       });
 
-    const wrapper = mountView("5OldBucket1111111111111111111");
+    const wrapper = mountView(STALE_ASSET_DEFINITION_ID);
     await flushPromises();
 
     expect(fetchAccountAssetsMock.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
-        assetDefinitionId: "5OldBucket1111111111111111111",
+        assetDefinitionId: STALE_ASSET_DEFINITION_ID,
         limit: 8,
       }),
     );
@@ -864,7 +821,7 @@ describe("WalletView", () => {
     );
     expect(wrapper.get(".wallet-balance-value").text()).toBe("0");
     expect(useSessionStore().connection.assetDefinitionId).toBe(
-      "5OldBucket1111111111111111111",
+      STALE_ASSET_DEFINITION_ID,
     );
   });
 
@@ -877,19 +834,19 @@ describe("WalletView", () => {
       .mockResolvedValueOnce({
         items: [
           {
-            asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland",
+            asset_id: ALICE_OTHER_HOLDING_ID,
             quantity: "25000",
           },
         ],
         total: 1,
       });
 
-    const wrapper = mountView("5OldBucket1111111111111111111");
+    const wrapper = mountView(STALE_ASSET_DEFINITION_ID);
     await flushPromises();
 
     expect(fetchAccountAssetsMock.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
-        assetDefinitionId: "5OldBucket1111111111111111111",
+        assetDefinitionId: STALE_ASSET_DEFINITION_ID,
         limit: 8,
       }),
     );
@@ -898,15 +855,15 @@ describe("WalletView", () => {
     );
     expect(wrapper.get(".wallet-balance-value").text()).toBe("0");
     expect(useSessionStore().connection.assetDefinitionId).toBe(
-      "5OldBucket1111111111111111111",
+      STALE_ASSET_DEFINITION_ID,
     );
   });
 
-  it("shows on-chain shielded xor balance derived from committed history", async () => {
+  it("shows the read-only private-note balance recovered by the wallet", async () => {
     fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
-          asset_id: "xor#universal##alice@wonderland",
+          asset_id: ALICE_XOR_HOLDING_ID,
           quantity: "22",
         },
       ],
@@ -917,51 +874,27 @@ describe("WalletView", () => {
         {
           entrypoint_hash: "0x1",
           result_ok: true,
-          authority: "alice@wonderland",
-          instructions: [
-            {
-              zk: {
-                Shield: {
-                  asset: "xor#universal",
-                  from: "alice@wonderland",
-                  amount: "12",
-                },
-              },
-            },
-          ],
-        },
-        {
-          entrypoint_hash: "0x2",
-          result_ok: true,
-          authority: "alice@wonderland",
-          instructions: [
-            {
-              zk: {
-                Unshield: {
-                  asset: "xor#universal",
-                  to: "alice@wonderland",
-                  public_amount: "3",
-                },
-              },
-            },
-          ],
+          authority: ALICE_ACCOUNT_ID,
+          instructions: [],
         },
       ],
-      total: 2,
+      total: 1,
     });
-    getConfidentialAssetBalanceMock.mockResolvedValue({
-      resolvedAssetId: "xor#universal",
-      quantity: "9",
-      onChainQuantity: "9",
-      spendableQuantity: "9",
-      exact: true,
-    });
+    getConfidentialAssetBalanceMock.mockResolvedValue(
+      confidentialBalanceFixture({
+        resolvedAssetId: XOR_ASSET_DEFINITION_ID,
+        quantity: "9",
+        onChainQuantity: "9",
+        spendableQuantity: "9",
+        recoveredNoteCount: 1,
+      }),
+    );
 
-    const wrapper = mountView("xor#universal");
+    const wrapper = mountView(XOR_ASSET_DEFINITION_ID);
     await flushPromises();
 
     expect(wrapper.text()).toContain(t("Private balance"));
-    expect(wrapper.text()).toContain("xor#universal");
+    expect(wrapper.text()).toContain(XOR_ASSET_DEFINITION_ID);
     expect(wrapper.text()).toContain("22");
     expect(wrapper.text()).toContain("9");
     const scrollableTables = wrapper.findAll(
@@ -973,18 +906,18 @@ describe("WalletView", () => {
     ).toEqual([t("Assets"), t("Latest Transactions")]);
   });
 
-  it("keeps the faucet action ahead of shielding controls in the wallet summary", async () => {
+  it("keeps the faucet action ahead of the private-balance reader in the wallet summary", async () => {
     fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
-          asset_id: "xor#universal##alice@wonderland",
+          asset_id: ALICE_XOR_HOLDING_ID,
           quantity: "22",
         },
       ],
       total: 1,
     });
 
-    const wrapper = mountView("xor#universal");
+    const wrapper = mountView(XOR_ASSET_DEFINITION_ID);
     await flushPromises();
 
     const summaryHtml = wrapper.get(".wallet-summary-card").html();
@@ -995,7 +928,7 @@ describe("WalletView", () => {
     );
   });
 
-  it("hides shield controls for unfunded wallets", async () => {
+  it("hides private-balance recovery for unfunded wallets", async () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [],
       total: 0,
@@ -1038,46 +971,49 @@ describe("WalletView", () => {
     expect(sendLink.attributes("href")).toBeUndefined();
   });
 
-  it("shows the shielded-note warning when wallet balance is inexact", async () => {
+  it("shows the private-note warning when wallet recovery is inexact", async () => {
     fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
-          asset_id: "xor#universal##alice@wonderland",
+          asset_id: ALICE_XOR_HOLDING_ID,
           quantity: "22",
         },
       ],
       total: 1,
     });
-    getConfidentialAssetBalanceMock.mockResolvedValue({
-      resolvedAssetId: "xor#universal",
-      quantity: "4",
-      onChainQuantity: null,
-      spendableQuantity: "4",
-      exact: false,
-    });
+    getConfidentialAssetBalanceMock.mockResolvedValue(
+      confidentialBalanceFixture({
+        resolvedAssetId: XOR_ASSET_DEFINITION_ID,
+        quantity: "4",
+        onChainQuantity: null,
+        spendableQuantity: "4",
+        exact: false,
+        recoveredNoteCount: 1,
+      }),
+    );
 
-    const wrapper = mountView("xor#universal");
+    const wrapper = mountView(XOR_ASSET_DEFINITION_ID);
     await flushPromises();
 
     expect(wrapper.text()).toContain(
       t(
-        "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.",
+        "Showing private notes recognized by this wallet. Older or foreign confidential outputs may be missing, so this total is not guaranteed complete or spendable in this release.",
       ),
     );
   });
 
-  it("rescans recoverable shielded notes on demand", async () => {
+  it("rescans recoverable private notes on demand", async () => {
     fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
-          asset_id: "xor#universal##alice@wonderland",
+          asset_id: ALICE_XOR_HOLDING_ID,
           quantity: "22",
         },
       ],
       total: 1,
     });
 
-    const wrapper = mountView("xor#universal");
+    const wrapper = mountView(XOR_ASSET_DEFINITION_ID);
     await flushPromises();
 
     await wrapper
@@ -1090,354 +1026,57 @@ describe("WalletView", () => {
       toriiUrl: "http://localhost:8080",
       chainId: "chain",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
-      privateKeyHex: "cd".repeat(32),
-      assetDefinitionId: "xor#universal",
-      force: true,
+      accountId: "testuAliceCanonicalAccount1234567890",
+      assetDefinitionId: XOR_ASSET_DEFINITION_ID,
     });
-    expect(wrapper.text()).toContain(t("Shielded note scan complete."));
+    expect(scanConfidentialWalletMock.mock.calls[0]?.[0]).not.toHaveProperty(
+      "privateKeyHex",
+    );
+    expect(wrapper.text()).toContain(t("Private note scan complete."));
     expect(wrapper.text()).toContain("7");
     expect(wrapper.text()).toContain("block 42");
   });
 
-  it("creates shielded xor balance and refreshes the on-chain amount", async () => {
-    fetchAccountAssetsMock
-      .mockResolvedValueOnce({
-        items: [
-          {
-            asset_id: "xor#universal##alice@wonderland",
-            quantity: "30",
-          },
-        ],
-        total: 1,
-      })
-      .mockResolvedValueOnce({
-        items: [
-          {
-            asset_id: "xor#universal##alice@wonderland",
-            quantity: "25",
-          },
-        ],
-        total: 1,
-      });
-    fetchAccountTransactionsMock
-      .mockResolvedValueOnce({
-        items: [],
-        total: 0,
-      })
-      .mockResolvedValueOnce({
-        items: [
-          {
-            entrypoint_hash: "0xshield",
-            result_ok: true,
-            authority: "alice@wonderland",
-            instructions: [
-              {
-                zk: {
-                  Shield: {
-                    asset: "xor#universal",
-                    from: "alice@wonderland",
-                    amount: "5",
-                  },
-                },
-              },
-            ],
-          },
-        ],
-        total: 1,
-      });
-    getConfidentialAssetBalanceMock
-      .mockResolvedValueOnce({
-        resolvedAssetId: "xor#universal",
-        quantity: "0",
-        onChainQuantity: "0",
-        spendableQuantity: "0",
-        exact: true,
-      })
-      .mockResolvedValueOnce({
-        resolvedAssetId: "xor#universal",
-        quantity: "5",
-        onChainQuantity: "5",
-        spendableQuantity: "5",
-        exact: true,
-      });
-    transferAssetMock.mockResolvedValue({ hash: "0xshield" });
-
-    const wrapper = mountView("xor#universal", { localOnly: true });
-    await flushPromises();
-
-    await wrapper.get(".wallet-shield-input input").setValue("5");
-    await wrapper
-      .findAll("button.secondary")
-      .find((button) => button.text().includes(t("Move to private balance")))!
-      .trigger("click");
-    await flushPromises();
-
-    expect(transferAssetMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        assetDefinitionId: "xor#universal",
-        destinationAccountId: "alice@wonderland",
-        quantity: "5",
-        shielded: true,
-      }),
-    );
-    expect(useSessionStore().activeAccount?.localOnly).toBe(false);
-    expect(wrapper.text()).toContain(
-      t("Shield transaction finalized on-chain: {hash}", {
-        hash: "0xshield",
-      }),
-    );
-    expect(wrapper.text()).toContain("5");
-  });
-
-  it("ignores a delayed shield completion after the active account switches", async () => {
-    let resolveBobAssets: (value: {
-      items: Array<{ asset_id: string; quantity: string }>;
-      total: number;
-    }) => void = () => {};
-    const bobAssets = new Promise<{
-      items: Array<{ asset_id: string; quantity: string }>;
-      total: number;
-    }>((resolve) => {
-      resolveBobAssets = resolve;
-    });
-    fetchAccountAssetsMock
-      .mockResolvedValueOnce({
-        items: [
-          {
-            asset_id: "xor#universal##alice@wonderland",
-            quantity: "30",
-          },
-        ],
-        total: 1,
-      })
-      .mockReturnValueOnce(bobAssets);
-    let resolveShield!: (value: { hash: string }) => void;
-    transferAssetMock.mockReturnValueOnce(
-      new Promise<{ hash: string }>((resolve) => {
-        resolveShield = resolve;
-      }),
-    );
-
-    const wrapper = mountView("xor#universal");
-    await flushPromises();
-    await wrapper.get(".wallet-shield-input input").setValue("5");
-    await wrapper
-      .findAll("button.secondary")
-      .find((button) => button.text().includes(t("Move to private balance")))!
-      .trigger("click");
-    await flushPromises();
-
-    const session = useSessionStore();
-    session.$patch({
-      accounts: [
-        ...session.accounts,
-        {
-          displayName: "Bob",
-          domain: "wonderland",
-          accountId: "bob@wonderland",
-          publicKeyHex: "ef".repeat(32),
-          privateKeyHex: "12".repeat(32),
-          hasStoredSecret: true,
-          localOnly: true,
-        },
-      ],
-      activeAccountId: "bob@wonderland",
-    });
-    resolveShield({ hash: "0xalice-shield" });
-    await flushPromises();
-    await flushPromises();
-
-    expect(session.activeAccount?.accountId).toBe("bob@wonderland");
-    expect(session.activeAccount?.localOnly).toBe(true);
-    expect(wrapper.text()).not.toContain("0xalice-shield");
-
-    resolveBobAssets({
-      items: [
-        {
-          asset_id: "xor#universal##bob@wonderland",
-          quantity: "40",
-        },
-      ],
-      total: 1,
-    });
-    await flushPromises();
-
-    expect(wrapper.get(".wallet-shield-input input").element).toHaveProperty(
-      "value",
-      "5",
-    );
-  });
-
-  it("uses the resolved on-chain xor asset id for wallet matching and shielding", async () => {
-    getConfidentialAssetPolicyMock.mockResolvedValueOnce({
-      asset_id: "norito:resolvedxorasset",
-      block_height: 1,
-      current_mode: "Convertible",
-      effective_mode: "Convertible",
-      vk_set_hash: null,
-      poseidon_params_id: null,
-      pedersen_params_id: null,
-      pending_transition: null,
-    });
+  it("keeps the exact configured asset instead of guessing from another positive holding", async () => {
     fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
-          asset_id: "norito:resolvedxorasset##alice@wonderland",
-          quantity: "40",
-        },
-      ],
-      total: 1,
-    });
-    fetchAccountTransactionsMock.mockResolvedValue({
-      items: [
-        {
-          entrypoint_hash: "0xresolved",
-          result_ok: true,
-          authority: "alice@wonderland",
-          instructions: [
-            {
-              zk: {
-                Shield: {
-                  asset: "norito:resolvedxorasset",
-                  from: "alice@wonderland",
-                  amount: "6",
-                },
-              },
-            },
-          ],
-        },
-      ],
-      total: 1,
-    });
-    getConfidentialAssetBalanceMock.mockResolvedValue({
-      resolvedAssetId: "norito:resolvedxorasset",
-      quantity: "6",
-      onChainQuantity: "6",
-      spendableQuantity: "6",
-      exact: true,
-    });
-    transferAssetMock.mockResolvedValue({ hash: "0xresolved" });
-
-    const wrapper = mountView("xor#wonderland");
-    await flushPromises();
-
-    expect(wrapper.text()).toContain(
-      formatAssetDefinitionLabel("norito:resolvedxorasset"),
-    );
-    expect(wrapper.text()).toContain("40");
-    expect(wrapper.text()).toContain("6");
-    expect(wrapper.text()).not.toContain("norito:resolvedxorasset");
-
-    await wrapper.get(".wallet-shield-input input").setValue("2");
-    await wrapper
-      .findAll("button.secondary")
-      .find((button) => button.text().includes(t("Move to private balance")))!
-      .trigger("click");
-    await flushPromises();
-
-    expect(transferAssetMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        assetDefinitionId: "norito:resolvedxorasset",
-        destinationAccountId: "alice@wonderland",
-        quantity: "2",
-        shielded: true,
-      }),
-    );
-  });
-
-  it("keeps the exact configured asset instead of guessing from another XOR alias", async () => {
-    fetchAccountAssetsMock.mockResolvedValue({
-      items: [
-        {
-          asset_id: "norito:cachedbucket",
+          asset_id: CACHED_ASSET_DEFINITION_ID,
           quantity: "25000",
         },
         {
-          asset_id: "xor#universal##alice@wonderland",
+          asset_id: ALICE_XOR_HOLDING_ID,
           quantity: "75000",
         },
       ],
       total: 2,
     });
 
-    const wrapper = mountView("norito:cachedbucket");
+    const wrapper = mountView(CACHED_ASSET_DEFINITION_ID);
     await flushPromises();
 
     expect(wrapper.get(".wallet-balance-value").text()).toBe("25000");
-    expect(wrapper.get(".wallet-balance-asset").text()).toBe("cachedbucket");
+    expect(wrapper.get(".wallet-balance-asset").text()).toBe(
+      CACHED_ASSET_DEFINITION_ID,
+    );
   });
 
   it("does not replace a configured asset with an unrelated positive bucket", async () => {
     fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
-          asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland",
+          asset_id: ALICE_OTHER_HOLDING_ID,
           quantity: "25000",
         },
       ],
       total: 1,
     });
 
-    mountView("xor#universal");
+    mountView(XOR_ASSET_DEFINITION_ID);
     await flushPromises();
 
     expect(useSessionStore().connection.assetDefinitionId).toBe(
-      "xor#universal",
-    );
-  });
-
-  it("shows the positive Minamoto XOR bucket when a stale legacy XOR alias is empty", async () => {
-    fetchAccountAssetsMock.mockResolvedValue({
-      items: [
-        {
-          asset_id: "xor#universal##alice@wonderland",
-          quantity: "0",
-        },
-        {
-          asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw#sorauAliceVisibleAccount",
-          asset_definition_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-          quantity: "125",
-        },
-      ],
-      total: 2,
-    });
-
-    const wrapper = mountView("xor#universal", {
-      connection: MINAMOTO_CHAIN_PRESET.connection,
-      account: {
-        accountId: "sorauAliceVisibleAccount",
-        i105AccountId: "sorauAliceVisibleAccount",
-      },
-    });
-    await flushPromises();
-
-    expect(wrapper.get(".wallet-balance-value").text()).toBe("125");
-    expect(wrapper.get(".wallet-balance-asset").text()).toBe(
-      "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-    );
-    expect(useSessionStore().connection.assetDefinitionId).toBe(
-      "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-    );
-  });
-
-  it("heals a stale canonical asset bucket from the shield policy preflight", async () => {
-    getConfidentialAssetPolicyMock.mockResolvedValueOnce({
-      asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
-      block_height: 1,
-      current_mode: "Convertible",
-      effective_mode: "Convertible",
-      vk_set_hash: null,
-      poseidon_params_id: null,
-      pedersen_params_id: null,
-      pending_transition: null,
-    });
-
-    mountView("5OldBucket1111111111111111111");
-    await flushPromises();
-
-    expect(useSessionStore().connection.assetDefinitionId).toBe(
-      "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      XOR_ASSET_DEFINITION_ID,
     );
   });
 
@@ -1486,7 +1125,7 @@ describe("WalletView", () => {
       .mockResolvedValueOnce(fundedAssets)
       .mockResolvedValue(fundedAssets);
     requestFaucetFundsMock.mockResolvedValue({
-      account_id: "alice@wonderland",
+      account_id: "testuAliceCanonicalAccount1234567890",
       asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
       asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
       amount: "25000",
@@ -1507,7 +1146,7 @@ describe("WalletView", () => {
     expect(requestFaucetFundsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         toriiUrl: "http://localhost:8080",
-        accountId: "alice@wonderland",
+        accountId: "testuAliceCanonicalAccount1234567890",
         networkPrefix: 369,
         requestId: expect.stringMatching(/^wallet-faucet-/),
       }),
@@ -1529,7 +1168,7 @@ describe("WalletView", () => {
   it("ignores a delayed faucet completion after endpoint, chain, prefix, and account switch", async () => {
     fetchAccountAssetsMock.mockImplementation(
       async (input: { accountId: string }) => {
-        if (input.accountId === "bob@wonderland") {
+        if (input.accountId === "testuBobCanonicalAccount1234567890") {
           throw new Error("Account not found");
         }
         return { items: [], total: 0 };
@@ -1556,7 +1195,7 @@ describe("WalletView", () => {
       connection: {
         toriiUrl: "https://network-b.example",
         chainId: "chain-b",
-        assetDefinitionId: "bob-bucket",
+        assetDefinitionId: CACHED_ASSET_DEFINITION_ID,
         networkPrefix: 753,
       },
       accounts: [
@@ -1564,19 +1203,18 @@ describe("WalletView", () => {
         {
           displayName: "Bob",
           domain: "wonderland",
-          accountId: "bob@wonderland",
+          accountId: "testuBobCanonicalAccount1234567890",
           publicKeyHex: "ef".repeat(32),
-          privateKeyHex: "12".repeat(32),
           hasStoredSecret: true,
           localOnly: true,
         },
       ],
-      activeAccountId: "bob@wonderland",
+      activeAccountId: "testuBobCanonicalAccount1234567890",
     });
     resolveFaucet({
-      account_id: "alice@wonderland",
-      asset_definition_id: "alice-funded-bucket",
-      asset_id: "alice-funded-bucket",
+      account_id: "testuAliceCanonicalAccount1234567890",
+      asset_definition_id: OTHER_ASSET_DEFINITION_ID,
+      asset_id: OTHER_ASSET_DEFINITION_ID,
       amount: "25000",
       tx_hash_hex: "0xalice-faucet",
       status: "Committed",
@@ -1588,15 +1226,18 @@ describe("WalletView", () => {
       toriiUrl: "https://network-b.example",
       chainId: "chain-b",
       networkPrefix: 753,
-      assetDefinitionId: "bob-bucket",
+      assetDefinitionId: CACHED_ASSET_DEFINITION_ID,
     });
-    expect(session.activeAccount?.accountId).toBe("bob@wonderland");
+    expect(session.activeAccount?.accountId).toBe(
+      "testuBobCanonicalAccount1234567890",
+    );
     expect(session.activeAccount?.localOnly).toBe(true);
     expect(wrapper.text()).not.toContain("0xalice-faucet");
     expect(getOpenDialog()).toBeNull();
   });
 
   it("switches known Minamoto faucet clicks to TAIRA before claiming", async () => {
+    installAccountAddressDeriver();
     const fundedAssets = {
       items: [
         {
@@ -1681,7 +1322,7 @@ describe("WalletView", () => {
     const fundedAssets = {
       items: [
         {
-          asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland",
+          asset_id: ALICE_OTHER_HOLDING_ID,
           quantity: "25000",
         },
       ],
@@ -1695,9 +1336,9 @@ describe("WalletView", () => {
       .mockResolvedValueOnce(fundedAssets)
       .mockResolvedValue(fundedAssets);
     requestFaucetFundsMock.mockResolvedValue({
-      account_id: "alice@wonderland",
+      account_id: "testuAliceCanonicalAccount1234567890",
       asset_definition_id: "",
-      asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland",
+      asset_id: ALICE_OTHER_HOLDING_ID,
       amount: "25000",
       tx_hash_hex: "0xabc",
       status: "QUEUED",
@@ -1778,7 +1419,7 @@ describe("WalletView", () => {
         total: 0,
       });
     requestFaucetFundsMock.mockResolvedValue({
-      account_id: "alice@wonderland",
+      account_id: "testuAliceCanonicalAccount1234567890",
       asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
       asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
       amount: "25000",
@@ -1786,7 +1427,7 @@ describe("WalletView", () => {
       status: "QUEUED",
     });
 
-    const wrapper = mountView("xor#universal");
+    const wrapper = mountView(XOR_ASSET_DEFINITION_ID);
     await flushPromises();
 
     await wrapper
@@ -1800,7 +1441,8 @@ describe("WalletView", () => {
     );
   });
 
-  it("uses the TAIRA i105 literal for faucet requests when stored ids are stale", async () => {
+  it("re-derives a runtime account through the SDK before a TAIRA faucet request", async () => {
+    installAccountAddressDeriver();
     fetchAccountAssetsMock
       .mockResolvedValueOnce({
         items: [],
@@ -1851,14 +1493,14 @@ describe("WalletView", () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [
         {
-          asset_id: "norito:abcdef0123456789",
+          asset_id: XOR_ASSET_DEFINITION_ID,
           quantity: "25000",
         },
       ],
       total: 1,
     });
 
-    const wrapper = mountView("norito:abcdef0123456789");
+    const wrapper = mountView(XOR_ASSET_DEFINITION_ID);
     await flushPromises();
 
     const faucetButton = wrapper
@@ -1918,7 +1560,7 @@ describe("WalletView", () => {
     );
 
     resolveFaucet({
-      account_id: "alice@wonderland",
+      account_id: "testuAliceCanonicalAccount1234567890",
       asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
       asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
       amount: "25000",
@@ -2000,7 +1642,7 @@ describe("WalletView", () => {
       })
       .mockResolvedValueOnce(fundedAssets);
     requestFaucetFundsMock.mockResolvedValue({
-      account_id: "alice@wonderland",
+      account_id: "testuAliceCanonicalAccount1234567890",
       asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
       asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
       amount: "25000",
@@ -2034,7 +1676,7 @@ describe("WalletView", () => {
       total: 0,
     });
     requestFaucetFundsMock.mockResolvedValue({
-      account_id: "alice@wonderland",
+      account_id: "testuAliceCanonicalAccount1234567890",
       asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
       asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
       amount: "25000",
@@ -2066,7 +1708,7 @@ describe("WalletView", () => {
       new Error("Account not found"),
     );
 
-    const wrapper = mountView("xor#wonderland", { localOnly: true });
+    const wrapper = mountView(XOR_ASSET_DEFINITION_ID, { localOnly: true });
     await flushPromises();
 
     expect(wrapper.text()).toContain(
@@ -2088,7 +1730,7 @@ describe("WalletView", () => {
       fetchAccountAssetsMock.mockResolvedValueOnce({
         items: [
           {
-            asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland",
+            asset_id: ALICE_OTHER_HOLDING_ID,
             quantity: "25000",
           },
         ],
@@ -2119,7 +1761,7 @@ describe("WalletView", () => {
       );
       expect(wrapper.text()).not.toContain(
         t(
-          "Recovered {count} shielded note(s) from {source} through {watermark}.",
+          "Recovered {count} private note(s) from {source} through {watermark}.",
           {
             count: 0,
             source: t("account history fallback"),
@@ -2132,77 +1774,38 @@ describe("WalletView", () => {
     }
   });
 
-  it("strips TAIRA account suffixes from opaque asset refs before self-shielding", async () => {
-    const consoleWarnSpy = vi
-      .spyOn(console, "warn")
-      .mockImplementation(() => undefined);
-    try {
-      getConfidentialAssetPolicyMock.mockResolvedValueOnce({
-        asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-        block_height: 1,
-        current_mode: "Convertible",
-        effective_mode: "Convertible",
-        vk_set_hash: null,
-        poseidon_params_id: null,
-        pedersen_params_id: null,
-        pending_transition: null,
-      });
-      fetchAccountAssetsMock.mockResolvedValueOnce({
-        items: [
-          {
-            asset_id:
-              "6TEAJqbb8oEPmLncoNiMRbLEK6tw#testuロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
-            quantity: "25000",
-          },
-        ],
-        total: 1,
-      });
-      getConfidentialAssetBalanceMock.mockRejectedValueOnce(
-        new Error(
-          "Confidential asset policy request failed with status 404 (Not Found)",
-        ),
-      );
-      transferAssetMock.mockResolvedValue({ hash: "0xshield" });
-
-      const wrapper = mountView("6TEAJqbb8oEPmLncoNiMRbLEK6tw", {
-        localOnly: false,
-        account: {
-          accountId:
-            "testuロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
-          i105AccountId:
-            "testuロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
-        },
-      });
-      await flushPromises();
-      await flushPromises();
-
-      await wrapper.get(".wallet-shield-input input").setValue("5");
-      await wrapper
-        .findAll("button.secondary")
-        .find((button) => button.text().includes(t("Move to private balance")))!
-        .trigger("click");
-      await flushPromises();
-
-      expect(transferAssetMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-          shielded: true,
-        }),
-      );
-    } finally {
-      consoleWarnSpy.mockRestore();
-    }
-  });
-
   it("clears the local-only flag once on-chain wallet data loads", async () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [],
       total: 0,
     });
 
-    mountView("xor#wonderland", { localOnly: true });
+    mountView(XOR_ASSET_DEFINITION_ID, { localOnly: true });
     await flushPromises();
 
     expect(useSessionStore().activeAccount?.localOnly).toBe(false);
+  });
+  it("keeps confidential balance recovery read-only", async () => {
+    fetchAccountAssetsMock.mockResolvedValue({
+      items: [
+        {
+          asset_id: ALICE_XOR_HOLDING_ID,
+          quantity: "22",
+        },
+      ],
+      total: 1,
+    });
+
+    const wrapper = mountView(XOR_ASSET_DEFINITION_ID);
+    await flushPromises();
+
+    expect(wrapper.find(".wallet-shield-panel").exists()).toBe(true);
+    expect(wrapper.find(".wallet-shield-input").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("Move to private balance");
+    expect(
+      wrapper
+        .findAll("button.secondary")
+        .some((button) => button.text().includes(t("Rescan private balance"))),
+    ).toBe(true);
   });
 });

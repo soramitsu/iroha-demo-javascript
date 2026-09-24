@@ -118,25 +118,34 @@ describe("faucet finality", () => {
     ).rejects.toBe(failure);
   });
 
-  it("reads the protocol-v3 authoritative committed height and legacy fallback", () => {
+  it("reads only the protocol-v4 authoritative committed height", () => {
     expect(
       readSumeragiCommittedHeight({
-        protocol_version: 3,
+        protocol_version: 4,
         last_committed_height: 14_535,
         commit_qc: { height: 12 },
       }),
     ).toBe(14_535);
     expect(
       readSumeragiCommittedHeight({
+        protocol_version: 3,
+        last_committed_height: 88,
         commit_qc: { height: 88 },
       }),
-    ).toBe(88);
+    ).toBeNull();
     expect(
       readSumeragiCommittedHeight({
+        protocol_version: 4,
         last_committed_height: null,
         commit_qc: { height: 89 },
       }),
-    ).toBe(89);
+    ).toBeNull();
+    expect(
+      readSumeragiCommittedHeight({
+        protocol_version: 4,
+        lastCommittedHeight: 90,
+      }),
+    ).toBeNull();
     expect(readSumeragiCommittedHeight({ height: 99 })).toBeNull();
   });
 });

@@ -2,7 +2,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, ref } from "vue";
 import { mount } from "@vue/test-utils";
-import { useQrScanner } from "@/composables/useQrScanner";
+import {
+  QR_CAPTURE_MAX_HEIGHT,
+  QR_CAPTURE_MAX_WIDTH,
+  QR_IMAGE_MAX_BYTES,
+  useQrScanner,
+} from "@/composables/useQrScanner";
 
 const mockControls = { stop: vi.fn() };
 const decodeFromImageUrl = vi.fn(async () => ({
@@ -68,8 +73,8 @@ describe("useQrScanner hook", () => {
       {
         video: {
           facingMode: { ideal: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 1280, max: QR_CAPTURE_MAX_WIDTH },
+          height: { ideal: 720, max: QR_CAPTURE_MAX_HEIGHT },
         },
         audio: false,
       },
@@ -77,6 +82,37 @@ describe("useQrScanner hook", () => {
       expect.any(Function),
     );
   });
+
+  it.each([
+    new File([], "empty.png", { type: "image/png" }),
+    new File([new Uint8Array(QR_IMAGE_MAX_BYTES + 1)], "oversized.png", {
+      type: "image/png",
+    }),
+    new File(["<svg/>"], "qr.svg", { type: "image/svg+xml" }),
+  ])(
+    "rejects empty, oversized, and active image formats before decoding",
+    async (file) => {
+      const scannerRef = ref<ReturnType<typeof useQrScanner> | null>(null);
+      mount(
+        defineComponent({
+          setup() {
+            scannerRef.value = useQrScanner(vi.fn());
+            return () => null;
+          },
+        }),
+      );
+      const scanner = scannerRef.value;
+      if (!scanner) throw new Error("scanner not initialised");
+      const target = { files: [file], value: "selected" };
+
+      await scanner.decodeFile({ target } as unknown as Event);
+
+      expect(decodeFromImageUrl).not.toHaveBeenCalled();
+      expect(URL.createObjectURL).not.toHaveBeenCalled();
+      expect(target.value).toBe("");
+      expect(scanner.message).toBe("Unable to decode the selected image.");
+    },
+  );
 
   it("stops the camera after an async decode callback fires", async () => {
     vi.useFakeTimers();
@@ -188,11 +224,11 @@ describe("useQrScanner hook", () => {
       .mockImplementation(() => undefined);
     Object.defineProperty(HTMLVideoElement.prototype, "videoWidth", {
       configurable: true,
-      get: () => 640,
+      get: () => 7680,
     });
     Object.defineProperty(HTMLVideoElement.prototype, "videoHeight", {
       configurable: true,
-      get: () => 360,
+      get: () => 4320,
     });
     const drawImage = vi.fn();
     const getContextSpy = vi
@@ -224,7 +260,19 @@ describe("useQrScanner hook", () => {
         },
         audio: false,
       });
-      expect(drawImage).toHaveBeenCalled();
+      expect(drawImage).toHaveBeenCalledWith(
+        expect.any(HTMLVideoElement),
+        0,
+        0,
+        QR_CAPTURE_MAX_WIDTH,
+        QR_CAPTURE_MAX_HEIGHT,
+      );
+      expect(decodeFromCanvas).toHaveBeenCalledWith(
+        expect.objectContaining({
+          width: QR_CAPTURE_MAX_WIDTH,
+          height: QR_CAPTURE_MAX_HEIGHT,
+        }),
+      );
       expect(decodeFromCanvas).toHaveBeenCalledWith(
         expect.any(HTMLCanvasElement),
       );

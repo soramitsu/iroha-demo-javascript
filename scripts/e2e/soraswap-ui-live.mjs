@@ -12,6 +12,7 @@ import {
 } from "@iroha/iroha-js";
 import { _electron as electron, chromium } from "playwright";
 import QRCode from "qrcode";
+import { validateAccountAssets } from "./taira-read-contract-utils.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDir, "..", "..");
@@ -180,14 +181,16 @@ const assertFundedAssets = async (accountId) => {
     `${nodeToriiUrl}/`,
   );
   url.searchParams.set("limit", "100");
+  url.searchParams.set("offset", "0");
+  url.searchParams.set("count_mode", "exact");
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(
       `Unable to read TAIRA assets for E2E wallet: ${response.status} ${response.statusText}`,
     );
   }
-  const payload = await response.json();
-  const items = Array.isArray(payload.items) ? payload.items : [];
+  const payload = validateAccountAssets(await response.json(), accountId);
+  const items = payload.items;
   const byAlias = new Map(
     items.map((item) => [
       String(item.asset_alias ?? item.asset_name ?? "").toLowerCase(),

@@ -2,11 +2,17 @@ import {
   buildConnectTokenProtocol as buildConnectTokenProtocolBase,
   buildConnectWebSocketUrl as buildConnectWebSocketUrlBase,
 } from "@iroha/iroha-js/connect-browser";
+import { NetworkId } from "@iroha/iroha-js/connect-browser";
 import type {
   EndpointInspection,
   EndpointNetworkContext,
 } from "@/types/endpointInspection";
 import { normalizeEndpointUrl } from "@/utils/endpoint";
+import { resolveFirstReleaseNetworkIdLiteral } from "@/utils/firstReleaseNetworkIdentity";
+import {
+  assertConnectSessionCommitment,
+  bytesToHex,
+} from "@/utils/soraswapConnectWire";
 
 export type IrohaConnectRole = "app" | "wallet";
 
@@ -15,25 +21,25 @@ export interface ParsedIrohaConnectUri {
   canonicalUri: string;
   launchUri: string;
   sid: string;
-  chainId: string | null;
-  node: string | null;
-  networkPrefix: number | null;
-  role: IrohaConnectRole;
-  token: string | null;
-  relayToken: string | null;
-  version: string | null;
+  networkId: string;
+  appPublicKeyBase64Url: string;
+  appPublicKeyHex: string;
+  nonceBase64Url: string;
+  node: string;
+  role: "wallet";
+  token: string;
+  relayToken: string;
+  version: "1";
 }
 
 export interface IrohaConnectNetworkClaim {
   node?: string | null;
-  chainId?: string | null;
-  networkPrefix?: unknown;
+  networkId?: string | null;
 }
 
 export interface IrohaConnectApprovalRequestInput {
   session: ParsedIrohaConnectUri;
   accountId: string;
-  fallbackToriiUrl: string;
 }
 
 export interface IrohaConnectApprovalRequest {
@@ -45,15 +51,46 @@ const CONNECT_PROTOCOLS = new Set(["iroha:", "irohaconnect:"]);
 const CONNECT_HOST = "connect";
 const CONNECT_LAUNCH_PROTOCOL = "irohaconnect:";
 const CONNECT_FIXED_KEY_LENGTH = 32;
+const CONNECT_URI_FIELDS = new Set([
+  "sid",
+  "network_id",
+  "app_pk",
+  "nonce",
+  "node",
+  "v",
+  "role",
+  "token",
+  "relay",
+]);
+const CONNECT_WALLET_REQUIRED_FIELDS = [...CONNECT_URI_FIELDS];
+const MAX_CONNECT_URI_LENGTH = 4_096;
 
-const decodeSidBytes = (sid: string | Uint8Array) => {
-  if (sid instanceof Uint8Array) {
-    if (sid.length !== CONNECT_FIXED_KEY_LENGTH) {
-      throw new RangeError("IrohaConnect session id must be 32 bytes.");
-    }
-    return new Uint8Array(sid);
+const encodeBase64Url = (bytes: Uint8Array): string => {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
   }
-  const body = sid.trim().replace(/=+$/u, "");
+  return btoa(binary)
+    .replace(/\+/gu, "-")
+    .replace(/\//gu, "_")
+    .replace(/=+$/gu, "");
+};
+
+const decodeCanonicalBase64Url = (
+  value: string,
+  byteLength: number,
+  label: string,
+) => {
+  if (
+    typeof value !== "string" ||
+    value.length !== Math.ceil((byteLength * 8) / 6) ||
+    !/^[A-Za-z0-9_-]+$/u.test(value)
+  ) {
+    throw new RangeError(
+      `${label} must be canonical ${byteLength}-byte base64url.`,
+    );
+  }
+  const body = value;
   const remainder = body.length % 4;
   const padded = `${body.replace(/-/g, "+").replace(/_/g, "/")}${"=".repeat(
     (4 - remainder) % 4,
@@ -61,66 +98,94 @@ const decodeSidBytes = (sid: string | Uint8Array) => {
   const bytes = Uint8Array.from(atob(padded), (character) =>
     character.charCodeAt(0),
   );
-  if (bytes.length !== CONNECT_FIXED_KEY_LENGTH) {
-    throw new RangeError("IrohaConnect session id must decode to 32 bytes.");
+  if (bytes.length !== byteLength) {
+    throw new RangeError(`${label} must decode to ${byteLength} bytes.`);
+  }
+  if (encodeBase64Url(bytes) !== value) {
+    throw new RangeError(
+      `${label} must be canonical ${byteLength}-byte base64url.`,
+    );
   }
   return bytes;
 };
 
-const requireConnectParam = (url: URL, name: string) => {
-  const value = url.searchParams.get(name)?.trim() ?? "";
-  if (!value) {
+const decodeSidBytes = (sid: string) =>
+  decodeCanonicalBase64Url(
+    sid,
+    CONNECT_FIXED_KEY_LENGTH,
+    "IrohaConnect session id",
+  );
+
+const requireConnectParam = (query: Map<string, string>, name: string) => {
+  const value = query.get(name);
+  if (value === undefined || !value || value.trim() !== value) {
     throw new Error(`IrohaConnect URI is missing ${name}.`);
   }
   return value;
 };
 
-const normalizeRole = (value: string | null): IrohaConnectRole => {
-  if (value === "app" || value === "wallet") {
-    return value;
+const requireCanonicalConnectText = (
+  value: string,
+  label: string,
+  maxLength: number,
+): string => {
+  if (
+    value.length > maxLength ||
+    value.normalize("NFC") !== value ||
+    Array.from(value).some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 0x1f || codePoint === 0x7f;
+    })
+  ) {
+    throw new Error(`${label} must be canonical text.`);
   }
-  throw new Error("IrohaConnect URI role must be app or wallet.");
+  return value;
+};
+
+const requireConnectToken = (value: string, label: string): string => {
+  try {
+    decodeSidBytes(value);
+  } catch {
+    throw new Error(`${label} must be canonical 32-byte base64url.`);
+  }
+  return value;
+};
+
+const normalizeRole = (value: string | null): "wallet" => {
+  if (value === "wallet") {
+    return "wallet";
+  }
+  throw new Error("IrohaConnect QR must use role=wallet.");
 };
 
 const normalizeIrohaConnectNetworkPrefix = (
   value: unknown,
   label: string,
 ): number => {
-  const normalized =
-    typeof value === "string" && /^(?:0|[1-9]\d*)$/u.test(value.trim())
-      ? Number(value.trim())
-      : value;
   if (
-    typeof normalized !== "number" ||
-    !Number.isInteger(normalized) ||
-    normalized < 0 ||
-    normalized > 0x3fff
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 0 ||
+    value > 0x3fff
   ) {
     throw new Error(`${label} must be an integer between 0 and 16383.`);
   }
+  return value;
+};
+
+const requireCanonicalEndpointOrigin = (
+  value: unknown,
+  label: string,
+): string => {
+  if (typeof value !== "string" || !value) {
+    throw new Error(`${label} is missing.`);
+  }
+  const normalized = normalizeEndpointUrl(value);
+  const endpoint = new URL(normalized);
+  if (value !== normalized || endpoint.pathname !== "/") {
+    throw new Error(`${label} must be an exact canonical Torii origin.`);
+  }
   return normalized;
-};
-
-const optionalIrohaConnectNetworkPrefix = (url: URL): number | null => {
-  if (!url.searchParams.has("network_prefix")) {
-    return null;
-  }
-  return normalizeIrohaConnectNetworkPrefix(
-    url.searchParams.get("network_prefix"),
-    "IrohaConnect URI network_prefix",
-  );
-};
-
-const normalizeEndpointOrigin = (value: string, label: string): string => {
-  try {
-    const endpoint = new URL(normalizeEndpointUrl(value));
-    if (endpoint.username || endpoint.password) {
-      throw new Error("credentials are not allowed");
-    }
-    return endpoint.origin;
-  } catch (_error) {
-    throw new Error(`${label} must be a valid HTTP(S) Torii endpoint.`);
-  }
 };
 
 export const validateIrohaConnectNetworkClaim = (
@@ -128,58 +193,67 @@ export const validateIrohaConnectNetworkClaim = (
   active: EndpointNetworkContext,
   options: {
     label?: string;
-    requireChainId?: boolean;
+    requireNetworkId?: boolean;
     requireNode?: boolean;
   } = {},
 ): EndpointNetworkContext => {
   const label = options.label?.trim() || "IrohaConnect pairing QR";
-  const activeChainId = String(active.chainId ?? "").trim();
-  if (!activeChainId) {
+  if (
+    typeof active.chainId !== "string" ||
+    !active.chainId ||
+    active.chainId.trim() !== active.chainId
+  ) {
     throw new Error("The active wallet connection is missing its chain ID.");
   }
+  const activeChainId = active.chainId;
   const activeNetworkPrefix = normalizeIrohaConnectNetworkPrefix(
     active.networkPrefix,
     "Active wallet network prefix",
   );
-  const activeToriiUrl = normalizeEndpointUrl(active.toriiUrl);
-  const activeOrigin = normalizeEndpointOrigin(
-    activeToriiUrl,
+  const activeToriiUrl = requireCanonicalEndpointOrigin(
+    active.toriiUrl,
     "Active wallet endpoint",
   );
+  const activeNetworkId = resolveFirstReleaseNetworkIdLiteral({
+    chainId: activeChainId,
+    networkPrefix: activeNetworkPrefix,
+  });
 
-  const claimedChainId = String(claim.chainId ?? "").trim();
-  if (options.requireChainId && !claimedChainId) {
-    throw new Error(`${label} is missing its chain ID.`);
+  const claimedNetworkId = claim.networkId;
+  if (options.requireNetworkId && !claimedNetworkId) {
+    throw new Error(`${label} is missing its NetworkId.`);
   }
-  if (claimedChainId && claimedChainId !== activeChainId) {
-    throw new Error(
-      `${label} targets a different chain than the active wallet.`,
-    );
+  if (claimedNetworkId) {
+    if (typeof claimedNetworkId !== "string") {
+      throw new Error(`${label} has an invalid NetworkId.`);
+    }
+    let canonicalClaim: string;
+    try {
+      canonicalClaim = NetworkId.parse(claimedNetworkId).toString();
+    } catch {
+      throw new Error(`${label} has an invalid NetworkId.`);
+    }
+    if (
+      canonicalClaim !== claimedNetworkId ||
+      canonicalClaim !== activeNetworkId
+    ) {
+      throw new Error(
+        `${label} targets a different NetworkId than the active wallet.`,
+      );
+    }
   }
 
-  const claimedNode = String(claim.node ?? "").trim();
+  const claimedNode = claim.node;
   if (options.requireNode && !claimedNode) {
     throw new Error(`${label} is missing its endpoint.`);
   }
   if (
     claimedNode &&
-    normalizeEndpointOrigin(claimedNode, `${label} endpoint`) !== activeOrigin
+    requireCanonicalEndpointOrigin(claimedNode, `${label} endpoint`) !==
+      activeToriiUrl
   ) {
     throw new Error(
       `${label} targets a different endpoint than the active wallet.`,
-    );
-  }
-
-  if (
-    claim.networkPrefix !== undefined &&
-    claim.networkPrefix !== null &&
-    normalizeIrohaConnectNetworkPrefix(
-      claim.networkPrefix,
-      `${label} network prefix`,
-    ) !== activeNetworkPrefix
-  ) {
-    throw new Error(
-      `${label} targets a different network prefix than the active wallet.`,
     );
   }
 
@@ -208,6 +282,9 @@ export const parseIrohaConnectUri = (input: string): ParsedIrohaConnectUri => {
   if (!raw) {
     throw new Error("IrohaConnect URI is empty.");
   }
+  if (raw !== input || raw.length > MAX_CONNECT_URI_LENGTH) {
+    throw new Error("IrohaConnect URI is not canonical.");
+  }
 
   let url: URL;
   try {
@@ -216,33 +293,110 @@ export const parseIrohaConnectUri = (input: string): ParsedIrohaConnectUri => {
     throw new Error("IrohaConnect URI is invalid.");
   }
 
-  if (!CONNECT_PROTOCOLS.has(url.protocol) || url.hostname !== CONNECT_HOST) {
+  if (
+    !CONNECT_PROTOCOLS.has(url.protocol) ||
+    url.host !== CONNECT_HOST ||
+    url.pathname !== "" ||
+    url.hash !== "" ||
+    url.username ||
+    url.password
+  ) {
     throw new Error("QR is not an IrohaConnect session.");
   }
 
-  const sid = requireConnectParam(url, "sid");
+  const query = new Map<string, string>();
+  for (const [name, value] of url.searchParams) {
+    if (!CONNECT_URI_FIELDS.has(name)) {
+      throw new Error(
+        `IrohaConnect URI contains unsupported parameter ${name}.`,
+      );
+    }
+    if (query.has(name)) {
+      throw new Error(`IrohaConnect URI contains duplicate parameter ${name}.`);
+    }
+    query.set(name, value);
+  }
+
+  const sid = requireConnectParam(query, "sid");
   decodeSidBytes(sid);
-  const role = normalizeRole(url.searchParams.get("role"));
-  const version = url.searchParams.get("v")?.trim() || null;
+  const role = normalizeRole(query.get("role") ?? null);
+  const version = query.get("v") ?? null;
   if (version !== "1") {
     throw new Error("IrohaConnect URI version must be v=1.");
   }
-  const canonical = new URL(url.toString());
-  canonical.protocol = "iroha:";
-  const launch = new URL(url.toString());
-  launch.protocol = CONNECT_LAUNCH_PROTOCOL;
+  for (const name of CONNECT_WALLET_REQUIRED_FIELDS) {
+    requireConnectParam(query, name);
+  }
+
+  const networkIdLiteral = requireCanonicalConnectText(
+    requireConnectParam(query, "network_id"),
+    "IrohaConnect network_id",
+    80,
+  );
+  let networkId: string;
+  try {
+    networkId = NetworkId.parse(networkIdLiteral).toString();
+  } catch {
+    throw new Error("IrohaConnect network_id must be a canonical NetworkId.");
+  }
+  const appPublicKeyBase64Url = requireConnectParam(query, "app_pk");
+  const appPublicKey = decodeCanonicalBase64Url(
+    appPublicKeyBase64Url,
+    32,
+    "IrohaConnect app_pk",
+  );
+  const nonceBase64Url = requireConnectParam(query, "nonce");
+  decodeCanonicalBase64Url(nonceBase64Url, 16, "IrohaConnect nonce");
+  const node = requireCanonicalEndpointOrigin(
+    requireConnectParam(query, "node"),
+    "IrohaConnect node",
+  );
+  const token = requireConnectToken(
+    requireConnectParam(query, "token"),
+    "IrohaConnect wallet token",
+  );
+  const relayToken = requireConnectToken(
+    requireConnectParam(query, "relay"),
+    "IrohaConnect relay token",
+  );
+  assertConnectSessionCommitment({
+    sid,
+    networkId,
+    appPublicKeyHex: bytesToHex(appPublicKey),
+    nonceBase64Url,
+  });
+  const canonicalParams = new URLSearchParams();
+  for (const name of [
+    "sid",
+    "network_id",
+    "app_pk",
+    "nonce",
+    "node",
+    "v",
+    "role",
+    "token",
+    "relay",
+  ]) {
+    const value = query.get(name);
+    if (value !== undefined) {
+      canonicalParams.set(name, value);
+    }
+  }
+  const canonicalQuery = canonicalParams.toString();
 
   return {
     raw,
-    canonicalUri: canonical.toString(),
-    launchUri: launch.toString(),
+    canonicalUri: `iroha://connect?${canonicalQuery}`,
+    launchUri: `${CONNECT_LAUNCH_PROTOCOL}//connect?${canonicalQuery}`,
     sid,
-    chainId: url.searchParams.get("chain_id")?.trim() || null,
-    node: url.searchParams.get("node")?.trim() || null,
-    networkPrefix: optionalIrohaConnectNetworkPrefix(url),
+    networkId,
+    appPublicKeyBase64Url,
+    appPublicKeyHex: bytesToHex(appPublicKey),
+    nonceBase64Url,
+    node,
     role,
-    token: url.searchParams.get("token")?.trim() || null,
-    relayToken: url.searchParams.get("relay")?.trim() || null,
+    token,
+    relayToken,
     version,
   };
 };
@@ -257,25 +411,26 @@ export const isIrohaConnectUri = (input: string): boolean => {
 };
 
 export const buildIrohaConnectTokenProtocol = (token: string) => {
-  const normalized = token.trim();
-  if (!normalized) {
-    throw new Error("IrohaConnect token is missing.");
-  }
-  return buildConnectTokenProtocolBase(normalized);
+  return buildConnectTokenProtocolBase(
+    requireConnectToken(token, "IrohaConnect token"),
+  );
 };
 
 export const buildIrohaConnectWebSocketUrl = (
   session: ParsedIrohaConnectUri,
-  fallbackToriiUrl: string,
 ) => {
-  const baseUrl = (session.node || fallbackToriiUrl).replace(/\/+$/u, "");
-  return buildConnectWebSocketUrlBase(baseUrl, session.sid, session.role);
+  const node = requireCanonicalEndpointOrigin(
+    session.node,
+    "IrohaConnect node",
+  );
+  decodeSidBytes(session.sid);
+  normalizeRole(session.role);
+  return buildConnectWebSocketUrlBase(node, session.sid, session.role);
 };
 
 export const buildIrohaConnectApprovalRequest = ({
   session,
   accountId,
-  fallbackToriiUrl,
 }: IrohaConnectApprovalRequestInput): IrohaConnectApprovalRequest => {
   if (session.role !== "wallet") {
     throw new Error("Scan the wallet-role IrohaConnect QR from the app.");
@@ -286,13 +441,18 @@ export const buildIrohaConnectApprovalRequest = ({
   if (!session.relayToken) {
     throw new Error("IrohaConnect relay token is missing.");
   }
-  const normalizedAccountId = accountId.trim();
-  if (!normalizedAccountId) {
+  if (
+    typeof accountId !== "string" ||
+    !accountId ||
+    accountId.trim() !== accountId ||
+    accountId.normalize("NFC") !== accountId ||
+    /[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(accountId)
+  ) {
     throw new Error("Choose an active wallet before approving IrohaConnect.");
   }
 
   return {
-    url: buildIrohaConnectWebSocketUrl(session, fallbackToriiUrl),
+    url: buildIrohaConnectWebSocketUrl(session),
     protocols: [buildIrohaConnectTokenProtocol(session.token)],
   };
 };

@@ -6,11 +6,11 @@ import {
 } from "@/utils/chainMetadata";
 
 describe("chain metadata utilities", () => {
-  it("normalizes complete chain metadata", () => {
+  it("accepts exact canonical chain metadata", () => {
     expect(
       normalizeChainMetadata({
-        chainId: " chain-alpha ",
-        networkPrefix: "42",
+        chainId: "chain-alpha",
+        networkPrefix: 42,
       }),
     ).toEqual({
       chainId: "chain-alpha",
@@ -20,11 +20,56 @@ describe("chain metadata utilities", () => {
 
   it("rejects missing chain IDs and invalid network prefixes", () => {
     expect(() => normalizeChainMetadata({ networkPrefix: 42 })).toThrow(
-      "Torii endpoint did not expose a chain ID.",
+      "missing or unknown fields",
     );
     expect(() =>
       normalizeChainMetadata({ chainId: "chain-alpha", networkPrefix: 16384 }),
-    ).toThrow("Torii endpoint did not expose a valid network prefix.");
+    ).toThrow("integer network prefix");
+    expect(() =>
+      normalizeChainMetadata({
+        chainId: " chain-alpha ",
+        networkPrefix: 42,
+      }),
+    ).toThrow("exact canonical chain ID");
+    expect(() =>
+      normalizeChainMetadata({
+        chainId: "chain-alpha",
+        networkPrefix: "42",
+      }),
+    ).toThrow("integer network prefix");
+  });
+
+  it("rejects extra fields, exotic prototypes, accessors, and symbols", () => {
+    expect(() =>
+      normalizeChainMetadata({
+        chainId: "chain-alpha",
+        networkPrefix: 42,
+        fallback: true,
+      } as never),
+    ).toThrow("missing or unknown fields");
+    expect(() =>
+      normalizeChainMetadata(
+        Object.assign(Object.create({ inherited: true }), {
+          chainId: "chain-alpha",
+          networkPrefix: 42,
+        }),
+      ),
+    ).toThrow("missing or unknown fields");
+    const accessor = { networkPrefix: 42 } as Record<string, unknown>;
+    Object.defineProperty(accessor, "chainId", {
+      enumerable: true,
+      get: () => "chain-alpha",
+    });
+    expect(() => normalizeChainMetadata(accessor)).toThrow(
+      "enumerable data fields",
+    );
+    expect(() =>
+      normalizeChainMetadata({
+        chainId: "chain-alpha",
+        networkPrefix: 42,
+        [Symbol("hidden")]: true,
+      } as never),
+    ).toThrow("missing or unknown fields");
   });
 
   it("parses the exact first-release endpoint payload", () => {
@@ -64,12 +109,20 @@ describe("chain metadata utilities", () => {
         account_id: "testuCoincidental",
       }),
     ).toThrow(/missing or unknown fields/u);
+    expect(() =>
+      parseFirstReleaseChainMetadataPayload({
+        chain_id: "chain-\u202ealpha",
+        network_prefix: 369,
+      }),
+    ).toThrow(/chain_id/u);
   });
 
-  it("normalizes only valid network prefix values", () => {
-    expect(normalizeNetworkPrefixValue("369")).toBe(369);
+  it("accepts only integer network-prefix values", () => {
+    expect(normalizeNetworkPrefixValue(369)).toBe(369);
+    expect(normalizeNetworkPrefixValue("369")).toBeNull();
     expect(normalizeNetworkPrefixValue("")).toBeNull();
     expect(normalizeNetworkPrefixValue("   ")).toBeNull();
+    expect(normalizeNetworkPrefixValue(369.5)).toBeNull();
     expect(normalizeNetworkPrefixValue(16_384)).toBeNull();
   });
 });

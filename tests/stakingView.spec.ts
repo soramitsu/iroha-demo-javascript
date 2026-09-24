@@ -2,10 +2,38 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { defineComponent } from "vue";
+import { AccountAddress } from "@iroha/iroha-js/address";
 import StakingView from "@/views/StakingView.vue";
 import { translate } from "@/i18n/messages";
 import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
+
+const TAIRA_TORII_URL = "https://taira.sora.org";
+const MINAMOTO_TORII_URL = "https://minamoto.sora.org";
+const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
+const MINAMOTO_CHAIN_ID = "00000000-0000-0000-0000-000000000000";
+const XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const ALICE_PUBLIC_KEY_HEX =
+  "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737";
+const BOB_PUBLIC_KEY_HEX =
+  "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0";
+const VALIDATOR_PUBLIC_KEY_HEX =
+  "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c";
+const STAKE_PUBLIC_KEY_HEX =
+  "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025";
+const accountIdFor = (publicKeyHex: string, networkPrefix = 369) =>
+  AccountAddress.fromAccount({
+    publicKey: Uint8Array.from(
+      publicKeyHex.match(/.{2}/gu)!.map((byte) => Number.parseInt(byte, 16)),
+    ),
+  }).toI105(networkPrefix);
+const ALICE_ACCOUNT_ID = accountIdFor(ALICE_PUBLIC_KEY_HEX);
+const BOB_ACCOUNT_ID = accountIdFor(BOB_PUBLIC_KEY_HEX);
+const VALIDATOR_ACCOUNT_ID = accountIdFor(VALIDATOR_PUBLIC_KEY_HEX);
+const STAKE_ACCOUNT_ID = accountIdFor(STAKE_PUBLIC_KEY_HEX);
+const ALICE_MINAMOTO_ACCOUNT_ID = accountIdFor(ALICE_PUBLIC_KEY_HEX, 753);
+const holdingId = (accountId: string) =>
+  `${XOR_ASSET_DEFINITION_ID}#${accountId}`;
 
 const getSumeragiStatusMock = vi.fn();
 const getNexusLifecycleMock = vi.fn();
@@ -125,7 +153,7 @@ describe("StakingView", () => {
     fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
-          asset_id: "xor#wonderland##alice@wonderland",
+          asset_id: holdingId(ALICE_ACCOUNT_ID),
           quantity: "10",
         },
       ],
@@ -137,9 +165,9 @@ describe("StakingView", () => {
       items: [
         {
           lane_id: 7,
-          validator: "validator@wonderland",
+          validator: VALIDATOR_ACCOUNT_ID,
           peer_id: "peer:validator",
-          stake_account: "stake@wonderland",
+          stake_account: STAKE_ACCOUNT_ID,
           total_stake: "100",
           self_stake: "10",
           status: {
@@ -178,24 +206,26 @@ describe("StakingView", () => {
   });
 
   const mountView = (
-    accountId = "alice@wonderland",
+    accountId = ALICE_ACCOUNT_ID,
     endpointOptions?: {
       stakingWrites?: boolean;
       writeAllowed?: boolean;
       assetDefinitionId?: string;
       chainId?: string;
       networkPrefix?: number;
+      toriiUrl?: string;
     },
   ) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
+    const toriiUrl = endpointOptions?.toriiUrl ?? TAIRA_TORII_URL;
     session.$patch({
       connection: {
-        toriiUrl: "http://localhost:8080",
-        chainId: endpointOptions?.chainId ?? "chain",
+        toriiUrl,
+        chainId: endpointOptions?.chainId ?? TAIRA_CHAIN_ID,
         assetDefinitionId:
-          endpointOptions?.assetDefinitionId ?? "xor#wonderland",
+          endpointOptions?.assetDefinitionId ?? XOR_ASSET_DEFINITION_ID,
         networkPrefix: endpointOptions?.networkPrefix ?? 369,
       },
       accounts: [
@@ -203,8 +233,7 @@ describe("StakingView", () => {
           displayName: "Alice",
           domain: "wonderland",
           accountId,
-          publicKeyHex: "ab".repeat(32),
-          privateKeyHex: "cd".repeat(32),
+          publicKeyHex: ALICE_PUBLIC_KEY_HEX,
         },
       ],
       activeAccountId: accountId,
@@ -215,14 +244,14 @@ describe("StakingView", () => {
       state: "ready",
       inspection: {
         schema: "iroha.wallet.endpoint-inspection.v1",
-        toriiUrl: "http://localhost:8080",
+        toriiUrl,
         expected: {
-          chainId: endpointOptions?.chainId ?? "chain",
+          chainId: endpointOptions?.chainId ?? TAIRA_CHAIN_ID,
           networkPrefix: endpointOptions?.networkPrefix ?? 369,
         },
         observed: writeAllowed
           ? {
-              chainId: endpointOptions?.chainId ?? "chain",
+              chainId: endpointOptions?.chainId ?? TAIRA_CHAIN_ID,
               networkPrefix: endpointOptions?.networkPrefix ?? 369,
             }
           : null,
@@ -268,12 +297,11 @@ describe("StakingView", () => {
         {
           displayName: "Bob",
           domain: "wonderland",
-          accountId: "bob@wonderland",
-          publicKeyHex: "ef".repeat(32),
-          privateKeyHex: "12".repeat(32),
+          accountId: BOB_ACCOUNT_ID,
+          publicKeyHex: BOB_PUBLIC_KEY_HEX,
         },
       ],
-      activeAccountId: "bob@wonderland",
+      activeAccountId: BOB_ACCOUNT_ID,
     });
     await flushPromises();
   };
@@ -366,7 +394,7 @@ describe("StakingView", () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [
         {
-          asset_id: "xor#wonderland##bob@wonderland",
+          asset_id: holdingId(BOB_ACCOUNT_ID),
           quantity: "20",
         },
       ],
@@ -383,7 +411,7 @@ describe("StakingView", () => {
     resolveAliceAssets({
       items: [
         {
-          asset_id: "xor#wonderland##alice@wonderland",
+          asset_id: holdingId(ALICE_ACCOUNT_ID),
           quantity: "1",
         },
       ],
@@ -393,7 +421,7 @@ describe("StakingView", () => {
     await flushPromises();
 
     expect(getStakeBalanceRow(wrapper).text()).toContain("20 XOR");
-    expect(wrapper.text()).toContain("bob@wonderland");
+    expect(wrapper.text()).toContain(BOB_ACCOUNT_ID);
   });
 
   it("ignores stale refresh error after active account switch", async () => {
@@ -405,7 +433,7 @@ describe("StakingView", () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [
         {
-          asset_id: "xor#wonderland##bob@wonderland",
+          asset_id: holdingId(BOB_ACCOUNT_ID),
           quantity: "20",
         },
       ],
@@ -431,7 +459,7 @@ describe("StakingView", () => {
     fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
-          asset_id: "xor#wonderland##bob@wonderland",
+          asset_id: holdingId(BOB_ACCOUNT_ID),
           quantity: "20",
         },
       ],
@@ -448,8 +476,8 @@ describe("StakingView", () => {
       items: [
         {
           lane_id: 7,
-          account: "bob@wonderland",
-          asset: "xor#wonderland",
+          account: BOB_ACCOUNT_ID,
+          asset: XOR_ASSET_DEFINITION_ID,
           last_claimed_epoch: 1,
           pending_through_epoch: 2,
           amount: "20",
@@ -469,7 +497,7 @@ describe("StakingView", () => {
     await flushPromises();
 
     expect(getRewardsAmountCell(wrapper)?.text()).toBe("20");
-    expect(wrapper.text()).toContain("bob@wonderland");
+    expect(wrapper.text()).toContain(BOB_ACCOUNT_ID);
 
     resolveAliceRewards({
       lane_id: 7,
@@ -477,8 +505,8 @@ describe("StakingView", () => {
       items: [
         {
           lane_id: 7,
-          account: "alice@wonderland",
-          asset: "xor#wonderland",
+          account: ALICE_ACCOUNT_ID,
+          asset: XOR_ASSET_DEFINITION_ID,
           last_claimed_epoch: 1,
           pending_through_epoch: 2,
           amount: "1",
@@ -489,7 +517,7 @@ describe("StakingView", () => {
     await flushPromises();
 
     expect(getRewardsAmountCell(wrapper)?.text()).toBe("20");
-    expect(wrapper.text()).toContain("bob@wonderland");
+    expect(wrapper.text()).toContain(BOB_ACCOUNT_ID);
   });
 
   it("clears stale staking bootstrap state when account context is missing", async () => {
@@ -536,14 +564,14 @@ describe("StakingView", () => {
       "assets down",
     );
     expect(getUnbondDelayRow(wrapper).text()).toContain("1 min");
-    expect(wrapper.text()).toContain("validator@wonderland");
+    expect(wrapper.text()).toContain(VALIDATOR_ACCOUNT_ID);
     expect(
       wrapper.findAll("select")[0]?.attributes("disabled"),
     ).toBeUndefined();
   });
 
   it("does not guess a stake asset when the active profile has no exact asset evidence", async () => {
-    const wrapper = mountView("alice@wonderland", {
+    const wrapper = mountView(ALICE_ACCOUNT_ID, {
       assetDefinitionId: "",
     });
     await flushPromises();
@@ -560,16 +588,17 @@ describe("StakingView", () => {
     fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
-          asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw##alice@wonderland",
+          asset_id: `${XOR_ASSET_DEFINITION_ID}#${ALICE_MINAMOTO_ACCOUNT_ID}`,
           quantity: "25",
         },
       ],
       total: 1,
     });
-    const wrapper = mountView("alice@wonderland", {
+    const wrapper = mountView(ALICE_MINAMOTO_ACCOUNT_ID, {
       assetDefinitionId: "",
-      chainId: "00000000-0000-0000-0000-000000000000",
+      chainId: MINAMOTO_CHAIN_ID,
       networkPrefix: 753,
+      toriiUrl: MINAMOTO_TORII_URL,
     });
     await flushPromises();
     await flushPromises();
@@ -592,7 +621,7 @@ describe("StakingView", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.text()).toContain("validator@wonderland");
+    expect(wrapper.text()).toContain(VALIDATOR_ACCOUNT_ID);
     expect(wrapper.text()).toContain(t("Consensus telemetry is unavailable."));
     expect(wrapper.text()).toContain(
       t("Unbond scheduling is unavailable because policy is not public."),
@@ -616,7 +645,7 @@ describe("StakingView", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.text()).toContain("validator@wonderland");
+    expect(wrapper.text()).toContain(VALIDATOR_ACCOUNT_ID);
     expect(wrapper.text()).toContain("503 route_unavailable");
     expect(wrapper.find('[role="listbox"]').exists()).toBe(true);
     expect(wrapper.get('[data-testid="staking-rewards-error"]').text()).toBe(
@@ -652,7 +681,7 @@ describe("StakingView", () => {
     const wrapper = mountView();
     await flushPromises();
     await flushPromises();
-    expect(wrapper.text()).toContain("validator@wonderland");
+    expect(wrapper.text()).toContain(VALIDATOR_ACCOUNT_ID);
 
     getNexusPublicLaneValidatorsMock.mockRejectedValueOnce(
       new Error("validator refresh down"),
@@ -668,7 +697,7 @@ describe("StakingView", () => {
     await flushPromises();
 
     expect(getNexusPublicLaneRewardsMock).toHaveBeenCalledTimes(2);
-    expect(wrapper.text()).toContain("validator@wonderland");
+    expect(wrapper.text()).toContain(VALIDATOR_ACCOUNT_ID);
     expect(wrapper.get('[data-testid="staking-validators-error"]').text()).toBe(
       "validator refresh down",
     );
@@ -726,7 +755,7 @@ describe("StakingView", () => {
   });
 
   it("keeps staking reads available but blocks writes missing from endpoint capabilities", async () => {
-    const wrapper = mountView("alice@wonderland", {
+    const wrapper = mountView(ALICE_ACCOUNT_ID, {
       stakingWrites: false,
     });
     await flushPromises();
@@ -734,7 +763,7 @@ describe("StakingView", () => {
 
     expect(getNexusPublicLaneValidatorsMock).toHaveBeenCalled();
     expect(getNexusPublicLaneStakeMock).toHaveBeenCalled();
-    expect(wrapper.text()).toContain("validator@wonderland");
+    expect(wrapper.text()).toContain(VALIDATOR_ACCOUNT_ID);
     expect(
       wrapper.get('[data-testid="staking-write-prerequisite"]').text(),
     ).toBe(
@@ -755,7 +784,7 @@ describe("StakingView", () => {
   });
 
   it("blocks staking mutations when endpoint identity is read-only", async () => {
-    const wrapper = mountView("alice@wonderland", {
+    const wrapper = mountView(ALICE_ACCOUNT_ID, {
       writeAllowed: false,
     });
     await flushPromises();
@@ -775,7 +804,7 @@ describe("StakingView", () => {
   });
 
   it("does not treat a separate stake account as this wallet's validator authority", async () => {
-    const wrapper = mountView("stake@wonderland");
+    const wrapper = mountView(STAKE_ACCOUNT_ID);
     await flushPromises();
     await flushPromises();
 
@@ -823,20 +852,22 @@ describe("StakingView", () => {
     await flushPromises();
 
     expect(registerPublicLaneValidatorMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-      chainId: "chain",
+      toriiUrl: TAIRA_TORII_URL,
+      chainId: TAIRA_CHAIN_ID,
       networkPrefix: 369,
       laneId: 7,
-      validatorAccountId: "alice@wonderland",
-      stakeAccountId: "alice@wonderland",
+      validatorAccountId: ALICE_ACCOUNT_ID,
+      stakeAccountId: ALICE_ACCOUNT_ID,
       peerId: "peer:alice",
       selfStake: "3",
       metadata: {
         endpoint: "https://validator.example",
         commission_bps: 250,
       },
-      privateKeyHex: "cd".repeat(32),
     });
+    expect(
+      registerPublicLaneValidatorMock.mock.calls[0]?.[0],
+    ).not.toHaveProperty("privateKeyHex");
     expect(wrapper.text()).toContain("a".repeat(64));
     expect(wrapper.text()).toContain("finalized in block 17");
   });

@@ -34,15 +34,13 @@ const endpointFeatures = (supported: boolean): EndpointFeatureMap => {
     "accountOnboarding",
     "assetTransfers",
     "faucetClaim",
-    "confidentialTransfers",
     "kaigiMeetings",
     "governanceWrites",
     "stakingWrites",
     "subscriptionWrites",
-    "soraCloudDeploy",
+    "soraCloudHfSharedLease",
     "vpnSessions",
     "irohaConnectSessions",
-    "zkProofJobs",
   ];
   return Object.fromEntries(
     features.map((feature) => [
@@ -413,43 +411,43 @@ describe("SettingsView", () => {
       '[data-testid="settings-torii-url-input"]',
     );
 
-    await endpointInput.setValue("http://candidate-a.example/");
+    await endpointInput.setValue("https://candidate-a.example/");
     await wrapper.get("form").trigger("submit");
     await flushPromises();
-    await endpointInput.setValue("http://candidate-b.example/");
+    await endpointInput.setValue("https://candidate-b.example/");
     await wrapper.get("form").trigger("submit");
     await flushPromises();
 
-    const resolveNewer = resolvers.get("http://candidate-b.example");
+    const resolveNewer = resolvers.get("https://candidate-b.example");
     if (!resolveNewer) throw new Error("newer candidate resolver missing");
     resolveNewer(
       matchingInspection({
-        toriiUrl: "http://candidate-b.example",
+        toriiUrl: "https://candidate-b.example",
         chainId: session.connection.chainId,
         networkPrefix: session.connection.networkPrefix,
       }),
     );
     await flushPromises();
 
-    expect(session.connection.toriiUrl).toBe("http://candidate-b.example");
+    expect(session.connection.toriiUrl).toBe("https://candidate-b.example");
     expect(endpointStore.inspection?.toriiUrl).toBe(
-      "http://candidate-b.example",
+      "https://candidate-b.example",
     );
 
-    const resolveOlder = resolvers.get("http://candidate-a.example");
+    const resolveOlder = resolvers.get("https://candidate-a.example");
     if (!resolveOlder) throw new Error("older candidate resolver missing");
     resolveOlder(
       matchingInspection({
-        toriiUrl: "http://candidate-a.example",
+        toriiUrl: "https://candidate-a.example",
         chainId: session.connection.chainId,
         networkPrefix: session.connection.networkPrefix,
       }),
     );
     await flushPromises();
 
-    expect(session.connection.toriiUrl).toBe("http://candidate-b.example");
+    expect(session.connection.toriiUrl).toBe("https://candidate-b.example");
     expect(endpointStore.inspection?.toriiUrl).toBe(
-      "http://candidate-b.example",
+      "https://candidate-b.example",
     );
     expect(endpointStore.writeAllowed).toBe(true);
   });

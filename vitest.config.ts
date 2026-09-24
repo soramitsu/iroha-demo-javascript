@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import vue from "@vitejs/plugin-vue";
 import {
   buildIrohaSdkAliases,
@@ -20,13 +20,6 @@ export default defineConfig({
         replacement: `${resolve(__dirname, "src")}/`,
       },
       {
-        find: /^@noble\/ciphers\/chacha$/u,
-        replacement: resolve(
-          __dirname,
-          "node_modules/@noble/ciphers/chacha.js",
-        ),
-      },
-      {
         find: /^@noble\/hashes\/webcrypto\.js$/u,
         replacement: resolve(
           __dirname,
@@ -42,6 +35,18 @@ export default defineConfig({
     fileParallelism: false,
     globals: true,
     setupFiles: ["./vitest.setup.ts"],
+    exclude: [
+      ...configDefaults.exclude,
+      "tests/sccp.spec.ts",
+      "tests/sccpBsc*.spec.*",
+      "tests/sccpNile*.spec.*",
+      "tests/sccpProver*.spec.*",
+      "tests/sccpSolana*.spec.*",
+      "tests/sccpView.spec.ts",
+      "tests/solana*.spec.*",
+      "tests/tronTypeContracts.spec.ts",
+      "tests/useSccpBridge.spec.ts",
+    ],
     coverage: {
       clean: true,
       enabled: process.env.VITEST_COVERAGE === "1",

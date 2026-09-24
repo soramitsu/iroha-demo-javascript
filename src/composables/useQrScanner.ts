@@ -12,6 +12,11 @@ type UseQrScannerOptions = {
   translate?: Translate;
 };
 
+export const QR_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+export const QR_CAPTURE_MAX_WIDTH = 1_920;
+export const QR_CAPTURE_MAX_HEIGHT = 1_080;
+const QR_IMAGE_MEDIA_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
 export const useQrScanner = (
   onDecoded: Decoder,
   options: UseQrScannerOptions = {},
@@ -29,8 +34,8 @@ export const useQrScanner = (
   const cameraConstraints: MediaStreamConstraints = {
     video: {
       facingMode: { ideal: "environment" },
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
+      width: { ideal: 1280, max: QR_CAPTURE_MAX_WIDTH },
+      height: { ideal: 720, max: QR_CAPTURE_MAX_HEIGHT },
     },
     audio: false,
   };
@@ -174,8 +179,13 @@ export const useQrScanner = (
       await waitForScreenVideoFrame(screenVideo);
 
       const canvas = document.createElement("canvas");
-      canvas.width = screenVideo.videoWidth;
-      canvas.height = screenVideo.videoHeight;
+      const scale = Math.min(
+        1,
+        QR_CAPTURE_MAX_WIDTH / screenVideo.videoWidth,
+        QR_CAPTURE_MAX_HEIGHT / screenVideo.videoHeight,
+      );
+      canvas.width = Math.max(1, Math.floor(screenVideo.videoWidth * scale));
+      canvas.height = Math.max(1, Math.floor(screenVideo.videoHeight * scale));
       const context = canvas.getContext("2d");
       if (!context) {
         throw new Error(t("Unable to capture a screen frame."));
@@ -208,6 +218,15 @@ export const useQrScanner = (
     const target = event.target as HTMLInputElement;
     const file = target.files?.[0];
     if (!file) return;
+    if (
+      file.size < 1 ||
+      file.size > QR_IMAGE_MAX_BYTES ||
+      !QR_IMAGE_MEDIA_TYPES.has(file.type)
+    ) {
+      message.value = t("Unable to decode the selected image.");
+      target.value = "";
+      return;
+    }
     const url = URL.createObjectURL(file);
     message.value = t("Processing image...");
     try {

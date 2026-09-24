@@ -12,12 +12,10 @@ import SendView from "@/views/SendView.vue";
 import ReceiveView from "@/views/ReceiveView.vue";
 import ExploreView from "@/views/ExploreView.vue";
 import AccountSetupView from "@/views/AccountSetupView.vue";
-import OfflineView from "@/views/OfflineView.vue";
 import SubscriptionHubView from "@/views/SubscriptionHubView.vue";
 import KaigiView from "@/views/KaigiView.vue";
 import VpnView from "@/views/VpnView.vue";
 import SoraCloudView from "@/views/SoraCloudView.vue";
-import SccpView from "@/views/SccpView.vue";
 import SettingsView from "@/views/SettingsView.vue";
 import { useSessionStore } from "@/stores/session";
 import type {
@@ -124,7 +122,7 @@ const appRoutes = [
     component: SoraCloudView,
     meta: appRouteMeta({
       titleKey: "SoraCloud",
-      subtitleKey: "Launch and monitor live services",
+      subtitleKey: "Monitor live SoraCloud services",
       navLabelKey: "SoraCloud",
       navGroup: "services",
       navOrder: 30,
@@ -176,25 +174,11 @@ const appRoutes = [
     }),
   },
   {
-    path: "/sccp",
-    component: SccpView,
-    meta: appRouteMeta({
-      titleKey: "SCCP Bridge",
-      subtitleKey: "TAIRA, TRON, BSC, TON, and Solana XOR bridge",
-      navLabelKey: "SCCP Bridge",
-      navGroup: "services",
-      navOrder: 70,
-      icon: "bridge",
-      requiresAccount: true,
-      navPlacement: "primary",
-    }),
-  },
-  {
     path: "/send",
     component: SendView,
     meta: appRouteMeta({
       titleKey: "Send",
-      subtitleKey: "Pay with a QR or account",
+      subtitleKey: "Send to a canonical account",
       navLabelKey: "Send",
       navGroup: "daily",
       navOrder: 20,
@@ -245,20 +229,6 @@ const appRoutes = [
       navPlacement: "primary",
     }),
   },
-  {
-    path: "/offline",
-    component: OfflineView,
-    meta: appRouteMeta({
-      titleKey: "Offline",
-      subtitleKey: "Device payments and invoices",
-      navLabelKey: "Offline",
-      navGroup: "services",
-      navOrder: 60,
-      icon: "offline",
-      requiresAccount: true,
-      navPlacement: "primary",
-    }),
-  },
 ] as const satisfies readonly RouteRecordRaw[];
 
 export const APP_NAV_ITEMS: readonly AppNavItem[] = appRoutes.map(
@@ -274,10 +244,6 @@ const routes: RouteRecordRaw[] = [
     redirect: "/wallet",
   },
   ...appRoutes,
-  {
-    path: "/parliament",
-    redirect: "/governance",
-  },
 ];
 
 const router = createRouter({

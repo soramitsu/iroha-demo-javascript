@@ -1,5 +1,3 @@
-import { formatOpaqueAssetLiteralsInText } from "./assetId";
-
 const READABLE_ERROR_ANCHOR =
   /\b(invalid|missing|unsupported|expected|forbidden|bad request|internal server error|too many requests|not found|no authoritative peer binding|already|failed|failure|timed out|timeout|unavailable|disabled|denied|required|must|rejected|malformed|unknown)\b/i;
 const ERROR_CODE_PREFIX = /^(ERR_[A-Z0-9_]+)\s*[—\-:]\s*(.+)$/i;
@@ -140,11 +138,9 @@ export const sanitizeErrorMessage = (value: unknown) => {
       anchorMatch.index > 0 &&
       hasUnreadablePrefix(remainder.slice(0, anchorMatch.index))
     ) {
-      return formatOpaqueAssetLiteralsInText(
-        `${code} — ${remainder.slice(anchorMatch.index).trim()}`,
-      );
+      return `${code} — ${remainder.slice(anchorMatch.index).trim()}`;
     }
-    return formatOpaqueAssetLiteralsInText(`${code} — ${remainder}`);
+    return `${code} — ${remainder}`;
   }
 
   const genericPrefixedMatch = GENERIC_ERROR_CODE_PREFIX.exec(text);
@@ -158,11 +154,9 @@ export const sanitizeErrorMessage = (value: unknown) => {
       anchorMatch.index > 0 &&
       hasUnreadablePrefix(remainder.slice(0, anchorMatch.index))
     ) {
-      return formatOpaqueAssetLiteralsInText(
-        `${code} — ${remainder.slice(anchorMatch.index).trim()}`,
-      );
+      return `${code} — ${remainder.slice(anchorMatch.index).trim()}`;
     }
-    return formatOpaqueAssetLiteralsInText(`${code} — ${remainder}`);
+    return `${code} — ${remainder}`;
   }
 
   const anchorMatch = READABLE_ERROR_ANCHOR.exec(text);
@@ -172,12 +166,10 @@ export const sanitizeErrorMessage = (value: unknown) => {
     anchorMatch.index > 0 &&
     hasUnreadablePrefix(text.slice(0, anchorMatch.index))
   ) {
-    return formatOpaqueAssetLiteralsInText(
-      text.slice(anchorMatch.index).trim(),
-    );
+    return text.slice(anchorMatch.index).trim();
   }
 
-  return formatOpaqueAssetLiteralsInText(text);
+  return text;
 };
 
 export const toUserFacingErrorMessage = (error: unknown, fallback = "") => {

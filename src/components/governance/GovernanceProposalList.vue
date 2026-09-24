@@ -60,8 +60,6 @@
         </span>
         <strong>{{ shortId(proposal.proposalId) }}</strong>
         <span class="proposal-row-meta">
-          <span>{{ t(proposal.currentStage) }}</span>
-          <span aria-hidden="true">·</span>
           <span>{{
             t("Block {height}", { height: proposal.createdHeight })
           }}</span>

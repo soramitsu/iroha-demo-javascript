@@ -1,24 +1,30 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
   assertConnectSigningPermission,
+  assertConnectSessionCommitment,
   base64ToBytes,
   buildApprovePreimage,
   bytesToBase64,
   bytesToHex,
   copyConnectPermissions,
+  decodeIrohaConnectFrameBase64,
   decodeConnectFrame,
   decryptConnectEnvelope,
-  deriveWalletConnectDirectionKeys,
+  deriveConnectWalletDirectionKeys,
   encodeApproveConnectFrame,
   encodeCiphertextConnectFrame,
   encodeControlConnectFrame,
   encryptConnectEnvelope,
-  generateWalletConnectKeyPair,
+  generateConnectWalletKeyPair,
   hexToBytes,
+  IROHA_CONNECT_MAX_FRAME_BYTES,
   type ConnectEnvelopePayload,
   type ConnectPermissions,
   type ConnectWalletSignature,
 } from "../src/utils/soraswapConnectWire";
+import { resolveFirstReleaseNetworkIdLiteral } from "../src/utils/firstReleaseNetworkIdentity";
+import { normalizeEndpointUrl } from "../src/utils/endpoint";
+import { normalizeCanonicalAccountIdLiteral } from "./accountAddress";
 
 export const IROHA_CONNECT_CONFIRMATION_CHANNEL =
   "iroha-connect:confirm-current-v1";
@@ -37,6 +43,7 @@ export type IrohaConnectConfirmation =
       accountId: string;
       toriiUrl: string;
       chainId: string;
+      networkPrefix: number;
       permissions: ConnectPermissions | null;
     }
   | {
@@ -45,10 +52,233 @@ export type IrohaConnectConfirmation =
       accountId: string;
       toriiUrl: string;
       chainId: string;
+      networkPrefix: number;
       domainTag: string | null;
       byteLength: number;
       payloadPreviewHex: string;
     };
+
+const snapshotExactOwnDataFields = (
+  value: object,
+  expected: readonly string[],
+): Readonly<Record<string, unknown>> | undefined => {
+  let prototype: object | null;
+  try {
+    prototype = Object.getPrototypeOf(value);
+  } catch {
+    return undefined;
+  }
+  if (prototype !== Object.prototype && prototype !== null) return undefined;
+  const allowed = new Set(expected);
+  let enumerableOwnKeyCount = 0;
+  try {
+    for (const key in value) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+      enumerableOwnKeyCount += 1;
+      if (enumerableOwnKeyCount > expected.length || !allowed.has(key)) {
+        return undefined;
+      }
+    }
+    if (enumerableOwnKeyCount !== expected.length) return undefined;
+    const snapshot: Record<string, unknown> = {};
+    for (const key of expected) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor?.enumerable || !("value" in descriptor)) {
+        return undefined;
+      }
+      snapshot[key] = descriptor.value;
+    }
+    return Object.freeze(snapshot);
+  } catch {
+    return undefined;
+  }
+};
+
+const isCanonicalConfirmationText = (
+  value: unknown,
+  maximumLength: number,
+): value is string =>
+  typeof value === "string" &&
+  value.length >= 1 &&
+  Buffer.byteLength(value, "utf8") <= maximumLength &&
+  value.trim() === value &&
+  value.normalize("NFC") === value &&
+  !/[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(value);
+
+const isCanonicalConfirmationContext = (
+  value: Record<string, unknown>,
+): boolean => {
+  if (
+    typeof value.accountId !== "string" ||
+    typeof value.chainId !== "string" ||
+    typeof value.sid !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(
+      value.chainId,
+    ) ||
+    !/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/u.test(value.sid) ||
+    !Number.isSafeInteger(value.networkPrefix) ||
+    Object.is(value.networkPrefix, -0) ||
+    (value.networkPrefix as number) < 0 ||
+    (value.networkPrefix as number) > 16_383 ||
+    !isCanonicalConfirmationText(value.toriiUrl, 2048)
+  ) {
+    return false;
+  }
+  try {
+    const endpoint = normalizeEndpointUrl(value.toriiUrl);
+    if (new URL(endpoint).pathname !== "/") return false;
+    const accountId = normalizeCanonicalAccountIdLiteral(
+      value.accountId,
+      "accountId",
+      value.networkPrefix as number,
+    );
+    return endpoint === value.toriiUrl && accountId === value.accountId;
+  } catch {
+    return false;
+  }
+};
+
+const snapshotCanonicalPermissionList = (
+  value: unknown,
+  maximumEntries: number,
+): string[] | undefined => {
+  try {
+    if (
+      !Array.isArray(value) ||
+      Object.getPrototypeOf(value) !== Array.prototype ||
+      value.length > maximumEntries
+    ) {
+      return undefined;
+    }
+    let enumerableOwnItemCount = 0;
+    for (const key in value) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+      if (!/^(?:0|[1-9]\d*)$/u.test(key) || Number(key) >= value.length) {
+        return undefined;
+      }
+      enumerableOwnItemCount += 1;
+      if (enumerableOwnItemCount > value.length) return undefined;
+    }
+    if (enumerableOwnItemCount !== value.length) return undefined;
+    const snapshot: string[] = [];
+    const seen = new Set<string>();
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (
+        !descriptor?.enumerable ||
+        !("value" in descriptor) ||
+        !isCanonicalConfirmationText(descriptor.value, 256) ||
+        seen.has(descriptor.value)
+      ) {
+        return undefined;
+      }
+      seen.add(descriptor.value);
+      snapshot.push(descriptor.value);
+    }
+    return snapshot;
+  } catch {
+    return undefined;
+  }
+};
+
+const snapshotCanonicalConnectPermissions = (
+  value: unknown,
+): ConnectPermissions | null | undefined => {
+  if (value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const permissions = snapshotExactOwnDataFields(value, [
+    "methods",
+    "events",
+    "resources",
+  ]);
+  if (!permissions) return undefined;
+  const methods = snapshotCanonicalPermissionList(permissions.methods, 16);
+  const events = snapshotCanonicalPermissionList(permissions.events, 16);
+  const resources =
+    permissions.resources === null
+      ? null
+      : snapshotCanonicalPermissionList(permissions.resources, 64);
+  if (!methods || !events || resources === undefined) return undefined;
+  return { methods, events, resources };
+};
+
+const isCanonicalConnectPermissions = (
+  value: unknown,
+): value is ConnectPermissions | null =>
+  snapshotCanonicalConnectPermissions(value) !== undefined;
+
+const requireCanonicalConnectPermissions = (
+  value: unknown,
+): ConnectPermissions | null => {
+  const permissions = snapshotCanonicalConnectPermissions(value);
+  if (permissions === undefined) {
+    throw new Error(
+      "IrohaConnect permissions must be an exact bounded permission manifest.",
+    );
+  }
+  return permissions;
+};
+
+export const isIrohaConnectConfirmation = (
+  value: unknown,
+): value is IrohaConnectConfirmation => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  let kind: unknown;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "kind");
+    if (!descriptor?.enumerable || !("value" in descriptor)) return false;
+    kind = descriptor.value;
+  } catch {
+    return false;
+  }
+  if (kind === "session") {
+    const record = snapshotExactOwnDataFields(value, [
+      "kind",
+      "sid",
+      "accountId",
+      "toriiUrl",
+      "chainId",
+      "networkPrefix",
+      "permissions",
+    ]);
+    return Boolean(
+      record &&
+        isCanonicalConfirmationContext(record) &&
+        isCanonicalConnectPermissions(record.permissions),
+    );
+  }
+  if (kind !== "sign_request_raw" && kind !== "sign_request_tx") {
+    return false;
+  }
+  const record = snapshotExactOwnDataFields(value, [
+    "kind",
+    "sid",
+    "accountId",
+    "toriiUrl",
+    "chainId",
+    "networkPrefix",
+    "domainTag",
+    "byteLength",
+    "payloadPreviewHex",
+  ]);
+  if (!record || !isCanonicalConfirmationContext(record)) return false;
+  return (
+    (kind === "sign_request_raw"
+      ? isCanonicalConfirmationText(record.domainTag, 256)
+      : record.domainTag === null) &&
+    Number.isSafeInteger(record.byteLength) &&
+    (record.byteLength as number) >= 1 &&
+    (record.byteLength as number) <= IROHA_CONNECT_MAX_FRAME_BYTES &&
+    typeof record.payloadPreviewHex === "string" &&
+    /^(?:[0-9a-f]{2}){1,96}$/u.test(record.payloadPreviewHex) &&
+    record.payloadPreviewHex.length ===
+      Math.min(record.byteLength as number, 96) * 2
+  );
+};
 
 export type IrohaConnectBoundaryDependencies = {
   assertContext(
@@ -122,31 +352,56 @@ export type IrohaConnectProcessedFrame =
 
 const SESSION_APPROVAL_TTL_MS = 2 * 60_000;
 const REQUEST_APPROVAL_TTL_MS = 2 * 60_000;
+const EXACT_BOUNDARY_TOKEN = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/u;
 
-const normalizeText = (value: unknown, label: string) => {
-  const normalized = String(value ?? "").trim();
-  if (!normalized) {
-    throw new Error(`${label} is required.`);
+const normalizeText = (value: unknown, label: string, maximumBytes = 4_096) => {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    value.trim() !== value ||
+    value.normalize("NFC") !== value ||
+    Buffer.byteLength(value, "utf8") > maximumBytes ||
+    /[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(value)
+  ) {
+    throw new Error(`${label} must be bounded canonical text.`);
   }
-  return normalized;
+  return value;
 };
+
+const isBoundaryToken = (value: unknown): value is string =>
+  typeof value === "string" && EXACT_BOUNDARY_TOKEN.test(value);
 
 const normalizeContext = (
   context: IrohaConnectWalletContext,
 ): IrohaConnectWalletContext => {
-  const toriiUrl = normalizeText(context.toriiUrl, "toriiUrl").replace(
-    /\/+$/u,
-    "",
-  );
-  const chainId = normalizeText(context.chainId, "chainId");
-  const accountId = normalizeText(context.accountId, "accountId");
+  const toriiUrl = normalizeText(context.toriiUrl, "toriiUrl", 2_048);
   if (
-    !Number.isInteger(context.networkPrefix) ||
+    normalizeEndpointUrl(toriiUrl) !== toriiUrl ||
+    new URL(toriiUrl).pathname !== "/"
+  ) {
+    throw new Error("toriiUrl must be a canonical endpoint origin.");
+  }
+  const chainId = normalizeText(context.chainId, "chainId", 64);
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(
+      chainId,
+    )
+  ) {
+    throw new Error("chainId must be an exact lowercase UUID.");
+  }
+  if (
+    !Number.isSafeInteger(context.networkPrefix) ||
+    Object.is(context.networkPrefix, -0) ||
     context.networkPrefix < 0 ||
     context.networkPrefix > 16_383
   ) {
     throw new Error("networkPrefix must be an integer between 0 and 16383.");
   }
+  const accountId = normalizeCanonicalAccountIdLiteral(
+    normalizeText(context.accountId, "accountId", 1_024),
+    "accountId",
+    context.networkPrefix,
+  );
   return {
     toriiUrl,
     chainId,
@@ -218,66 +473,115 @@ export class IrohaConnectBoundary {
     context: IrohaConnectWalletContext;
     sid: string;
     appPublicKeyHex: string;
+    nonceBase64Url: string;
     relayToken: string;
-    requestedChainId: string;
+    requestedNetworkId: string;
     permissions: ConnectPermissions | null;
   }): Promise<{ approvalToken: string }> {
+    const permissions = requireCanonicalConnectPermissions(input.permissions);
     const requestedContext = normalizeContext(input.context);
     this.#requireCurrentContext(requestedContext);
     const generation = this.#generation;
     this.#requireSessionSlotAvailable();
+    const expectedNetworkId = resolveFirstReleaseNetworkIdLiteral({
+      chainId: requestedContext.chainId,
+      networkPrefix: requestedContext.networkPrefix,
+    });
+    if (
+      normalizeText(input.requestedNetworkId, "requestedNetworkId", 128) !==
+      expectedNetworkId
+    ) {
+      throw new Error(
+        "The IrohaConnect Open frame is for a different NetworkId.",
+      );
+    }
+    const sid = normalizeText(input.sid, "sid", 128);
+    const relayToken = normalizeText(input.relayToken, "relayToken", 4_096);
+    const appPublicKeyHex = normalizeText(
+      input.appPublicKeyHex,
+      "appPublicKeyHex",
+      128,
+    );
+    const nonceBase64Url = normalizeText(
+      input.nonceBase64Url,
+      "nonceBase64Url",
+      128,
+    );
+    assertConnectSessionCommitment({
+      sid,
+      networkId: expectedNetworkId,
+      appPublicKeyHex,
+      nonceBase64Url,
+    });
     const verifiedContext = normalizeContext(
       await this.#dependencies.assertContext(requestedContext),
     );
     this.#requireGeneration(generation);
     this.#requireCurrentContext(verifiedContext);
     this.#requireSessionSlotAvailable();
-    if (input.requestedChainId.trim() !== verifiedContext.chainId) {
-      throw new Error("The IrohaConnect Open frame is for a different chain.");
+    const verifiedNetworkId = resolveFirstReleaseNetworkIdLiteral({
+      chainId: verifiedContext.chainId,
+      networkPrefix: verifiedContext.networkPrefix,
+    });
+    if (verifiedNetworkId !== expectedNetworkId) {
+      throw new Error(
+        "The verified IrohaConnect context changed the requested NetworkId.",
+      );
     }
-    const sid = normalizeText(input.sid, "sid");
-    const relayToken = normalizeText(input.relayToken, "relayToken");
-    const appPublicKeyHex = normalizeText(
-      input.appPublicKeyHex,
-      "appPublicKeyHex",
-    );
-    const walletKeyPair = generateWalletConnectKeyPair();
-    const directionKeys = deriveWalletConnectDirectionKeys({
+    const walletKeyPair = generateConnectWalletKeyPair();
+    const directionKeys = deriveConnectWalletDirectionKeys({
       sid,
       appPublicKeyHex,
       walletPrivateKeyHex: walletKeyPair.privateKeyHex,
     });
-    const approvalPreimage = buildApprovePreimage({
-      sid,
-      appPublicKeyHex,
-      walletPublicKeyHex: walletKeyPair.publicKeyHex,
-      accountId: verifiedContext.accountId,
-      relayToken,
-      permissions: null,
-      proof: null,
-    });
-    const approvalToken = this.#uniqueToken();
-    this.#pendingSessions.set(approvalToken, {
-      approvalToken,
-      contextKey: contextKey(verifiedContext),
-      generation,
-      context: verifiedContext,
-      sid,
-      walletPublicKeyHex: walletKeyPair.publicKeyHex,
-      appKey: directionKeys.appKey,
-      walletKey: directionKeys.walletKey,
-      permissions: copyConnectPermissions(input.permissions),
-      approvalPreimage,
-      expiresAtMs: this.#dependencies.now() + SESSION_APPROVAL_TTL_MS,
-    });
-    return { approvalToken };
+    let approvalPreimage: Uint8Array | null = null;
+    let transferred = false;
+    try {
+      approvalPreimage = buildApprovePreimage({
+        sid,
+        networkId: expectedNetworkId,
+        appPublicKeyHex,
+        walletPublicKeyHex: walletKeyPair.publicKeyHex,
+        accountId: verifiedContext.accountId,
+        relayToken,
+        permissions: null,
+        proof: null,
+      });
+      const approvalToken = this.#uniqueToken();
+      this.#pendingSessions.set(approvalToken, {
+        approvalToken,
+        contextKey: contextKey(verifiedContext),
+        generation,
+        context: verifiedContext,
+        sid,
+        walletPublicKeyHex: walletKeyPair.publicKeyHex,
+        appKey: directionKeys.appKey,
+        walletKey: directionKeys.walletKey,
+        permissions,
+        approvalPreimage,
+        expiresAtMs: this.#dependencies.now() + SESSION_APPROVAL_TTL_MS,
+      });
+      transferred = true;
+      return { approvalToken };
+    } finally {
+      if (!transferred) {
+        directionKeys.appKey.fill(0);
+        directionKeys.walletKey.fill(0);
+        approvalPreimage?.fill(0);
+      }
+    }
   }
 
   async approveSession(input: { approvalToken: string }): Promise<{
     sessionToken: string;
     frameBase64: string;
   }> {
-    const approvalToken = normalizeText(input.approvalToken, "approvalToken");
+    const approvalToken = input.approvalToken;
+    if (!isBoundaryToken(approvalToken)) {
+      throw new Error(
+        "IrohaConnect session approval token is invalid or already used.",
+      );
+    }
     const pending = this.#pendingSessions.get(approvalToken);
     if (!pending) {
       throw new Error(
@@ -300,6 +604,7 @@ export class IrohaConnectBoundary {
         accountId: pending.context.accountId,
         toriiUrl: pending.context.toriiUrl,
         chainId: pending.context.chainId,
+        networkPrefix: pending.context.networkPrefix,
         permissions: copyConnectPermissions(pending.permissions),
       });
       if (!authorized) {
@@ -362,7 +667,9 @@ export class IrohaConnectBoundary {
     frameBase64: string;
   }): IrohaConnectProcessedFrame {
     const session = this.#requireSession(input.sessionToken);
-    const frame = decodeConnectFrame(base64ToBytes(input.frameBase64));
+    const frame = decodeConnectFrame(
+      decodeIrohaConnectFrameBase64(input.frameBase64),
+    );
     if (frame.sid !== session.sid || frame.direction !== "app_to_wallet") {
       throw new Error(
         "IrohaConnect frame does not match the approved session.",
@@ -525,6 +832,7 @@ export class IrohaConnectBoundary {
         accountId: session.context.accountId,
         toriiUrl: session.context.toriiUrl,
         chainId: session.context.chainId,
+        networkPrefix: session.context.networkPrefix,
         domainTag: request.domainTag,
         byteLength: request.message.length,
         payloadPreviewHex: bytesToHex(request.message.slice(0, 96)),
@@ -600,12 +908,12 @@ export class IrohaConnectBoundary {
   }
 
   closeSession(sessionToken: string) {
-    const normalized = String(sessionToken ?? "").trim();
-    const session = this.#sessions.get(normalized);
+    if (!isBoundaryToken(sessionToken)) return;
+    const session = this.#sessions.get(sessionToken);
     if (!session) {
       return;
     }
-    this.#sessions.delete(normalized);
+    this.#sessions.delete(sessionToken);
     if (session.requestSlot) {
       const request = session.requestSlot.request;
       request.message.fill(0);
@@ -624,10 +932,11 @@ export class IrohaConnectBoundary {
     expired: boolean;
   } {
     const session = this.#requireSession(input.sessionToken);
-    const requestToken = normalizeText(input.requestToken, "requestToken");
+    const requestToken = input.requestToken;
     const slot = session.requestSlot;
     const request = slot?.request;
     if (
+      !isBoundaryToken(requestToken) ||
       !request ||
       request.requestToken !== requestToken ||
       request.sessionToken !== session.sessionToken ||
@@ -681,8 +990,9 @@ export class IrohaConnectBoundary {
   }
 
   #requireSession(sessionToken: string) {
-    const normalized = normalizeText(sessionToken, "sessionToken");
-    const session = this.#sessions.get(normalized);
+    const session = isBoundaryToken(sessionToken)
+      ? this.#sessions.get(sessionToken)
+      : undefined;
     if (!session) {
       throw new Error("IrohaConnect session token is invalid or stale.");
     }
@@ -735,10 +1045,12 @@ export class IrohaConnectBoundary {
 
   #uniqueToken() {
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      const token = normalizeText(
-        this.#dependencies.randomToken(),
-        "generated token",
-      );
+      const token = this.#dependencies.randomToken();
+      if (!isBoundaryToken(token)) {
+        throw new Error(
+          "IrohaConnect token generator must return an exact 32-byte base64url token.",
+        );
+      }
       if (
         !this.#pendingSessions.has(token) &&
         !this.#authorizingSessions.has(token) &&

@@ -1,12 +1,17 @@
 import type { ToriiClient } from "@iroha/iroha-js";
 import {
-  confidentialModeSupportsShield,
-  isPositiveWholeAmount,
+  readConfidentialPolicyMode,
+  type ConfidentialPolicyMode,
 } from "../src/utils/confidential";
 import { sanitizeErrorMessage } from "../src/utils/errorMessage";
+import {
+  ENDPOINT_URL_MAX_CHARACTERS,
+  isLoopbackEndpointUrl,
+} from "../src/utils/endpoint";
+import { normalizeCanonicalAccountIdLiteral } from "./accountAddress";
 import { normalizeFirstReleaseAssetDefinitionId } from "./assetDefinitionId";
-
-export { confidentialModeSupportsShield, isPositiveWholeAmount };
+import { readBoundedResponseBytes } from "./boundedJsonResponse";
+import { parseStrictJson } from "./secureBoundedJson";
 
 export type ExplorerAccountQrResponse = Awaited<
   ReturnType<ToriiClient["getExplorerAccountQr"]>
@@ -95,48 +100,24 @@ export interface NexusLifecycleView {
   lanes: NexusLifecycleLaneView[];
 }
 
-export interface OfflineReadinessBlockerView {
-  code: string;
-  message: string;
-}
-
-export interface OfflineReadinessView {
-  required_bridge_abi_version: 21;
-  cash_handoff_capability: "cash_handoff_v1";
-  max_hops: number;
-  asset_definition_id: string;
-  asset_scale: number | null;
-  evaluated_block_height: number;
-  evaluated_block_hash: string;
-  active_transfer_verifier: Record<string, unknown> | null;
-  active_topup_shield_verifier: Record<string, unknown> | null;
-  active_unshield_verifier: Record<string, unknown> | null;
-  active_recursive_step_eq_verifier: Record<string, unknown> | null;
-  active_recursive_step_ep_verifier: Record<string, unknown> | null;
-  artifact_set: Record<string, unknown> | null;
-  proof_backend_available: boolean;
-  recursive_lineage_supported: boolean;
-  ready: boolean;
-  blockers: OfflineReadinessBlockerView[];
-}
-
 export interface AssetDefinitionConfidentialPolicyView {
   [key: string]: unknown;
-  mode: string;
-  allow_shield: boolean | null;
-  allow_unshield: boolean | null;
+  mode: ConfidentialPolicyMode;
+  allow_shield: boolean;
+  allow_unshield: boolean;
   vk_transfer: string | null;
   vk_unshield: string | null;
   vk_shield: string | null;
   vk_set_hash: string | null;
   poseidon_params_id: number | null;
   pedersen_params_id: number | null;
+  pending_transition: ConfidentialPolicyTransitionView | null;
 }
 
 export interface ConfidentialPolicyTransitionView {
   transition_id: string;
-  previous_mode: string;
-  new_mode: string;
+  previous_mode: ConfidentialPolicyMode;
+  new_mode: ConfidentialPolicyMode;
   effective_height: number;
   conversion_window: number | null;
   window_open_height: number | null;
@@ -145,10 +126,10 @@ export interface ConfidentialPolicyTransitionView {
 export interface ConfidentialAssetPolicyView {
   asset_id: string;
   block_height: number;
-  current_mode: string;
-  effective_mode: string;
-  allow_shield: boolean | null;
-  allow_unshield: boolean | null;
+  current_mode: ConfidentialPolicyMode;
+  effective_mode: ConfidentialPolicyMode;
+  allow_shield: boolean;
+  allow_unshield: boolean;
   vk_transfer: string | null;
   vk_unshield: string | null;
   vk_shield: string | null;
@@ -161,6 +142,7 @@ export interface ConfidentialAssetPolicyView {
 export interface AccountAssetListItemView {
   asset_id: string;
   quantity: string;
+  scope: string;
   asset_alias?: string | null;
   asset_name?: string | null;
   asset_definition_id?: string | null;
@@ -226,17 +208,10 @@ const toExactJsonNonNegativeInteger = (value: unknown, label: string) => {
 };
 
 const toPositiveInteger = (value: unknown, label: string) => {
-  if (
-    typeof value !== "number" &&
-    (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value))
-  ) {
-    throw new Error(`${label} must be a non-negative integer.`);
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative JSON integer.`);
   }
-  const numberValue = typeof value === "number" ? value : Number(value);
-  if (!Number.isSafeInteger(numberValue) || numberValue < 0) {
-    throw new Error(`${label} must be a non-negative integer.`);
-  }
-  return numberValue;
+  return value;
 };
 
 const toCanonicalNonNegativeDecimalString = (
@@ -260,23 +235,34 @@ const toCanonicalNonNegativeDecimalString = (
 };
 
 const toNullableInteger = (value: unknown) => {
-  if (value === null || value === undefined || value === "") return null;
+  if (value === null) return null;
   return toPositiveInteger(value, "numeric field");
 };
 
 const toStringValue = (value: unknown, label: string) => {
-  const out = String(value ?? "").trim();
-  if (!out) {
-    throw new Error(`${label} must be a non-empty string.`);
+  if (
+    typeof value !== "string" ||
+    !value ||
+    value.trim() !== value ||
+    Array.from(value).some((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code < 0x20 || code === 0x7f;
+    })
+  ) {
+    throw new Error(`${label} must be canonical non-empty text.`);
   }
-  return out;
+  return value;
 };
 
-const toMetadataRecord = (value: unknown) => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
+const toMetadataRecord = (value: unknown, label: string) =>
+  toRecord(value, label);
+
+const toCanonicalQuantity = (value: unknown, label: string): string => {
+  const quantity = toStringValue(value, label);
+  if (!/^(?:0|[1-9]\d*)(?:\.\d*[1-9])?$/u.test(quantity)) {
+    throw new Error(`${label} must be a canonical non-negative quantity.`);
   }
-  return value as Record<string, unknown>;
+  return quantity;
 };
 
 const toArray = (value: unknown, label: string): unknown[] => {
@@ -287,11 +273,35 @@ const toArray = (value: unknown, label: string): unknown[] => {
 };
 
 export const normalizeBaseUrl = (url: string) => {
-  const trimmed = url.trim().replace(/\/$/, "");
-  if (!trimmed.startsWith("http")) {
-    throw new Error("Torii URL must include http or https scheme");
+  if (
+    typeof url !== "string" ||
+    !url ||
+    url.length > ENDPOINT_URL_MAX_CHARACTERS ||
+    url.trim() !== url
+  ) {
+    throw new Error("Torii URL must be canonical non-empty text.");
   }
-  return trimmed;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("Torii URL must be a valid absolute URL.");
+  }
+  if (
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error(
+      "Torii URL must use HTTP(S) without credentials, a query, or a fragment.",
+    );
+  }
+  if (parsed.protocol === "http:" && !isLoopbackEndpointUrl(parsed)) {
+    throw new Error("Remote Torii URLs must use HTTPS.");
+  }
+  return parsed.toString().replace(/\/+$/u, "");
 };
 
 export const stripConfidentialFeeSponsor = (
@@ -307,6 +317,7 @@ export const stripConfidentialFeeSponsor = (
 };
 
 const BINARY_API_ERROR_CONTENT_TYPES = ["application/x-norito"];
+const MAX_API_ERROR_RESPONSE_BYTES = 64 * 1024;
 const BINARY_API_ERROR_DETAIL_KEYWORDS =
   /\b(account|faucet|invalid|missing|unsupported|expected|forbidden|bad request|internal server error|too many requests|not found|already|failed|failure|timed out|timeout|unavailable|disabled|denied|required|must|rejected|malformed|unknown|ERR_[A-Z0-9_]+)\b/i;
 
@@ -438,7 +449,7 @@ export const extractApiErrorDetail = (payload: unknown): string => {
 };
 
 export const readApiErrorDetail = async (
-  response: Pick<Response, "headers" | "text">,
+  response: Pick<Response, "arrayBuffer" | "headers">,
 ): Promise<string> => {
   const rejectCode = sanitizeErrorMessage(
     readResponseHeader(response, "x-iroha-reject-code"),
@@ -448,18 +459,32 @@ export const readApiErrorDetail = async (
   }
 
   const contentType = readResponseHeader(response, "content-type");
+  let bytes: Buffer;
+  try {
+    bytes = await readBoundedResponseBytes(response, {
+      label: "Torii error response",
+      maximumBytes: MAX_API_ERROR_RESPONSE_BYTES,
+      allowEmpty: true,
+    });
+  } catch {
+    return "";
+  }
+  if (bytes.length === 0) {
+    return "";
+  }
+  const text = new TextDecoder("utf-8").decode(bytes).trim();
   if (isBinaryApiErrorContentType(contentType)) {
-    return extractBinaryApiErrorDetail(await response.text().catch(() => ""));
+    return extractBinaryApiErrorDetail(text);
   }
 
-  const text = (await response.text().catch(() => "")).trim();
   if (!text) {
     return "";
   }
 
   try {
     return sanitizeErrorMessage(
-      extractApiErrorDetail(JSON.parse(text)) || text,
+      extractApiErrorDetail(parseStrictJson(text, "Torii error response")) ||
+        text,
     );
   } catch {
     return sanitizeErrorMessage(text);
@@ -487,28 +512,60 @@ export const formatOnboardingError = (input: {
 export const normalizeExplorerAccountQrPayload = (
   payload: Record<string, unknown>,
 ): ExplorerAccountQrResponse => {
-  const canonicalId = String(payload.canonicalId ?? payload.canonical_id ?? "");
-  const literal = String(payload.literal ?? "");
-  const networkPrefix = Number(
-    payload.networkPrefix ?? payload.network_prefix ?? 0,
+  assertExactObjectKeys(
+    payload,
+    [
+      "canonicalId",
+      "literal",
+      "networkPrefix",
+      "errorCorrection",
+      "modules",
+      "qrVersion",
+      "svg",
+    ],
+    "Explorer QR response",
   );
-  const errorCorrection = String(
-    payload.errorCorrection ?? payload.error_correction ?? "",
+  const canonicalId = toStringValue(
+    payload.canonicalId,
+    "Explorer QR response.canonicalId",
   );
-  const modules = Number(payload.modules ?? 0);
-  const qrVersion = Number(payload.qrVersion ?? payload.qr_version ?? 0);
-  const svg = String(payload.svg ?? "");
-
-  if (!canonicalId || !literal || !svg) {
-    throw new Error("Explorer QR response was missing required fields.");
+  const literal = toStringValue(
+    payload.literal,
+    "Explorer QR response.literal",
+  );
+  const networkPrefix = toExactJsonNonNegativeInteger(
+    payload.networkPrefix,
+    "Explorer QR response.networkPrefix",
+  );
+  if (networkPrefix < 1 || networkPrefix > 0x3fff) {
+    throw new Error(
+      "Explorer QR response.networkPrefix must be between 1 and 16383.",
+    );
+  }
+  if (payload.errorCorrection !== "M") {
+    throw new Error("Explorer QR response.errorCorrection must be exactly M.");
+  }
+  if (payload.modules !== 192) {
+    throw new Error("Explorer QR response.modules must be exactly 192.");
+  }
+  const qrVersion = toExactJsonNonNegativeInteger(
+    payload.qrVersion,
+    "Explorer QR response.qrVersion",
+  );
+  if (qrVersion < 1 || qrVersion > 40) {
+    throw new Error("Explorer QR response.qrVersion must be between 1 and 40.");
+  }
+  const svg = toStringValue(payload.svg, "Explorer QR response.svg");
+  if (!svg.startsWith("<svg") || svg.length > 1024 * 1024) {
+    throw new Error("Explorer QR response.svg must be a bounded SVG document.");
   }
 
   return {
     canonicalId,
     literal,
     networkPrefix,
-    errorCorrection,
-    modules,
+    errorCorrection: "M",
+    modules: 192,
     qrVersion,
     svg,
   };
@@ -519,7 +576,10 @@ export const assertExplorerAccountQrMatchesRequestedAccount = (
   expectedAccountId: string,
 ): ExplorerAccountQrResponse => {
   const normalized = normalizeExplorerAccountQrPayload(payload);
-  if (normalized.literal !== expectedAccountId) {
+  if (
+    normalized.literal !== expectedAccountId ||
+    normalized.canonicalId !== expectedAccountId
+  ) {
     throw new Error(
       "Explorer QR response account did not match the requested account.",
     );
@@ -529,94 +589,183 @@ export const assertExplorerAccountQrMatchesRequestedAccount = (
 
 export const normalizeAccountAssetListPayload = (
   payload: unknown,
+  context: Readonly<{
+    expectedAccountId: string;
+    expectedAssetDefinitionId?: string;
+    networkPrefix: number;
+    maximumItems: number;
+  }>,
 ): AccountAssetListResponseView => {
-  const record = toRecord(payload, "account asset list response");
-  const items = toArray(record.items, "account asset list response.items").map(
-    (value, index) => {
-      const entry = toRecord(
-        value,
-        `account asset list response.items[${index}]`,
-      );
-      const itemLabel = `account asset list response.items[${index}]`;
-      const unsupportedField = [
-        "assetId",
-        "assetDefinitionId",
-        "asset_definition_id",
-        "accountId",
-        "assetAlias",
-        "assetName",
-      ].find((field) => Object.prototype.hasOwnProperty.call(entry, field));
-      if (unsupportedField) {
-        throw new Error(
-          `${itemLabel}.${unsupportedField} is outside the first-release account asset contract.`,
-        );
-      }
-
-      const readRequiredString = (field: string) => {
-        const fieldValue = entry[field];
-        if (typeof fieldValue !== "string" || !fieldValue.trim()) {
-          throw new Error(`${itemLabel}.${field} must be a non-empty string.`);
-        }
-        return fieldValue.trim();
-      };
-      const readOptionalString = (field: string) => {
-        const fieldValue = entry[field];
-        if (fieldValue === null || fieldValue === undefined) {
-          return "";
-        }
-        if (typeof fieldValue !== "string") {
-          throw new Error(`${itemLabel}.${field} must be a string or null.`);
-        }
-        return fieldValue.trim();
-      };
-
-      const hasLegacyAssetId = Object.prototype.hasOwnProperty.call(
-        entry,
-        "asset_id",
-      );
-      const hasSplitAsset = Object.prototype.hasOwnProperty.call(
-        entry,
-        "asset",
-      );
-      const hasSplitAccountId = Object.prototype.hasOwnProperty.call(
-        entry,
-        "account_id",
-      );
-      if (
-        (hasLegacyAssetId && (hasSplitAsset || hasSplitAccountId)) ||
-        (!hasLegacyAssetId && (!hasSplitAsset || !hasSplitAccountId))
-      ) {
-        throw new Error(
-          `${itemLabel} must use exactly one first-release shape: { asset_id, quantity } or { asset, account_id, quantity }.`,
-        );
-      }
-
-      const assetDefinitionId = hasLegacyAssetId
-        ? ""
-        : readRequiredString("asset");
-      const accountId = hasLegacyAssetId
-        ? ""
-        : readRequiredString("account_id");
-      const assetId = hasLegacyAssetId
-        ? readRequiredString("asset_id")
-        : `${assetDefinitionId}#${accountId}`;
-      const assetAlias = readOptionalString("asset_alias").replace(/^@/, "");
-      const assetName = readOptionalString("asset_name");
-      return {
-        asset_id: assetId,
-        quantity: readRequiredString("quantity"),
-        ...(assetAlias ? { asset_alias: assetAlias } : {}),
-        ...(assetName ? { asset_name: assetName } : {}),
-        ...(assetDefinitionId
-          ? { asset_definition_id: assetDefinitionId }
-          : {}),
-      };
-    },
+  const expectedAccountId = normalizeCanonicalAccountIdLiteral(
+    context.expectedAccountId,
+    "expectedAccountId",
+    context.networkPrefix,
   );
-  return {
-    items,
-    total: toPositiveInteger(record.total, "account asset list response.total"),
-  };
+  if (!Number.isSafeInteger(context.maximumItems) || context.maximumItems < 0) {
+    throw new Error("account asset list maximumItems must be non-negative.");
+  }
+  const expectedAssetDefinitionId =
+    context.expectedAssetDefinitionId === undefined
+      ? undefined
+      : normalizeFirstReleaseAssetDefinitionId(
+          context.expectedAssetDefinitionId,
+          "expectedAssetDefinitionId",
+        );
+  const record = toRecord(payload, "account asset list response");
+  assertExactObjectKeys(
+    record,
+    ["items", "total", "has_more", "count_mode"],
+    "account asset list response",
+  );
+  if (typeof record.has_more !== "boolean") {
+    throw new Error("account asset list response.has_more must be a boolean.");
+  }
+  if (record.count_mode !== "exact") {
+    throw new Error('account asset list response.count_mode must be "exact".');
+  }
+  const rawItems = toArray(record.items, "account asset list response.items");
+  if (rawItems.length > context.maximumItems) {
+    throw new Error(
+      "account asset list response.items exceeds the requested item limit.",
+    );
+  }
+  const holdingKeys = new Set<string>();
+  const items = rawItems.map((value, index) => {
+    const entry = toRecord(
+      value,
+      `account asset list response.items[${index}]`,
+    );
+    const itemLabel = `account asset list response.items[${index}]`;
+    assertExactObjectKeys(
+      entry,
+      [
+        "account_id",
+        "asset",
+        "asset_alias",
+        "asset_name",
+        "scope",
+        "quantity",
+        "primary_alias",
+        "primary_alias_name",
+        "primary_alias_dataspace",
+        "primary_alias_domain",
+        "has_primary_alias",
+      ],
+      itemLabel,
+    );
+    if (
+      entry.primary_alias !== null ||
+      entry.primary_alias_name !== null ||
+      entry.primary_alias_dataspace !== null ||
+      entry.primary_alias_domain !== null ||
+      entry.has_primary_alias !== false
+    ) {
+      throw new Error(
+        `${itemLabel} contains unsupported primary alias projection data.`,
+      );
+    }
+
+    const readRequiredString = (field: string) => {
+      const fieldValue = entry[field];
+      if (
+        typeof fieldValue !== "string" ||
+        !fieldValue ||
+        fieldValue.trim() !== fieldValue ||
+        Array.from(fieldValue).some((character) => character < " ")
+      ) {
+        throw new Error(`${itemLabel}.${field} must be canonical text.`);
+      }
+      return fieldValue;
+    };
+    const readOptionalString = (field: string) => {
+      const fieldValue = entry[field];
+      if (fieldValue === null) {
+        return "";
+      }
+      if (
+        typeof fieldValue !== "string" ||
+        !fieldValue ||
+        fieldValue.trim() !== fieldValue ||
+        Array.from(fieldValue).some((character) => character < " ")
+      ) {
+        throw new Error(`${itemLabel}.${field} must be a string or null.`);
+      }
+      return fieldValue;
+    };
+
+    const assetDefinitionId = normalizeFirstReleaseAssetDefinitionId(
+      readRequiredString("asset"),
+      `${itemLabel}.asset`,
+    );
+    if (
+      expectedAssetDefinitionId !== undefined &&
+      assetDefinitionId !== expectedAssetDefinitionId
+    ) {
+      throw new Error(
+        `${itemLabel}.asset does not match the requested asset definition.`,
+      );
+    }
+    const accountId = normalizeCanonicalAccountIdLiteral(
+      readRequiredString("account_id"),
+      `${itemLabel}.account_id`,
+      context.networkPrefix,
+    );
+    if (accountId !== expectedAccountId) {
+      throw new Error(
+        `${itemLabel}.account_id does not match the requested account.`,
+      );
+    }
+    const scope = readRequiredString("scope");
+    if (scope !== "global" && !/^dataspace:(?:0|[1-9]\d*)$/u.test(scope)) {
+      throw new Error(
+        `${itemLabel}.scope must be "global" or a canonical dataspace scope.`,
+      );
+    }
+    if (
+      scope.startsWith("dataspace:") &&
+      BigInt(scope.slice("dataspace:".length)) > 0xffff_ffff_ffff_ffffn
+    ) {
+      throw new Error(`${itemLabel}.scope dataspace ID exceeds u64.`);
+    }
+    const holdingKey = `${assetDefinitionId}\0${scope}`;
+    if (holdingKeys.has(holdingKey)) {
+      throw new Error(
+        `${itemLabel} duplicates an account asset holding in this exact page.`,
+      );
+    }
+    holdingKeys.add(holdingKey);
+    const assetId = `${assetDefinitionId}#${accountId}${
+      scope === "global" ? "" : `#${scope}`
+    }`;
+    const assetAlias = readOptionalString("asset_alias");
+    const assetName = readRequiredString("asset_name");
+    const quantity = readRequiredString("quantity");
+    if (
+      quantity.length > 155 ||
+      !/^(?:0|[1-9]\d*)(?:\.\d*[1-9])?$/u.test(quantity) ||
+      (quantity.includes(".") && quantity.split(".")[1]!.length > 28)
+    ) {
+      throw new Error(`${itemLabel}.quantity must be a canonical quantity.`);
+    }
+    return {
+      asset_id: assetId,
+      quantity,
+      scope,
+      ...(assetAlias ? { asset_alias: assetAlias } : {}),
+      ...(assetName ? { asset_name: assetName } : {}),
+      asset_definition_id: assetDefinitionId,
+    };
+  });
+  const total = toExactJsonNonNegativeInteger(
+    record.total,
+    "account asset list response.total",
+  );
+  if (total < items.length) {
+    throw new Error(
+      "account asset list response.total cannot be less than items.length.",
+    );
+  }
+  return { items, total };
 };
 
 const normalizeGovernanceCouncilMember = (
@@ -791,9 +940,7 @@ export const normalizeGovernanceUnlockStatsPayload = (
 export const normalizePublicLaneValidatorsPayload = (
   payload: Record<string, unknown>,
 ): PublicLaneValidatorsResponseView => {
-  if ("laneId" in payload) {
-    throw new Error("validators.laneId is not part of the current contract.");
-  }
+  assertExactObjectKeys(payload, ["lane_id", "total", "items"], "validators");
   const laneId = toPositiveInteger(payload.lane_id, "validators.lane_id");
   const total = toPositiveInteger(payload.total, "validators.total");
   const rawItems = toArray(payload.items, "validators.items");
@@ -801,55 +948,59 @@ export const normalizePublicLaneValidatorsPayload = (
   const items: PublicLaneValidatorRecordView[] = rawItems.map(
     (raw, index): PublicLaneValidatorRecordView => {
       const item = toRecord(raw, `validators.items[${index}]`);
-      if (
+      const itemLabel = `validators.items[${index}]`;
+      assertExactObjectKeys(
+        item,
         [
-          "laneId",
-          "peerId",
-          "stakeAccount",
-          "totalStake",
-          "selfStake",
-          "activationEpoch",
-          "activationHeight",
-          "lastRewardEpoch",
-        ].some((key) => key in item)
-      ) {
-        throw new Error(
-          `validators.items[${index}] contains fields outside the current contract.`,
-        );
-      }
+          "lane_id",
+          "validator",
+          "peer_id",
+          "stake_account",
+          "total_stake",
+          "self_stake",
+          "status",
+          "activation_epoch",
+          "activation_height",
+          "last_reward_epoch",
+          "metadata",
+        ],
+        itemLabel,
+      );
       const statusRecord = toRecord(
-        item.status ?? {},
+        item.status,
         `validators.items[${index}].status`,
       );
-      if (
-        ["activatesAtEpoch", "releasesAtMs"].some((key) => key in statusRecord)
-      ) {
-        throw new Error(
-          `validators.items[${index}].status contains fields outside the current contract.`,
-        );
+      assertExactObjectKeys(
+        statusRecord,
+        ["type", "activates_at_epoch", "reason", "releases_at_ms", "slash_id"],
+        `${itemLabel}.status`,
+      );
+      const itemLaneId = toPositiveInteger(
+        item.lane_id,
+        `${itemLabel}.lane_id`,
+      );
+      if (itemLaneId !== laneId) {
+        throw new Error(`${itemLabel}.lane_id must match validators.lane_id.`);
       }
       return {
-        lane_id: toPositiveInteger(
-          item.lane_id ?? laneId,
-          `validators.items[${index}].lane_id`,
-        ),
+        lane_id: itemLaneId,
         validator: toStringValue(
           item.validator,
           `validators.items[${index}].validator`,
         ),
         peer_id: toStringValue(
-          item.peer_id ?? "",
+          item.peer_id,
           `validators.items[${index}].peer_id`,
         ),
         stake_account: toStringValue(
           item.stake_account,
           `validators.items[${index}].stake_account`,
         ),
-        total_stake: toStringValue(
+        total_stake: toCanonicalQuantity(
           item.total_stake,
           `validators.items[${index}].total_stake`,
         ),
-        self_stake: toStringValue(
+        self_stake: toCanonicalQuantity(
           item.self_stake,
           `validators.items[${index}].self_stake`,
         ),
@@ -862,23 +1013,35 @@ export const normalizePublicLaneValidatorsPayload = (
             statusRecord.activates_at_epoch,
           ),
           reason:
-            statusRecord.reason === null || statusRecord.reason === undefined
+            statusRecord.reason === null
               ? null
-              : String(statusRecord.reason),
+              : toStringValue(
+                  statusRecord.reason,
+                  `${itemLabel}.status.reason`,
+                ),
           releases_at_ms: toNullableInteger(statusRecord.releases_at_ms),
           slash_id:
-            statusRecord.slash_id === null ||
-            statusRecord.slash_id === undefined
+            statusRecord.slash_id === null
               ? null
-              : String(statusRecord.slash_id),
+              : toStringValue(
+                  statusRecord.slash_id,
+                  `${itemLabel}.status.slash_id`,
+                ),
         },
         activation_epoch: toNullableInteger(item.activation_epoch),
         activation_height: toNullableInteger(item.activation_height),
         last_reward_epoch: toNullableInteger(item.last_reward_epoch),
-        metadata: toMetadataRecord(item.metadata),
+        metadata: toMetadataRecord(item.metadata, `${itemLabel}.metadata`),
       };
     },
   );
+
+  if (total < items.length) {
+    throw new Error("validators.total must not be smaller than items.length.");
+  }
+  if (new Set(items.map((item) => item.validator)).size !== items.length) {
+    throw new Error("validators.items must contain unique validators.");
+  }
 
   return {
     lane_id: laneId,
@@ -890,22 +1053,28 @@ export const normalizePublicLaneValidatorsPayload = (
 export const normalizePublicLaneStakePayload = (
   payload: Record<string, unknown>,
 ): PublicLaneStakeResponseView => {
-  if ("laneId" in payload) {
-    throw new Error("stake.laneId is not part of the current contract.");
-  }
+  assertExactObjectKeys(payload, ["lane_id", "total", "items"], "stake");
   const laneId = toPositiveInteger(payload.lane_id, "stake.lane_id");
   const total = toPositiveInteger(payload.total, "stake.total");
   const rawItems = toArray(payload.items, "stake.items");
 
   const items: PublicLaneStakeShareView[] = rawItems.map((raw, index) => {
     const item = toRecord(raw, `stake.items[${index}]`);
-    if ("laneId" in item || "pendingUnbonds" in item) {
-      throw new Error(
-        `stake.items[${index}] contains fields outside the current contract.`,
-      );
-    }
+    const itemLabel = `stake.items[${index}]`;
+    assertExactObjectKeys(
+      item,
+      [
+        "lane_id",
+        "validator",
+        "staker",
+        "bonded",
+        "metadata",
+        "pending_unbonds",
+      ],
+      itemLabel,
+    );
     const rawUnbonds = toArray(
-      item.pending_unbonds ?? [],
+      item.pending_unbonds,
       `stake.items[${index}].pending_unbonds`,
     );
     const pending_unbonds: PublicLaneUnbondingView[] = rawUnbonds.map(
@@ -914,17 +1083,18 @@ export const normalizePublicLaneStakePayload = (
           unbondRaw,
           `stake.items[${index}].pending_unbonds[${unbondIndex}]`,
         );
-        if ("requestId" in unbond || "releaseAtMs" in unbond) {
-          throw new Error(
-            `stake.items[${index}].pending_unbonds[${unbondIndex}] contains fields outside the current contract.`,
-          );
-        }
+        const unbondLabel = `${itemLabel}.pending_unbonds[${unbondIndex}]`;
+        assertExactObjectKeys(
+          unbond,
+          ["request_id", "amount", "release_at_ms"],
+          unbondLabel,
+        );
         return {
           request_id: toStringValue(
             unbond.request_id,
             `stake.items[${index}].pending_unbonds[${unbondIndex}].request_id`,
           ),
-          amount: toStringValue(
+          amount: toCanonicalQuantity(
             unbond.amount,
             `stake.items[${index}].pending_unbonds[${unbondIndex}].amount`,
           ),
@@ -936,21 +1106,32 @@ export const normalizePublicLaneStakePayload = (
       },
     );
 
+    const itemLaneId = toPositiveInteger(item.lane_id, `${itemLabel}.lane_id`);
+    if (itemLaneId !== laneId) {
+      throw new Error(`${itemLabel}.lane_id must match stake.lane_id.`);
+    }
     return {
-      lane_id: toPositiveInteger(
-        item.lane_id ?? laneId,
-        `stake.items[${index}].lane_id`,
-      ),
+      lane_id: itemLaneId,
       validator: toStringValue(
         item.validator,
         `stake.items[${index}].validator`,
       ),
       staker: toStringValue(item.staker, `stake.items[${index}].staker`),
-      bonded: toStringValue(item.bonded, `stake.items[${index}].bonded`),
-      metadata: toMetadataRecord(item.metadata),
+      bonded: toCanonicalQuantity(item.bonded, `stake.items[${index}].bonded`),
+      metadata: toMetadataRecord(item.metadata, `${itemLabel}.metadata`),
       pending_unbonds,
     };
   });
+
+  if (total < items.length) {
+    throw new Error("stake.total must not be smaller than items.length.");
+  }
+  if (
+    new Set(items.map((item) => JSON.stringify([item.validator, item.staker])))
+      .size !== items.length
+  ) {
+    throw new Error("stake.items must contain unique validator/staker pairs.");
+  }
 
   return {
     lane_id: laneId,
@@ -962,29 +1143,32 @@ export const normalizePublicLaneStakePayload = (
 export const normalizePublicLaneRewardsPayload = (
   payload: Record<string, unknown>,
 ): PublicLaneRewardsResponseView => {
-  if ("laneId" in payload) {
-    throw new Error("rewards.laneId is not part of the current contract.");
-  }
+  assertExactObjectKeys(payload, ["lane_id", "total", "items"], "rewards");
   const laneId = toPositiveInteger(payload.lane_id, "rewards.lane_id");
   const total = toPositiveInteger(payload.total, "rewards.total");
   const rawItems = toArray(payload.items, "rewards.items");
 
   const items: PublicLanePendingRewardView[] = rawItems.map((raw, index) => {
     const item = toRecord(raw, `rewards.items[${index}]`);
-    if (
-      ["laneId", "lastClaimedEpoch", "pendingThroughEpoch"].some(
-        (key) => key in item,
-      )
-    ) {
-      throw new Error(
-        `rewards.items[${index}] contains fields outside the current contract.`,
-      );
+    const itemLabel = `rewards.items[${index}]`;
+    assertExactObjectKeys(
+      item,
+      [
+        "lane_id",
+        "account",
+        "asset",
+        "last_claimed_epoch",
+        "pending_through_epoch",
+        "amount",
+      ],
+      itemLabel,
+    );
+    const itemLaneId = toPositiveInteger(item.lane_id, `${itemLabel}.lane_id`);
+    if (itemLaneId !== laneId) {
+      throw new Error(`${itemLabel}.lane_id must match rewards.lane_id.`);
     }
     return {
-      lane_id: toPositiveInteger(
-        item.lane_id ?? laneId,
-        `rewards.items[${index}].lane_id`,
-      ),
+      lane_id: itemLaneId,
       account: toStringValue(item.account, `rewards.items[${index}].account`),
       asset: toStringValue(item.asset, `rewards.items[${index}].asset`),
       last_claimed_epoch: toPositiveInteger(
@@ -995,9 +1179,22 @@ export const normalizePublicLaneRewardsPayload = (
         item.pending_through_epoch,
         `rewards.items[${index}].pending_through_epoch`,
       ),
-      amount: toStringValue(item.amount, `rewards.items[${index}].amount`),
+      amount: toCanonicalQuantity(
+        item.amount,
+        `rewards.items[${index}].amount`,
+      ),
     };
   });
+
+  if (total < items.length) {
+    throw new Error("rewards.total must not be smaller than items.length.");
+  }
+  if (
+    new Set(items.map((item) => JSON.stringify([item.account, item.asset])))
+      .size !== items.length
+  ) {
+    throw new Error("rewards.items must contain unique account/asset pairs.");
+  }
 
   return {
     lane_id: laneId,
@@ -1009,9 +1206,36 @@ export const normalizePublicLaneRewardsPayload = (
 export const normalizeNexusLifecyclePayload = (
   payload: Record<string, unknown>,
 ): NexusLifecycleView => {
+  assertExactObjectKeys(
+    payload,
+    ["version", "nexus_enabled", "lane_count", "lanes"],
+    "nexus lifecycle",
+  );
   const rawLanes = toArray(payload.lanes, "nexus lifecycle.lanes");
   const lanes = rawLanes.map((rawLane, index): NexusLifecycleLaneView => {
     const lane = toRecord(rawLane, `nexus lifecycle.lanes[${index}]`);
+    const laneLabel = `nexus lifecycle.lanes[${index}]`;
+    assertExactObjectKeys(
+      lane,
+      [
+        "id",
+        "dataspace_id",
+        "alias",
+        "description",
+        "visibility",
+        "governance",
+        "storage",
+        "proof_scheme",
+        "metadata",
+      ],
+      laneLabel,
+    );
+    if (
+      typeof lane.description !== "string" ||
+      lane.description.trim() !== lane.description
+    ) {
+      throw new Error(`${laneLabel}.description must be canonical text.`);
+    }
     return {
       id: toPositiveInteger(lane.id, `nexus lifecycle.lanes[${index}].id`),
       dataspace_id: toCanonicalNonNegativeDecimalString(
@@ -1019,15 +1243,15 @@ export const normalizeNexusLifecyclePayload = (
         `nexus lifecycle.lanes[${index}].dataspace_id`,
       ),
       alias: toStringValue(lane.alias, `nexus lifecycle.lanes[${index}].alias`),
-      description: String(lane.description ?? "").trim(),
+      description: lane.description,
       visibility: toStringValue(
         lane.visibility,
         `nexus lifecycle.lanes[${index}].visibility`,
       ),
       governance:
-        lane.governance === null || lane.governance === undefined
+        lane.governance === null
           ? null
-          : String(lane.governance).trim() || null,
+          : toStringValue(lane.governance, `${laneLabel}.governance`),
       storage: toStringValue(
         lane.storage,
         `nexus lifecycle.lanes[${index}].storage`,
@@ -1036,7 +1260,7 @@ export const normalizeNexusLifecyclePayload = (
         lane.proof_scheme,
         `nexus lifecycle.lanes[${index}].proof_scheme`,
       ),
-      metadata: toMetadataRecord(lane.metadata),
+      metadata: toMetadataRecord(lane.metadata, `${laneLabel}.metadata`),
     };
   });
   const laneCount = toPositiveInteger(
@@ -1046,6 +1270,15 @@ export const normalizeNexusLifecyclePayload = (
   if (laneCount !== lanes.length) {
     throw new Error(
       "nexus lifecycle.lane_count must match nexus lifecycle.lanes.",
+    );
+  }
+  if (
+    new Set(lanes.map((lane) => lane.id)).size !== lanes.length ||
+    new Set(lanes.map((lane) => lane.dataspace_id)).size !== lanes.length ||
+    new Set(lanes.map((lane) => lane.alias)).size !== lanes.length
+  ) {
+    throw new Error(
+      "nexus lifecycle lanes must have unique IDs, dataspaces, and aliases.",
     );
   }
   if (typeof payload.nexus_enabled !== "boolean") {
@@ -1091,189 +1324,289 @@ export const parseNexusLifecycleJson = (text: string): NexusLifecycleView => {
   return normalizeNexusLifecyclePayload(toRecord(payload, "nexus lifecycle"));
 };
 
-export const normalizeOfflineReadinessPayload = (
-  payload: Record<string, unknown>,
-  expectedAssetDefinitionId?: string,
-): OfflineReadinessView => {
+const readNullablePolicyUint32 = (
+  value: unknown,
+  label: string,
+): number | null => {
+  if (value === null) {
+    return null;
+  }
+  const normalized = toExactJsonNonNegativeInteger(value, label);
+  if (normalized > 0xffff_ffff) {
+    throw new Error(`${label} must be a uint32 or null.`);
+  }
+  return normalized;
+};
+
+const readPolicyBoolean = (value: unknown, label: string): boolean => {
+  if (typeof value !== "boolean") {
+    throw new Error(`${label} must be an explicit boolean.`);
+  }
+  return value;
+};
+
+const readNullablePolicyString = (
+  value: unknown,
+  label: string,
+): string | null => {
+  if (value === null) {
+    return null;
+  }
+  if (
+    typeof value !== "string" ||
+    !value ||
+    value.trim() !== value ||
+    Array.from(value).some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 0x20 || code === 0x7f;
+    })
+  ) {
+    throw new Error(`${label} must be canonical text or null.`);
+  }
+  return value;
+};
+
+const readUpperHashBody = (value: unknown, label: string): string | null => {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string" || !/^[0-9A-F]{64}$/u.test(value)) {
+    throw new Error(`${label} must be an uppercase 32-byte hash or null.`);
+  }
+  return value;
+};
+
+const readAssetDefinitionHashBody = (
+  value: unknown,
+  label: string,
+): string | null => {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a canonical hash literal or null.`);
+  }
+  const match = /^hash:([0-9A-F]{64})#[0-9A-F]{4}$/u.exec(value);
+  if (!match) {
+    throw new Error(`${label} must be a canonical hash literal or null.`);
+  }
+  return match[1];
+};
+
+const readRequiredUpperHashBody = (value: unknown, label: string): string => {
+  const hash = readUpperHashBody(value, label);
+  if (hash === null) {
+    throw new Error(`${label} must not be null.`);
+  }
+  return hash;
+};
+
+const readRequiredAssetDefinitionHashBody = (
+  value: unknown,
+  label: string,
+): string => {
+  const hash = readAssetDefinitionHashBody(value, label);
+  if (hash === null) {
+    throw new Error(`${label} must not be null.`);
+  }
+  return hash;
+};
+
+const assertPendingTransitionShape = (
+  currentMode: ConfidentialPolicyMode,
+  pending: ConfidentialPolicyTransitionView,
+  label: string,
+): void => {
+  if (pending.previous_mode !== currentMode) {
+    throw new Error(`${label}.previous_mode must match the current mode.`);
+  }
+  if (currentMode === "Convertible" && pending.new_mode === "ShieldedOnly") {
+    if (
+      pending.conversion_window === null ||
+      pending.conversion_window < 1 ||
+      pending.conversion_window > pending.effective_height ||
+      pending.window_open_height !==
+        pending.effective_height - pending.conversion_window
+    ) {
+      throw new Error(
+        `${label} must carry its exact ShieldedOnly conversion window.`,
+      );
+    }
+    return;
+  }
+  if (currentMode === "ShieldedOnly" && pending.new_mode === "Convertible") {
+    if (
+      pending.conversion_window !== null ||
+      pending.window_open_height !== null
+    ) {
+      throw new Error(
+        `${label} must not carry a conversion window when entering Convertible mode.`,
+      );
+    }
+    return;
+  }
+  throw new Error(
+    `${label} is outside the first-release policy state machine.`,
+  );
+};
+
+const effectiveConfidentialPolicyMode = (
+  currentMode: ConfidentialPolicyMode,
+  blockHeight: number,
+  pending: ConfidentialPolicyTransitionView | null,
+): ConfidentialPolicyMode => {
+  if (!pending) {
+    return currentMode;
+  }
+  if (blockHeight >= pending.effective_height) {
+    return pending.new_mode;
+  }
+  if (
+    pending.new_mode === "ShieldedOnly" &&
+    pending.window_open_height !== null &&
+    blockHeight >= pending.window_open_height
+  ) {
+    return "Convertible";
+  }
+  return currentMode;
+};
+
+const assertPendingTransitionState = (
+  currentMode: ConfidentialPolicyMode,
+  effectiveMode: ConfidentialPolicyMode,
+  blockHeight: number,
+  pending: ConfidentialPolicyTransitionView | null,
+  label: string,
+): void => {
+  if (pending) {
+    assertPendingTransitionShape(
+      currentMode,
+      pending,
+      `${label}.pending_transition`,
+    );
+  }
+  if (
+    effectiveMode !==
+    effectiveConfidentialPolicyMode(currentMode, blockHeight, pending)
+  ) {
+    throw new Error(
+      `${label}.effective_mode does not match the current block and pending transition.`,
+    );
+  }
+};
+
+const readTransitionEndpointPendingTransition = (
+  value: unknown,
+): ConfidentialPolicyTransitionView | null => {
+  if (value === null) {
+    return null;
+  }
+  const pending = toRecord(value, "confidential.pending_transition");
   assertExactObjectKeys(
-    payload,
+    pending,
     [
-      "required_bridge_abi_version",
-      "cash_handoff_capability",
-      "max_hops",
-      "asset_definition_id",
-      "asset_scale",
-      "evaluated_block_height",
-      "evaluated_block_hash",
-      "active_transfer_verifier",
-      "active_topup_shield_verifier",
-      "active_unshield_verifier",
-      "active_recursive_step_eq_verifier",
-      "active_recursive_step_ep_verifier",
-      "artifact_set",
-      "proof_backend_available",
-      "recursive_lineage_supported",
-      "ready",
-      "blockers",
+      "transition_id",
+      "previous_mode",
+      "new_mode",
+      "effective_height",
+      "conversion_window",
+      "window_open_height",
     ],
-    "offline readiness",
+    "confidential.pending_transition",
   );
-  if (payload.required_bridge_abi_version !== 21) {
-    throw new Error(
-      "offline readiness.required_bridge_abi_version must be exactly 21.",
-    );
-  }
-  if (payload.cash_handoff_capability !== "cash_handoff_v1") {
-    throw new Error(
-      'offline readiness.cash_handoff_capability must be exactly "cash_handoff_v1".',
-    );
-  }
-  if (payload.max_hops !== 8) {
-    throw new Error("offline readiness.max_hops must be exactly 8.");
-  }
-  if (typeof payload.asset_definition_id !== "string") {
-    throw new Error("offline readiness.asset_definition_id must be a string.");
-  }
-  const assetDefinitionId = normalizeFirstReleaseAssetDefinitionId(
-    payload.asset_definition_id,
-    "offline readiness.asset_definition_id",
+  const effectiveHeight = toExactJsonNonNegativeInteger(
+    pending.effective_height,
+    "confidential.pending_transition.effective_height",
   );
-  if (assetDefinitionId !== payload.asset_definition_id) {
+  if (effectiveHeight === 0) {
     throw new Error(
-      "offline readiness.asset_definition_id must be an exact first-release asset definition literal.",
+      "confidential.pending_transition.effective_height must be greater than zero.",
     );
   }
-  const assetScale =
-    payload.asset_scale === null
+  return {
+    transition_id: readRequiredUpperHashBody(
+      pending.transition_id,
+      "confidential.pending_transition.transition_id",
+    ),
+    previous_mode: readConfidentialPolicyMode(
+      pending.previous_mode,
+      "confidential.pending_transition.previous_mode",
+    ),
+    new_mode: readConfidentialPolicyMode(
+      pending.new_mode,
+      "confidential.pending_transition.new_mode",
+    ),
+    effective_height: effectiveHeight,
+    conversion_window:
+      pending.conversion_window === null
+        ? null
+        : toExactJsonNonNegativeInteger(
+            pending.conversion_window,
+            "confidential.pending_transition.conversion_window",
+          ),
+    window_open_height:
+      pending.window_open_height === null
+        ? null
+        : toExactJsonNonNegativeInteger(
+            pending.window_open_height,
+            "confidential.pending_transition.window_open_height",
+          ),
+  };
+};
+
+const readAssetDefinitionPendingTransition = (
+  value: unknown,
+  currentMode: ConfidentialPolicyMode,
+): ConfidentialPolicyTransitionView | null => {
+  if (value === null) {
+    return null;
+  }
+  const pending = toRecord(
+    value,
+    "asset definition.confidential_policy.pending_transition",
+  );
+  const label = "asset definition.confidential_policy.pending_transition";
+  assertExactObjectKeys(
+    pending,
+    [
+      "new_mode",
+      "effective_height",
+      "previous_mode",
+      "transition_id",
+      "conversion_window",
+    ],
+    label,
+  );
+  const effectiveHeight = toExactJsonNonNegativeInteger(
+    pending.effective_height,
+    `${label}.effective_height`,
+  );
+  if (effectiveHeight === 0) {
+    throw new Error(`${label}.effective_height must be greater than zero.`);
+  }
+  const conversionWindow =
+    pending.conversion_window === null
       ? null
       : toExactJsonNonNegativeInteger(
-          payload.asset_scale,
-          "offline readiness.asset_scale",
+          pending.conversion_window,
+          `${label}.conversion_window`,
         );
-  if (assetScale !== null && assetScale > 0xffff_ffff) {
-    throw new Error("offline readiness.asset_scale must be a uint32 or null.");
-  }
-  const evaluatedBlockHeight = toExactJsonNonNegativeInteger(
-    payload.evaluated_block_height,
-    "offline readiness.evaluated_block_height",
-  );
-  if (
-    typeof payload.evaluated_block_hash !== "string" ||
-    !/^[0-9a-f]{64}$/u.test(payload.evaluated_block_hash)
-  ) {
-    throw new Error(
-      "offline readiness.evaluated_block_hash must be a lowercase 32-byte hash.",
-    );
-  }
-  const nullableRecord = (
-    value: unknown,
-    label: string,
-  ): Record<string, unknown> | null => {
-    if (value === null) return null;
-    return toRecord(value, label);
+  const normalized: ConfidentialPolicyTransitionView = {
+    transition_id: readRequiredAssetDefinitionHashBody(
+      pending.transition_id,
+      `${label}.transition_id`,
+    ),
+    previous_mode: readConfidentialPolicyMode(
+      pending.previous_mode,
+      `${label}.previous_mode`,
+    ),
+    new_mode: readConfidentialPolicyMode(pending.new_mode, `${label}.new_mode`),
+    effective_height: effectiveHeight,
+    conversion_window: conversionWindow,
+    window_open_height:
+      conversionWindow === null ? null : effectiveHeight - conversionWindow,
   };
-  const rawBlockers = toArray(payload.blockers, "offline readiness.blockers");
-  const blockers = rawBlockers.map(
-    (rawBlocker, index): OfflineReadinessBlockerView => {
-      const blocker = toRecord(
-        rawBlocker,
-        `offline readiness.blockers[${index}]`,
-      );
-      assertExactObjectKeys(
-        blocker,
-        ["code", "message"],
-        `offline readiness.blockers[${index}]`,
-      );
-      if (
-        typeof blocker.code !== "string" ||
-        !/^[a-z0-9][a-z0-9_]{0,63}$/u.test(blocker.code)
-      ) {
-        throw new Error(
-          `offline readiness.blockers[${index}].code is malformed.`,
-        );
-      }
-      if (
-        typeof blocker.message !== "string" ||
-        !blocker.message.trim() ||
-        blocker.message !== blocker.message.trim()
-      ) {
-        throw new Error(
-          `offline readiness.blockers[${index}].message must be a non-empty trimmed string.`,
-        );
-      }
-      return {
-        code: blocker.code,
-        message: blocker.message,
-      };
-    },
-  );
-  if (
-    typeof payload.proof_backend_available !== "boolean" ||
-    typeof payload.recursive_lineage_supported !== "boolean" ||
-    typeof payload.ready !== "boolean"
-  ) {
-    throw new Error(
-      "offline readiness capability fields must be boolean values.",
-    );
-  }
-  const normalized: OfflineReadinessView = {
-    required_bridge_abi_version: payload.required_bridge_abi_version,
-    cash_handoff_capability: payload.cash_handoff_capability,
-    max_hops: 8,
-    asset_definition_id: assetDefinitionId,
-    asset_scale: assetScale,
-    evaluated_block_height: evaluatedBlockHeight,
-    evaluated_block_hash: payload.evaluated_block_hash,
-    active_transfer_verifier: nullableRecord(
-      payload.active_transfer_verifier,
-      "offline readiness.active_transfer_verifier",
-    ),
-    active_topup_shield_verifier: nullableRecord(
-      payload.active_topup_shield_verifier,
-      "offline readiness.active_topup_shield_verifier",
-    ),
-    active_unshield_verifier: nullableRecord(
-      payload.active_unshield_verifier,
-      "offline readiness.active_unshield_verifier",
-    ),
-    active_recursive_step_eq_verifier: nullableRecord(
-      payload.active_recursive_step_eq_verifier,
-      "offline readiness.active_recursive_step_eq_verifier",
-    ),
-    active_recursive_step_ep_verifier: nullableRecord(
-      payload.active_recursive_step_ep_verifier,
-      "offline readiness.active_recursive_step_ep_verifier",
-    ),
-    artifact_set: nullableRecord(
-      payload.artifact_set,
-      "offline readiness.artifact_set",
-    ),
-    proof_backend_available: payload.proof_backend_available,
-    recursive_lineage_supported: payload.recursive_lineage_supported,
-    ready: payload.ready,
-    blockers,
-  };
-  if (
-    expectedAssetDefinitionId !== undefined &&
-    normalized.asset_definition_id !== expectedAssetDefinitionId
-  ) {
-    throw new Error(
-      "offline readiness.asset_definition_id must match the requested asset definition.",
-    );
-  }
-  if (normalized.ready !== (normalized.blockers.length === 0)) {
-    throw new Error(
-      "offline readiness.ready must be true exactly when blockers is empty.",
-    );
-  }
-  if (
-    normalized.ready &&
-    (normalized.asset_scale === null || normalized.asset_scale > 28)
-  ) {
-    throw new Error(
-      "A ready offline response must include a supported asset scale.",
-    );
-  }
+  assertPendingTransitionShape(currentMode, normalized, label);
   return normalized;
 };
 
@@ -1290,165 +1623,212 @@ export const normalizeAssetDefinitionConfidentialPolicy = (
     assetDefinition.confidential_policy,
     "asset definition.confidential_policy",
   );
-  const nullableBoolean = (value: unknown, label: string): boolean | null => {
-    if (value === null || value === undefined) return null;
-    if (typeof value !== "boolean") {
-      throw new Error(`${label} must be a boolean or null.`);
-    }
-    return value;
-  };
-  const nullableString = (value: unknown): string | null => {
-    if (value === null || value === undefined) return null;
-    return String(value).trim() || null;
-  };
+  assertExactObjectKeys(
+    policy,
+    [
+      "mode",
+      "allow_shield",
+      "allow_unshield",
+      "vk_transfer",
+      "vk_unshield",
+      "vk_shield",
+      "vk_set_hash",
+      "poseidon_params_id",
+      "pedersen_params_id",
+      "pending_transition",
+    ],
+    "asset definition.confidential_policy",
+  );
+  const mode = readConfidentialPolicyMode(
+    policy.mode,
+    "asset definition.confidential_policy.mode",
+  );
   return {
-    mode: toStringValue(
-      policy.mode,
-      "asset definition.confidential_policy.mode",
-    ),
-    allow_shield: nullableBoolean(
+    mode,
+    allow_shield: readPolicyBoolean(
       policy.allow_shield,
       "asset definition.confidential_policy.allow_shield",
     ),
-    allow_unshield: nullableBoolean(
+    allow_unshield: readPolicyBoolean(
       policy.allow_unshield,
       "asset definition.confidential_policy.allow_unshield",
     ),
-    vk_transfer: nullableString(policy.vk_transfer),
-    vk_unshield: nullableString(policy.vk_unshield),
-    vk_shield: nullableString(policy.vk_shield),
-    vk_set_hash: nullableString(policy.vk_set_hash),
-    poseidon_params_id: toNullableInteger(policy.poseidon_params_id),
-    pedersen_params_id: toNullableInteger(policy.pedersen_params_id),
+    vk_transfer: readNullablePolicyString(
+      policy.vk_transfer,
+      "asset definition.confidential_policy.vk_transfer",
+    ),
+    vk_unshield: readNullablePolicyString(
+      policy.vk_unshield,
+      "asset definition.confidential_policy.vk_unshield",
+    ),
+    vk_shield: readNullablePolicyString(
+      policy.vk_shield,
+      "asset definition.confidential_policy.vk_shield",
+    ),
+    vk_set_hash: readAssetDefinitionHashBody(
+      policy.vk_set_hash,
+      "asset definition.confidential_policy.vk_set_hash",
+    ),
+    poseidon_params_id: readNullablePolicyUint32(
+      policy.poseidon_params_id,
+      "asset definition.confidential_policy.poseidon_params_id",
+    ),
+    pedersen_params_id: readNullablePolicyUint32(
+      policy.pedersen_params_id,
+      "asset definition.confidential_policy.pedersen_params_id",
+    ),
+    pending_transition: readAssetDefinitionPendingTransition(
+      policy.pending_transition,
+      mode,
+    ),
   };
 };
 
 export const normalizeConfidentialAssetPolicyPayload = (
   payload: Record<string, unknown>,
 ): ConfidentialAssetPolicyView => {
-  const legacyFields = [
-    "assetId",
-    "blockHeight",
-    "currentMode",
-    "effectiveMode",
-    "allowShield",
-    "allowUnshield",
-    "vkTransfer",
-    "vkUnshield",
-    "vkShield",
-    "vkSetHash",
-    "poseidonParamsId",
-    "pedersenParamsId",
-    "pendingTransition",
-  ];
-  if (legacyFields.some((field) => field in payload)) {
-    throw new Error(
-      "Confidential asset policy contains fields outside the first-release contract.",
-    );
+  assertExactObjectKeys(
+    payload,
+    [
+      "asset_id",
+      "block_height",
+      "current_mode",
+      "effective_mode",
+      "allow_shield",
+      "allow_unshield",
+      "vk_transfer",
+      "vk_unshield",
+      "vk_shield",
+      "vk_set_hash",
+      "poseidon_params_id",
+      "pedersen_params_id",
+      "pending_transition",
+    ],
+    "Confidential asset policy",
+  );
+  if (typeof payload.asset_id !== "string") {
+    throw new Error("confidential.asset_id must be a string.");
   }
-  const asset_id = toStringValue(payload.asset_id, "confidential.asset_id");
-  const block_height = toPositiveInteger(
+  const asset_id = normalizeFirstReleaseAssetDefinitionId(
+    payload.asset_id,
+    "confidential.asset_id",
+  );
+  if (asset_id !== payload.asset_id) {
+    throw new Error("confidential.asset_id must be canonical.");
+  }
+  const block_height = toExactJsonNonNegativeInteger(
     payload.block_height,
     "confidential.block_height",
   );
-  const current_mode = toStringValue(
+  const current_mode = readConfidentialPolicyMode(
     payload.current_mode,
     "confidential.current_mode",
   );
-  const effective_mode = toStringValue(
+  const effective_mode = readConfidentialPolicyMode(
     payload.effective_mode,
     "confidential.effective_mode",
   );
-
-  const pendingTransitionRaw = payload.pending_transition;
-  let pending_transition: ConfidentialPolicyTransitionView | null = null;
-  if (pendingTransitionRaw !== null && pendingTransitionRaw !== undefined) {
-    const pending = toRecord(
-      pendingTransitionRaw,
-      "confidential.pending_transition",
-    );
-    const legacyPendingFields = [
-      "transitionId",
-      "previousMode",
-      "newMode",
-      "effectiveHeight",
-      "conversionWindow",
-      "windowOpenHeight",
-    ];
-    if (legacyPendingFields.some((field) => field in pending)) {
-      throw new Error(
-        "Confidential pending transition contains fields outside the first-release contract.",
-      );
-    }
-    pending_transition = {
-      transition_id: toStringValue(
-        pending.transition_id,
-        "confidential.pending_transition.transition_id",
-      ),
-      previous_mode: toStringValue(
-        pending.previous_mode,
-        "confidential.pending_transition.previous_mode",
-      ),
-      new_mode: toStringValue(
-        pending.new_mode,
-        "confidential.pending_transition.new_mode",
-      ),
-      effective_height: toPositiveInteger(
-        pending.effective_height,
-        "confidential.pending_transition.effective_height",
-      ),
-      conversion_window: toNullableInteger(pending.conversion_window),
-      window_open_height: toNullableInteger(pending.window_open_height),
-    };
-  }
-
-  const vkSetHashRaw = payload.vk_set_hash;
-  const vk_set_hash =
-    vkSetHashRaw === undefined ||
-    vkSetHashRaw === null ||
-    String(vkSetHashRaw).trim().length === 0
-      ? null
-      : String(vkSetHashRaw);
-
-  const readNullableBoolean = (
-    value: unknown,
-    label: string,
-  ): boolean | null => {
-    if (value === undefined || value === null) {
-      return null;
-    }
-    if (typeof value === "boolean") {
-      return value;
-    }
-    throw new Error(`${label} must be a boolean or null.`);
-  };
-
-  const readNullableString = (value: unknown) => {
-    const normalized = String(value ?? "").trim();
-    return normalized ? normalized : null;
-  };
+  const pending_transition = readTransitionEndpointPendingTransition(
+    payload.pending_transition,
+  );
+  assertPendingTransitionState(
+    current_mode,
+    effective_mode,
+    block_height,
+    pending_transition,
+    "Confidential asset policy",
+  );
 
   return {
     asset_id,
     block_height,
     current_mode,
     effective_mode,
-    allow_shield: readNullableBoolean(
+    allow_shield: readPolicyBoolean(
       payload.allow_shield,
       "confidential.allow_shield",
     ),
-    allow_unshield: readNullableBoolean(
+    allow_unshield: readPolicyBoolean(
       payload.allow_unshield,
       "confidential.allow_unshield",
     ),
-    vk_transfer: readNullableString(payload.vk_transfer),
-    vk_unshield: readNullableString(payload.vk_unshield),
-    vk_shield: readNullableString(payload.vk_shield),
-    vk_set_hash,
-    poseidon_params_id: toNullableInteger(payload.poseidon_params_id),
-    pedersen_params_id: toNullableInteger(payload.pedersen_params_id),
+    vk_transfer: readNullablePolicyString(
+      payload.vk_transfer,
+      "confidential.vk_transfer",
+    ),
+    vk_unshield: readNullablePolicyString(
+      payload.vk_unshield,
+      "confidential.vk_unshield",
+    ),
+    vk_shield: readNullablePolicyString(
+      payload.vk_shield,
+      "confidential.vk_shield",
+    ),
+    vk_set_hash: readUpperHashBody(
+      payload.vk_set_hash,
+      "confidential.vk_set_hash",
+    ),
+    poseidon_params_id: readNullablePolicyUint32(
+      payload.poseidon_params_id,
+      "confidential.poseidon_params_id",
+    ),
+    pedersen_params_id: readNullablePolicyUint32(
+      payload.pedersen_params_id,
+      "confidential.pedersen_params_id",
+    ),
     pending_transition,
   };
+};
+
+export const assertConfidentialPolicyProjectionAgreement = (
+  policy: ConfidentialAssetPolicyView,
+  assetDefinition: Record<string, unknown>,
+): ConfidentialAssetPolicyView => {
+  const assetPolicy =
+    normalizeAssetDefinitionConfidentialPolicy(assetDefinition);
+  if (!assetPolicy) {
+    throw new Error(
+      "Confidential asset is missing the top-level confidential_policy.",
+    );
+  }
+  if (
+    typeof assetDefinition.id !== "string" ||
+    normalizeFirstReleaseAssetDefinitionId(
+      assetDefinition.id,
+      "asset definition.id",
+    ) !== policy.asset_id ||
+    assetDefinition.id !== policy.asset_id
+  ) {
+    throw new Error(
+      "Confidential policy transition projection identifies a different asset definition.",
+    );
+  }
+  const expectedEffectiveMode = effectiveConfidentialPolicyMode(
+    assetPolicy.mode,
+    policy.block_height,
+    assetPolicy.pending_transition,
+  );
+  const samePendingTransition =
+    JSON.stringify(policy.pending_transition) ===
+    JSON.stringify(assetPolicy.pending_transition);
+  if (
+    policy.current_mode !== assetPolicy.mode ||
+    policy.effective_mode !== expectedEffectiveMode ||
+    policy.allow_shield !== assetPolicy.allow_shield ||
+    policy.allow_unshield !== assetPolicy.allow_unshield ||
+    policy.vk_transfer !== assetPolicy.vk_transfer ||
+    policy.vk_unshield !== assetPolicy.vk_unshield ||
+    policy.vk_shield !== assetPolicy.vk_shield ||
+    policy.vk_set_hash !== assetPolicy.vk_set_hash ||
+    policy.poseidon_params_id !== assetPolicy.poseidon_params_id ||
+    policy.pedersen_params_id !== assetPolicy.pedersen_params_id ||
+    !samePendingTransition
+  ) {
+    throw new Error(
+      "Confidential policy transition projection does not exactly match the asset definition.",
+    );
+  }
+  return policy;
 };
 
 export const readNexusUnbondingDelayMs = (

@@ -1,732 +1,512 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
-import { useSessionStore, SESSION_STORAGE_KEY } from "@/stores/session";
+import { AccountAddress } from "@iroha/iroha-js/address";
+import {
+  SESSION_SCHEMA,
+  SESSION_STORAGE_KEY,
+  SESSION_VERSION,
+  useSessionStore,
+} from "@/stores/session";
 import {
   DEFAULT_CHAIN_PRESET,
   MINAMOTO_CHAIN_PRESET,
   TAIRA_CHAIN_PRESET,
 } from "@/constants/chains";
 
+const ALICE_PUBLIC_KEY_HEX =
+  "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737";
+const BOB_PUBLIC_KEY_HEX =
+  "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0";
+const accountIdFor = (publicKeyHex: string, networkPrefix: number) =>
+  AccountAddress.fromAccount({
+    publicKey: Uint8Array.from(
+      publicKeyHex.match(/.{2}/gu)!.map((byte) => Number.parseInt(byte, 16)),
+    ),
+  }).toI105(networkPrefix);
+const ALICE_ACCOUNT_ID = accountIdFor(ALICE_PUBLIC_KEY_HEX, 369);
+const BOB_ACCOUNT_ID = accountIdFor(BOB_PUBLIC_KEY_HEX, 369);
+
+const persistedAccount = (overrides: Record<string, unknown> = {}) => ({
+  displayName: "Alice",
+  domain: "default",
+  accountId: ALICE_ACCOUNT_ID,
+  publicKeyHex: ALICE_PUBLIC_KEY_HEX,
+  signingAlgorithm: "ed25519",
+  hasStoredSecret: true,
+  localOnly: false,
+  ...overrides,
+});
+
+const persistedSession = (overrides: Record<string, unknown> = {}) => ({
+  schema: SESSION_SCHEMA,
+  version: SESSION_VERSION,
+  connection: {
+    toriiUrl: "https://torii.example",
+    chainId: "chain",
+    assetDefinitionId: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+    networkPrefix: 369,
+  },
+  authority: {
+    accountId: "",
+    signingAlgorithm: "ed25519",
+    hasStoredSecret: false,
+  },
+  accounts: [persistedAccount()],
+  activeAccountId: ALICE_ACCOUNT_ID,
+  ...overrides,
+});
+
 const snapshot = () =>
-  JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? "{}");
+  JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? "{}") as Record<
+    string,
+    unknown
+  >;
+
+const hydratePayload = async (payload: unknown) => {
+  localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
+  const store = useSessionStore();
+  await store.hydrate();
+  return store;
+};
 
 describe("session store", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
     localStorage.clear();
-    delete (window as any).iroha;
+    delete (window as { iroha?: unknown }).iroha;
     setActivePinia(createPinia());
   });
 
   it("initialises with defaults", () => {
     const store = useSessionStore();
-    expect(store.connection.networkPrefix).toBe(
-      DEFAULT_CHAIN_PRESET.connection.networkPrefix,
-    );
-    expect(store.connection.toriiUrl).toBe(
-      DEFAULT_CHAIN_PRESET.connection.toriiUrl,
-    );
-    expect(store.connection.chainId).toBe(
-      DEFAULT_CHAIN_PRESET.connection.chainId,
-    );
-    expect(store.accounts.length).toBe(0);
+
+    expect(store.connection).toEqual(DEFAULT_CHAIN_PRESET.connection);
+    expect(store.accounts).toEqual([]);
     expect(store.activeAccount).toBeNull();
     expect(store.hasAccount).toBe(false);
-    expect(store.customChains.length).toBe(0);
   });
 
-  it("adds accounts, switches active account, and persists", () => {
+  it("persists one explicit public-session DTO without secrets or runtime state", () => {
     const store = useSessionStore();
-    store.updateConnection({ toriiUrl: "http://torii", chainId: "dev" });
     store.addAccount({
       displayName: "Alice",
-      domain: "wonderland",
-      accountId: "ed0120@wonderland",
-      publicKeyHex: "pub",
-      privateKeyHex: "aa",
+      domain: "default",
+      accountId: ALICE_ACCOUNT_ID,
+      publicKeyHex: ALICE_PUBLIC_KEY_HEX,
+      hasStoredSecret: true,
+      localOnly: false,
+    });
+    store.updateAuthority({
+      accountId: BOB_ACCOUNT_ID,
+      hasStoredSecret: true,
+    });
+
+    store.persistState();
+
+    const persisted = snapshot();
+    expect(Object.keys(persisted).sort()).toEqual(
+      [
+        "schema",
+        "version",
+        "connection",
+        "authority",
+        "accounts",
+        "activeAccountId",
+      ].sort(),
+    );
+    expect(persisted.schema).toBe(SESSION_SCHEMA);
+    expect(persisted.version).toBe(SESSION_VERSION);
+    expect(persisted).not.toHaveProperty("hydrated");
+    expect(persisted).not.toHaveProperty("customChains");
+    expect(persisted.authority).toEqual({
+      accountId: BOB_ACCOUNT_ID,
+      signingAlgorithm: "ed25519",
+      hasStoredSecret: true,
+    });
+    expect(persisted.accounts).toEqual([
+      {
+        displayName: "Alice",
+        domain: "default",
+        accountId: ALICE_ACCOUNT_ID,
+        publicKeyHex: ALICE_PUBLIC_KEY_HEX,
+        signingAlgorithm: "ed25519",
+        hasStoredSecret: true,
+        localOnly: false,
+      },
+    ]);
+    expect(JSON.stringify(store.$state)).not.toContain("privateKeyHex");
+    expect(JSON.stringify(persisted)).not.toContain("privateKeyHex");
+  });
+
+  it("rejects private keys at the session-state boundary", () => {
+    const store = useSessionStore();
+
+    expect(() =>
+      store.addAccount({
+        displayName: "Alice",
+        domain: "default",
+        accountId: ALICE_ACCOUNT_ID,
+        publicKeyHex: ALICE_PUBLIC_KEY_HEX,
+        privateKeyHex: "cd".repeat(32),
+        hasStoredSecret: true,
+        localOnly: false,
+      }),
+    ).toThrow("Session account must not include private key material.");
+    expect(() =>
+      store.updateAuthority({
+        accountId: BOB_ACCOUNT_ID,
+        privateKeyHex: "ef".repeat(32),
+        hasStoredSecret: true,
+      } as never),
+    ).toThrow("Session authority must not include private key material.");
+    expect(store.accounts).toEqual([]);
+    expect(JSON.stringify(store.$state)).not.toContain("cd".repeat(32));
+    expect(JSON.stringify(store.$state)).not.toContain("ef".repeat(32));
+  });
+
+  it("hydrates the exact current DTO without rewriting account identifiers", async () => {
+    const payload = persistedSession();
+
+    const store = await hydratePayload(payload);
+
+    expect(store.connection).toEqual(payload.connection);
+    expect(store.accounts).toHaveLength(1);
+    expect(store.accounts[0]?.accountId).toBe(ALICE_ACCOUNT_ID);
+    expect(store.accounts[0]?.i105AccountId).toBe(ALICE_ACCOUNT_ID);
+    expect(store.activeAccountId).toBe(ALICE_ACCOUNT_ID);
+    expect(store.activeAccount?.hasStoredSecret).toBe(true);
+    expect(store.activeAccount).not.toHaveProperty("privateKeyHex");
+  });
+
+  it("rejects an account literal for a different network prefix", async () => {
+    const accountId = accountIdFor(ALICE_PUBLIC_KEY_HEX, 753);
+    const store = await hydratePayload(
+      persistedSession({
+        accounts: [persistedAccount({ accountId })],
+        activeAccountId: accountId,
+      }),
+    );
+
+    expect(store.accounts).toEqual([]);
+    expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it("accepts an empty account set only with a null active account", async () => {
+    const store = await hydratePayload(
+      persistedSession({ accounts: [], activeAccountId: null }),
+    );
+
+    expect(store.accounts).toEqual([]);
+    expect(store.activeAccountId).toBeNull();
+  });
+
+  it.each([
+    ["an unversioned payload", { connection: persistedSession().connection }],
+    ["a different schema", persistedSession({ schema: "other-session" })],
+    ["a different version", persistedSession({ version: 2 })],
+    [
+      "a legacy user field",
+      { ...persistedSession(), user: persistedAccount() },
+    ],
+    ["an unknown root field", { ...persistedSession(), unknown: true }],
+    [
+      "a missing root field",
+      (() => {
+        const payload = persistedSession();
+        delete (payload as { authority?: unknown }).authority;
+        return payload;
+      })(),
+    ],
+  ])("rejects %s as a whole", async (_label, payload) => {
+    const store = await hydratePayload(payload);
+
+    expect(store.connection).toEqual(DEFAULT_CHAIN_PRESET.connection);
+    expect(store.accounts).toEqual([]);
+    expect(store.activeAccountId).toBeNull();
+    expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it("rejects duplicate JSON object keys before parsing", async () => {
+    const raw = JSON.stringify(persistedSession()).replace(
+      `"version":${SESSION_VERSION}`,
+      `"version":${SESSION_VERSION},"version":${SESSION_VERSION}`,
+    );
+    localStorage.setItem(SESSION_STORAGE_KEY, raw);
+
+    const store = useSessionStore();
+    await store.hydrate();
+
+    expect(store.accounts).toEqual([]);
+    expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it("rejects duplicate nested JSON object keys before parsing", async () => {
+    const raw = JSON.stringify(persistedSession()).replace(
+      '"displayName":"Alice"',
+      '"displayName":"Alice","displayName":"Mallory"',
+    );
+    localStorage.setItem(SESSION_STORAGE_KEY, raw);
+
+    const store = useSessionStore();
+    await store.hydrate();
+
+    expect(store.accounts).toEqual([]);
+    expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it("rejects an oversized saved session before JSON parsing", async () => {
+    localStorage.setItem(SESSION_STORAGE_KEY, " ".repeat(1_048_577));
+
+    const store = useSessionStore();
+    await store.hydrate();
+
+    expect(store.accounts).toEqual([]);
+    expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it.each([
+    [
+      "connection extras",
+      persistedSession({
+        connection: {
+          ...persistedSession().connection,
+          endpoint: "https://legacy.example",
+        },
+      }),
+    ],
+    [
+      "authority secrets",
+      persistedSession({
+        authority: {
+          ...persistedSession().authority,
+          privateKeyHex: "",
+        },
+      }),
+    ],
+    [
+      "account secrets",
+      persistedSession({
+        accounts: [persistedAccount({ privateKeyHex: "" })],
+      }),
+    ],
+    [
+      "legacy account fields",
+      persistedSession({
+        accounts: [persistedAccount({ ih58: "legacy" })],
+      }),
+    ],
+    [
+      "missing account fields",
+      persistedSession({
+        accounts: [
+          (() => {
+            const account = persistedAccount();
+            delete (account as { localOnly?: unknown }).localOnly;
+            return account;
+          })(),
+        ],
+      }),
+    ],
+  ])("rejects exact-shape violation: %s", async (_label, payload) => {
+    const store = await hydratePayload(payload);
+
+    expect(store.accounts).toEqual([]);
+    expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it.each([
+    ["string network prefix", { networkPrefix: "369" }],
+    ["fractional network prefix", { networkPrefix: 369.5 }],
+    ["noncanonical endpoint", { toriiUrl: "https://torii.example/" }],
+    ["empty chain ID", { chainId: "" }],
+    ["retired asset alias", { assetDefinitionId: "xor#universal" }],
+    [
+      "invalid asset checksum",
+      { assetDefinitionId: "4Zust3cNxsgov3757wxRW7DtR8n6" },
+    ],
+  ])("rejects invalid connection type/value: %s", async (_label, change) => {
+    const store = await hydratePayload(
+      persistedSession({
+        connection: { ...persistedSession().connection, ...change },
+      }),
+    );
+
+    expect(store.connection).toEqual(DEFAULT_CHAIN_PRESET.connection);
+    expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it.each([
+    ["legacy account ID", { accountId: "alice@wonderland" }],
+    ["noncanonical account ID", { accountId: ` ${ALICE_ACCOUNT_ID}` }],
+    ["wrong boolean type", { localOnly: 0 }],
+    ["noncanonical signing algorithm", { signingAlgorithm: " Ed25519 " }],
+    ["missing public key", { publicKeyHex: "" }],
+  ])("rejects invalid account type/value: %s", async (_label, change) => {
+    const account = persistedAccount(change);
+    const store = await hydratePayload(
+      persistedSession({
+        accounts: [account],
+        activeAccountId: account.accountId,
+      }),
+    );
+
+    expect(store.accounts).toEqual([]);
+    expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it("rejects duplicate account IDs instead of merging them", async () => {
+    const store = await hydratePayload(
+      persistedSession({
+        accounts: [persistedAccount(), persistedAccount({ displayName: "B" })],
+      }),
+    );
+
+    expect(store.accounts).toEqual([]);
+    expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it.each([
+    ["missing", null],
+    ["unknown", BOB_ACCOUNT_ID],
+    ["wrong type", 42],
+  ])(
+    "rejects a %s active-account selector without falling back",
+    async (_label, id) => {
+      const store = await hydratePayload(
+        persistedSession({ activeAccountId: id }),
+      );
+
+      expect(store.accounts).toEqual([]);
+      expect(store.activeAccountId).toBeNull();
+      expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+    },
+  );
+
+  it("adds, updates, and switches accounts at runtime", () => {
+    const store = useSessionStore();
+    store.addAccount({
+      displayName: "Alice",
+      domain: "default",
+      accountId: ALICE_ACCOUNT_ID,
+      publicKeyHex: ALICE_PUBLIC_KEY_HEX,
       hasStoredSecret: true,
       localOnly: false,
     });
     store.addAccount({
       displayName: "Bob",
-      domain: "wonderland",
-      accountId: "ed0999@wonderland",
-      publicKeyHex: "pub2",
-      privateKeyHex: "bb",
+      domain: "default",
+      accountId: BOB_ACCOUNT_ID,
+      publicKeyHex: BOB_PUBLIC_KEY_HEX,
       hasStoredSecret: true,
-      localOnly: false,
-    });
-    store.setActiveAccount("ed0999@wonderland");
-    store.updateAuthority({ accountId: "authority@wonderland" });
-    store.persistState();
-
-    const persisted = snapshot();
-    expect(persisted.connection.toriiUrl).toBe("http://torii");
-    expect(persisted.connection.chainId).toBe("dev");
-    expect(persisted.accounts[0].accountId).toBe("ed0120@wonderland");
-    expect(persisted.activeAccountId).toBe("ed0999@wonderland");
-    expect(store.hasAccount).toBe(true);
-    expect(store.activeAccount?.accountId).toBe("ed0999@wonderland");
-  });
-
-  it("hydrates from saved snapshot", () => {
-    const payload = {
-      connection: {
-        toriiUrl: "https://torii",
-        chainId: "chain",
-        assetDefinitionId: "norito:abcdef0123456789",
-        networkPrefix: 10,
-      },
-      accounts: [
-        {
-          displayName: "Alice",
-          domain: "wonderland",
-          accountId: "abc@wonderland",
-          publicKeyHex: "abc",
-          privateKeyHex: "def",
-          hasStoredSecret: true,
-          ih58: "IH58",
-          compressed: "snx1x",
-          compressedWarning: "",
-        },
-      ],
-      activeAccountId: "abc@wonderland",
-      authority: {
-        accountId: "authority@wonderland",
-        privateKeyHex: "deadbeef",
-      },
-      customChains: [
-        {
-          id: "nexus",
-          label: "Nexus",
-          toriiUrl: "https://nexus",
-          chainId: "nexus",
-          assetDefinitionId: "asset#nexus",
-          networkPrefix: 24,
-        },
-      ],
-    };
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
-
-    const store = useSessionStore();
-    store.hydrate();
-
-    expect(store.connection.toriiUrl).toBe("https://torii");
-    expect(store.connection.chainId).toBe("chain");
-    expect(store.connection.networkPrefix).toBe(10);
-    expect(store.connection.assetDefinitionId).toBe("norito:abcdef0123456789");
-    expect(store.activeAccount?.displayName).toBe("Alice");
-    expect(store.hasAccount).toBe(true);
-    expect(store.customChains).toHaveLength(0);
-  });
-
-  it("normalizes signing algorithm metadata on hydrate and persist", () => {
-    localStorage.setItem(
-      SESSION_STORAGE_KEY,
-      JSON.stringify({
-        accounts: [
-          {
-            displayName: "Alice",
-            domain: "wonderland",
-            accountId: "abc@wonderland",
-            publicKeyHex: "abc",
-            signingAlgorithm: "  Secp256K1  ",
-            hasStoredSecret: true,
-          },
-          {
-            displayName: "Mallory",
-            domain: "wonderland",
-            accountId: "mallory@wonderland",
-            publicKeyHex: "def",
-            signingAlgorithm: { nested: "ml-dsa" },
-            hasStoredSecret: true,
-          },
-        ],
-        activeAccountId: "abc@wonderland",
-        authority: {
-          accountId: "authority@wonderland",
-          signingAlgorithm: "ml-dsa\ned25519",
-        },
-      }),
-    );
-
-    const store = useSessionStore();
-    store.hydrate();
-    store.persistState();
-
-    expect(store.accounts[0]?.signingAlgorithm).toBe("secp256k1");
-    expect(store.accounts[1]?.signingAlgorithm).toBe("ed25519");
-    expect(store.authority.signingAlgorithm).toBe("ed25519");
-    expect(snapshot().accounts[0].signingAlgorithm).toBe("secp256k1");
-    expect(snapshot().accounts[1].signingAlgorithm).toBe("ed25519");
-    expect(snapshot().authority.signingAlgorithm).toBe("ed25519");
-  });
-
-  it("does not rewrite persisted preset identity metadata", () => {
-    localStorage.setItem(
-      SESSION_STORAGE_KEY,
-      JSON.stringify({
-        connection: {
-          ...MINAMOTO_CHAIN_PRESET.connection,
-          chainId: "sora nexus main net",
-          assetDefinitionId: "xor#universal",
-        },
-      }),
-    );
-
-    const store = useSessionStore();
-    store.hydrate();
-
-    expect(store.connection.toriiUrl).toBe(
-      MINAMOTO_CHAIN_PRESET.connection.toriiUrl,
-    );
-    expect(store.connection.chainId).toBe("sora nexus main net");
-    expect(store.connection.networkPrefix).toBe(
-      MINAMOTO_CHAIN_PRESET.connection.networkPrefix,
-    );
-    expect(store.connection.assetDefinitionId).toBe("xor#universal");
-  });
-
-  it("preserves saved TAIRA faucet asset buckets on hydrate", () => {
-    const fundedAssetDefinitionId = "61CtjvNd9T3THAR65GsMVHr82Bjc";
-    localStorage.setItem(
-      SESSION_STORAGE_KEY,
-      JSON.stringify({
-        connection: {
-          ...TAIRA_CHAIN_PRESET.connection,
-          assetDefinitionId: fundedAssetDefinitionId,
-        },
-      }),
-    );
-
-    const store = useSessionStore();
-    store.hydrate();
-
-    expect(store.connection.toriiUrl).toBe(
-      TAIRA_CHAIN_PRESET.connection.toriiUrl,
-    );
-    expect(store.connection.chainId).toBe(
-      TAIRA_CHAIN_PRESET.connection.chainId,
-    );
-    expect(store.connection.networkPrefix).toBe(
-      TAIRA_CHAIN_PRESET.connection.networkPrefix,
-    );
-    expect(store.connection.assetDefinitionId).toBe(fundedAssetDefinitionId);
-  });
-
-  it("refreshes known preset asset metadata when endpoint metadata is saved", () => {
-    const store = useSessionStore();
-    store.$patch({
-      connection: {
-        ...TAIRA_CHAIN_PRESET.connection,
-        assetDefinitionId: "61CtjvNd9T3THAR65GsMVHr82Bjc",
-      },
+      localOnly: true,
     });
 
-    store.updateConnection({
-      toriiUrl: MINAMOTO_CHAIN_PRESET.connection.toriiUrl,
-      chainId: MINAMOTO_CHAIN_PRESET.connection.chainId,
-      networkPrefix: MINAMOTO_CHAIN_PRESET.connection.networkPrefix,
-    });
-
-    expect(store.connection.assetDefinitionId).toBe(
-      MINAMOTO_CHAIN_PRESET.connection.assetDefinitionId,
-    );
-  });
-
-  it("preserves saved TAIRA faucet asset buckets during checked endpoint saves", () => {
-    const fundedAssetDefinitionId = "61CtjvNd9T3THAR65GsMVHr82Bjc";
-    const store = useSessionStore();
-    store.$patch({
-      connection: {
-        ...TAIRA_CHAIN_PRESET.connection,
-        assetDefinitionId: fundedAssetDefinitionId,
-      },
-    });
-
-    store.updateConnection({
-      toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      chainId: TAIRA_CHAIN_PRESET.connection.chainId,
-      networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
-    });
-
-    expect(store.connection.assetDefinitionId).toBe(fundedAssetDefinitionId);
-  });
-
-  it("clears saved TAIRA faucet assets when the endpoint preset is explicit", () => {
-    const store = useSessionStore();
-    store.$patch({
-      connection: {
-        ...TAIRA_CHAIN_PRESET.connection,
-        assetDefinitionId: "61CtjvNd9T3THAR65GsMVHr82Bjc",
-      },
-    });
-
-    store.updateConnection(TAIRA_CHAIN_PRESET.connection);
-
-    expect(store.connection.assetDefinitionId).toBe("");
-  });
-
-  it("migrates legacy single-user snapshots", () => {
-    const legacy = {
-      connection: {
-        toriiUrl: "https://legacy-torii",
-        chainId: "legacy",
-        networkPrefix: 369,
-      },
-      user: {
-        displayName: "Legacy",
-        domain: "wonderland",
-        accountId: "legacy@wonderland",
-        publicKeyHex: "pub",
-        privateKeyHex: "priv",
-        hasStoredSecret: true,
-        ih58: "ih58",
-        compressed: "cmp",
-        compressedWarning: "",
-      },
-      authority: {
-        accountId: "auth@wonderland",
-        privateKeyHex: "beef",
-      },
-    };
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(legacy));
-
-    const store = useSessionStore();
-    store.hydrate();
-
-    expect(store.activeAccount?.accountId).toBe("legacy@wonderland");
-    expect(store.accounts).toHaveLength(1);
-    expect(store.connection.chainId).toBe("legacy");
-    expect(store.connection.toriiUrl).toBe("https://legacy-torii");
-  });
-
-  it("upgrades legacy account ids from stored canonical literals", () => {
-    const canonical = "testu1234567890abcdef1234567890";
-    const payload = {
-      connection: {
-        toriiUrl: "https://legacy-torii",
-        chainId: "legacy",
-        networkPrefix: 369,
-      },
-      accounts: [
-        {
-          displayName: "Alice",
-          domain: "wonderland",
-          accountId: "alice@wonderland",
-          publicKeyHex: "pub",
-          privateKeyHex: "priv",
-          hasStoredSecret: true,
-          ih58: canonical,
-          compressed: "",
-          compressedWarning: "",
-        },
-      ],
-      activeAccountId: "alice@wonderland",
-      authority: {
-        accountId: "alice@wonderland",
-        privateKeyHex: "beef",
-      },
-    };
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
-
-    const store = useSessionStore();
-    store.hydrate();
-
-    expect(store.accounts).toHaveLength(1);
-    expect(store.accounts[0]?.accountId).toBe(canonical);
-    expect(store.activeAccountId).toBe(canonical);
-    expect(store.authority.accountId).toBe(canonical);
-  });
-
-  it("derives canonical account ids from stored key material when bridge is available", () => {
-    const canonical = "testuDerivedFromPublicKey1234567890";
-    (window as any).iroha = {
-      deriveAccountAddress: () => ({
-        accountId: canonical,
-        i105AccountId: "testuDerivedVisible1234567890",
-        i105DefaultAccountId: "sorauDerivedDefault1234567890",
-        publicKeyHex: "ab".repeat(32),
-        accountIdWarning: "",
-      }),
-    };
-
-    const payload = {
-      connection: {
-        toriiUrl: "https://legacy-torii",
-        chainId: "legacy",
-        networkPrefix: 369,
-      },
-      accounts: [
-        {
-          displayName: "Legacy",
-          domain: "wonderland",
-          accountId: "legacy@wonderland",
-          publicKeyHex: "ab".repeat(32),
-          privateKeyHex: "priv",
-          hasStoredSecret: true,
-          ih58: "",
-          compressed: "",
-          compressedWarning: "",
-        },
-      ],
-      activeAccountId: "legacy@wonderland",
-    };
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
-
-    const store = useSessionStore();
-    store.hydrate();
-
-    expect(store.accounts[0]?.accountId).toBe(canonical);
-    expect(store.accounts[0]?.i105AccountId).toBe(
-      "testuDerivedVisible1234567890",
-    );
-    expect(store.activeAccountId).toBe(canonical);
-  });
-
-  it("rewrites stored native i105 ids back to the compatibility accountId field", () => {
-    (window as any).iroha = {
-      deriveAccountAddress: () => ({
-        accountId: "URpZvCompatAccountId1234567890",
-        i105AccountId: "testuVisibleNativeAccountId1234567890",
-        i105DefaultAccountId: "sorauDefaultNativeAccountId1234567890",
-        publicKeyHex: "ab".repeat(32),
-        accountIdWarning: "",
-      }),
-    };
-
-    const payload = {
-      connection: {
-        toriiUrl: "https://legacy-torii",
-        chainId: "legacy",
-        networkPrefix: 369,
-      },
-      accounts: [
-        {
-          displayName: "Native",
-          domain: "default",
-          accountId: "testuVisibleNativeAccountId1234567890",
-          publicKeyHex: "ab".repeat(32),
-          privateKeyHex: "priv",
-          hasStoredSecret: true,
-        },
-      ],
-      activeAccountId: "testuVisibleNativeAccountId1234567890",
-    };
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
-
-    const store = useSessionStore();
-    store.hydrate();
-
-    expect(store.accounts[0]?.accountId).toBe("URpZvCompatAccountId1234567890");
-    expect(store.accounts[0]?.i105AccountId).toBe(
-      "testuVisibleNativeAccountId1234567890",
-    );
-    expect(store.activeAccountId).toBe("URpZvCompatAccountId1234567890");
-  });
-
-  it("adopts a chain-reported network prefix and re-derives stored account literals", () => {
-    (window as any).iroha = {
-      deriveAccountAddress: ({ networkPrefix }: { networkPrefix: number }) => ({
-        accountId:
-          networkPrefix === 369
-            ? "testuAliceCompat1234567890"
-            : "n42uAliceCompat1234567890",
-        i105AccountId:
-          networkPrefix === 369
-            ? "testuAliceCompat1234567890"
-            : "n42uAliceCompat1234567890",
-        i105DefaultAccountId: "sorauAliceDefault1234567890",
-        publicKeyHex: "ab".repeat(32),
-        accountIdWarning: "",
-      }),
-    };
-
-    const store = useSessionStore();
-    store.$patch({
-      connection: {
-        ...store.connection,
-        networkPrefix: 42,
-      },
-      accounts: [
-        {
-          displayName: "Alice",
-          domain: "default",
-          accountId: "n42uAliceCompat1234567890",
-          publicKeyHex: "ab".repeat(32),
-          privateKeyHex: "cd".repeat(32),
-          hasStoredSecret: true,
-          localOnly: false,
-        },
-      ],
-      activeAccountId: "n42uAliceCompat1234567890",
-      authority: {
-        accountId: "n42uAliceCompat1234567890",
-        privateKeyHex: "deadbeef",
-      },
-    });
-
-    expect(store.syncChainNetworkPrefix(369)).toBe(true);
-
-    expect(store.connection.networkPrefix).toBe(369);
-    expect(store.accounts[0]?.accountId).toBe("testuAliceCompat1234567890");
-    expect(store.accounts[0]?.i105AccountId).toBe("testuAliceCompat1234567890");
-    expect(store.activeAccountId).toBe("testuAliceCompat1234567890");
-    expect(store.authority.accountId).toBe("testuAliceCompat1234567890");
-  });
-
-  it("re-derives stored account literals when connection metadata changes", () => {
-    (window as any).iroha = {
-      deriveAccountAddress: ({ networkPrefix }: { networkPrefix: number }) => ({
-        accountId:
-          networkPrefix === 42
-            ? "n42uAliceCompat1234567890"
-            : "testuAliceCompat1234567890",
-        i105AccountId:
-          networkPrefix === 42
-            ? "n42uAliceCompat1234567890"
-            : "testuAliceCompat1234567890",
-        i105DefaultAccountId: "sorauAliceDefault1234567890",
-        publicKeyHex: "ab".repeat(32),
-        accountIdWarning: "",
-      }),
-    };
-
-    const store = useSessionStore();
-    store.$patch({
-      accounts: [
-        {
-          displayName: "Alice",
-          domain: "default",
-          accountId: "testuAliceCompat1234567890",
-          publicKeyHex: "ab".repeat(32),
-          privateKeyHex: "cd".repeat(32),
-          hasStoredSecret: true,
-          localOnly: false,
-        },
-      ],
-      activeAccountId: "testuAliceCompat1234567890",
-      authority: {
-        accountId: "testuAliceCompat1234567890",
-        privateKeyHex: "deadbeef",
-      },
-    });
-
-    store.updateConnection({
-      toriiUrl: "http://localhost:8080",
-      chainId: "local-chain",
-      networkPrefix: 42,
-    });
-
-    expect(store.connection.chainId).toBe("local-chain");
-    expect(store.connection.networkPrefix).toBe(42);
-    expect(store.accounts[0]?.accountId).toBe("n42uAliceCompat1234567890");
-    expect(store.activeAccountId).toBe("n42uAliceCompat1234567890");
-    expect(store.authority.accountId).toBe("n42uAliceCompat1234567890");
-  });
-
-  it("ignores invalid chain-reported network prefixes", () => {
-    const store = useSessionStore();
-    const before = store.connection.networkPrefix;
-
-    expect(store.syncChainNetworkPrefix(16384)).toBe(false);
-    expect(store.connection.networkPrefix).toBe(before);
-  });
-
-  it("updates the active account in place", () => {
-    const store = useSessionStore();
-    store.addAccount({
-      displayName: "First",
-      domain: "wonderland",
-      accountId: "first@wonderland",
-      publicKeyHex: "pub",
-      privateKeyHex: "priv",
-      hasStoredSecret: true,
-      localOnly: false,
-    });
-
+    store.setActiveAccount(ALICE_ACCOUNT_ID);
     store.updateActiveAccount({ displayName: "Renamed" });
 
+    expect(store.accounts).toHaveLength(2);
     expect(store.activeAccount?.displayName).toBe("Renamed");
-    expect(store.activeAccount?.accountId).toBe("first@wonderland");
+    expect(store.hasAccount).toBe(true);
   });
 
-  it("normalizes the legacy wonderland example domain to default for canonical accounts", () => {
+  it("keeps current endpoint and preset update behavior", () => {
     const store = useSessionStore();
-    store.addAccount({
-      displayName: "Alice",
-      domain: "wonderland",
-      accountId: "6cmzPVPX8AmHxBYtL9tbVfEPntBHMDWKCn8NRwxRXGDMjz5QWhdyboK",
-      publicKeyHex: "pub",
-      privateKeyHex: "priv",
-      localOnly: true,
-    });
-
-    expect(store.activeAccount?.domain).toBe("default");
-  });
-
-  it("rewrites stored SORA-native account literals onto the TAIRA prefix", () => {
-    const store = useSessionStore();
-    store.updateConnection(TAIRA_CHAIN_PRESET.connection);
-    store.addAccount({
-      displayName: "Alice",
-      domain: "default",
-      accountId: "sorauLegacyVisibleAccount1234567890",
-      i105AccountId: "",
-      i105DefaultAccountId: "sorauLegacyVisibleAccount1234567890",
-      publicKeyHex: "",
-      privateKeyHex: "priv",
-      localOnly: true,
-    });
-
-    expect(store.activeAccount?.accountId).toBe(
-      "testuLegacyVisibleAccount1234567890",
-    );
-    expect(store.activeAccount?.i105AccountId).toBe(
-      "testuLegacyVisibleAccount1234567890",
-    );
-    expect(store.activeAccount?.i105DefaultAccountId).toBe(
-      "sorauLegacyVisibleAccount1234567890",
-    );
-  });
-
-  it("rewrites stored TAIRA-native account literals onto the mainnet prefix", () => {
-    const store = useSessionStore();
-    store.$patch({
-      connection: {
-        ...TAIRA_CHAIN_PRESET.connection,
-      },
-      accounts: [
-        {
-          displayName: "Alice",
-          domain: "default",
-          accountId: "testuLegacyVisibleAccount1234567890",
-          i105AccountId: "testuLegacyVisibleAccount1234567890",
-          i105DefaultAccountId: "",
-          publicKeyHex: "",
-          privateKeyHex: "priv",
-          localOnly: true,
-        },
-      ],
-      activeAccountId: "testuLegacyVisibleAccount1234567890",
-      authority: {
-        accountId: "testuLegacyVisibleAccount1234567890",
-        privateKeyHex: "beef",
-      },
-    });
-
-    store.updateConnection(MINAMOTO_CHAIN_PRESET.connection);
-
-    expect(store.connection.networkPrefix).toBe(753);
-    expect(store.activeAccount?.accountId).toBe(
-      "sorauLegacyVisibleAccount1234567890",
-    );
-    expect(store.activeAccount?.i105AccountId).toBe(
-      "sorauLegacyVisibleAccount1234567890",
-    );
-    expect(store.activeAccountId).toBe("sorauLegacyVisibleAccount1234567890");
-    expect(store.authority.accountId).toBe(
-      "sorauLegacyVisibleAccount1234567890",
-    );
-  });
-
-  it("keeps custom chain profiles disabled while preserving the active connection", () => {
-    const store = useSessionStore();
-    store.updateConnection({
-      toriiUrl: "http://127.0.0.1:8080",
-      chainId: "testus",
-      networkPrefix: 99,
-    });
-    store.addCustomChain({
-      label: "Local devnet",
-      chainId: "ignored-chain",
-      toriiUrl: "http://127.0.0.1:9090",
-      assetDefinitionId: "asset#local",
-      networkPrefix: 123,
-    });
-    expect(store.customChains).toHaveLength(0);
-    expect(store.connection.chainId).toBe("testus");
-    expect(store.connection.toriiUrl).toBe("http://127.0.0.1:8080");
-    expect(store.connection.networkPrefix).toBe(99);
-    expect(store.connection.assetDefinitionId).toBe("asset#local");
-
-    store.persistState();
-    const persisted = snapshot();
-    expect(persisted.customChains).toHaveLength(0);
-
-    store.removeCustomChain("local-devnet");
-    expect(store.customChains).toHaveLength(0);
-  });
-
-  it("normalizes custom Torii endpoints and accepts loaded chain metadata", () => {
-    const store = useSessionStore();
-
     store.updateConnection({
       toriiUrl: " http://127.0.0.1:8080/ ",
       chainId: "custom-chain",
       networkPrefix: 99,
     });
-
     expect(store.connection.toriiUrl).toBe("http://127.0.0.1:8080");
-    expect(store.connection.chainId).toBe("custom-chain");
-    expect(store.connection.networkPrefix).toBe(99);
-  });
-
-  it("applies known preset metadata when only the endpoint changes", () => {
-    const store = useSessionStore();
-    store.updateConnection({
-      toriiUrl: "http://127.0.0.1:8080",
-      chainId: "00000000-0000-0000-0000-000000000000",
-      networkPrefix: 1,
-    });
 
     store.updateConnection({
       toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
     });
-
-    expect(store.connection.toriiUrl).toBe(
-      TAIRA_CHAIN_PRESET.connection.toriiUrl,
-    );
-    expect(store.connection.chainId).toBe(
-      TAIRA_CHAIN_PRESET.connection.chainId,
-    );
-    expect(store.connection.networkPrefix).toBe(
-      TAIRA_CHAIN_PRESET.connection.networkPrefix,
-    );
-  });
-
-  it("keeps checked metadata when a preset endpoint reports different values", () => {
-    const store = useSessionStore();
+    expect(store.connection).toEqual(TAIRA_CHAIN_PRESET.connection);
 
     store.updateConnection({
-      toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      chainId: "checked-live-chain",
+      toriiUrl: MINAMOTO_CHAIN_PRESET.connection.toriiUrl,
+      chainId: "checked-chain",
       networkPrefix: 42,
     });
-
     expect(store.connection.toriiUrl).toBe(
-      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      MINAMOTO_CHAIN_PRESET.connection.toriiUrl,
     );
-    expect(store.connection.chainId).toBe("checked-live-chain");
+    expect(store.connection.chainId).toBe("checked-chain");
     expect(store.connection.networkPrefix).toBe(42);
+
+    store.updateConnection({
+      toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    });
+    expect(store.connection).toEqual(TAIRA_CHAIN_PRESET.connection);
   });
 
-  it("preserves an invalid saved endpoint so it fails closed", () => {
-    localStorage.setItem(
-      SESSION_STORAGE_KEY,
-      JSON.stringify({
-        connection: {
-          toriiUrl: "ftp://not-supported",
-          chainId: "custom-chain",
-          networkPrefix: 99,
-        },
-      }),
-    );
-
+  it("rejects invalid runtime connection updates without mutating state", () => {
     const store = useSessionStore();
-    store.hydrate();
+    const before = { ...store.connection };
 
-    expect(store.connection.toriiUrl).toBe("ftp://not-supported");
-    expect(store.connection.chainId).toBe("custom-chain");
-    expect(store.connection.networkPrefix).toBe(99);
+    expect(() =>
+      store.updateConnection({
+        toriiUrl: "ftp://not-torii.example",
+        chainId: "custom-chain",
+        networkPrefix: 42,
+      }),
+    ).toThrow("http:// or https://");
+    expect(store.connection).toEqual(before);
+
+    expect(() =>
+      store.updateConnection({
+        toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
+        chainId: 7,
+      } as never),
+    ).toThrow("canonical chain ID");
+    expect(() =>
+      store.updateConnection({ networkPrefix: "369" } as never),
+    ).toThrow("integer network prefix");
+    expect(() =>
+      store.updateConnection({
+        legacyEndpoint: "https://legacy.example",
+      } as never),
+    ).toThrow("unsupported field or shape");
+    expect(store.connection).toEqual(before);
+  });
+
+  it("rejects coercive and exotic runtime account updates", () => {
+    const store = useSessionStore();
+    const base = {
+      displayName: "Alice",
+      domain: "default",
+      accountId: ALICE_ACCOUNT_ID,
+      publicKeyHex: ALICE_PUBLIC_KEY_HEX,
+      hasStoredSecret: true,
+      localOnly: false,
+    };
+
+    expect(() =>
+      store.addAccount({ ...base, hasStoredSecret: "true" } as never),
+    ).toThrow("secret flag must be a boolean");
+    expect(() =>
+      store.addAccount({ ...base, displayName: 42 } as never),
+    ).toThrow("display name must be text");
+    expect(() =>
+      store.addAccount({ ...base, legacyAddress: ALICE_ACCOUNT_ID } as never),
+    ).toThrow("unsupported field or shape");
+
+    const accessor = { ...base } as Record<string, unknown>;
+    Object.defineProperty(accessor, "displayName", {
+      enumerable: true,
+      get: () => "Mallory",
+    });
+    expect(() => store.addAccount(accessor)).toThrow("defined data fields");
+    expect(store.accounts).toEqual([]);
+  });
+
+  it("rejects invalid runtime authority flags", () => {
+    const store = useSessionStore();
+
+    expect(() =>
+      store.updateAuthority({ hasStoredSecret: 1 } as never),
+    ).toThrow("secret flag must be a boolean");
+    expect(store.authority.hasStoredSecret).toBe(false);
   });
 });

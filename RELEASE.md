@@ -14,9 +14,10 @@ The checked-out Iroha SDK already contains its Windows MSVC compatibility gates.
 ## Sigstore keyless provenance
 
 The release workflow uses GitHub Actions OIDC and Cosign keyless blob signing.
-It needs no long-lived signing key or repository secret. The draft-release job
-alone receives `id-token: write`; build and verification jobs remain
-`contents: read`.
+The Sigstore step needs no long-lived signing key. The draft-release job alone
+receives `id-token: write`; build and verification jobs remain `contents:
+read`. Authenticated Iroha source verification separately uses the public-only
+OpenPGP input documented below; that input cannot sign releases or commits.
 
 Every distributable, `SOURCE-IDENTITY.json`, and `SHA256SUMS.txt` receives an
 adjacent `.sigstore.json` bundle. Before the workflow finishes, it verifies
@@ -38,8 +39,56 @@ tag as both `--ref` and the `tag` input.
 
 Sigstore proves which tagged GitHub Actions workflow produced a byte-for-byte
 artifact. It does **not** provide macOS Developer ID signing/notarization or
-Windows Authenticode signing. The workflow and generated verification guide
-state that distinction explicitly.
+Windows Authenticode signing. Those are independent mandatory release gates:
+the workflow verifies the final macOS app, nested VPN code, notarization ticket,
+Windows app, native addon, and installer before it creates or replaces a draft.
+
+## Required authenticated Iroha source inputs
+
+Repository variable:
+
+- `IROHA_REF`: Exact lowercase 40-character reviewed Iroha commit SHA. It must
+  equal the checked-in `REVIEWED_IROHA_REF`; the manual workflow input cannot
+  override that pin.
+
+GitHub Actions secret:
+
+- `IROHA_RELEASE_SIGNER_PUBLIC_KEY_BASE64`: Canonical unwrapped standard-base64
+  encoding of a public-only OpenPGP export. The decoded keyring must contain
+  exactly one primary key with fingerprint
+  `9D1C8BFA5A0C1FEF5A8B1E5F552C2D0FD7C40BEB` and no private key.
+
+Provision the public verifier input from an already authenticated local GPG
+keyring. `gpg --export` emits public material even if the local keyring also
+holds the private key:
+
+```bash
+release_repo='soramitsu/iroha-demo-javascript'
+iroha_release_signer='9D1C8BFA5A0C1FEF5A8B1E5F552C2D0FD7C40BEB'
+iroha_release_public_key="$(mktemp)"
+
+gpg --batch --export --armor "$iroha_release_signer" > "$iroha_release_public_key"
+test -s "$iroha_release_public_key"
+test "$(
+  gpg --batch --show-keys --with-colons --fingerprint "$iroha_release_public_key" |
+    awk -F: '$1 == "pub" { primary = 1; next } primary && $1 == "fpr" { print $10; primary = 0 }'
+)" = "$iroha_release_signer"
+
+iroha_release_public_key_base64="$(base64 < "$iroha_release_public_key" | tr -d '\r\n')"
+gh secret set IROHA_RELEASE_SIGNER_PUBLIC_KEY_BASE64 \
+  --repo "$release_repo" \
+  --body "$iroha_release_public_key_base64"
+rm -f "$iroha_release_public_key"
+```
+
+The preflight fails before build work when this secret is absent. Each build
+job decodes it into a new isolated `GNUPGHOME`, rejects extra primary keys and
+all private keys, checks the exact fingerprint, and removes only the expected
+checkout `origin` remote. It then runs `install:release` followed by
+`verify:iroha-sdk`. The resulting provenance marker makes the resolver, Vite,
+native staging, and every installer-producing `dist*` command select the same
+physical reviewed SDK package. The workflow has no manual SDK/native copy
+bypass.
 
 ## Required production platform signing secrets
 
@@ -52,31 +101,29 @@ macOS signing and notarization:
 - `APPLE_API_KEY_ID`: App Store Connect API key ID.
 - `APPLE_API_ISSUER`: App Store Connect issuer UUID.
 
-Optional macOS signing overrides:
-
-- `APPLE_SIGN_IDENTITY`: Full codesign identity, for example `Developer ID Application: Example Corp (TEAMID)`.
-- `APPLE_XCODE_SIGN_IDENTITY`: Xcode identity for the VPN helper and PacketTunnel builds. Defaults to `Developer ID Application`.
-
 Windows signing:
 
 - `WIN_CSC_LINK`: Base64-encoded Windows Authenticode `.pfx`.
 - `WIN_CSC_KEY_PASSWORD`: Password for the Windows signing certificate.
 
-When these secrets are absent, the workflow may still prepare unsigned draft
-packages for internal diagnostics and attach keyless Sigstore provenance. Do
-not publish that draft as a production release.
-Do not describe those packages as notarized or Authenticode-signed.
+The release workflow does not produce unsigned platform packages. Missing,
+expired, malformed, wrong-team, wrong-purpose, or partial signing credentials
+fail the corresponding build before any draft asset is uploaded. Unsigned local
+builds remain development-only and cannot pass the release workflow.
 
-Required repository variable for tag-push releases:
+The checked-in release corridor is still sealed to authenticated baseline
+`1bcb05eb208d8bda1610789d827a7ed97e66e56c`. That baseline predates the
+mandatory native ABI 23 contract described below, so it is an intentional
+release blocker rather than a publishable source pin. Do not create a release
+tag until the revision, parent, trees, Cargo lock, workflow constants, and this
+document have been replaced together from one reviewed signed commit. Until
+that refresh, `IROHA_REF` and the manual `iroha_ref` input can only equal the
+baseline—the workflow rejects every other value and the ABI gate rejects the
+baseline itself.
 
-- `IROHA_REF`: Must be the reviewed v4 commit
-  `1bcb05eb208d8bda1610789d827a7ed97e66e56c`. Moving branches, tags,
-  abbreviations, any other commit, and an absent value fail closed. Manual
-  reruns require the same value through `iroha_ref`.
-
-That commit must directly descend from signed parent
-`03b2bff298cabe1c1355d78379acb4a099e6d627`, have tree
-`801349ba2350640643179c83821c43d8548ba021`, and contain Iroha JS tree
+The baseline directly descends from signed parent
+`03b2bff298cabe1c1355d78379acb4a099e6d627`, has tree
+`801349ba2350640643179c83821c43d8548ba021`, and contains Iroha JS tree
 `6ce1556f6b1e1bc62f20dbc63db3e3cca6148bdc`. The workflow verifies both Iroha
 commit signatures, does a complete non-shallow checkout without replacement
 objects or submodules, and installs the wallet-tracked
@@ -90,32 +137,58 @@ Release-native manifests must use provenance version `3`, execution policy
 SHA-256 selected by the complete reviewed pin set, and set
 `cargo_profile: "release"` plus
 `source_tree_clean: true`; missing, malformed, or unknown provenance fields fail
-closed. The reviewed addon must export the native governance private-file
-boundary, report exactly `1` from `securePrivateFileAbiVersion()`, and provide
-the directory-ensure, bounded-read, and atomic-write methods covered by that
-versioned contract. JavaScript function arity is not an ABI signal for N-API
-exports. `SOURCE-IDENTITY.json` records this contract as
-`secure_private_file_abi_version: 1` and lists the version probe plus all three
-operations as required exports. Packaged Electron loading also binds the native
+closed. The reviewed addon must report exactly `23` from
+`connectNoritoBridgeAbiVersion()`, export the exact address, confidential
+receive-address, versioned-transaction, subscription, Hijiri quote,
+governance fingerprint, and secure private-file methods enforced by
+`postinstallNativeCheck.mjs`, and report exactly `1` from
+`securePrivateFileAbiVersion()`. JavaScript function arity is not an ABI signal
+for N-API exports. `SOURCE-IDENTITY.json` records provenance version `3`, the
+`trusted-local-cargo-v1` execution policy, both ABI versions, and the same exact
+required-export inventory. Packaged Electron loading also binds the native
 bytes to that manifest, using the signing-independent identity on macOS and
 Windows so platform signing cannot silently replace the reviewed addon. Windows
-packaging signs both `.exe` and `.node` files and the
-post-sign hook requires Windows to report the exact unpacked
-`iroha_js_host.node` signature as `Valid` whenever production signing is
-enabled. Windows artifacts remain x64-only until the release matrix builds and
-seals a genuine `win32-arm64` native addon.
+packaging signs both `.exe` and `.node` files. The packaged runtime contains one
+canonical `dist/native/iroha_js_host.node`; the SDK source package is excluded.
+Every platform's `afterPack` gate opens the ASAR and requires exactly that
+unpacked addon plus its sealed checksum manifest, rejecting stale native layouts
+and any packaged `@iroha/iroha-js` source tree.
+The post-sign hook requires the unpacked application and canonical native addon
+to report `Valid`, carry a trusted timestamp, and match the exact certificate
+thumbprint loaded from the release PFX; the finished NSIS installer is checked
+against the same certificate and timestamp requirement.
+Windows artifacts remain x64-only until the release matrix builds and seals a
+genuine `win32-arm64` native addon.
 
-The native compatibility gate also executes the current rules-bound
-validation-fee proposal known-answer tests. The frozen rules fixture includes
-the exact seed-8 bond-escrow and seed-9 slash-receiver I105 account literals;
-its policy fingerprint is
-`85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90`
-and its payout-lifecycle fingerprint is
-`fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b`.
-Runtime custody accounts are never copied from that test fixture: they must
-match the exact `bond_escrow_account` and `slash_receiver_account` carried by
-the live capabilities and retained proposal rules, and both must equal the
-reviewed Taira governance escrow account.
+macOS packaging accepts exactly one current `SoraVpnController.app`, containing
+one packet-engine app and one bundle-ID-matched PacketTunnel system extension.
+Both the controller and provider signatures must carry exactly Apple's
+Developer-ID system-extension value, `packet-tunnel-provider-systemextension`;
+the app-extension-only `packet-tunnel-provider` value is rejected.
+It rejects symlinks, legacy `.bundle`/`.appex` alternatives, missing nested
+executables, stripped VPN entitlements, a wrong Apple team, an unstapled app,
+debugger-enabled or untimestamped signatures, or failed Gatekeeper assessment.
+Electron's general signer explicitly leaves the separately signed VPN helper
+tree untouched so its restricted entitlements cannot be replaced with host-app
+entitlements. Linux packages copy only the exact
+`sora-vpn-controller` file. The release artifact inventory is fixed at nine
+non-empty regular files (the platform matrix above); missing or extra
+distributables fail before checksums or Sigstore bundles are created.
+
+The native compatibility gate also executes the current operator-bound
+validation-fee proposal known-answer tests. The policy fixture binds the exact
+`hash:1313131313131313131313131313131313131313131313131313131313131313#9CE1`
+network, seed-7 proposal operator, seed-1 treasury,
+`7FF2EKZbaWzi5QTD6hewE2voveah` DS asset, and no payout; its fingerprint is
+`4742b1f274928767564c6effa414e640e6f635874d74684b06b95414c5afa16e`.
+The payout fixture binds the same operator to the upstream
+`validation_fee_payout_binding_fixture`, including its immutable contract,
+code hash, seed-2 pool vault, seed-3 through seed-6 recipients, DS asset, and
+`5dHF5UNffENuEg9mhjYwY1jcZ1K5` XOR asset; its fingerprint is
+`8fd84f6599e22db4da15f7152a914dc0091dd73a7906d5981cce37d485191c25`.
+Both probes require the exact positive vector, deterministic repetition,
+operator sensitivity, and strict rejection of malformed input. These fixture
+identities are compatibility test data, not runtime governance configuration.
 
 The release tag must be covered by an active GitHub tag-protection ruleset.
 Before any build starts, the workflow requires GitHub to verify valid
@@ -188,14 +261,15 @@ Do not hand-edit or synthesize the Parliament evidence in the generated config.
 Missing or mismatched inputs intentionally leave validation-fee policy writes
 unavailable.
 
-## Local sealed Iroha release source
+## Refreshing the sealed Iroha release source
 
 The checked-in Iroha revision, tree, JavaScript tree, and sealed Cargo-lock
 values below predate the secure private-file ABI. They remain only as the last
 fully authenticated baseline and must not be used to publish this release.
 Replace the entire pin set together from one clean signed Iroha commit that
-contains ABI v1, then rebuild every platform artifact from that exact source.
-Do not advance an individual digest or revision in isolation.
+contains bridge ABI 23 and secure private-file ABI 1, then rebuild every
+platform artifact from that exact source. Do not advance an individual digest
+or revision in isolation.
 
 These commands are local only; they do not contact Taira or deploy anything.
 Create the install source through Git transport. Never use `git clone --local`,

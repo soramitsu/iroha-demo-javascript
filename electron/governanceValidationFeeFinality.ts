@@ -6,13 +6,14 @@ import {
   type GovernanceValidationFeeCoreFetch,
   type GovernanceValidationFeeEnabledConfig,
   type GovernanceValidationFeeFinalityObservation,
-  type GovernanceValidationFeePolicyView,
 } from "./governanceValidationFee";
+import type { GovernanceValidationFeePolicyView } from "./governanceValidationFeePolicyView";
 import {
   governanceIntegrityDirectoryPath,
   loadSecureBoundedJson,
   secureWriteBoundedFile,
 } from "./secureBoundedJson";
+import { isTrustedRendererNavigationUrl } from "./rendererProtocol";
 
 export const GOVERNANCE_VALIDATION_FEE_POLICY_IPC_CHANNEL =
   "governance:getCurrentValidationFeePolicy";
@@ -264,28 +265,6 @@ const pathExists = (path: string, label: string): boolean => {
 const sha256 = (value: string): string =>
   createHash("sha256").update(value, "utf8").digest("hex");
 
-const sameTrustedRendererOrigin = (
-  actualUrl: unknown,
-  trustedUrl: string,
-): boolean => {
-  if (typeof actualUrl !== "string" || !actualUrl.trim()) return false;
-  try {
-    const actual = new URL(actualUrl);
-    const trusted = new URL(trustedUrl);
-    return (
-      !actual.username &&
-      !actual.password &&
-      !trusted.username &&
-      !trusted.password &&
-      actual.protocol === trusted.protocol &&
-      actual.hostname === trusted.hostname &&
-      actual.port === trusted.port
-    );
-  } catch {
-    return false;
-  }
-};
-
 const rejectRegressionOrEquivocation = (
   previous: StoredObservation,
   current: StoredObservation,
@@ -366,7 +345,11 @@ export const assertGovernanceValidationFeeTrustedSender = (
     input.ownerDestroyed ||
     !input.senderFrame ||
     input.senderFrame !== input.mainFrame ||
-    !sameTrustedRendererOrigin(input.senderFrame.url, input.trustedRendererUrl)
+    typeof input.senderFrame.url !== "string" ||
+    !isTrustedRendererNavigationUrl(
+      input.senderFrame.url,
+      input.trustedRendererUrl,
+    )
   ) {
     throw new Error(
       "Governance validation-fee policy reads require the trusted top-level wallet frame.",
@@ -517,7 +500,7 @@ export class GovernanceValidationFeeFinalityStore {
 export const fetchGovernanceValidationFeePolicyInMain = async (input: {
   runtimeConfig: GovernanceValidationFeeRuntimeCoordinates;
   finalityStore: GovernanceValidationFeeFinalityStore;
-  fetcher?: GovernanceValidationFeeCoreFetch;
+  fetcher: GovernanceValidationFeeCoreFetch;
   signal?: AbortSignal;
 }): Promise<GovernanceValidationFeePolicyView> => {
   const immutableLedgerScope =

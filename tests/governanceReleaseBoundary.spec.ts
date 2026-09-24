@@ -25,9 +25,16 @@ describe("v2.0.1 governance release boundary", () => {
       version: string;
       scripts: Record<string, string>;
     };
+    const packageLock = JSON.parse(source("package-lock.json")) as {
+      packages: Record<string, Record<string, unknown>>;
+    };
+    const npmConfig = source(".npmrc");
     const chains = source("src/constants/chains.ts");
     const sdkCompatibility = source("scripts/iroha-sdk-compat.mjs");
     const releaseSource = source("scripts/iroha-js-release-source.mjs");
+    const releaseSourcePreparation = source(
+      "scripts/prepare-iroha-release-source.mjs",
+    );
     const releaseWorkflow = source(".github/workflows/release.yml");
     const electronBuilder = source("electron-builder.yml");
     const postinstallNativeCheck = source("scripts/postinstallNativeCheck.mjs");
@@ -37,6 +44,7 @@ describe("v2.0.1 governance release boundary", () => {
     const runtimeNativeProvenance = source(
       "electron/irohaJsNativeProvenance.ts",
     );
+    const releaseNotes = source("RELEASE.md");
 
     expect(packageJson.version).toBe("2.0.1");
     expect(packageJson.scripts.build).not.toContain("taira-v1");
@@ -57,6 +65,24 @@ describe("v2.0.1 governance release boundary", () => {
     );
     expect(packageJson.scripts["verify:release"]).toContain("verify:iroha-sdk");
     expect(packageJson.scripts["build:release"]).toContain("verify:iroha-sdk");
+    expect(packageJson.scripts).not.toHaveProperty("dist:release");
+    for (const command of ["dist", "dist:mac", "dist:win", "dist:linux"]) {
+      expect(packageJson.scripts[command]).toMatch(
+        /^npm run build:release &&/u,
+      );
+      expect(packageJson.scripts[command]).not.toContain("npm run build &&");
+    }
+    expect(packageLock.packages["node_modules/@iroha/iroha-js"]).toMatchObject({
+      resolved: "file:../iroha/javascript/iroha_js",
+      version: "0.0.3",
+    });
+    expect(
+      packageLock.packages["node_modules/@iroha/iroha-js"],
+    ).not.toHaveProperty("link");
+    expect(packageLock.packages).not.toHaveProperty(
+      "../iroha/javascript/iroha_js",
+    );
+    expect(npmConfig).toBe("install-links=true\n");
     expect(sdkCompatibility).toContain(
       "verifyInstalledReleaseDependencies(projectRoot, releaseRoot)",
     );
@@ -111,7 +137,7 @@ describe("v2.0.1 governance release boundary", () => {
     );
     expect(releaseSource).toContain("GIT_ALTERNATE_OBJECT_DIRECTORIES");
     expect(releaseSource).toContain("GIT_CONFIG_COUNT");
-    expect(releaseWorkflow).toContain('NODE_VERSION: "20"');
+    expect(releaseWorkflow).toContain('NODE_VERSION: "24"');
     expect(releaseWorkflow).toContain('RUST_TOOLCHAIN: "1.93.1"');
     expect(releaseWorkflow).toContain(
       'IROHA_JS_NATIVE_BUILD_PROFILE: "release"',
@@ -124,17 +150,26 @@ describe("v2.0.1 governance release boundary", () => {
     );
     expect(releaseWorkflow).toContain("resources/release/iroha-v4-Cargo.lock");
     expect(
-      releaseWorkflow.match(/npm ci --ignore-scripts --install-links/gu)
-        ?.length,
-    ).toBeGreaterThanOrEqual(2);
+      releaseWorkflow.match(
+        /- name: Prepare authenticated Iroha release source/gu,
+      )?.length,
+    ).toBe(2);
+    expect(
+      releaseWorkflow.match(/run: npm run install:release/gu)?.length,
+    ).toBe(2);
+    expect(
+      releaseWorkflow.match(/run: npm run verify:iroha-sdk/gu)?.length,
+    ).toBe(2);
+    expect(releaseWorkflow).toContain(
+      "secrets.IROHA_RELEASE_SIGNER_PUBLIC_KEY_BASE64",
+    );
+    expect(releaseWorkflow).toContain(
+      "IROHA_RELEASE_SIGNER_PUBLIC_KEY_BASE64 is required",
+    );
+    expect(releaseWorkflow).not.toContain("copyFileSync(sourceNode");
     expect(
       releaseWorkflow.match(/- name: Build reviewed Iroha native binding/gu)
         ?.length,
-    ).toBeGreaterThanOrEqual(2);
-    expect(
-      releaseWorkflow.match(
-        /physical SDK package unexpectedly contains a native binary/gu,
-      )?.length,
     ).toBeGreaterThanOrEqual(2);
     expect(
       releaseWorkflow.match(/CARGO_TARGET_DIR: \$\{\{ runner\.temp \}\}/gu)
@@ -144,14 +179,24 @@ describe("v2.0.1 governance release boundary", () => {
       "reviewed native build failed verification",
     );
     expect(releaseWorkflow).not.toContain("run: npm ci\n");
+    expect(releaseSourcePreparation).toContain(
+      "assertExactReviewedPublicKey(publicListing, secretListing)",
+    );
+    expect(releaseSourcePreparation).toContain("IROHA_ROOT: sourceRoot");
+    expect(releaseSourcePreparation).toContain(
+      '["-C", sourceRoot, "remote", "remove", "origin"]',
+    );
+    expect(releaseSource).toContain('"gpg.exe"');
+    expect(releaseSource).toContain('"git.exe"');
     expect(releaseWorkflow).toContain(
       'test "$(git -C iroha rev-parse --is-shallow-repository)" = "false"',
     );
-    expect(releaseWorkflow).toContain('"sora.wallet.release-source.v2"');
+    expect(releaseWorkflow).toContain('"sora.wallet.release-source.v3"');
+    expect(releaseWorkflow).not.toContain('"sora.wallet.release-source.v2"');
     expect(releaseWorkflow).not.toContain('"sora.wallet.release-source.v1"');
     expect(releaseWorkflow).not.toContain("rustup toolchain install stable");
     expect(releaseWorkflow).not.toContain("rustup default stable");
-    expect(releaseWorkflow).toContain("connect_norito_bridge_abi_version: 21");
+    expect(releaseWorkflow).toContain("connect_norito_bridge_abi_version: 23");
     expect(releaseWorkflow).not.toContain(
       "validation_fee_policy_fingerprint_arity",
     );
@@ -175,12 +220,26 @@ describe("v2.0.1 governance release boundary", () => {
       expect(releaseWorkflow).toContain(`"${secureStorageExport}"`);
     }
     for (const fingerprint of [
-      "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90",
-      "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b",
+      "4742b1f274928767564c6effa414e640e6f635874d74684b06b95414c5afa16e",
+      "8fd84f6599e22db4da15f7152a914dc0091dd73a7906d5981cce37d485191c25",
     ]) {
       expect(releaseWorkflow).toContain(fingerprint);
       expect(postinstallNativeCheck).toContain(fingerprint);
       expect(runtimeNativeCheck).toContain(fingerprint);
+      expect(releaseNotes).toContain(fingerprint);
+    }
+    for (const retiredFingerprint of [
+      "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90",
+      "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b",
+    ]) {
+      for (const releaseBoundary of [
+        releaseWorkflow,
+        postinstallNativeCheck,
+        runtimeNativeCheck,
+        releaseNotes,
+      ]) {
+        expect(releaseBoundary).not.toContain(retiredFingerprint);
+      }
     }
     for (const nativeCheck of [postinstallNativeCheck, runtimeNativeCheck]) {
       for (const activeRuntimeExport of [
@@ -198,14 +257,44 @@ describe("v2.0.1 governance release boundary", () => {
         "validationFeePayoutLifecycleProposalFingerprintV1",
       );
       expect(nativeCheck).toContain(
-        "REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION = 21",
+        "REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION = 23",
       );
       expect(nativeCheck).toContain("connectNoritoBridgeAbiVersion");
       expect(nativeCheck).toContain(
         "REQUIRED_SECURE_PRIVATE_FILE_ABI_VERSION = 1",
       );
       expect(nativeCheck).toContain("securePrivateFileAbiVersion");
+      expect(nativeCheck).toContain('"7FF2EKZbaWzi5QTD6hewE2voveah"');
+      expect(nativeCheck).toContain('"5dHF5UNffENuEg9mhjYwY1jcZ1K5"');
+      expect(nativeCheck).toContain(
+        '"irohac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9gg4yxgjw"',
+      );
+      expect(nativeCheck).toContain(
+        "REQUIRED_VALIDATION_FEE_PAYOUT_BINDING_JSON",
+      );
+      expect(nativeCheck).toContain(
+        "REQUIRED_VALIDATION_FEE_SECOND_PROPOSAL_OPERATOR",
+      );
+      expect(nativeCheck).toContain(
+        "validation-fee policy must contain exactly",
+      );
+      expect(nativeCheck).toContain("payout binding must contain exactly");
     }
+    for (const retiredConfidentialExport of [
+      "buildConfidentialTransferProofV2",
+      "buildConfidentialUnshieldProofV2",
+      "buildConfidentialUnshieldProofV3",
+    ]) {
+      expect(releaseWorkflow).not.toContain(`"${retiredConfidentialExport}"`);
+      expect(postinstallNativeCheck).not.toContain(
+        `"${retiredConfidentialExport}"`,
+      );
+      expect(runtimeNativeCheck).not.toContain(
+        `"${retiredConfidentialExport}"`,
+      );
+    }
+    expect(releaseNotes).not.toContain("confidential-proof");
+    expect(releaseNotes).not.toContain("rules-bound");
     expect(postinstallNativeCheck).toContain(
       "IROHA_JS_NATIVE_SOURCE_GIT_REVISION",
     );
@@ -258,6 +347,7 @@ describe("v2.0.1 governance release boundary", () => {
     expect(electronBuilder).toContain(
       "asarUnpack:\n  - dist/native/iroha_js_host.node",
     );
+    expect(electronBuilder).toContain('  - "!node_modules/@iroha/iroha-js/**"');
     expect(electronBuilder).toContain("- .node");
     expect(electronBuilder).not.toMatch(/^asar:\s*false\s*$/mu);
   });
@@ -266,7 +356,7 @@ describe("v2.0.1 governance release boundary", () => {
     const rendererTypes = between(
       source("src/types/iroha.d.ts"),
       "export interface GovernancePrepareContext",
-      "export type GovernanceVotingMode",
+      "export interface SigningAlgorithmOption",
     );
     const preloadTypes = between(
       source("electron/preload.ts"),
@@ -322,63 +412,32 @@ describe("v2.0.1 governance release boundary", () => {
     expect(runtimeConfig).toContain(
       "refusing to mix environment and file runtime configuration",
     );
-    expect(main).toContain(
-      'loadGovernanceRuntimeConfig({\n      userDataPath: app.getPath("userData")',
-    );
+    expect(main).toContain("loadGovernanceRuntimeConfig({");
+    expect(main).toContain('userDataPath: app.getPath("userData")');
     expect(main).toContain("fetchGovernanceValidationFeePolicyInMain({");
+    expect(main).toContain("fetcher: nodeFetch");
+    expect(source("electron/governanceValidationFee.ts")).not.toContain(
+      "globalThis.fetch",
+    );
     expect(preload).toContain(
-      "ipcRenderer.invoke(\n    GOVERNANCE_VALIDATION_FEE_POLICY_IPC_CHANNEL",
+      "parseGovernanceValidationFeePolicyView(\n    await ipcRenderer.invoke(GOVERNANCE_VALIDATION_FEE_POLICY_IPC_CHANNEL)",
     );
     expect(preload).not.toContain("fetchCoreGovernanceValidationFeePolicy");
     expect(preload).not.toContain("trustScopeHash");
   });
 
-  it("loads the immutable PLAIN electorate through one packaged, hash-bound handoff", () => {
+  it("does not ship or register the retired proposal-backed PLAIN electorate handoff", () => {
     const main = source("electron/main.ts");
     const preload = source("electron/preload.ts");
-    const contract = source("electron/governancePlainReferendum.ts");
-    const secureLoader = source("electron/secureBoundedJson.ts");
     const builder = source("electron-builder.yml");
-    const packagedSource = source(
-      "resources/governance-referendum-source.json",
-    );
+    const bridge = source("src/types/iroha.d.ts");
+    const services = source("src/services/iroha.ts");
 
-    expect(contract).toContain('"governance:getPlainReferendumContract"');
-    expect(contract).toContain(
-      '"governance/governance-referendum-source.json"',
-    );
-    expect(contract).toContain('"sora.parliament.plain-referendum.v2"');
-    expect(contract).toContain(
-      '"sora.wallet.governance-referendum-handoff.v1"',
-    );
-    expect(contract).toContain(
-      '"taira.governance-post-parliament-registration-gate.v1"',
-    );
-    expect(contract).toContain("artifact.sha256 !== descriptor.artifactSha256");
-    expect(contract).toContain("GovernancePlainReferendumFinalityStore");
-    expect(contract).toContain(
-      "governanceIntegrityDirectoryPath(userDataPath)",
-    );
-    expect(secureLoader).toContain("getInstalledIrohaJsNativeBinding()");
-    expect(secureLoader).toContain("installed.securePrivateFileAbiVersion()");
-    expect(secureLoader).toContain("native.securePrivateDirectoryEnsure");
-    expect(secureLoader).toContain("native.securePrivateFileRead");
-    expect(secureLoader).toContain("native.securePrivateFileWriteAtomic");
-    expect(secureLoader).not.toContain("process.getuid");
-    expect(main).toContain("registerGovernancePlainReferendumHandler();");
-    expect(main).toContain("loadGovernancePlainReferendumSource(sourcePath)");
-    expect(main).toContain("observedIdentity");
-    expect(preload).toContain(
-      "GOVERNANCE_PLAIN_REFERENDUM_IPC_CHANNEL,\n    observedIdentity",
-    );
-    expect(preload).not.toMatch(
-      /governancePlainReferendum.*(?:privateKey|secretKey|seedPhrase)/u,
-    );
-    expect(preload).not.toContain("governance-plain-referendum.json");
-    expect(builder).toContain("resources/governance-referendum-source.json");
-    expect(packagedSource).toContain(
-      "https://cbsi-core.soramitsu.io/governance/plain-referendum/current.json",
-    );
-    expect(packagedSource).not.toMatch(/privateKey|secretKey|seedPhrase/u);
+    for (const production of [main, preload, bridge, services]) {
+      expect(production).not.toMatch(
+        /GovernancePlainReferendum|governancePlainReferendum|prepareGovernancePlainBallot|CastPlainBallot/u,
+      );
+    }
+    expect(builder).not.toContain("governance-referendum-source.json");
   });
 });

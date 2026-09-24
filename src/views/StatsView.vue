@@ -613,6 +613,7 @@ const refresh = async () => {
       getNetworkStats({
         toriiUrl,
         assetDefinitionId: assetDefinitionId.value,
+        networkPrefix: session.connection.networkPrefix,
       }),
       getGovernanceCitizenCount(toriiUrl),
     ] as const);

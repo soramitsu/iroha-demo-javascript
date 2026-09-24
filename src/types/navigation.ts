@@ -14,8 +14,6 @@ export type AppIconName =
   | "cloud"
   | "vpn"
   | "kaigi"
-  | "offline"
-  | "bridge"
   | "settings"
   | "advanced"
   | "account"

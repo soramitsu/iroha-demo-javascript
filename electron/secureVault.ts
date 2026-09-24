@@ -1,14 +1,37 @@
 import { safeStorage } from "electron";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { delimiter, dirname, join } from "node:path";
+import { mkdir, open, rename, unlink } from "node:fs/promises";
+import { basename, delimiter, dirname, join } from "node:path";
+import { normalizeCryptoAlgorithm } from "@iroha/iroha-js/crypto";
+import { parseJsonWithoutDuplicateObjectKeys } from "../src/utils/json";
+import { requireFirstReleaseIpcInputObject } from "./firstReleaseIpcInput";
+import { FIRST_RELEASE_CRYPTO_KEY_MATERIAL_MAX_BYTES } from "./firstReleaseResourceLimits";
 
 const SECURE_VAULT_FILENAME = "secure-vault.json";
 const SECURE_VAULT_VERSION = 1;
 const ACCOUNT_SECRET_SCHEMA_V2 = "iroha-demo-account-secret/v2";
-const DEFAULT_SIGNING_ALGORITHM = "ed25519";
+const MAX_SECURE_VAULT_BYTES = 16 * 1024 * 1024;
+const MAX_ACCOUNT_SECRETS = 256;
+const MAX_RECEIVE_KEYS = 4_096;
+export const SECURE_VAULT_MAX_RECEIVE_KEYS_PER_ACCOUNT = 1_024;
+export const SECURE_VAULT_MAX_RECEIVE_KEY_BATCH =
+  SECURE_VAULT_MAX_RECEIVE_KEYS_PER_ACCOUNT;
+const MAX_ACCOUNT_SECRET_HEX_CHARACTERS =
+  FIRST_RELEASE_CRYPTO_KEY_MATERIAL_MAX_BYTES * 2;
+const MAX_ENCRYPTED_ENVELOPE_CHARACTERS = 256 * 1024;
+const MAX_DECRYPTED_SECRET_CHARACTERS = 64 * 1024;
+const MAX_DPAPI_OUTPUT_CHARACTERS = 256 * 1024;
+const WINDOWS_DPAPI_TIMEOUT_MS = 15_000;
+const SAFE_STORAGE_ENVELOPE = "electron-safe-storage:";
 const WINDOWS_DPAPI_ENVELOPE = "win-dpapi:";
+const SECURE_LINUX_STORAGE_BACKENDS = new Set([
+  "gnome_libsecret",
+  "kwallet",
+  "kwallet5",
+  "kwallet6",
+]);
 const WSL_KERNEL_MARKER_RE = /microsoft|wsl/i;
 const WINDOWS_POWERSHELL_SUBPATH = [
   "System32",
@@ -31,21 +54,39 @@ $protectedBytes = [Security.Cryptography.ProtectedData]::Protect($plainBytes, $n
 const WINDOWS_DPAPI_UNPROTECT_SCRIPT = `
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Security
-$protectedBase64 = [Console]::In.ReadToEnd().Trim()
+$protectedBase64 = [Console]::In.ReadToEnd()
 $protectedBytes = [Convert]::FromBase64String($protectedBase64)
 $plainBytes = [Security.Cryptography.ProtectedData]::Unprotect($protectedBytes, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
 [Console]::Out.Write([Text.Encoding]::UTF8.GetString($plainBytes))
 `;
 
-const trimString = (value: unknown): string => String(value ?? "").trim();
-
-const normalizeAccountIdKey = (accountId: string): string =>
-  trimString(accountId);
-
-const SORA_I105_PREFIX = "sorau";
-const SORA_I105_FULLWIDTH_PREFIX = "\uff53\uff4f\uff52\uff41u";
-const TAIRA_I105_PREFIX = "testu";
-const GENERIC_I105_PREFIX_RE = /^n\d{1,4}u/;
+const normalizeAccountIdKey = (accountId: string): string => {
+  if (
+    typeof accountId !== "string" ||
+    !accountId ||
+    accountId.trim() !== accountId ||
+    accountId.normalize("NFC") !== accountId ||
+    Buffer.byteLength(accountId, "utf8") > 512 ||
+    accountId === "__proto__" ||
+    accountId === "constructor" ||
+    accountId === "prototype"
+  ) {
+    throw new Error("accountId must be canonical non-empty text.");
+  }
+  for (const character of accountId) {
+    const codePoint = character.codePointAt(0)!;
+    if (
+      codePoint <= 0x1f ||
+      codePoint === 0x7f ||
+      (codePoint >= 0xd800 && codePoint <= 0xdfff) ||
+      (codePoint >= 0x202a && codePoint <= 0x202e) ||
+      (codePoint >= 0x2066 && codePoint <= 0x2069)
+    ) {
+      throw new Error("accountId must be canonical non-empty text.");
+    }
+  }
+  return accountId;
+};
 
 const unique = (values: string[]): string[] => {
   const seen = new Set<string>();
@@ -95,134 +136,134 @@ const hasWindowsPowerShellCommand = (): boolean =>
     (candidate) => candidate !== "powershell.exe" && existsSync(candidate),
   );
 
-const parseI105AccountKeySuffix = (accountId: string): string | null => {
-  const normalized = normalizeAccountIdKey(accountId);
-  if (normalized.startsWith(SORA_I105_PREFIX)) {
-    return normalized.slice(SORA_I105_PREFIX.length);
-  }
-  if (normalized.startsWith(SORA_I105_FULLWIDTH_PREFIX)) {
-    return normalized.slice(SORA_I105_FULLWIDTH_PREFIX.length);
-  }
-  if (normalized.startsWith(TAIRA_I105_PREFIX)) {
-    return normalized.slice(TAIRA_I105_PREFIX.length);
-  }
-  const genericMatch = normalized.match(GENERIC_I105_PREFIX_RE);
-  if (genericMatch) {
-    return normalized.slice(genericMatch[0].length);
-  }
-  return null;
-};
-
-const accountSecretLookupKeys = (accountId: string): string[] => {
-  const normalized = normalizeAccountIdKey(accountId);
-  const suffix = parseI105AccountKeySuffix(normalized);
-  if (!suffix) {
-    return normalized ? [normalized] : [];
-  }
-  return unique([
-    `i105:${suffix}`,
-    normalized,
-    `${SORA_I105_PREFIX}${suffix}`,
-    `${SORA_I105_FULLWIDTH_PREFIX}${suffix}`,
-    `${TAIRA_I105_PREFIX}${suffix}`,
-  ]);
-};
-
 const normalizeAccountSecretStorageKey = (accountId: string): string =>
-  accountSecretLookupKeys(accountId)[0] ?? normalizeAccountIdKey(accountId);
+  normalizeAccountIdKey(accountId);
 
 const findAccountSecret = (
   accountSecrets: Record<string, string>,
   accountId: string,
 ): string | undefined => {
-  const directMatch = accountSecretLookupKeys(accountId)
-    .map((key) => accountSecrets[key])
-    .find(Boolean);
-  if (directMatch) {
-    return directMatch;
-  }
-
-  const suffix = parseI105AccountKeySuffix(accountId);
-  if (!suffix) {
-    return undefined;
-  }
-  return Object.entries(accountSecrets).find(
-    ([key]) => parseI105AccountKeySuffix(key) === suffix,
-  )?.[1];
+  return accountSecrets[normalizeAccountIdKey(accountId)];
 };
 
 const normalizeHex = (value: string, label: string): string => {
-  const normalized = trimString(value).replace(/^0x/i, "");
-  if (!/^[0-9a-f]+$/i.test(normalized) || normalized.length % 2 !== 0) {
-    throw new Error(`${label} must be an even-length hex string.`);
+  if (
+    typeof value !== "string" ||
+    !/^[0-9a-f]+$/.test(value) ||
+    value.length % 2 !== 0
+  ) {
+    throw new Error(`${label} must be canonical even-length lowercase hex.`);
   }
-  return normalized.toLowerCase();
+  return value;
 };
 
 const normalizeSigningAlgorithm = (value: unknown): string => {
-  if (value === null || value === undefined || value === "") {
-    return DEFAULT_SIGNING_ALGORITHM;
-  }
   if (typeof value !== "string") {
-    throw new Error("signingAlgorithm must be a string.");
+    throw new Error("signingAlgorithm must be explicitly provided.");
   }
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) {
-    return DEFAULT_SIGNING_ALGORITHM;
+  try {
+    const normalized = normalizeCryptoAlgorithm(value);
+    if (normalized !== value) {
+      throw new Error("noncanonical signing algorithm");
+    }
+    return normalized;
+  } catch {
+    throw new Error(
+      "signingAlgorithm must be an exact supported algorithm identifier.",
+    );
   }
-  if (!/^[\x20-\x7e]{1,128}$/.test(normalized)) {
-    throw new Error("signingAlgorithm must use printable ASCII.");
-  }
-  return normalized;
 };
 
 const encodeAccountSecretMaterial = (input: AccountSecretMaterial): string =>
   JSON.stringify({
     schema: ACCOUNT_SECRET_SCHEMA_V2,
-    privateKeyHex: normalizeHex(input.privateKeyHex, "privateKeyHex"),
+    privateKeyHex: (() => {
+      const privateKeyHex = normalizeHex(input.privateKeyHex, "privateKeyHex");
+      if (privateKeyHex.length > MAX_ACCOUNT_SECRET_HEX_CHARACTERS) {
+        throw new Error("privateKeyHex exceeds the supported size.");
+      }
+      return privateKeyHex;
+    })(),
     signingAlgorithm: normalizeSigningAlgorithm(input.signingAlgorithm),
   });
 
 const decodeAccountSecretMaterial = (raw: string): AccountSecretMaterial => {
-  const trimmed = trimString(raw);
-  if (trimmed.startsWith("{")) {
-    let parsed: Record<string, unknown> | null = null;
-    try {
-      parsed = JSON.parse(trimmed) as Record<string, unknown>;
-    } catch {
-      // Fall through to legacy hex parsing so a malformed wrapper gets a
-      // deterministic privateKeyHex validation error.
-    }
-    if (parsed?.schema === ACCOUNT_SECRET_SCHEMA_V2) {
-      return {
-        privateKeyHex: normalizeHex(
-          String(parsed.privateKeyHex ?? ""),
-          "privateKeyHex",
-        ),
-        signingAlgorithm: normalizeSigningAlgorithm(parsed.signingAlgorithm),
-      };
-    }
+  const parsed = parseJsonWithoutDuplicateObjectKeys(
+    raw,
+    "Account secret material",
+  );
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed) ||
+    Object.getPrototypeOf(parsed) !== Object.prototype
+  ) {
+    throw new Error("Account secret material must be an object.");
+  }
+  const record = parsed as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (
+    keys.length !== 3 ||
+    keys[0] !== "privateKeyHex" ||
+    keys[1] !== "schema" ||
+    keys[2] !== "signingAlgorithm" ||
+    record.schema !== ACCOUNT_SECRET_SCHEMA_V2
+  ) {
+    throw new Error("Unsupported account secret material schema.");
+  }
+  if (typeof record.privateKeyHex !== "string") {
+    throw new Error("privateKeyHex must be a string.");
+  }
+  const privateKeyHex = normalizeHex(record.privateKeyHex, "privateKeyHex");
+  if (privateKeyHex.length > MAX_ACCOUNT_SECRET_HEX_CHARACTERS) {
+    throw new Error("privateKeyHex exceeds the supported size.");
+  }
+  if (privateKeyHex !== record.privateKeyHex) {
+    throw new Error("privateKeyHex must use canonical lowercase hex.");
+  }
+  const signingAlgorithm = normalizeSigningAlgorithm(record.signingAlgorithm);
+  if (signingAlgorithm !== record.signingAlgorithm) {
+    throw new Error("signingAlgorithm must be canonical lowercase text.");
   }
   return {
-    privateKeyHex: normalizeHex(trimmed, "privateKeyHex"),
-    signingAlgorithm: DEFAULT_SIGNING_ALGORITHM,
+    privateKeyHex,
+    signingAlgorithm,
   };
 };
 
 const normalizeReceiveKeyId = (value: string): string => {
-  const normalized = trimString(value);
-  if (!/^[A-Za-z0-9_-]{8,128}$/.test(normalized)) {
-    throw new Error("receiveKeyId must be a compact URL-safe identifier.");
+  if (
+    typeof value !== "string" ||
+    value.length !== 24 ||
+    !/^[A-Za-z0-9_-]+$/u.test(value) ||
+    Buffer.from(value, "base64url").length !== 18 ||
+    Buffer.from(value, "base64url").toString("base64url") !== value
+  ) {
+    throw new Error(
+      "receiveKeyId must be canonical base64url for exactly 18 bytes.",
+    );
   }
-  return normalized;
+  return value;
 };
 
 const normalizeBase64Url = (value: string, label: string): string => {
-  const normalized = trimString(value);
-  if (!/^[A-Za-z0-9_-]+$/.test(normalized)) {
-    throw new Error(`${label} must be base64url.`);
+  if (
+    typeof value !== "string" ||
+    value.length !== 43 ||
+    !/^[A-Za-z0-9_-]+$/.test(value)
+  ) {
+    throw new Error(`${label} must be canonical base64url for 32 bytes.`);
   }
-  return normalized;
+  const decoded = Buffer.from(value, "base64url");
+  try {
+    if (decoded.length !== 32 || decoded.toString("base64url") !== value) {
+      throw new Error(`${label} must be canonical base64url for 32 bytes.`);
+    }
+    return value;
+  } finally {
+    // This validator also handles confidential receive private keys.
+    decoded.fill(0);
+  }
 };
 
 const normalizeHex32 = (value: string, label: string): string => {
@@ -241,8 +282,7 @@ type StoredReceiveKeyRecord = {
   accountId: string;
   ownerTagHex: string;
   diversifierHex: string;
-  publicKeyBase64Url?: string;
-  encryptedPublicKeyBase64?: string;
+  encryptedPublicKeyBase64: string;
   encryptedPrivateKeyBase64: string;
   createdAtMs: number;
 };
@@ -312,30 +352,54 @@ const runWindowsDpapiScriptWithCommand = (
       },
     );
     let stdout = "";
-    let stderr = "";
+    let stderrLength = 0;
+    let settled = false;
+    const finish = (operation: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      operation();
+    };
+    const rejectOversizeOutput = () => {
+      child.kill();
+      finish(() =>
+        reject(new Error("Windows DPAPI command output exceeded its limit.")),
+      );
+    };
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish(() => reject(new Error("Windows DPAPI command timed out.")));
+    }, WINDOWS_DPAPI_TIMEOUT_MS);
 
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       stdout += chunk;
+      if (stdout.length > MAX_DPAPI_OUTPUT_CHARACTERS) {
+        rejectOversizeOutput();
+      }
     });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
+      stderrLength += chunk.length;
+      if (stderrLength > MAX_DPAPI_OUTPUT_CHARACTERS) {
+        rejectOversizeOutput();
+      }
     });
     child.on("error", (error) => {
-      reject(error);
+      finish(() => reject(error));
     });
     child.on("close", (code) => {
       if (code === 0) {
-        resolve(stdout.trim());
+        finish(() => resolve(stdout));
         return;
       }
-      const detail = stderr.trim();
-      reject(
-        new Error(
-          detail
-            ? `Windows DPAPI command failed: ${detail}`
-            : `Windows DPAPI command failed with exit code ${code ?? "unknown"}.`,
+      finish(() =>
+        reject(
+          new Error(
+            `Windows DPAPI command failed with exit code ${code ?? "unknown"}.`,
+          ),
         ),
       );
     });
@@ -377,9 +441,348 @@ const defaultWindowsDpapi: WindowsDpapi = {
 
 const emptyVault = (): SecureVaultFile => ({
   version: SECURE_VAULT_VERSION,
-  accountSecrets: {},
-  receiveKeys: {},
+  accountSecrets: Object.create(null) as Record<string, string>,
+  receiveKeys: Object.create(null) as Record<string, StoredReceiveKeyRecord>,
 });
+
+const cloneVault = (vault: SecureVaultFile): SecureVaultFile => ({
+  version: vault.version,
+  accountSecrets: Object.assign(
+    Object.create(null) as Record<string, string>,
+    vault.accountSecrets,
+  ),
+  receiveKeys: (() => {
+    const cloned = Object.create(null) as Record<
+      string,
+      StoredReceiveKeyRecord
+    >;
+    for (const keyId in vault.receiveKeys) {
+      if (!Object.prototype.hasOwnProperty.call(vault.receiveKeys, keyId)) {
+        continue;
+      }
+      cloned[keyId] = { ...vault.receiveKeys[keyId]! };
+    }
+    return cloned;
+  })(),
+});
+
+const isMissingFileError = (error: unknown): boolean =>
+  Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT",
+  );
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" &&
+  value !== null &&
+  !Array.isArray(value) &&
+  Object.getPrototypeOf(value) === Object.prototype;
+
+const assertExactKeys = (
+  record: Record<string, unknown>,
+  keys: readonly string[],
+  label: string,
+): void => {
+  const expected = new Set(keys);
+  let count = 0;
+  for (const key in record) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) {
+      continue;
+    }
+    count += 1;
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    if (
+      count > keys.length ||
+      !expected.has(key) ||
+      !descriptor?.enumerable ||
+      !("value" in descriptor)
+    ) {
+      throw new Error(`${label} has an unsupported shape.`);
+    }
+  }
+  if (count !== keys.length) {
+    throw new Error(`${label} has an unsupported shape.`);
+  }
+};
+
+const assertEnumerablePropertyLimit = (
+  record: Record<string, unknown>,
+  maximum: number,
+  message: string,
+): number => {
+  let count = 0;
+  for (const key in record) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) {
+      continue;
+    }
+    count += 1;
+    if (count > maximum) {
+      throw new Error(message);
+    }
+  }
+  return count;
+};
+
+const requireEncryptedEnvelope = (value: unknown, label: string): string => {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_ENCRYPTED_ENVELOPE_CHARACTERS ||
+    (!value.startsWith(SAFE_STORAGE_ENVELOPE) &&
+      !value.startsWith(WINDOWS_DPAPI_ENVELOPE))
+  ) {
+    throw new Error(`${label} must use a supported encrypted envelope.`);
+  }
+  const separatorIndex = value.indexOf(":");
+  const body = value.slice(separatorIndex + 1);
+  if (
+    body.length === 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
+      body,
+    )
+  ) {
+    throw new Error(`${label} must contain canonical base64 ciphertext.`);
+  }
+  const decoded = Buffer.from(body, "base64");
+  if (decoded.length === 0 || decoded.toString("base64") !== body) {
+    throw new Error(`${label} must contain canonical base64 ciphertext.`);
+  }
+  return value;
+};
+
+const decodeVaultFile = (raw: string): SecureVaultFile => {
+  if (Buffer.byteLength(raw, "utf8") > MAX_SECURE_VAULT_BYTES) {
+    throw new Error("Secure vault exceeds the supported size.");
+  }
+  const parsed = parseJsonWithoutDuplicateObjectKeys(raw, "Secure vault");
+  if (!isPlainRecord(parsed)) {
+    throw new Error("Secure vault must be an object.");
+  }
+  assertExactKeys(
+    parsed,
+    ["version", "accountSecrets", "receiveKeys"],
+    "Secure vault",
+  );
+  if (parsed.version !== SECURE_VAULT_VERSION) {
+    throw new Error("Unsupported secure vault version.");
+  }
+  if (!isPlainRecord(parsed.accountSecrets)) {
+    throw new Error("Secure vault accountSecrets must be an object.");
+  }
+  if (!isPlainRecord(parsed.receiveKeys)) {
+    throw new Error("Secure vault receiveKeys must be an object.");
+  }
+  assertEnumerablePropertyLimit(
+    parsed.accountSecrets,
+    MAX_ACCOUNT_SECRETS,
+    "Secure vault contains too many account secrets.",
+  );
+  assertEnumerablePropertyLimit(
+    parsed.receiveKeys,
+    MAX_RECEIVE_KEYS,
+    "Secure vault contains too many receive keys.",
+  );
+  const accountSecrets = Object.create(null) as Record<string, string>;
+  for (const accountId in parsed.accountSecrets) {
+    if (
+      !Object.prototype.hasOwnProperty.call(parsed.accountSecrets, accountId)
+    ) {
+      continue;
+    }
+    const encrypted = parsed.accountSecrets[accountId];
+    if (normalizeAccountIdKey(accountId) !== accountId) {
+      throw new Error("Secure vault account secret key is not canonical.");
+    }
+    accountSecrets[accountId] = requireEncryptedEnvelope(
+      encrypted,
+      `Secure vault account secret ${accountId}`,
+    );
+  }
+  const receiveKeyCountByAccount = new Map<string, number>();
+  const receiveKeys = Object.create(null) as Record<
+    string,
+    StoredReceiveKeyRecord
+  >;
+  for (const keyId in parsed.receiveKeys) {
+    if (!Object.prototype.hasOwnProperty.call(parsed.receiveKeys, keyId)) {
+      continue;
+    }
+    const value = parsed.receiveKeys[keyId];
+    if (!isPlainRecord(value)) {
+      throw new Error(`Secure vault receive key ${keyId} must be an object.`);
+    }
+    assertExactKeys(
+      value,
+      [
+        "keyId",
+        "accountId",
+        "ownerTagHex",
+        "diversifierHex",
+        "encryptedPublicKeyBase64",
+        "encryptedPrivateKeyBase64",
+        "createdAtMs",
+      ],
+      `Secure vault receive key ${keyId}`,
+    );
+    if (normalizeReceiveKeyId(keyId) !== keyId || value.keyId !== keyId) {
+      throw new Error(`Secure vault receive key ${keyId} has an invalid ID.`);
+    }
+    if (typeof value.accountId !== "string") {
+      throw new Error(
+        `Secure vault receive key ${keyId} has an invalid account ID.`,
+      );
+    }
+    const accountId = normalizeAccountIdKey(value.accountId);
+    const accountReceiveKeyCount =
+      (receiveKeyCountByAccount.get(accountId) ?? 0) + 1;
+    if (accountReceiveKeyCount > SECURE_VAULT_MAX_RECEIVE_KEYS_PER_ACCOUNT) {
+      throw new Error(
+        `Secure vault account ${accountId} contains too many receive keys.`,
+      );
+    }
+    receiveKeyCountByAccount.set(accountId, accountReceiveKeyCount);
+    if (
+      typeof value.ownerTagHex !== "string" ||
+      typeof value.diversifierHex !== "string"
+    ) {
+      throw new Error(`Secure vault receive key ${keyId} uses invalid hex.`);
+    }
+    const ownerTagHex = normalizeHex32(value.ownerTagHex, "ownerTagHex");
+    const diversifierHex = normalizeHex32(
+      value.diversifierHex,
+      "diversifierHex",
+    );
+    if (
+      ownerTagHex !== value.ownerTagHex ||
+      diversifierHex !== value.diversifierHex
+    ) {
+      throw new Error(
+        `Secure vault receive key ${keyId} uses noncanonical hex.`,
+      );
+    }
+    if (
+      typeof value.createdAtMs !== "number" ||
+      !Number.isSafeInteger(value.createdAtMs) ||
+      Object.is(value.createdAtMs, -0) ||
+      value.createdAtMs < 0
+    ) {
+      throw new Error(
+        `Secure vault receive key ${keyId} has an invalid timestamp.`,
+      );
+    }
+    receiveKeys[keyId] = {
+      keyId,
+      accountId,
+      ownerTagHex,
+      diversifierHex,
+      encryptedPublicKeyBase64: requireEncryptedEnvelope(
+        value.encryptedPublicKeyBase64,
+        `Secure vault receive key ${keyId} public key`,
+      ),
+      encryptedPrivateKeyBase64: requireEncryptedEnvelope(
+        value.encryptedPrivateKeyBase64,
+        `Secure vault receive key ${keyId} private key`,
+      ),
+      createdAtMs: value.createdAtMs,
+    };
+  }
+  return {
+    version: SECURE_VAULT_VERSION,
+    accountSecrets,
+    receiveKeys,
+  };
+};
+
+const requireReceiveKeyBatch = (
+  value: unknown,
+): ConfidentialReceiveKeyRecord[] => {
+  if (
+    !Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Array.prototype ||
+    value.length > SECURE_VAULT_MAX_RECEIVE_KEY_BATCH
+  ) {
+    throw new Error(
+      `Receive-key batch must contain at most ${SECURE_VAULT_MAX_RECEIVE_KEY_BATCH} records.`,
+    );
+  }
+  let enumerableItemCount = 0;
+  for (const key in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      continue;
+    }
+    if (!/^(?:0|[1-9]\d*)$/u.test(key) || Number(key) >= value.length) {
+      throw new Error("Receive-key batch contains unsupported array fields.");
+    }
+    enumerableItemCount += 1;
+    if (enumerableItemCount > value.length) {
+      throw new Error("Receive-key batch contains unsupported array fields.");
+    }
+  }
+  if (enumerableItemCount !== value.length) {
+    throw new Error("Receive-key batch must be a dense data-field array.");
+  }
+  if (Object.getOwnPropertySymbols(value).length !== 0) {
+    throw new Error("Receive-key batch contains unsupported array fields.");
+  }
+
+  const seenKeyIds = new Set<string>();
+  const normalized: ConfidentialReceiveKeyRecord[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      throw new Error("Receive-key batch must be a dense data-field array.");
+    }
+    const exactInput =
+      requireFirstReleaseIpcInputObject<ConfidentialReceiveKeyRecord>(
+        descriptor.value,
+        {
+          label: `Secure vault receive-key batch[${index}]`,
+          required: [
+            "keyId",
+            "accountId",
+            "ownerTagHex",
+            "diversifierHex",
+            "publicKeyBase64Url",
+            "privateKeyBase64Url",
+            "createdAtMs",
+          ],
+        },
+      );
+    const record: ConfidentialReceiveKeyRecord = {
+      keyId: normalizeReceiveKeyId(exactInput.keyId),
+      accountId: normalizeAccountIdKey(exactInput.accountId),
+      ownerTagHex: normalizeHex32(exactInput.ownerTagHex, "ownerTagHex"),
+      diversifierHex: normalizeHex32(
+        exactInput.diversifierHex,
+        "diversifierHex",
+      ),
+      publicKeyBase64Url: normalizeBase64Url(
+        exactInput.publicKeyBase64Url,
+        "publicKeyBase64Url",
+      ),
+      privateKeyBase64Url: normalizeBase64Url(
+        exactInput.privateKeyBase64Url,
+        "privateKeyBase64Url",
+      ),
+      createdAtMs: exactInput.createdAtMs,
+    };
+    if (
+      !Number.isSafeInteger(record.createdAtMs) ||
+      Object.is(record.createdAtMs, -0) ||
+      record.createdAtMs < 0
+    ) {
+      throw new Error("createdAtMs must be a non-negative safe integer.");
+    }
+    if (seenKeyIds.has(record.keyId)) {
+      throw new Error("Receive-key batch must not contain duplicate key IDs.");
+    }
+    seenKeyIds.add(record.keyId);
+    normalized.push(record);
+  }
+  return normalized;
+};
 
 export class SecureVault {
   private readonly filePath: string;
@@ -396,6 +799,8 @@ export class SecureVault {
 
   private loadPromise: Promise<SecureVaultFile> | null = null;
 
+  private mutationTail: Promise<void> = Promise.resolve();
+
   constructor(userDataPath: string, options: SecureVaultOptions = {}) {
     this.filePath = join(userDataPath, SECURE_VAULT_FILENAME);
     this.platform = options.platform ?? process.platform;
@@ -411,18 +816,32 @@ export class SecureVault {
   async storeAccountSecret(input: {
     accountId: string;
     privateKeyHex: string;
-    signingAlgorithm?: string;
+    signingAlgorithm: string;
   }): Promise<void> {
+    const exactInput = requireFirstReleaseIpcInputObject<typeof input>(input, {
+      label: "Secure vault account-secret input",
+      required: ["accountId", "privateKeyHex", "signingAlgorithm"],
+    });
+    const storageKey = normalizeAccountSecretStorageKey(exactInput.accountId);
+    const encodedMaterial = encodeAccountSecretMaterial({
+      privateKeyHex: exactInput.privateKeyHex,
+      signingAlgorithm: normalizeSigningAlgorithm(exactInput.signingAlgorithm),
+    });
     this.ensureAvailable();
-    const vault = await this.load();
-    vault.accountSecrets[normalizeAccountSecretStorageKey(input.accountId)] =
-      await this.encrypt(
-        encodeAccountSecretMaterial({
-          privateKeyHex: input.privateKeyHex,
-          signingAlgorithm: normalizeSigningAlgorithm(input.signingAlgorithm),
-        }),
-      );
-    await this.persist(vault);
+    await this.mutate(async (vault) => {
+      if (
+        vault.accountSecrets[storageKey] === undefined &&
+        assertEnumerablePropertyLimit(
+          vault.accountSecrets,
+          MAX_ACCOUNT_SECRETS,
+          "Secure vault contains too many account secrets.",
+        ) >= MAX_ACCOUNT_SECRETS
+      ) {
+        throw new Error("Secure vault account-secret capacity is exhausted.");
+      }
+      const encrypted = await this.encrypt(encodedMaterial);
+      vault.accountSecrets[storageKey] = encrypted;
+    });
   }
 
   async getAccountSecret(accountId: string): Promise<string | null> {
@@ -433,9 +852,10 @@ export class SecureVault {
   async getAccountSecretMaterial(
     accountId: string,
   ): Promise<AccountSecretMaterial | null> {
+    const storageKey = normalizeAccountSecretStorageKey(accountId);
     this.ensureAvailable();
     const vault = await this.load();
-    const encrypted = findAccountSecret(vault.accountSecrets, accountId);
+    const encrypted = vault.accountSecrets[storageKey];
     if (!encrypted) {
       return null;
     }
@@ -445,62 +865,160 @@ export class SecureVault {
   async listAccountSecretFlags(
     accountIds: string[],
   ): Promise<Record<string, boolean>> {
+    if (
+      !Array.isArray(accountIds) ||
+      Object.getPrototypeOf(accountIds) !== Array.prototype ||
+      accountIds.length > MAX_ACCOUNT_SECRETS
+    ) {
+      throw new Error(
+        `accountIds must contain at most ${MAX_ACCOUNT_SECRETS} unique entries.`,
+      );
+    }
+    let enumerableItemCount = 0;
+    for (const key in accountIds) {
+      if (!Object.prototype.hasOwnProperty.call(accountIds, key)) {
+        continue;
+      }
+      if (!/^(?:0|[1-9]\d*)$/u.test(key) || Number(key) >= accountIds.length) {
+        throw new Error("accountIds contains unsupported array fields.");
+      }
+      enumerableItemCount += 1;
+    }
+    if (enumerableItemCount !== accountIds.length) {
+      throw new Error("accountIds must be a dense data-field array.");
+    }
+    if (Object.getOwnPropertySymbols(accountIds).length !== 0) {
+      throw new Error("accountIds contains unsupported array fields.");
+    }
+    const normalizedAccountIds: string[] = [];
+    const seen = new Set<string>();
+    for (let index = 0; index < accountIds.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        accountIds,
+        String(index),
+      );
+      if (!descriptor?.enumerable || !("value" in descriptor)) {
+        throw new Error("accountIds must be a dense data-field array.");
+      }
+      const accountId = normalizeAccountIdKey(descriptor.value);
+      if (seen.has(accountId)) {
+        throw new Error(
+          `accountIds must contain at most ${MAX_ACCOUNT_SECRETS} unique entries.`,
+        );
+      }
+      seen.add(accountId);
+      normalizedAccountIds.push(accountId);
+    }
     const vault = this.isAvailable() ? await this.load() : emptyVault();
     return Object.fromEntries(
-      accountIds.map((accountId) => [
+      normalizedAccountIds.map((accountId) => [
         accountId,
         Boolean(findAccountSecret(vault.accountSecrets, accountId)),
       ]),
     );
   }
 
-  async storeReceiveKey(
-    input: ConfidentialReceiveKeyRecord,
-  ): Promise<ConfidentialReceiveKeyRecord> {
+  async storeReceiveKey(input: ConfidentialReceiveKeyRecord): Promise<void> {
+    await this.storeReceiveKeys([input]);
+  }
+
+  async storeReceiveKeys(
+    inputs: readonly ConfidentialReceiveKeyRecord[],
+  ): Promise<void> {
+    const normalized = requireReceiveKeyBatch(inputs);
+    if (normalized.length === 0) {
+      return;
+    }
     this.ensureAvailable();
-    const vault = await this.load();
-    const keyId = normalizeReceiveKeyId(input.keyId);
-    const record: StoredReceiveKeyRecord = {
-      keyId,
-      accountId: normalizeAccountIdKey(input.accountId),
-      ownerTagHex: normalizeHex32(input.ownerTagHex, "ownerTagHex"),
-      diversifierHex: normalizeHex32(input.diversifierHex, "diversifierHex"),
-      encryptedPublicKeyBase64: await this.encrypt(
-        normalizeBase64Url(input.publicKeyBase64Url, "publicKeyBase64Url"),
-      ),
-      encryptedPrivateKeyBase64: await this.encrypt(
-        normalizeBase64Url(input.privateKeyBase64Url, "privateKeyBase64Url"),
-      ),
-      createdAtMs:
-        Number.isFinite(input.createdAtMs) && input.createdAtMs >= 0
-          ? Math.trunc(input.createdAtMs)
-          : Date.now(),
-    };
-    vault.receiveKeys[keyId] = record;
-    await this.persist(vault);
-    return {
-      keyId: record.keyId,
-      accountId: record.accountId,
-      ownerTagHex: record.ownerTagHex,
-      diversifierHex: record.diversifierHex,
-      publicKeyBase64Url: normalizeBase64Url(
-        input.publicKeyBase64Url,
-        "publicKeyBase64Url",
-      ),
-      privateKeyBase64Url: normalizeBase64Url(
-        input.privateKeyBase64Url,
-        "privateKeyBase64Url",
-      ),
-      createdAtMs: record.createdAtMs,
-    };
+    await this.mutate(async (vault) => {
+      const newRecords = normalized.filter(
+        (record) => vault.receiveKeys[record.keyId] === undefined,
+      );
+      const currentReceiveKeyCount = assertEnumerablePropertyLimit(
+        vault.receiveKeys,
+        MAX_RECEIVE_KEYS,
+        "Secure vault contains too many receive keys.",
+      );
+      if (currentReceiveKeyCount + newRecords.length > MAX_RECEIVE_KEYS) {
+        throw new Error("Secure vault receive-key capacity is exhausted.");
+      }
+      const receiveKeyCountByAccount = new Map<string, number>();
+      for (const keyId in vault.receiveKeys) {
+        if (!Object.prototype.hasOwnProperty.call(vault.receiveKeys, keyId)) {
+          continue;
+        }
+        const accountId = vault.receiveKeys[keyId]!.accountId;
+        receiveKeyCountByAccount.set(
+          accountId,
+          (receiveKeyCountByAccount.get(accountId) ?? 0) + 1,
+        );
+      }
+      for (const record of newRecords) {
+        const nextCount =
+          (receiveKeyCountByAccount.get(record.accountId) ?? 0) + 1;
+        if (nextCount > SECURE_VAULT_MAX_RECEIVE_KEYS_PER_ACCOUNT) {
+          throw new Error(
+            `Secure vault account ${record.accountId} receive-key capacity is exhausted.`,
+          );
+        }
+        receiveKeyCountByAccount.set(record.accountId, nextCount);
+      }
+
+      for (const record of normalized) {
+        const existing = vault.receiveKeys[record.keyId];
+        if (!existing) {
+          continue;
+        }
+        const existingPublicKey = await this.readReceiveKeyPublicKey(existing);
+        const existingPrivateKey = normalizeBase64Url(
+          await this.decrypt(existing.encryptedPrivateKeyBase64),
+          "privateKeyBase64Url",
+        );
+        const isExactRetry =
+          existing.accountId === record.accountId &&
+          existing.ownerTagHex === record.ownerTagHex &&
+          existing.diversifierHex === record.diversifierHex &&
+          existing.createdAtMs === record.createdAtMs &&
+          existingPublicKey === record.publicKeyBase64Url &&
+          existingPrivateKey === record.privateKeyBase64Url;
+        if (!isExactRetry) {
+          throw new Error(
+            "receiveKeyId is already bound to different receive material.",
+          );
+        }
+      }
+
+      const encryptedRecords: StoredReceiveKeyRecord[] = [];
+      for (const record of newRecords) {
+        const encryptedPublicKeyBase64 = await this.encrypt(
+          record.publicKeyBase64Url,
+        );
+        const encryptedPrivateKeyBase64 = await this.encrypt(
+          record.privateKeyBase64Url,
+        );
+        encryptedRecords.push({
+          keyId: record.keyId,
+          accountId: record.accountId,
+          ownerTagHex: record.ownerTagHex,
+          diversifierHex: record.diversifierHex,
+          encryptedPublicKeyBase64,
+          encryptedPrivateKeyBase64,
+          createdAtMs: record.createdAtMs,
+        });
+      }
+      for (const record of encryptedRecords) {
+        vault.receiveKeys[record.keyId] = record;
+      }
+    });
   }
 
   async getReceiveKey(
     keyId: string,
   ): Promise<ConfidentialReceiveKeyRecord | null> {
+    const normalizedKeyId = normalizeReceiveKeyId(keyId);
     this.ensureAvailable();
     const vault = await this.load();
-    const record = vault.receiveKeys[normalizeReceiveKeyId(keyId)];
+    const record = vault.receiveKeys[normalizedKeyId];
     if (!record) {
       return null;
     }
@@ -521,25 +1039,31 @@ export class SecureVault {
   async listReceiveKeysForAccount(
     accountId: string,
   ): Promise<ConfidentialReceiveKeyRecord[]> {
+    const targetAccountId = normalizeAccountIdKey(accountId);
     this.ensureAvailable();
     const vault = await this.load();
-    const targetAccountId = normalizeAccountIdKey(accountId);
-    const records = await Promise.all(
-      Object.values(vault.receiveKeys)
-        .filter((record) => record.accountId === targetAccountId)
-        .map(async (record) => ({
-          keyId: record.keyId,
-          accountId: record.accountId,
-          ownerTagHex: record.ownerTagHex,
-          diversifierHex: record.diversifierHex,
-          publicKeyBase64Url: await this.readReceiveKeyPublicKey(record),
-          privateKeyBase64Url: normalizeBase64Url(
-            await this.decrypt(record.encryptedPrivateKeyBase64),
-            "privateKeyBase64Url",
-          ),
-          createdAtMs: record.createdAtMs,
-        })),
-    );
+    const records: ConfidentialReceiveKeyRecord[] = [];
+    for (const keyId in vault.receiveKeys) {
+      if (!Object.prototype.hasOwnProperty.call(vault.receiveKeys, keyId)) {
+        continue;
+      }
+      const record = vault.receiveKeys[keyId]!;
+      if (record.accountId !== targetAccountId) {
+        continue;
+      }
+      records.push({
+        keyId: record.keyId,
+        accountId: record.accountId,
+        ownerTagHex: record.ownerTagHex,
+        diversifierHex: record.diversifierHex,
+        publicKeyBase64Url: await this.readReceiveKeyPublicKey(record),
+        privateKeyBase64Url: normalizeBase64Url(
+          await this.decrypt(record.encryptedPrivateKeyBase64),
+          "privateKeyBase64Url",
+        ),
+        createdAtMs: record.createdAtMs,
+      });
+    }
     return records.sort((left, right) => left.createdAtMs - right.createdAtMs);
   }
 
@@ -551,7 +1075,15 @@ export class SecureVault {
 
   private isSafeStorageAvailable(): boolean {
     try {
-      return safeStorage.isEncryptionAvailable();
+      if (!safeStorage.isEncryptionAvailable()) {
+        return false;
+      }
+      if (this.platform !== "linux") {
+        return true;
+      }
+      return SECURE_LINUX_STORAGE_BACKENDS.has(
+        safeStorage.getSelectedStorageBackend(),
+      );
     } catch {
       return false;
     }
@@ -569,40 +1101,72 @@ export class SecureVault {
 
   private async encrypt(value: string): Promise<string> {
     if (this.isSafeStorageAvailable()) {
-      return safeStorage.encryptString(value).toString("base64");
+      try {
+        const ciphertext = safeStorage.encryptString(value);
+        return requireEncryptedEnvelope(
+          `${SAFE_STORAGE_ENVELOPE}${ciphertext.toString("base64")}`,
+          "Encrypted secure-vault value",
+        );
+      } catch {
+        throw new Error("Secure key encryption failed.");
+      }
     }
     if (this.canUseWindowsDpapi()) {
-      return `${WINDOWS_DPAPI_ENVELOPE}${await this.windowsDpapi.protect(value)}`;
+      try {
+        return requireEncryptedEnvelope(
+          `${WINDOWS_DPAPI_ENVELOPE}${await this.windowsDpapi.protect(value)}`,
+          "Encrypted secure-vault value",
+        );
+      } catch {
+        throw new Error("Secure key encryption failed.");
+      }
     }
     throw new Error(SECURE_VAULT_UNAVAILABLE_MESSAGE);
   }
 
   private async decrypt(value: string): Promise<string> {
+    requireEncryptedEnvelope(value, "Encrypted secure-vault value");
+    let decrypted: unknown;
     if (value.startsWith(WINDOWS_DPAPI_ENVELOPE)) {
       if (!this.canUseWindowsDpapi()) {
         throw new Error(SECURE_VAULT_UNAVAILABLE_MESSAGE);
       }
-      return this.windowsDpapi.unprotect(
-        value.slice(WINDOWS_DPAPI_ENVELOPE.length),
-      );
+      try {
+        decrypted = await this.windowsDpapi.unprotect(
+          value.slice(WINDOWS_DPAPI_ENVELOPE.length),
+        );
+      } catch {
+        throw new Error("Secure key decryption failed.");
+      }
+    } else if (value.startsWith(SAFE_STORAGE_ENVELOPE)) {
+      if (!this.isSafeStorageAvailable()) {
+        throw new Error(SECURE_VAULT_UNAVAILABLE_MESSAGE);
+      }
+      try {
+        decrypted = safeStorage.decryptString(
+          Buffer.from(value.slice(SAFE_STORAGE_ENVELOPE.length), "base64"),
+        );
+      } catch {
+        throw new Error("Secure key decryption failed.");
+      }
+    } else {
+      throw new Error("Unsupported secure vault encryption envelope.");
     }
-    if (this.isSafeStorageAvailable()) {
-      return safeStorage.decryptString(Buffer.from(value, "base64"));
+    if (
+      typeof decrypted !== "string" ||
+      decrypted.length > MAX_DECRYPTED_SECRET_CHARACTERS ||
+      Buffer.byteLength(decrypted, "utf8") > MAX_DECRYPTED_SECRET_CHARACTERS
+    ) {
+      throw new Error("Secure key decryption returned invalid material.");
     }
-    throw new Error(SECURE_VAULT_UNAVAILABLE_MESSAGE);
+    return decrypted;
   }
 
   private async readReceiveKeyPublicKey(
     record: StoredReceiveKeyRecord,
   ): Promise<string> {
-    if (record.encryptedPublicKeyBase64) {
-      return normalizeBase64Url(
-        await this.decrypt(record.encryptedPublicKeyBase64),
-        "publicKeyBase64Url",
-      );
-    }
     return normalizeBase64Url(
-      record.publicKeyBase64Url ?? "",
+      await this.decrypt(record.encryptedPublicKeyBase64),
       "publicKeyBase64Url",
     );
   }
@@ -614,41 +1178,87 @@ export class SecureVault {
     if (!this.loadPromise) {
       this.loadPromise = (async () => {
         try {
-          const raw = await readFile(this.filePath, "utf8");
-          const parsed = JSON.parse(raw) as Partial<SecureVaultFile>;
-          const vault: SecureVaultFile = {
-            version:
-              parsed.version === SECURE_VAULT_VERSION
-                ? SECURE_VAULT_VERSION
-                : SECURE_VAULT_VERSION,
-            accountSecrets:
-              parsed.accountSecrets &&
-              typeof parsed.accountSecrets === "object" &&
-              !Array.isArray(parsed.accountSecrets)
-                ? { ...parsed.accountSecrets }
-                : {},
-            receiveKeys:
-              parsed.receiveKeys &&
-              typeof parsed.receiveKeys === "object" &&
-              !Array.isArray(parsed.receiveKeys)
-                ? { ...parsed.receiveKeys }
-                : {},
-          };
+          const handle = await open(this.filePath, "r");
+          let raw: string;
+          try {
+            const metadata = await handle.stat();
+            if (!metadata.isFile() || metadata.size > MAX_SECURE_VAULT_BYTES) {
+              throw new Error("Secure vault exceeds the supported size.");
+            }
+            raw = await handle.readFile("utf8");
+          } finally {
+            await handle.close();
+          }
+          const vault = decodeVaultFile(raw);
           this.cache = vault;
           return vault;
-        } catch {
+        } catch (error) {
+          if (!isMissingFileError(error)) {
+            throw error;
+          }
           const vault = emptyVault();
           this.cache = vault;
           return vault;
         }
-      })();
+      })().catch((error: unknown) => {
+        this.loadPromise = null;
+        throw error;
+      });
     }
     return this.loadPromise;
   }
 
+  private async mutate(
+    operation: (vault: SecureVaultFile) => void | Promise<void>,
+  ): Promise<void> {
+    const run = this.mutationTail.then(async () => {
+      const vault = cloneVault(await this.load());
+      await operation(vault);
+      await this.persist(vault);
+    });
+    this.mutationTail = run.catch(() => undefined);
+    return run;
+  }
+
   private async persist(vault: SecureVaultFile): Promise<void> {
-    this.cache = vault;
-    await mkdir(dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, JSON.stringify(vault, null, 2), "utf8");
+    const encodedVault = JSON.stringify(vault, null, 2);
+    if (Buffer.byteLength(encodedVault, "utf8") > MAX_SECURE_VAULT_BYTES) {
+      throw new Error("Secure vault exceeds the supported size.");
+    }
+    decodeVaultFile(encodedVault);
+    const parentDirectory = dirname(this.filePath);
+    await mkdir(parentDirectory, { recursive: true, mode: 0o700 });
+    const temporaryPath = join(
+      parentDirectory,
+      `.${basename(this.filePath)}.${process.pid}.${randomUUID()}.tmp`,
+    );
+    let handle: Awaited<ReturnType<typeof open>> | null = null;
+    let replacedVault = false;
+    try {
+      handle = await open(temporaryPath, "wx", 0o600);
+      await handle.writeFile(encodedVault, "utf8");
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      await rename(temporaryPath, this.filePath);
+      replacedVault = true;
+      if (this.platform !== "win32") {
+        const directoryHandle = await open(parentDirectory, "r");
+        try {
+          await directoryHandle.sync();
+        } finally {
+          await directoryHandle.close();
+        }
+      }
+      this.cache = cloneVault(vault);
+    } catch (error) {
+      if (replacedVault) {
+        this.cache = null;
+        this.loadPromise = null;
+      }
+      await handle?.close().catch(() => undefined);
+      await unlink(temporaryPath).catch(() => undefined);
+      throw error;
+    }
   }
 }

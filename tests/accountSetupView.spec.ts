@@ -11,8 +11,14 @@ import type {
   EndpointInspection,
 } from "@/types/endpointInspection";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { NetworkId } from "@iroha/iroha-js/browser";
+import { AccountAddress } from "@iroha/iroha-js/address";
+import { createConnectSessionPreview } from "@iroha/iroha-js/connect-browser";
 import { mnemonicToPrivateKeyHex } from "@/utils/mnemonic";
-import { buildWalletBackupPayload } from "@/utils/walletBackup";
+import {
+  WALLET_BACKUP_SCHEMA,
+  buildWalletBackupPayload,
+} from "@/utils/walletBackup";
 import { buildIrohaConnectTokenProtocol } from "@/utils/irohaConnect";
 import {
   IrohaConnectBoundary,
@@ -26,23 +32,65 @@ import {
   encodeControlConnectFrame,
   encodeServerEventConnectFrame,
   encryptConnectEnvelope,
-  generateWalletConnectKeyPair,
+  generateConnectWalletKeyPair,
   hexToBytes,
   type ConnectPermissions,
 } from "@/utils/soraswapConnectWire";
+import { TAIRA_NETWORK_ID } from "@/utils/firstReleaseNetworkIdentity";
 
-const EXAMPLE_REAL_I105_ACCOUNT_ID =
-  "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV";
+const ALICE_PUBLIC_KEY_HEX =
+  "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737";
+const BOB_PUBLIC_KEY_HEX =
+  "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0";
+const accountIdFor = (publicKeyHex: string, networkPrefix: number) =>
+  AccountAddress.fromAccount({
+    publicKey: Uint8Array.from(
+      publicKeyHex.match(/.{2}/gu)!.map((byte) => Number.parseInt(byte, 16)),
+    ),
+  }).toI105(networkPrefix);
+const EXAMPLE_REAL_I105_ACCOUNT_ID = accountIdFor(ALICE_PUBLIC_KEY_HEX, 369);
+const SECOND_I105_ACCOUNT_ID = accountIdFor(BOB_PUBLIC_KEY_HEX, 369);
+const SECP256K1_I105_ACCOUNT_ID = "testuAliceSecp256k1Account1234567890";
 const VALID_MNEMONIC =
   "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 const VALID_MNEMONIC_PRIVATE_KEY_HEX =
   "5EB00BBDDCF069084889A8AB9155568165F5C453CCB85E70811AAED6F6DA5FC1";
 const VALID_24_WORD_MNEMONIC =
   "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
-const VALID_CONNECT_SID = Buffer.from(new Uint8Array(32).fill(0xce)).toString(
-  "base64url",
-);
 const RAW_DOMAIN = "account-setup:sign:v1";
+const CONNECT_APP_KEY_PAIR = generateConnectWalletKeyPair();
+const CONNECT_NONCE = new Uint8Array(16).fill(0x42);
+const CONNECT_PREVIEW = createConnectSessionPreview({
+  networkId: NetworkId.parse(TAIRA_NETWORK_ID),
+  node: TAIRA_CHAIN_PRESET.connection.toriiUrl,
+  nonce: CONNECT_NONCE,
+  appKeyPair: {
+    publicKey: hexToBytes(CONNECT_APP_KEY_PAIR.publicKeyHex),
+    privateKey: hexToBytes(CONNECT_APP_KEY_PAIR.privateKeyHex),
+  },
+});
+const VALID_CONNECT_SID = CONNECT_PREVIEW.sidBase64Url;
+const VALID_WALLET_TOKEN = Buffer.alloc(32, 0xa1).toString("base64url");
+const VALID_RELAY_TOKEN = Buffer.alloc(32, 0xa2).toString("base64url");
+const VALID_CONNECT_WALLET_URI = `${CONNECT_PREVIEW.walletUri}&token=${VALID_WALLET_TOKEN}&relay=${VALID_RELAY_TOKEN}`;
+const FOREIGN_NETWORK_ID = NetworkId.fromBytes(
+  Uint8Array.from({ length: 32 }, (_, index) => (index === 31 ? 0x13 : 0x11)),
+);
+const buildConnectWalletUri = (input: {
+  networkId?: NetworkId;
+  node?: string;
+}) => {
+  const preview = createConnectSessionPreview({
+    networkId: input.networkId ?? NetworkId.parse(TAIRA_NETWORK_ID),
+    node: input.node ?? TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    nonce: CONNECT_NONCE,
+    appKeyPair: {
+      publicKey: hexToBytes(CONNECT_APP_KEY_PAIR.publicKeyHex),
+      privateKey: hexToBytes(CONNECT_APP_KEY_PAIR.privateKeyHex),
+    },
+  });
+  return `${preview.walletUri}&token=${VALID_WALLET_TOKEN}&relay=${VALID_RELAY_TOKEN}`;
+};
 const copyTextToClipboardMock = vi.fn();
 const deriveAccountAddressMock = vi.fn();
 const derivePublicKeyMock = vi.fn();
@@ -261,18 +309,16 @@ describe("AccountSetupView", () => {
     storeAccountSecretMock.mockReset();
     onboardAccountMock.mockReset();
     routerPushMock.mockReset();
-    deriveAccountAddressMock.mockImplementation(
-      (input: { domain?: string }) => ({
-        accountId: `alice@${input.domain || "wonderland"}`,
-        i105AccountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
-        i105DefaultAccountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
-        i105DefaultFullwidthAccountId: "",
-        publicKeyHex: "ab".repeat(32),
-        accountIdWarning: "",
-      }),
-    );
+    deriveAccountAddressMock.mockImplementation(() => ({
+      accountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
+      i105AccountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
+      i105DefaultAccountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
+      i105DefaultFullwidthAccountId: "",
+      publicKeyHex: ALICE_PUBLIC_KEY_HEX,
+      accountIdWarning: "",
+    }));
     derivePublicKeyMock.mockResolvedValue({
-      publicKeyHex: "ab".repeat(32),
+      publicKeyHex: ALICE_PUBLIC_KEY_HEX,
     });
     generateKeyPairMock.mockImplementation(
       async (input: { seedHex?: string; signingAlgorithm?: string } = {}) => {
@@ -290,15 +336,15 @@ describe("AccountSetupView", () => {
     exportConfidentialWalletBackupMock.mockResolvedValue({
       schema: "iroha-demo-confidential-wallet-backup/v2",
       chainId: TAIRA_CHAIN_PRESET.connection.chainId,
-      accountId: "alice@default",
+      accountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
       scanWatermarkBlock: 12,
       stateBox: {
         kdf: "HKDF-SHA256",
         cipher: "AES-256-GCM",
-        saltBase64Url: "salt",
-        ivBase64Url: "iv",
-        ciphertextBase64Url: "ciphertext",
-        authTagBase64Url: "tag",
+        saltBase64Url: "A".repeat(43),
+        ivBase64Url: "B".repeat(16),
+        ciphertextBase64Url: "C".repeat(32),
+        authTagBase64Url: "Q".repeat(22),
       },
     });
     importConfidentialWalletBackupMock.mockResolvedValue(undefined);
@@ -327,6 +373,7 @@ describe("AccountSetupView", () => {
       i105AccountId?: string;
       i105DefaultAccountId?: string;
       publicKeyHex?: string;
+      signingAlgorithm?: string;
       privateKeyHex?: string;
       hasStoredSecret?: boolean;
       localOnly?: boolean;
@@ -345,10 +392,10 @@ describe("AccountSetupView", () => {
       const savedAccount = {
         displayName: "Alice",
         domain: "wonderland",
-        accountId: "alice@wonderland",
+        accountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
         i105AccountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
-        publicKeyHex: "ab".repeat(32),
-        privateKeyHex: "cd".repeat(32),
+        publicKeyHex: ALICE_PUBLIC_KEY_HEX,
+        signingAlgorithm: "ed25519",
         hasStoredSecret: true,
         localOnly: false,
         ...options?.savedAccount,
@@ -389,15 +436,13 @@ describe("AccountSetupView", () => {
           accountOnboarding: feature(),
           assetTransfers: feature(),
           faucetClaim: feature(),
-          confidentialTransfers: feature(),
           kaigiMeetings: feature(),
           governanceWrites: feature(),
           stakingWrites: feature(),
           subscriptionWrites: feature(),
-          soraCloudDeploy: feature(),
+          soraCloudHfSharedLease: feature(),
           vpnSessions: feature(),
           irohaConnectSessions: feature(options?.connectSupported !== false),
-          zkProofJobs: feature(),
         },
         diagnostic: endpointWriteAllowed
           ? {
@@ -486,12 +531,7 @@ describe("AccountSetupView", () => {
       resources: [RAW_DOMAIN],
     },
   ) => {
-    const appKeyPair = generateWalletConnectKeyPair();
-    await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
-        TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-    );
+    await scanConnectQr(VALID_CONNECT_WALLET_URI);
     getDialogButtonByText(t("Approve connection")).click();
     await flushPromises();
     const socket = FakeWebSocket.instances.at(-1);
@@ -508,9 +548,9 @@ describe("AccountSetupView", () => {
           seq: 1,
           control: {
             type: "open",
-            appPublicKeyHex: appKeyPair.publicKeyHex,
+            appPublicKeyHex: CONNECT_APP_KEY_PAIR.publicKeyHex,
             constraints: {
-              chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+              networkId: TAIRA_NETWORK_ID,
             },
             appMeta: null,
             permissions,
@@ -528,8 +568,8 @@ describe("AccountSetupView", () => {
         sid: VALID_CONNECT_SID,
         sidBytesHex: "",
         nonceHex: "",
-        privateKeyHex: appKeyPair.privateKeyHex,
-        publicKeyHex: appKeyPair.publicKeyHex,
+        privateKeyHex: CONNECT_APP_KEY_PAIR.privateKeyHex,
+        publicKeyHex: CONNECT_APP_KEY_PAIR.publicKeyHex,
         walletUri: "",
         appUri: "",
         wsUrl: "",
@@ -663,9 +703,9 @@ describe("AccountSetupView", () => {
         {
           displayName: "Bob",
           domain: "wonderland",
-          accountId: "bob@wonderland",
-          publicKeyHex: "bc".repeat(32),
-          privateKeyHex: "",
+          accountId: SECOND_I105_ACCOUNT_ID,
+          publicKeyHex: BOB_PUBLIC_KEY_HEX,
+          signingAlgorithm: "ed25519",
           hasStoredSecret: true,
           localOnly: false,
         },
@@ -678,18 +718,15 @@ describe("AccountSetupView", () => {
     );
     await flushPromises();
 
-    expect(session.activeAccountId).toBe("bob@wonderland");
+    expect(session.activeAccountId).toBe(SECOND_I105_ACCOUNT_ID);
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");
   });
 
   it("approves a scanned wallet-role IrohaConnect QR over the relay WebSocket", async () => {
     const wrapper = mountView({ withSavedAccount: true });
     const relayNode = TAIRA_CHAIN_PRESET.connection.toriiUrl;
-    const walletToken = "wallet-token-1";
-    const appKeyPair = generateWalletConnectKeyPair();
-    const payload = `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
-      relayNode,
-    )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=${encodeURIComponent(walletToken)}&relay=relay-token-1`;
+    const walletToken = VALID_WALLET_TOKEN;
+    const payload = VALID_CONNECT_WALLET_URI;
 
     await scanConnectQr(payload);
 
@@ -731,9 +768,9 @@ describe("AccountSetupView", () => {
           seq: 1,
           control: {
             type: "open",
-            appPublicKeyHex: appKeyPair.publicKeyHex,
+            appPublicKeyHex: CONNECT_APP_KEY_PAIR.publicKeyHex,
             constraints: {
-              chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+              networkId: TAIRA_NETWORK_ID,
             },
             appMeta: null,
             permissions: {
@@ -781,18 +818,14 @@ describe("AccountSetupView", () => {
       }),
     );
     mountView({ withSavedAccount: true });
-    await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
-        TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-    );
+    await scanConnectQr(VALID_CONNECT_WALLET_URI);
     getDialogButtonByText(t("Approve connection")).click();
     await flushPromises();
     const socket = FakeWebSocket.instances[0];
     socket.emit("open");
     for (const [index, appKey] of [
-      generateWalletConnectKeyPair(),
-      generateWalletConnectKeyPair(),
+      CONNECT_APP_KEY_PAIR,
+      generateConnectWalletKeyPair(),
     ].entries()) {
       socket.emit(
         "message",
@@ -805,7 +838,7 @@ describe("AccountSetupView", () => {
               type: "open",
               appPublicKeyHex: appKey.publicKeyHex,
               constraints: {
-                chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+                networkId: TAIRA_NETWORK_ID,
               },
               appMeta: null,
               permissions: {
@@ -1042,12 +1075,7 @@ describe("AccountSetupView", () => {
       }),
     );
     mountView({ withSavedAccount: true });
-    const appKeyPair = generateWalletConnectKeyPair();
-    await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
-        TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      )}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-    );
+    await scanConnectQr(VALID_CONNECT_WALLET_URI);
     getDialogButtonByText(t("Approve connection")).click();
     await flushPromises();
     const socket = FakeWebSocket.instances[0];
@@ -1061,9 +1089,9 @@ describe("AccountSetupView", () => {
           seq: 1,
           control: {
             type: "open",
-            appPublicKeyHex: appKeyPair.publicKeyHex,
+            appPublicKeyHex: CONNECT_APP_KEY_PAIR.publicKeyHex,
             constraints: {
-              chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+              networkId: TAIRA_NETWORK_ID,
             },
             appMeta: null,
             permissions: null,
@@ -1096,39 +1124,35 @@ describe("AccountSetupView", () => {
 
   it.each([
     {
-      label: "chain",
-      chainId: "different-chain",
-      node: TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
+      label: "NetworkId",
+      uri: buildConnectWalletUri({ networkId: FOREIGN_NETWORK_ID }),
+      connection: {},
+      error: "different NetworkId",
     },
     {
       label: "endpoint",
-      chainId: TAIRA_CHAIN_PRESET.connection.chainId,
-      node: "https://other.example",
-      networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
+      uri: buildConnectWalletUri({ node: "https://other.example" }),
+      connection: {},
+      error: "different endpoint",
     },
     {
-      label: "network prefix",
-      chainId: TAIRA_CHAIN_PRESET.connection.chainId,
-      node: TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      networkPrefix: 753,
+      label: "unpinned profile",
+      uri: VALID_CONNECT_WALLET_URI,
+      connection: { networkPrefix: 753 },
+      error: "no exact genesis-derived NetworkId pinned",
     },
   ])(
     "rejects a scanned pairing for a different $label before opening the relay",
-    async ({ chainId, node, networkPrefix }) => {
-      const wrapper = mountView({ withSavedAccount: true });
+    async ({ uri, connection, error }) => {
+      const wrapper = mountView({ withSavedAccount: true, connection });
 
-      await scanConnectQr(
-        `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${chainId}&node=${encodeURIComponent(
-          node,
-        )}&network_prefix=${networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-      );
+      await scanConnectQr(uri);
       getDialogButtonByText(t("Approve connection")).click();
       await flushPromises();
 
       expect(inspectEndpointMock).not.toHaveBeenCalled();
       expect(FakeWebSocket.instances).toHaveLength(0);
-      expect(wrapper.text()).toContain("different");
+      expect(wrapper.text()).toContain(error);
     },
   );
 
@@ -1146,11 +1170,7 @@ describe("AccountSetupView", () => {
       },
     });
 
-    await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
-        TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-    );
+    await scanConnectQr(VALID_CONNECT_WALLET_URI);
     getDialogButtonByText(t("Approve connection")).click();
     await flushPromises();
 
@@ -1169,11 +1189,7 @@ describe("AccountSetupView", () => {
     );
     mountView({ withSavedAccount: true });
 
-    await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
-        TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-    );
+    await scanConnectQr(VALID_CONNECT_WALLET_URI);
     getDialogButtonByText(t("Approve connection")).click();
     await flushPromises();
 
@@ -1203,11 +1219,7 @@ describe("AccountSetupView", () => {
   it("does not approve an opened relay after the wallet context changes", async () => {
     mountView({ withSavedAccount: true });
 
-    await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
-        TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-    );
+    await scanConnectQr(VALID_CONNECT_WALLET_URI);
     getDialogButtonByText(t("Approve connection")).click();
     await flushPromises();
     const socket = FakeWebSocket.instances[0];
@@ -1230,28 +1242,18 @@ describe("AccountSetupView", () => {
     const wrapper = mountView({ withSavedAccount: true });
 
     await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&role=wallet&node=${encodeURIComponent(
-        "https://relay.example",
-      )}&v=1&relay=relay-token-1`,
+      VALID_CONNECT_WALLET_URI.replace(`&token=${VALID_WALLET_TOKEN}`, ""),
     );
 
-    expect(getOpenDialog()).not.toBeNull();
+    expect(getOpenDialog()).toBeNull();
     expect(FakeWebSocket.instances).toHaveLength(0);
-    getDialogButtonByText(t("Approve connection")).click();
-    await flushPromises();
-
-    expect(FakeWebSocket.instances).toHaveLength(0);
-    expect(wrapper.text()).toContain("IrohaConnect wallet token is missing.");
+    expect(wrapper.text()).toContain("IrohaConnect URI is missing token.");
   });
 
   it("rejects a scanned wallet-role IrohaConnect QR without opening the relay", async () => {
     const wrapper = mountView({ withSavedAccount: true });
 
-    await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
-        TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-    );
+    await scanConnectQr(VALID_CONNECT_WALLET_URI);
 
     expect(getOpenDialog()).not.toBeNull();
     getDialogButtonByText(t("Reject")).click();
@@ -1272,9 +1274,7 @@ describe("AccountSetupView", () => {
     scanButton.focus();
     expect(document.activeElement).toBe(scanButton);
 
-    await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-    );
+    await scanConnectQr(VALID_CONNECT_WALLET_URI);
 
     const dialog = getOpenDialog();
     expect(dialog).not.toBeNull();
@@ -1293,13 +1293,11 @@ describe("AccountSetupView", () => {
     const wrapper = mountView({ withSavedAccount: true });
 
     await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&v=1&role=app&token=wallet-token-1&relay=relay-token-1`,
+      VALID_CONNECT_WALLET_URI.replace("role=wallet", "role=app"),
     );
 
     expect(FakeWebSocket.instances).toHaveLength(0);
-    expect(wrapper.text()).toContain(
-      "Scan the wallet-role IrohaConnect QR from the app.",
-    );
+    expect(wrapper.text()).toContain("IrohaConnect QR must use role=wallet.");
     expect(wrapper.text()).not.toContain(VALID_CONNECT_SID);
   });
 
@@ -1307,11 +1305,7 @@ describe("AccountSetupView", () => {
     vi.useFakeTimers();
     const wrapper = mountView({ withSavedAccount: true });
 
-    await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
-        TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
-    );
+    await scanConnectQr(VALID_CONNECT_WALLET_URI);
 
     getDialogButtonByText(t("Approve connection")).click();
     await flushPromises();
@@ -1354,7 +1348,7 @@ describe("AccountSetupView", () => {
 
     expect(onboardAccountMock).not.toHaveBeenCalled();
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");
-    expect(session.activeAccountId).toBe("alice@flowers");
+    expect(session.activeAccountId).toBe(EXAMPLE_REAL_I105_ACCOUNT_ID);
     expect(session.activeAccount?.displayName).toBe("Alice");
     expect(session.activeAccount?.hasStoredSecret).toBe(true);
     expect(session.activeAccount?.localOnly).toBe(true);
@@ -1437,7 +1431,8 @@ describe("AccountSetupView", () => {
 
     expect(storeAccountSecretMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        accountId: "alice@flowers",
+        accountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
+        networkPrefix: 369,
         privateKeyHex: expect.stringMatching(/^[0-9a-f]{64}$/i),
       }),
     );
@@ -1506,7 +1501,7 @@ describe("AccountSetupView", () => {
 
     expect(onboardAccountMock).not.toHaveBeenCalled();
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");
-    expect(session.activeAccountId).toBe("alice@flowers");
+    expect(session.activeAccountId).toBe(EXAMPLE_REAL_I105_ACCOUNT_ID);
     expect(session.activeAccount?.displayName).toBe("");
     expect(session.activeAccount?.hasStoredSecret).toBe(true);
     expect(session.activeAccount?.localOnly).toBe(true);
@@ -1538,8 +1533,8 @@ describe("AccountSetupView", () => {
     ]);
     deriveAccountAddressMock.mockImplementation(
       (input: { domain?: string; signingAlgorithm?: string }) => ({
-        accountId: `alice-${input.signingAlgorithm}@${input.domain || "wonderland"}`,
-        i105AccountId: `alice-${input.signingAlgorithm}@${input.domain || "wonderland"}`,
+        accountId: SECP256K1_I105_ACCOUNT_ID,
+        i105AccountId: SECP256K1_I105_ACCOUNT_ID,
         i105DefaultAccountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
         i105DefaultFullwidthAccountId: "",
         publicKeyHex: "ab".repeat(32),
@@ -1578,7 +1573,8 @@ describe("AccountSetupView", () => {
       }),
     );
     expect(storeAccountSecretMock).toHaveBeenCalledWith({
-      accountId: "alice-secp256k1@default",
+      accountId: SECP256K1_I105_ACCOUNT_ID,
+      networkPrefix: 369,
       privateKeyHex: expect.stringMatching(/^[0-9a-f]{64}$/i),
       signingAlgorithm: "secp256k1",
     });
@@ -1625,6 +1621,7 @@ describe("AccountSetupView", () => {
 
     expect(storeAccountSecretMock).toHaveBeenCalledWith({
       accountId: "n42uflowersStableAccount1234567890",
+      networkPrefix: 42,
       privateKeyHex: expect.stringMatching(/^[0-9a-f]{64}$/i),
       signingAlgorithm: "ed25519",
     });
@@ -1671,6 +1668,7 @@ describe("AccountSetupView", () => {
 
     expect(storeAccountSecretMock).toHaveBeenCalledWith({
       accountId: "n42uflowersPartialAccount1234567890",
+      networkPrefix: 42,
       privateKeyHex: expect.stringMatching(/^[0-9a-f]{64}$/i),
       signingAlgorithm: "ed25519",
     });
@@ -1706,7 +1704,7 @@ describe("AccountSetupView", () => {
 
     expect(onboardAccountMock).not.toHaveBeenCalled();
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");
-    expect(session.activeAccountId).toBe("alice@default");
+    expect(session.activeAccountId).toBe(EXAMPLE_REAL_I105_ACCOUNT_ID);
     expect(session.activeAccount?.hasStoredSecret).toBe(true);
     expect(session.activeAccount?.localOnly).toBe(true);
   });
@@ -1725,15 +1723,15 @@ describe("AccountSetupView", () => {
         confidentialWallet: {
           schema: "iroha-demo-confidential-wallet-backup/v2",
           chainId: TAIRA_CHAIN_PRESET.connection.chainId,
-          accountId: "alice@backup-domain",
+          accountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
           scanWatermarkBlock: 42,
           stateBox: {
             kdf: "HKDF-SHA256",
             cipher: "AES-256-GCM",
-            saltBase64Url: "salt",
-            ivBase64Url: "iv",
-            ciphertextBase64Url: "ciphertext",
-            authTagBase64Url: "tag",
+            saltBase64Url: "A".repeat(43),
+            ivBase64Url: "B".repeat(16),
+            ciphertextBase64Url: "C".repeat(32),
+            authTagBase64Url: "Q".repeat(22),
           },
         },
       }),
@@ -1768,20 +1766,20 @@ describe("AccountSetupView", () => {
       toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
       chainId: TAIRA_CHAIN_PRESET.connection.chainId,
       networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
-      accountId: "alice@backup-domain",
+      accountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
       mnemonic: VALID_MNEMONIC,
       confidentialWallet: {
         schema: "iroha-demo-confidential-wallet-backup/v2",
         chainId: TAIRA_CHAIN_PRESET.connection.chainId,
-        accountId: "alice@backup-domain",
+        accountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
         scanWatermarkBlock: 42,
         stateBox: {
           kdf: "HKDF-SHA256",
           cipher: "AES-256-GCM",
-          saltBase64Url: "salt",
-          ivBase64Url: "iv",
-          ciphertextBase64Url: "ciphertext",
-          authTagBase64Url: "tag",
+          saltBase64Url: "A".repeat(43),
+          ivBase64Url: "B".repeat(16),
+          ciphertextBase64Url: "C".repeat(32),
+          authTagBase64Url: "Q".repeat(22),
         },
       },
     });
@@ -1804,15 +1802,15 @@ describe("AccountSetupView", () => {
         confidentialWallet: {
           schema: "iroha-demo-confidential-wallet-backup/v2",
           chainId: TAIRA_CHAIN_PRESET.connection.chainId,
-          accountId: "alice@backup-domain",
+          accountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
           scanWatermarkBlock: 42,
           stateBox: {
             kdf: "HKDF-SHA256",
             cipher: "AES-256-GCM",
-            saltBase64Url: "salt",
-            ivBase64Url: "iv",
-            ciphertextBase64Url: "ciphertext",
-            authTagBase64Url: "tag",
+            saltBase64Url: "A".repeat(43),
+            ivBase64Url: "B".repeat(16),
+            ciphertextBase64Url: "C".repeat(32),
+            authTagBase64Url: "Q".repeat(22),
           },
         },
       }),
@@ -1837,7 +1835,8 @@ describe("AccountSetupView", () => {
     await flushPromises();
 
     expect(storeAccountSecretMock).toHaveBeenCalledWith({
-      accountId: "alice@backup-domain",
+      accountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
+      networkPrefix: 369,
       privateKeyHex: VALID_MNEMONIC_PRIVATE_KEY_HEX,
       signingAlgorithm: "ed25519",
     });
@@ -1850,10 +1849,29 @@ describe("AccountSetupView", () => {
   it("does not apply backup metadata when imported recovery data is invalid", async () => {
     const wrapper = mountView();
     const invalidBackupPayload = JSON.stringify({
+      schema: WALLET_BACKUP_SCHEMA,
       mnemonic:
         "invalid invalid invalid invalid invalid invalid invalid invalid invalid invalid invalid invalid",
+      wordCount: 12,
+      signingAlgorithm: "ed25519",
+      createdAt: "2026-03-29T00:00:00.000Z",
+      target: "manual",
       displayName: "Backup Alice",
       domain: "backup-domain",
+      confidentialWallet: {
+        schema: "iroha-demo-confidential-wallet-backup/v2",
+        chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+        accountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
+        scanWatermarkBlock: null,
+        stateBox: {
+          kdf: "HKDF-SHA256",
+          cipher: "AES-256-GCM",
+          saltBase64Url: "A".repeat(43),
+          ivBase64Url: "B".repeat(16),
+          ciphertextBase64Url: "C".repeat(32),
+          authTagBase64Url: "Q".repeat(22),
+        },
+      },
     });
     const backupFile = new File([invalidBackupPayload], "iroha-backup.json", {
       type: "application/json",
@@ -1991,7 +2009,7 @@ describe("AccountSetupView", () => {
 
     expect(onboardAccountMock).not.toHaveBeenCalled();
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");
-    expect(session.activeAccountId).toBe("alice@flowers");
+    expect(session.activeAccountId).toBe(EXAMPLE_REAL_I105_ACCOUNT_ID);
     expect(session.activeAccount?.localOnly).toBe(true);
     expect(session.activeAccount?.hasStoredSecret).toBe(true);
   });
@@ -2001,9 +2019,10 @@ describe("AccountSetupView", () => {
       savedAccount: {
         displayName: "Existing Alice",
         domain: "default",
-        accountId: "alice@default",
+        accountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
         publicKeyHex: "11".repeat(32),
-        privateKeyHex: "22".repeat(32),
+        signingAlgorithm: "ed25519",
+        hasStoredSecret: true,
         localOnly: false,
       },
     });
@@ -2022,7 +2041,7 @@ describe("AccountSetupView", () => {
 
     expect(onboardAccountMock).not.toHaveBeenCalled();
     expect(session.accounts).toHaveLength(1);
-    expect(session.activeAccountId).toBe("alice@default");
+    expect(session.activeAccountId).toBe(EXAMPLE_REAL_I105_ACCOUNT_ID);
     expect(session.activeAccount?.displayName).toBe("");
     expect(session.activeAccount?.hasStoredSecret).toBe(true);
     expect(session.activeAccount?.localOnly).toBe(true);

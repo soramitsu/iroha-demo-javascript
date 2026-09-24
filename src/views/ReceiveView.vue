@@ -2,10 +2,11 @@
   <section class="receive-shell">
     <div class="receive-layout">
       <div class="receive-qr-workspace">
-        <div class="qr-panel" :class="{ ready: Boolean(qrMarkup) }">
-          <!-- eslint-disable-next-line vue/no-v-html -->
-          <div v-if="qrMarkup" class="qr" v-html="qrMarkup"></div>
-          <p v-if="qrMarkup && qrMessage" class="helper receive-qr-status">
+        <div class="qr-panel" :class="{ ready: Boolean(qrDataUrl) }">
+          <div v-if="qrDataUrl" class="qr">
+            <img :src="qrDataUrl" :alt="t('Receive')" />
+          </div>
+          <p v-if="qrDataUrl && qrMessage" class="helper receive-qr-status">
             {{ qrMessage }}
           </p>
           <p v-else class="helper receive-empty-state">
@@ -89,7 +90,6 @@ const activeAccount = computed(() => session.activeAccount);
 const shareAccountId = computed(() =>
   getPublicAccountId(activeAccount.value, session.connection.networkPrefix),
 );
-const qrMarkup = ref("");
 const qrDataUrl = ref("");
 const qrPayloadText = ref("");
 const privateAddressText = ref("");
@@ -105,7 +105,6 @@ const generateQr = async () => {
   qrGeneration.value = currentGeneration;
 
   if (!accountId) {
-    qrMarkup.value = "";
     qrDataUrl.value = "";
     qrPayloadText.value = "";
     privateAddressText.value = "";
@@ -116,7 +115,7 @@ const generateQr = async () => {
   try {
     const payload = await createConfidentialPaymentAddress({
       accountId,
-      privateKeyHex: activeAccount.value?.privateKeyHex,
+      networkPrefix: session.connection.networkPrefix,
     });
     const payloadText = JSON.stringify(payload);
     const addressText = encodeConfidentialPaymentAddress(payload);
@@ -127,23 +126,16 @@ const generateQr = async () => {
         light: QR_LIGHT_COLOR,
       },
     };
-    const [nextQrMarkup, nextQrDataUrl] = await Promise.all([
-      QRCode.toString(payloadText, {
-        ...qrOptions,
-        type: "svg",
-      }),
-      QRCode.toDataURL(payloadText, {
-        ...qrOptions,
-        type: "image/png",
-      }),
-    ]);
+    const nextQrDataUrl = await QRCode.toDataURL(payloadText, {
+      ...qrOptions,
+      type: "image/png",
+    });
     if (
       currentGeneration !== qrGeneration.value ||
       shareAccountId.value !== accountId
     ) {
       return;
     }
-    qrMarkup.value = nextQrMarkup;
     qrDataUrl.value = nextQrDataUrl;
     qrPayloadText.value = payloadText;
     privateAddressText.value = addressText;
@@ -152,7 +144,6 @@ const generateQr = async () => {
     if (currentGeneration !== qrGeneration.value) {
       return;
     }
-    qrMarkup.value = "";
     qrDataUrl.value = "";
     qrPayloadText.value = "";
     privateAddressText.value = "";
@@ -364,7 +355,7 @@ watch(
   box-shadow: var(--shadow-control);
 }
 
-.qr :deep(svg) {
+.qr img {
   width: 100%;
   height: auto;
   display: block;

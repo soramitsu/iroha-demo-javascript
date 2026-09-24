@@ -1,30 +1,30 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+  constants,
+  copyFileSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildIrohaNative } from "./build-iroha-native.mjs";
+import { resolveCompatibleIrohaSdkRoot } from "./iroha-sdk-compat.mjs";
 import {
   resolveNativeBuildRequirement,
   resolveNativeProvenanceRequirement,
 } from "./postinstallNativeCheck.mjs";
 
-const projectRoot = process.cwd();
-const sdkEntry = fileURLToPath(import.meta.resolve("@iroha/iroha-js"));
-const sdkRoot = dirname(dirname(sdkEntry));
+const scriptPath = fileURLToPath(import.meta.url);
+const projectRoot = resolve(dirname(scriptPath), "..");
+const sdkRoot = resolveCompatibleIrohaSdkRoot({ projectRoot });
 const source = join(sdkRoot, "native");
+const distRoot = join(projectRoot, "dist");
 const target = join(projectRoot, "dist", "native");
-const npmExecPath = process.env.npm_execpath;
-const npmCommand = npmExecPath
-  ? process.execPath
-  : process.platform === "win32"
-    ? "cmd.exe"
-    : "npm";
-const npmBuildNativeArgs = npmExecPath
-  ? [npmExecPath, "run", "build:native"]
-  : process.platform === "win32"
-    ? ["/d", "/s", "/c", "npm run build:native"]
-    : ["run", "build:native"];
+const retiredNativeTarget = join(projectRoot, "dist", "native-v1");
 const nativeProvenanceRequirement = resolveNativeProvenanceRequirement(
   process.env,
 );
@@ -35,6 +35,17 @@ const inspectNativeBinding = () =>
     undefined,
     nativeProvenanceRequirement,
   );
+
+const requireCanonicalPhysicalDirectory = (path, label) => {
+  const metadata = lstatSync(path);
+  if (
+    !metadata.isDirectory() ||
+    metadata.isSymbolicLink() ||
+    realpathSync.native(path) !== path
+  ) {
+    throw new Error(`${label} must be a canonical physical directory.`);
+  }
+};
 
 const requirement = inspectNativeBinding();
 
@@ -47,34 +58,54 @@ if (requirement.shouldBuild) {
   console.log(
     `Building @iroha/iroha-js native bindings before copy (${requirement.reason})...`,
   );
-  const result = spawnSync(npmCommand, npmBuildNativeArgs, {
-    cwd: sdkRoot,
-    stdio: "inherit",
-    env: process.env,
-  });
+  buildIrohaNative({ projectRoot, sdkRoot });
   const refreshedRequirement = inspectNativeBinding();
   if (refreshedRequirement.shouldBuild) {
-    if (result.error) {
-      console.error(
-        `Unable to launch ${npmCommand} for @iroha/iroha-js native build: ${result.error.message}`,
-      );
-    }
     throw new Error(
-      `Failed to build a verified @iroha/iroha-js native binding before copy (status ${result.status ?? "unknown"}; ${refreshedRequirement.reason}).`,
-    );
-  }
-  if (result.status !== 0) {
-    console.warn(
-      `@iroha/iroha-js native build exited with status ${result.status ?? "unknown"}, but the native bundle is current now; continuing with copy.`,
+      `Failed to build a verified @iroha/iroha-js native binding before copy (${refreshedRequirement.reason}).`,
     );
   }
 }
 
-if (!existsSync(source)) {
-  throw new Error(`@iroha/iroha-js native directory is missing at ${source}`);
-}
-
-mkdirSync(dirname(target), { recursive: true });
+requireCanonicalPhysicalDirectory(source, "@iroha/iroha-js native directory");
+requireCanonicalPhysicalDirectory(distRoot, "Wallet build output");
+rmSync(retiredNativeTarget, { recursive: true, force: true });
 rmSync(target, { recursive: true, force: true });
-cpSync(source, target, { recursive: true });
-console.log(`Copied @iroha/iroha-js native binding to ${target}`);
+mkdirSync(target, { mode: 0o700 });
+for (const sourcePath of [
+  requirement.nativeModulePath,
+  requirement.checksumManifestPath,
+]) {
+  copyFileSync(
+    sourcePath,
+    join(
+      target,
+      sourcePath === requirement.nativeModulePath
+        ? "iroha_js_host.node"
+        : "iroha_js_host.checksums.json",
+    ),
+    constants.COPYFILE_EXCL,
+  );
+}
+const stagedEntries = readdirSync(target).toSorted();
+const expectedEntries = ["iroha_js_host.checksums.json", "iroha_js_host.node"];
+if (
+  stagedEntries.length !== expectedEntries.length ||
+  stagedEntries.some((entry, index) => entry !== expectedEntries[index])
+) {
+  throw new Error("Staged @iroha/iroha-js native inventory is not exact.");
+}
+const stagedRequirement = resolveNativeBuildRequirement(
+  distRoot,
+  undefined,
+  undefined,
+  nativeProvenanceRequirement,
+);
+if (stagedRequirement.shouldBuild) {
+  throw new Error(
+    `Staged @iroha/iroha-js native binding failed verification (${stagedRequirement.reason}).`,
+  );
+}
+console.log(
+  `Copied the verified @iroha/iroha-js native pair from ${sdkRoot} to ${target}`,
+);

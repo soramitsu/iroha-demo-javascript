@@ -101,15 +101,20 @@ describe("native runtime load boundary", () => {
       resolve(PROJECT_ROOT, "electron/preload.ts"),
       "utf8",
     );
-    const installCall = "\ninstallGlobalIrohaJsNativeBinding(import.meta.url);";
+    const installCall = "installGlobalIrohaJsNativeBinding(import.meta.url)";
+    const mainInstall = main.indexOf(installCall);
+    const preloadInstall = preload.indexOf(installCall);
 
-    expect(main.indexOf(installCall)).toBeGreaterThanOrEqual(0);
-    expect(main.indexOf(installCall)).toBeLessThan(
+    expect(mainInstall).toBeGreaterThanOrEqual(0);
+    expect(mainInstall).toBeLessThan(
       main.indexOf("const vpnRuntime = new VpnRuntime"),
     );
-    expect(preload.indexOf(installCall)).toBeGreaterThanOrEqual(0);
-    expect(preload.indexOf(installCall)).toBeLessThan(
-      preload.indexOf('contextBridge.exposeInMainWorld("iroha", api)'),
+    expect(preloadInstall).toBeGreaterThanOrEqual(0);
+    expect(preloadInstall).toBeLessThan(
+      preload.indexOf("const api: IrohaBridge"),
+    );
+    expect(preload).toContain(
+      "const irohaNativeBinding = installGlobalIrohaJsNativeBinding(import.meta.url);",
     );
   });
 });

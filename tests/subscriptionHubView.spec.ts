@@ -117,7 +117,6 @@ const mountView = async (
       },
       features: {
         faucetClaim: feature(true),
-        confidentialTransfers: feature(true),
         kaigiMeetings: feature(true),
         governanceWrites: feature(true),
         stakingWrites: feature(true),
@@ -127,7 +126,7 @@ const mountView = async (
           requiredOperations: subscriptionWriteOperations,
           missingOperations,
         },
-        soraCloudDeploy: feature(true),
+        soraCloudHfSharedLease: feature(true),
         vpnSessions: feature(true),
       },
     },

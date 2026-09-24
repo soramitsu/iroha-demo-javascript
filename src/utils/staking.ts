@@ -21,6 +21,12 @@ export type DataspaceOption = {
 
 const DECIMAL_PATTERN = /^\d+(\.\d+)?$/;
 
+const hasAsciiControlCharacter = (value: string): boolean =>
+  Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f;
+  });
+
 const toNonNegativeInteger = (value: unknown): number | null => {
   const numeric = Number(value);
   if (!Number.isInteger(numeric) || numeric < 0) {
@@ -278,20 +284,14 @@ export const extractValidatorCommissionBps = (
   if (!metadata) {
     return null;
   }
-  const rawBps = metadata.commission_bps ?? metadata.commissionBps;
-  if (rawBps !== undefined && rawBps !== null && rawBps !== "") {
-    const parsed = Number(rawBps);
-    if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 10_000) {
-      return parsed;
-    }
-  }
-
-  const rawPercent = metadata.commission_percent ?? metadata.commissionPercent;
-  if (rawPercent !== undefined && rawPercent !== null && rawPercent !== "") {
-    const parsed = Number(rawPercent);
-    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 100) {
-      return Math.round(parsed * 100);
-    }
+  const value = metadata.commission_bps;
+  if (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= 10_000
+  ) {
+    return value;
   }
   return null;
 };
@@ -302,19 +302,17 @@ export const readValidatorEndpoint = (
   if (!metadata) {
     return "";
   }
-  for (const key of [
-    "endpoint",
-    "rpc_url",
-    "rpcUrl",
-    "p2p_endpoint",
-    "p2pEndpoint",
-  ]) {
-    const value = String(metadata[key] ?? "").trim();
-    if (value) {
-      return value;
-    }
+  const value = metadata.endpoint;
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 2_048 ||
+    value !== value.trim() ||
+    hasAsciiControlCharacter(value)
+  ) {
+    return "";
   }
-  return "";
+  return value;
 };
 
 const toHex = (bytes: Uint8Array) =>

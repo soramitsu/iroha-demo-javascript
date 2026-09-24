@@ -1,15 +1,42 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const nativeBinding = vi.hoisted(() => ({
+  buildTransactionPayload: (...args: unknown[]) => ({
+    payloadJson: JSON.stringify({
+      authority: args[1],
+      instructions: [],
+      fee_payment: {
+        payer: "authority",
+        value: { charge_limits: [], gas_limit: null },
+      },
+      metadata: {},
+    }),
+    payloadBytes: Buffer.from([1]),
+    payloadHash: Buffer.alloc(32, 3),
+  }),
+  signQuotedTransactionPayload: () => ({}),
+  encodeSignedTransactionVersioned: (input: Uint8Array) => input,
+  hashSignedTransaction: () => Buffer.alloc(32),
+}));
+
+vi.mock("../electron/irohaJsNativeDir", () => ({
+  getInstalledIrohaJsNativeBinding: () => nativeBinding,
+  installGlobalIrohaJsNativeBinding: () => nativeBinding,
+}));
+
+import { NetworkId } from "@iroha/iroha-js/canonical-request";
 import { deriveAccountAddressView } from "../electron/accountAddress";
 import {
   buildCanonicalInstructionFeeQuoteRequest,
-  isMissingFeeQuoteRouteError,
   resolveCanonicalInstructionWireInput,
 } from "../electron/transactionFeeQuote";
 
 const PUBLIC_KEY_HEX =
   "CE7FA46C9DCE7EA4B125E2E36BDB63EA33073E7590AC92816AE1E861B7048B03";
 const PRIVATE_KEY = Buffer.alloc(32, 17);
-
+const NETWORK_ID = NetworkId.fromBytes(
+  Buffer.from(`${"11".repeat(31)}13`, "hex"),
+);
 describe("canonical transaction fee quotes", () => {
   it.each([
     { activePrefix: 369, stalePrefix: 753, expectedPrefix: "testu" },
@@ -28,14 +55,14 @@ describe("canonical transaction fee quotes", () => {
         networkPrefix: activePrefix,
       }).i105AccountId;
       const wireInput = resolveCanonicalInstructionWireInput({
-        authorityAccountId: staleAccount,
+        authorityAccountId: expectedAccount,
         networkPrefix: activePrefix,
         instruction: (authority) => ({
           RegisterCitizen: { owner: authority, amount: "10000" },
         }),
       });
       const request = buildCanonicalInstructionFeeQuoteRequest({
-        chainId: "test-chain",
+        networkId: NETWORK_ID,
         authority: wireInput.authority,
         networkPrefix: activePrefix,
         instructions: [wireInput.instruction],
@@ -51,19 +78,27 @@ describe("canonical transaction fee quotes", () => {
       });
       expect(request.authority).toBe(expectedAccount);
       expect(request.authority.startsWith(expectedPrefix)).toBe(true);
-      expect(request.payload.payload.authority).toBe(expectedAccount);
-      expect(request.payload.payload.metadata).toEqual({});
+      expect(request.payload.authority).toBe(expectedAccount);
+      expect(request.payload.metadata).toEqual({});
+      expect(request.draft.payload).toBe(request.payload);
       expect(request.canonicalAuth).toEqual({
         accountId: expectedAccount,
         privateKey: PRIVATE_KEY,
       });
+      expect(() =>
+        resolveCanonicalInstructionWireInput({
+          authorityAccountId: staleAccount,
+          networkPrefix: activePrefix,
+          instruction: {},
+        }),
+      ).toThrow(/network prefix/i);
     },
   );
 
   it("rejects a malformed authority before building a fee quote", () => {
     expect(() =>
       buildCanonicalInstructionFeeQuoteRequest({
-        chainId: "test-chain",
+        networkId: NETWORK_ID,
         authority: "alice@wonderland",
         networkPrefix: 369,
         instructions: [],
@@ -71,53 +106,5 @@ describe("canonical transaction fee quotes", () => {
         metadata: {},
       }),
     ).toThrow(/authority/i);
-  });
-
-  it.each([
-    {
-      error: {
-        status: 404,
-        code: "route_not_found",
-      },
-    },
-    {
-      error: {
-        status: 404,
-        bodyJson: {
-          error: "route_not_found",
-          message: "The requested route does not exist.",
-        },
-      },
-    },
-    {
-      error: Object.assign(
-        new Error(
-          "Torii responded with HTTP 404 Not Found: The requested route does not exist.",
-        ),
-        { status: 404 },
-      ),
-    },
-  ])("recognizes an unavailable fee-quote route", ({ error }) => {
-    expect(isMissingFeeQuoteRouteError(error)).toBe(true);
-  });
-
-  it.each([
-    {
-      error: {
-        status: 422,
-        code: "route_not_found",
-      },
-    },
-    {
-      error: {
-        status: 404,
-        code: "proposal_not_found",
-      },
-    },
-    {
-      error: new Error("network unavailable"),
-    },
-  ])("does not enable the fallback for other failures", ({ error }) => {
-    expect(isMissingFeeQuoteRouteError(error)).toBe(false);
   });
 });

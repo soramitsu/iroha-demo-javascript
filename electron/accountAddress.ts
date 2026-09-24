@@ -1,21 +1,15 @@
+import { AccountAddress } from "@iroha/iroha-js/address";
 import {
-  AccountAddress,
-  encodeI105AccountAddress,
-  normalizeAccountId as normalizeSdkAccountId,
-} from "@iroha/iroha-js";
+  normalizeCryptoAlgorithm,
+  type CryptoAlgorithm,
+} from "@iroha/iroha-js/crypto";
 import { DEFAULT_SIGNING_ALGORITHM } from "../src/utils/signingAlgorithms";
 import { getInstalledIrohaJsNativeBinding } from "./irohaJsNativeDir";
+import { FIRST_RELEASE_CRYPTO_KEY_MATERIAL_MAX_BYTES } from "./firstReleaseResourceLimits";
 
 const SORA_NETWORK_PREFIX = 753;
-const DEFAULT_NETWORK_PREFIX = SORA_NETWORK_PREFIX;
+const LOCAL_DOMAIN_LABEL_MAX_BYTES = 256;
 const HEX_RE = /^[0-9a-fA-F]+$/;
-
-type NativeAccountAddressParseResult = {
-  canonicalBytes?: Uint8Array;
-  canonical_bytes?: Uint8Array;
-  networkPrefix?: number;
-  network_prefix?: number;
-};
 
 type NativeAccountAddressRenderResult = {
   i105?: string;
@@ -24,10 +18,6 @@ type NativeAccountAddressRenderResult = {
 };
 
 type NativeAccountAddressCodec = {
-  accountAddressParseEncoded: (
-    input: string,
-    expectedPrefix: number | null,
-  ) => NativeAccountAddressParseResult | null;
   accountAddressRender: (
     canonicalBytes: Uint8Array,
     networkPrefix: number,
@@ -36,68 +26,21 @@ type NativeAccountAddressCodec = {
 
 const trimString = (value: unknown): string => String(value ?? "").trim();
 
-// Torii surfaces may hand back I105 account IDs as UTF-8 full-width kana,
-// while the current JS/native codec accepts the canonical half-width alphabet.
-const I105_FULLWIDTH_TO_CANONICAL_KANA: Record<string, string> = {
-  イ: "ｲ",
-  ロ: "ﾛ",
-  ハ: "ﾊ",
-  ニ: "ﾆ",
-  ホ: "ﾎ",
-  ヘ: "ﾍ",
-  ト: "ﾄ",
-  チ: "ﾁ",
-  リ: "ﾘ",
-  ヌ: "ﾇ",
-  ル: "ﾙ",
-  ヲ: "ｦ",
-  ワ: "ﾜ",
-  カ: "ｶ",
-  ヨ: "ﾖ",
-  タ: "ﾀ",
-  レ: "ﾚ",
-  ソ: "ｿ",
-  ツ: "ﾂ",
-  ネ: "ﾈ",
-  ナ: "ﾅ",
-  ラ: "ﾗ",
-  ム: "ﾑ",
-  ウ: "ｳ",
-  ノ: "ﾉ",
-  オ: "ｵ",
-  ク: "ｸ",
-  ヤ: "ﾔ",
-  マ: "ﾏ",
-  ケ: "ｹ",
-  フ: "ﾌ",
-  コ: "ｺ",
-  エ: "ｴ",
-  テ: "ﾃ",
-  ア: "ｱ",
-  サ: "ｻ",
-  キ: "ｷ",
-  ユ: "ﾕ",
-  メ: "ﾒ",
-  ミ: "ﾐ",
-  シ: "ｼ",
-  ヒ: "ﾋ",
-  モ: "ﾓ",
-  セ: "ｾ",
-  ス: "ｽ",
+const requireBoundedLocalDomainLabel = (value: unknown): void => {
+  if (
+    typeof value !== "string" ||
+    value.trim() !== value ||
+    Buffer.byteLength(value, "utf8") > LOCAL_DOMAIN_LABEL_MAX_BYTES ||
+    Array.from(value).some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 0x1f || codePoint === 0x7f;
+    })
+  ) {
+    throw new Error("domain must be bounded canonical local-profile text.");
+  }
 };
 
-const normalizeI105KanaVariants = (literal: string): string =>
-  Array.from(literal, (character) => {
-    return I105_FULLWIDTH_TO_CANONICAL_KANA[character] ?? character;
-  }).join("");
-
-const normalizeAccountLiteralInput = (value: unknown): string =>
-  normalizeI105KanaVariants(trimString(value));
-
-const normalizeNetworkPrefix = (value?: number): number => {
-  if (value === undefined) {
-    return DEFAULT_NETWORK_PREFIX;
-  }
+const normalizeNetworkPrefix = (value: number): number => {
   const normalized = Number(value);
   if (!Number.isInteger(normalized) || normalized < 0 || normalized > 0x3fff) {
     throw new Error("networkPrefix must be an integer between 0 and 16383.");
@@ -106,14 +49,18 @@ const normalizeNetworkPrefix = (value?: number): number => {
 };
 
 const hexToBuffer = (value: string, label: string): Buffer => {
-  const trimmed = trimString(value);
-  if (!trimmed) {
+  if (typeof value !== "string" || value.length === 0) {
     throw new Error(`${label} is required.`);
   }
-  if (trimmed.length % 2 !== 0 || !HEX_RE.test(trimmed)) {
-    throw new Error(`${label} must be an even-length hex string.`);
+  if (
+    value.length > FIRST_RELEASE_CRYPTO_KEY_MATERIAL_MAX_BYTES * 2 ||
+    value.trim() !== value ||
+    value.length % 2 !== 0 ||
+    !HEX_RE.test(value)
+  ) {
+    throw new Error(`${label} must be bounded canonical even-length hex.`);
   }
-  return Buffer.from(trimmed, "hex");
+  return Buffer.from(value, "hex");
 };
 
 const resolveInstalledNativeAccountAddressCodec =
@@ -121,87 +68,15 @@ const resolveInstalledNativeAccountAddressCodec =
     const binding = getInstalledIrohaJsNativeBinding();
     if (
       binding === null ||
-      typeof binding.accountAddressParseEncoded !== "function" ||
       typeof binding.accountAddressRender !== "function"
     ) {
       return null;
     }
     return {
-      accountAddressParseEncoded:
-        binding.accountAddressParseEncoded as NativeAccountAddressCodec["accountAddressParseEncoded"],
       accountAddressRender:
         binding.accountAddressRender as NativeAccountAddressCodec["accountAddressRender"],
     };
   };
-
-const detectNativeLiteralPrefix = (literal: string): number | null => {
-  if (literal.startsWith("sorau") || literal.startsWith("ｓｏｒａu")) {
-    return SORA_NETWORK_PREFIX;
-  }
-  if (literal.startsWith("testu")) {
-    return 369;
-  }
-  const match = /^n(\d{1,4})u/.exec(literal);
-  if (!match) {
-    return null;
-  }
-  const parsed = Number(match[1]);
-  return Number.isInteger(parsed) ? parsed : null;
-};
-
-const uniquePrefixes = (values: Array<number | null | undefined>): number[] => {
-  const out: number[] = [];
-  const seen = new Set<number>();
-  for (const value of values) {
-    if (typeof value !== "number" || !Number.isInteger(value)) {
-      continue;
-    }
-    if (seen.has(value)) {
-      continue;
-    }
-    seen.add(value);
-    out.push(value);
-  }
-  return out;
-};
-
-const parseNativeAccountLiteral = (
-  literal: string,
-  networkPrefix: number,
-): { canonicalBytes: Uint8Array; networkPrefix: number } | null => {
-  const nativeAccountAddressCodec = resolveInstalledNativeAccountAddressCodec();
-  if (nativeAccountAddressCodec === null) {
-    return null;
-  }
-  const attempts = uniquePrefixes([
-    detectNativeLiteralPrefix(literal),
-    networkPrefix,
-    SORA_NETWORK_PREFIX,
-  ]);
-
-  for (const expectedPrefix of attempts) {
-    try {
-      const parsed = nativeAccountAddressCodec.accountAddressParseEncoded(
-        literal,
-        expectedPrefix,
-      );
-      const canonicalBytes = parsed?.canonicalBytes ?? parsed?.canonical_bytes;
-      if (!canonicalBytes || !canonicalBytes.length) {
-        continue;
-      }
-      const detectedPrefix =
-        parsed?.networkPrefix ?? parsed?.network_prefix ?? expectedPrefix;
-      return {
-        canonicalBytes: Uint8Array.from(canonicalBytes),
-        networkPrefix: detectedPrefix,
-      };
-    } catch {
-      continue;
-    }
-  }
-
-  return null;
-};
 
 const renderNativeAccountLiteral = (
   canonicalBytes: Uint8Array,
@@ -225,163 +100,119 @@ const renderNativeAccountLiteral = (
   }
 };
 
-const normalizeCompatLiteralFromAddress = (
+const renderCanonicalAccountId = (
   address: InstanceType<typeof AccountAddress>,
   networkPrefix: number,
-) =>
-  encodeI105AccountAddress(address.canonicalBytes(), {
-    chainDiscriminant: networkPrefix,
-  });
+) => address.toI105(networkPrefix);
 
-const normalizeCanonicalLiteralFromAddress = (
-  address: InstanceType<typeof AccountAddress>,
-  networkPrefix: number,
-) => normalizeCompatLiteralFromAddress(address, networkPrefix);
-
-const fallbackCompatLiteral = (
-  literal: string,
+const parseCanonicalAccountId = (
+  value: unknown,
   label: string,
   networkPrefix: number,
-) => {
-  const normalizedLiteral = normalizeSdkAccountId(literal, label);
-  const parsed = AccountAddress.parseEncoded(normalizedLiteral);
-  return normalizeCompatLiteralFromAddress(parsed.address, networkPrefix);
-};
-
-const fallbackCanonicalLiteral = (
-  literal: string,
-  label: string,
-  networkPrefix: number,
-) => {
-  const normalizedLiteral = normalizeSdkAccountId(literal, label);
-  const parsed = AccountAddress.parseEncoded(normalizedLiteral);
-  return normalizeCanonicalLiteralFromAddress(parsed.address, networkPrefix);
-};
-
-export const normalizeCompatAccountIdLiteral = (
-  value: string,
-  label: string,
-  networkPrefix?: number,
-) => {
-  const literal = normalizeAccountLiteralInput(value);
-  if (!literal) {
+): {
+  address: InstanceType<typeof AccountAddress>;
+  literal: string;
+} => {
+  if (typeof value !== "string" || value.length === 0) {
     throw new Error(`${label} must be a non-empty string.`);
   }
-  const detectedPrefix = detectNativeLiteralPrefix(literal);
-  const normalizedPrefix = normalizeNetworkPrefix(
-    networkPrefix ?? detectedPrefix ?? DEFAULT_NETWORK_PREFIX,
-  );
-
-  try {
-    const parsed = AccountAddress.parseEncoded(literal);
-    return normalizeCompatLiteralFromAddress(parsed.address, normalizedPrefix);
-  } catch {
-    // Fall through to native I105 parsing or legacy SDK normalization.
-  }
-
-  const nativeParsed = parseNativeAccountLiteral(literal, normalizedPrefix);
-  if (nativeParsed) {
-    return normalizeCompatLiteralFromAddress(
-      AccountAddress.fromCanonicalBytes(nativeParsed.canonicalBytes),
-      normalizedPrefix,
+  if (value !== value.trim()) {
+    throw new Error(
+      `${label} must be a canonical I105 account ID without surrounding whitespace.`,
     );
   }
 
-  return fallbackCompatLiteral(literal, label, normalizedPrefix);
+  let address: InstanceType<typeof AccountAddress>;
+  try {
+    address = AccountAddress.parseEncoded(value, networkPrefix).address;
+  } catch {
+    throw new Error(
+      `${label} must be a canonical I105 account ID for network prefix ${networkPrefix}.`,
+    );
+  }
+
+  const literal = renderCanonicalAccountId(address, networkPrefix);
+  if (value !== literal) {
+    throw new Error(
+      `${label} must exactly match its canonical I105 rendering for network prefix ${networkPrefix}.`,
+    );
+  }
+
+  return { address, literal };
 };
 
 export const normalizeCanonicalAccountIdLiteral = (
   value: string,
   label: string,
-  networkPrefix?: number,
+  networkPrefix: number,
 ) => {
-  const literal = normalizeAccountLiteralInput(value);
-  if (!literal) {
-    throw new Error(`${label} must be a non-empty string.`);
-  }
-  const detectedPrefix = detectNativeLiteralPrefix(literal);
-  const normalizedPrefix = normalizeNetworkPrefix(
-    networkPrefix ?? detectedPrefix ?? DEFAULT_NETWORK_PREFIX,
+  const normalizedPrefix = normalizeNetworkPrefix(networkPrefix);
+  return parseCanonicalAccountId(value, label, normalizedPrefix).literal;
+};
+
+export const requireAccountIdBoundToPublicKey = (input: {
+  accountId: string;
+  publicKeyHex: string;
+  networkPrefix: number;
+  signingAlgorithm: string;
+}): string => {
+  const accountId = normalizeCanonicalAccountIdLiteral(
+    input.accountId,
+    "accountId",
+    input.networkPrefix,
   );
-
-  try {
-    const parsed = AccountAddress.parseEncoded(literal);
-    return normalizeCanonicalLiteralFromAddress(
-      parsed.address,
-      normalizedPrefix,
-    );
-  } catch {
-    // Fall through to native I105 parsing or legacy SDK normalization.
-  }
-
-  const nativeParsed = parseNativeAccountLiteral(literal, normalizedPrefix);
-  if (nativeParsed) {
-    return normalizeCanonicalLiteralFromAddress(
-      AccountAddress.fromCanonicalBytes(nativeParsed.canonicalBytes),
-      normalizedPrefix,
+  const derivedAccountId = deriveAccountAddressView({
+    domain: "",
+    publicKeyHex: input.publicKeyHex,
+    networkPrefix: input.networkPrefix,
+    signingAlgorithm: input.signingAlgorithm,
+  }).accountId;
+  if (accountId !== derivedAccountId) {
+    throw new Error(
+      "accountId does not match the supplied signing key and algorithm.",
     );
   }
-
-  return fallbackCanonicalLiteral(literal, label, normalizedPrefix);
+  return accountId;
 };
 
 export const parseAccountAddressLiteral = (
   value: string,
   label: string,
-  networkPrefix = DEFAULT_NETWORK_PREFIX,
+  networkPrefix: number,
 ) => {
-  const literal = normalizeAccountLiteralInput(value);
-  if (!literal) {
-    throw new Error(`${label} must be a non-empty string.`);
-  }
   const normalizedPrefix = normalizeNetworkPrefix(networkPrefix);
-
-  try {
-    return AccountAddress.parseEncoded(literal).address;
-  } catch {
-    // Fall through to native I105 parsing or legacy SDK normalization.
-  }
-
-  const nativeParsed = parseNativeAccountLiteral(literal, normalizedPrefix);
-  if (nativeParsed) {
-    return AccountAddress.fromCanonicalBytes(nativeParsed.canonicalBytes);
-  }
-
-  const normalizedLiteral = normalizeSdkAccountId(literal, label);
-  return AccountAddress.parseEncoded(normalizedLiteral).address;
+  return parseCanonicalAccountId(value, label, normalizedPrefix).address;
 };
 
 export const deriveAccountAddressView = (input: {
   domain: string;
   publicKeyHex: string;
-  networkPrefix?: number;
+  networkPrefix: number;
   signingAlgorithm?: string;
 }) => {
+  requireBoundedLocalDomainLabel(input.domain);
   const networkPrefix = normalizeNetworkPrefix(input.networkPrefix);
   const publicKey = hexToBuffer(input.publicKeyHex, "publicKeyHex");
-  const signingAlgorithm =
-    trimString(input.signingAlgorithm) || DEFAULT_SIGNING_ALGORITHM;
-  // Modern account addresses are signatory-only; keep `domain` on the input
-  // for compatibility with stored profile metadata and onboarding UX.
-  void trimString(input.domain);
+  const signingAlgorithm: CryptoAlgorithm = normalizeCryptoAlgorithm(
+    trimString(input.signingAlgorithm) || DEFAULT_SIGNING_ALGORITHM,
+  );
+  // Modern account addresses are signatory-only. The domain remains local
+  // profile metadata and never participates in address derivation.
   const address = AccountAddress.fromAccount({
     publicKey,
     algorithm: signingAlgorithm,
   });
   const canonicalBytes = Uint8Array.from(address.canonicalBytes());
-  const compatAccountId = normalizeCompatLiteralFromAddress(
-    address,
-    networkPrefix,
-  );
+  const canonicalAccountId = renderCanonicalAccountId(address, networkPrefix);
   const nativeRendering = renderNativeAccountLiteral(
     canonicalBytes,
     networkPrefix,
   );
 
   return {
-    accountId: compatAccountId,
-    i105AccountId: normalizeCanonicalLiteralFromAddress(address, networkPrefix),
-    i105DefaultAccountId: normalizeCanonicalLiteralFromAddress(
+    accountId: canonicalAccountId,
+    i105AccountId: canonicalAccountId,
+    i105DefaultAccountId: renderCanonicalAccountId(
       address,
       SORA_NETWORK_PREFIX,
     ),

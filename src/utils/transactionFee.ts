@@ -11,241 +11,92 @@ type Translate = (
   params?: Record<string, string | number>,
 ) => string;
 
-export type TransactionFeeLike = {
-  amount?: string | number | null;
-  quantity?: string | number | null;
-  assetId?: string | null;
-  asset_id?: string | null;
-  asset?: string | null;
-  feeAssetId?: string | null;
-  fee_asset_id?: string | null;
-  fee_amount?: string | number | null;
-  feeAmount?: string | number | null;
-  gas_asset_id?: string | null;
-  gasAssetId?: string | null;
-  source?: string | null;
-  estimated?: boolean | null;
-};
+export type TransactionFeeComponentKind = "nexus" | "pipeline_gas";
 
-type TransactionFeeContainer = TransactionFeeLike & {
-  fee?: TransactionFeeLike | string | number | null;
-  fees?: TransactionFeeLike | TransactionFeeLike[] | string | number | null;
-  tx_fee?: TransactionFeeLike | string | number | null;
-  txFee?: TransactionFeeLike | string | number | null;
-  transaction_fee?: TransactionFeeLike | string | number | null;
-  transactionFee?: TransactionFeeLike | string | number | null;
-  network_fee?: TransactionFeeLike | string | number | null;
-  networkFee?: TransactionFeeLike | string | number | null;
-  fee_amount?: string | number | null;
-  feeAmount?: string | number | null;
-};
+/**
+ * The only transaction-fee DTO exposed to the renderer.
+ *
+ * Amounts are the signed quote's charge limits, not post-commit debits. Torii's
+ * current pipeline and explorer transaction projections do not expose a
+ * committed-fee contract, so they must never be adapted into this shape.
+ */
+export interface TransactionFeeQuoteView {
+  payer: "authority" | "sponsor";
+  components: Array<{
+    kind: TransactionFeeComponentKind;
+    assetDefinitionId: string;
+    maxAmount: string;
+  }>;
+  nextBlockHeight: string;
+}
 
-const trim = (value: unknown) => String(value ?? "").trim();
-
-export const transactionFeeHintForEndpoint = (
-  toriiUrl: unknown,
-): TransactionFeeLike | null => {
-  void toriiUrl;
-  // An endpoint URL is not evidence of its live fee schedule. Callers may use
-  // this helper as a fallback slot, but the amount must come from the Torii
-  // transaction/finality response rather than a wallet-side estimate.
-  return null;
-};
-
-const readNestedFee = (
-  value: TransactionFeeLike | string | number | null | undefined,
-): TransactionFeeLike | null => {
-  if (value === undefined || value === null || value === "") {
-    return null;
-  }
-  if (typeof value === "string" || typeof value === "number") {
-    return { amount: value };
-  }
-  if (typeof value === "object" && !Array.isArray(value)) {
-    return value;
-  }
-  return null;
-};
-
-const readFeeCollection = (
-  value:
-    | TransactionFeeLike
-    | TransactionFeeLike[]
-    | string
-    | number
-    | null
-    | undefined,
-): TransactionFeeLike | null => {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const fee = readNestedFee(item);
-      if (fee) {
-        return fee;
-      }
-    }
-    return null;
-  }
-  return readNestedFee(value);
-};
-
-const readDirectTransactionFee = (
-  record: TransactionFeeContainer,
-): TransactionFeeLike | null =>
-  readNestedFee(record.fee) ??
-  readFeeCollection(record.fees) ??
-  readNestedFee(record.tx_fee) ??
-  readNestedFee(record.txFee) ??
-  readNestedFee(record.transaction_fee) ??
-  readNestedFee(record.transactionFee) ??
-  readNestedFee(record.network_fee) ??
-  readNestedFee(record.networkFee) ??
-  (trim(record.fee_amount ?? record.feeAmount)
-    ? {
-        amount: record.fee_amount ?? record.feeAmount,
-        assetId:
-          record.feeAssetId ??
-          record.fee_asset_id ??
-          record.gasAssetId ??
-          record.gas_asset_id,
-        source: record.source,
-        estimated: record.estimated,
-      }
-    : null) ??
-  (trim(
-    record.feeAssetId ??
-      record.fee_asset_id ??
-      record.gasAssetId ??
-      record.gas_asset_id,
-  )
-    ? {
-        assetId:
-          record.feeAssetId ??
-          record.fee_asset_id ??
-          record.gasAssetId ??
-          record.gas_asset_id,
-        source: record.source,
-        estimated: record.estimated,
-      }
-    : null);
-
-const FEE_CONTAINER_KEYS = [
-  "status",
-  "content",
-  "result",
-  "execution_result",
-  "executionResult",
-  "receipt",
-  "committed",
-  "transaction",
-] as const;
-
-const readTransactionFeeFromContainer = (
-  value: unknown,
-  seen: WeakSet<object>,
-): TransactionFeeLike | null => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  if (seen.has(value)) {
-    return null;
-  }
-  seen.add(value);
-
-  const record = value as TransactionFeeContainer & Record<string, unknown>;
-  const direct = readDirectTransactionFee(record);
-  if (direct) {
-    return direct;
-  }
-
-  for (const key of FEE_CONTAINER_KEYS) {
-    const fee = readTransactionFeeFromContainer(record[key], seen);
-    if (fee) {
-      return fee;
-    }
-  }
-  return null;
-};
-
-export const readTransactionFee = (
-  value: unknown,
-): TransactionFeeLike | null => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  return readTransactionFeeFromContainer(value, new WeakSet());
-};
-
-const formatFeeAsset = (fee: TransactionFeeLike): string => {
-  const assetId = trim(
-    fee.assetId ??
-      fee.asset_id ??
-      fee.feeAssetId ??
-      fee.fee_asset_id ??
-      fee.gasAssetId ??
-      fee.gas_asset_id ??
-      fee.asset,
-  );
-  if (!assetId) {
-    return "asset";
-  }
-  if (areAssetDefinitionIdsEquivalent(assetId, SORA_XOR_ASSET_DEFINITION_ID)) {
+const formatFeeAsset = (assetDefinitionId: string): string => {
+  if (
+    areAssetDefinitionIdsEquivalent(
+      assetDefinitionId,
+      SORA_XOR_ASSET_DEFINITION_ID,
+    )
+  ) {
     return "XOR";
   }
-  const symbol = deriveAssetSymbol(assetId, "");
-  return symbol || formatAssetDefinitionLabel(assetId, assetId);
+  const symbol = deriveAssetSymbol(assetDefinitionId, "");
+  return (
+    symbol || formatAssetDefinitionLabel(assetDefinitionId, assetDefinitionId)
+  );
 };
 
-const isEstimatedFee = (fee: TransactionFeeLike): boolean =>
-  Boolean(fee.estimated) || trim(fee.source).toLowerCase() === "estimated";
+const formatFeeComponents = (
+  quote: TransactionFeeQuoteView,
+  t: Translate,
+): string =>
+  quote.components
+    .map((component) =>
+      t("{amount} {asset} ({kind})", {
+        amount: component.maxAmount,
+        asset: formatFeeAsset(component.assetDefinitionId),
+        kind:
+          component.kind === "pipeline_gas" ? t("Pipeline gas") : t("Nexus"),
+      }),
+    )
+    .join(" + ");
 
 export const formatTransactionFeeInline = (
-  value: unknown,
+  quote: TransactionFeeQuoteView | null | undefined,
   t: Translate,
 ): string => {
-  const fee = readTransactionFee(value);
-  if (!fee) {
-    return t("Charged on-chain");
+  if (!quote) {
+    return t("Fee quote unavailable");
   }
-  const amount = trim(
-    fee.amount ?? fee.quantity ?? fee.fee_amount ?? fee.feeAmount,
-  );
-  if (amount) {
-    return `${amount} ${formatFeeAsset(fee)}`;
+  if (quote.components.length === 0) {
+    return t("Quoted maximum: none");
   }
-  return t("Charged on-chain");
+  return t("Quoted maximum: {components}", {
+    components: formatFeeComponents(quote, t),
+  });
 };
 
 export const formatTransactionFee = (
-  value: unknown,
+  quote: TransactionFeeQuoteView | null | undefined,
   t: Translate,
-  fallbackFee?: unknown,
 ): string => {
-  const fee = readTransactionFee(value) ?? readTransactionFee(fallbackFee);
-  if (!fee) {
-    return t("Network fee: charged on-chain (amount unavailable).");
+  if (!quote) {
+    return t("Network fee quote unavailable.");
   }
-  const amount = trim(
-    fee.amount ?? fee.quantity ?? fee.fee_amount ?? fee.feeAmount,
-  );
-  const asset = formatFeeAsset(fee);
-  if (amount) {
-    return t(
-      isEstimatedFee(fee)
-        ? "Network fee: {amount} {asset} (estimated)."
-        : "Network fee: {amount} {asset}.",
-      { amount, asset },
-    );
+  if (quote.components.length === 0) {
+    return t("Quoted maximum network fee: none.");
   }
-  return t("Network fee: charged on-chain ({asset}).", { asset });
+  return t("Quoted maximum network fee: {components} (paid by {payer}).", {
+    components: formatFeeComponents(quote, t),
+    payer: quote.payer === "authority" ? t("wallet") : t("sponsor"),
+  });
 };
 
 export const appendTransactionFee = (
   message: string,
-  transactionResult: unknown,
+  quote: TransactionFeeQuoteView | null | undefined,
   t: Translate,
-  fallbackFee?: unknown,
 ): string => {
-  const base = trim(message);
-  const fee = formatTransactionFee(transactionResult, t, fallbackFee);
+  const base = message.trim();
+  const fee = formatTransactionFee(quote, t);
   return base ? `${base} ${fee}` : fee;
 };

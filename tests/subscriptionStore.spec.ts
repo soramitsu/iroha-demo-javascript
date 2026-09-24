@@ -61,6 +61,7 @@ const subscriptionContext = (input: {
   networkPrefix?: number;
   observedChainId?: string;
   observedNetworkPrefix?: number | null;
+  observedGenesisHash?: string;
   identityStatus?: string;
 }) => ({
   toriiUrl: input.toriiUrl,
@@ -72,6 +73,7 @@ const subscriptionContext = (input: {
     input.observedNetworkPrefix === undefined
       ? (input.networkPrefix ?? 369)
       : input.observedNetworkPrefix,
+  observedGenesisHash: input.observedGenesisHash ?? "11".repeat(32),
   identityStatus: input.identityStatus ?? "matched",
 });
 
@@ -252,6 +254,29 @@ describe("subscription store context ownership", () => {
     expect(store.ownsRecord(staleRecord, matchedContext)).toBe(false);
   });
 
+  it("isolates a same-chain network reset by its genesis hash", async () => {
+    vi.mocked(listSubscriptions).mockResolvedValue({
+      items: [record("pre-reset-subscription")],
+      total: 1,
+    });
+    vi.mocked(listSubscriptionPlans).mockResolvedValue({ items: [], total: 0 });
+    const beforeReset = subscriptionContext({
+      toriiUrl: "https://taira.example",
+      accountId: "testuAlice",
+      observedGenesisHash: "11".repeat(32),
+    });
+    const store = useSubscriptionStore();
+    await store.refresh(beforeReset);
+
+    store.activateContext({
+      ...beforeReset,
+      observedGenesisHash: "22".repeat(32),
+    });
+
+    expect(store.records).toEqual([]);
+    expect(store.pendingForContext(beforeReset)).toEqual([]);
+  });
+
   it("loads every declared page for records and plans", async () => {
     const records = Array.from({ length: 101 }, (_, index) =>
       record(`subscription-${index.toString().padStart(3, "0")}`),
@@ -307,6 +332,34 @@ describe("subscription store context ownership", () => {
       limit: 100,
       offset: 100,
     });
+  });
+
+  it("rejects endpoint-declared pagination beyond the first-release bound", async () => {
+    vi.mocked(listSubscriptions).mockResolvedValue({
+      items: [],
+      total: 10_001,
+    });
+    vi.mocked(listSubscriptionPlans).mockResolvedValue({
+      items: [],
+      total: 10_001,
+    });
+
+    const store = useSubscriptionStore();
+    await store.refresh(
+      subscriptionContext({
+        toriiUrl: "https://taira.example",
+        accountId: "alice@wonderland",
+      }),
+    );
+
+    expect(listSubscriptions).toHaveBeenCalledOnce();
+    expect(listSubscriptionPlans).toHaveBeenCalledOnce();
+    expect(store.recordsError).toBe(
+      "Subscription pagination returned an invalid total.",
+    );
+    expect(store.plansError).toBe(
+      "Subscription plan pagination returned an invalid total.",
+    );
   });
 
   it("keeps plan and owned-record reads independent", async () => {

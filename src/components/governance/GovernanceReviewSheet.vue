@@ -5,7 +5,7 @@
     :eyebrow="t('Decoded transaction')"
     :description="
       t(
-        'The exact decoded instruction and ABI21 fee quote are shown before vault signing.',
+        'The exact decoded instruction and transaction fee quote are shown before vault signing.',
       )
     "
     :busy="governance.busy === 'commit'"

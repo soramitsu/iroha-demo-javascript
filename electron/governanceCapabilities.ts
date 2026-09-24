@@ -1,16 +1,16 @@
 import { createHash } from "node:crypto";
 import { normalizeCanonicalAccountIdLiteral } from "./accountAddress";
+import {
+  TAIRA_CHAIN_ID,
+  TAIRA_NETWORK_ID,
+  TAIRA_NETWORK_PREFIX,
+} from "../src/utils/firstReleaseNetworkIdentity";
 
-export const TAIRA_GOVERNANCE_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
-export const TAIRA_GOVERNANCE_NETWORK_PREFIX = 369;
-export const TAIRA_GOVERNANCE_GENESIS_HASH =
-  "884b61c61f56dcddceee7aa3dc1deb89fb8552576d02b01a1b7af9ae7fd5ff7a";
+export const TAIRA_GOVERNANCE_CHAIN_ID = TAIRA_CHAIN_ID;
+export const TAIRA_GOVERNANCE_NETWORK_ID = TAIRA_NETWORK_ID;
+export const TAIRA_GOVERNANCE_NETWORK_PREFIX = TAIRA_NETWORK_PREFIX;
 export const TAIRA_GOVERNANCE_ABI_VERSION = 1;
-export const TAIRA_GOVERNANCE_DATA_MODEL_VERSION = 3;
-export const TAIRA_GOVERNANCE_WINDOW_SPAN = 3_600;
-// This Torii capability is the staging delay before the voting window opens.
-// Validation-fee activation has its own strict 120,960-block delay.
-export const TAIRA_GOVERNANCE_MIN_ENACTMENT_DELAY = 600;
+export const TAIRA_GOVERNANCE_DATA_MODEL_VERSION = 4;
 export const TAIRA_GOVERNANCE_XOR_ASSET_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 export const TAIRA_GOVERNANCE_ESCROW_ACCOUNT =
   "testuﾛ1NfｷgﾉﾓﾉBｦKﾌﾘﾒoﾇﾂﾛrG81ﾋjWﾎﾕVncwﾌSｱ3pﾘﾋﾉhUS9Q76";
@@ -20,143 +20,147 @@ export const GOVERNANCE_BODY_KEYS = [
   "agenda_council",
   "interest_panel",
   "review_panel",
-  "policy_jury",
-  "oversight_committee",
+  "coordination_council",
+  "mpc_committee",
   "fma_committee",
+  "oversight_committee",
+  "policy_jury",
+  "confirmation_jury",
 ] as const;
 
 export type GovernanceBodyKey = (typeof GOVERNANCE_BODY_KEYS)[number];
 
-export const TAIRA_GOVERNANCE_TARGET_BODY_SIZES: Readonly<
-  Record<GovernanceBodyKey, number>
-> = Object.freeze({
+export const TAIRA_GOVERNANCE_TARGET_BODY_SIZES = Object.freeze({
   rules_committee: 7,
   agenda_council: 9,
   interest_panel: 11,
   review_panel: 13,
-  policy_jury: 25,
-  oversight_committee: 7,
+  coordination_council: 150,
+  mpc_committee: 50,
   fma_committee: 5,
+  oversight_committee: 7,
+  policy_jury: 25,
+  confirmation_jury: 1_000,
+} satisfies Record<GovernanceBodyKey, number>);
+
+export const TAIRA_GOVERNANCE_PRIVATE_BALLOT_BOUNDS = Object.freeze({
+  minEnactmentDelay: 600,
+  invitationPhaseBlocks: 3_600,
+  registrationPhaseBlocks: 3_600,
+  survivorFreezePhaseBlocks: 1_000,
+  commitmentPhaseBlocks: 3_600,
+  releaseDelayBlocks: 600,
+  openingPhaseBlocks: 600,
+  maxBallotRetries: 3,
+  maxCorpusEntries: 1_000,
 });
 
 export const GOVERNANCE_REQUIRED_PROPOSAL_KINDS = [
-  "VALIDATION_FEE_PAYOUT_LIFECYCLE",
+  "DEPLOY_CONTRACT",
+  "RUNTIME_UPGRADE",
+  "SCCP_ROUTE_GOVERNANCE",
   "VALIDATION_FEE_POLICY",
+  "VALIDATION_FEE_PAYOUT_LIFECYCLE",
+  "MUSUBI_REGISTRY_GOVERNANCE",
+  "SORAFS_PROVIDER_GOVERNANCE",
+  "CONTRACT_LIFECYCLE_GOVERNANCE",
+  "CONTRACT_EMERGENCY_HOLD",
+  "GLOBAL_DATA_TRIGGER_PERMISSION_GOVERNANCE",
 ] as const;
 
 export const GOVERNANCE_REQUIRED_ROUTES = [
   "/v1/gov/capabilities",
-  "/v1/gov/citizens",
-  "/v1/gov/citizens/{account_id}",
   "/v1/gov/citizens/draft",
+  "/v1/gov/parliament/attempts/draft",
+  "/v1/gov/parliament/attempts/{governance_attempt_id}",
+  "/v1/gov/parliament/ballots/{ballot_attempt_id}/casting-context",
+  "/v1/gov/parliament/ballots/{ballot_attempt_id}/casting-proof",
+  "/v1/gov/parliament/ballots/{ballot_attempt_id}/release-context",
+  "/v1/gov/parliament/ballots/{ballot_attempt_id}/partial-release",
+  "/v1/gov/parliament/transitions/draft",
+  "/v1/gov/ballots/plain",
+  "/v1/gov/ballots/zk-v1",
+  "/v1/gov/ballots/zk-v1/ballot-proof",
   "/v1/validation-fee/proposals",
   "/v1/validation-fee/proposals/{proposal_id}",
-  "/v1/validation-fee/proposals/{proposal_id}/enactment-proof",
   "/v1/validation-fee/proposals/draft",
-  "/v1/validation-fee/proposals/{proposal_id}/plain-electorate/draft",
-  "/v1/validation-fee/proposals/{proposal_id}/plain-ballot/draft",
-  "/v1/validation-fee/proposals/{proposal_id}/finalization/draft",
-  "/v1/validation-fee/proposals/{proposal_id}/payout-lifecycle-enactment/draft",
-  "/v1/gov/parliament/ballots",
-  "/v1/gov/ballots/plain",
 ] as const;
-
-export interface GovernanceValidationFeePlainElectorateRulesV1 {
-  votingAssetId: typeof TAIRA_GOVERNANCE_XOR_ASSET_ID;
-  bondEscrowAccount: string;
-  slashReceiverAccount: string;
-  ballotAmount: "150";
-  ballotDurationBlocks: "3600";
-  citizenshipAmount: "10000";
-  maxMembers: "256";
-  convictionStepBlocks: "100";
-  maxConviction: "6";
-  minTurnout: "1";
-  approvalThresholdNumerator: "1";
-  approvalThresholdDenominator: "2";
-  eligibilityRule: {
-    rule: "proposal_operator_at_or_before_gate_others_after_gate";
-    value: null;
-  };
-}
 
 export interface GovernanceCapabilitiesV1 {
   schema: "iroha.governance.capabilities.v1";
   version: 1;
-  chainId: string;
-  genesisHash: string;
-  currentHeight: number;
-  networkPrefix: number;
-  abiVersion: number;
-  dataModelVersion: number;
-  approvalMode: "PARLIAMENT_SORTITION_JIT";
-  plainVotingEnabled: true;
-  autoFinalizePlain: true;
-  autoFinalizePlainScope: "GENERIC_NON_VALIDATION_FEE_ONLY";
-  validationFeePlainRequiresExplicitFinalization: true;
-  validationFeePlainElectorateRules: GovernanceValidationFeePlainElectorateRulesV1;
-  citizenshipAssetId: string;
-  citizenshipBondAmount: string;
-  citizenshipEscrowAccount: string;
-  votingAssetId: string;
-  minBondAmount: string;
-  bondEscrowAccount: string;
-  convictionStepBlocks: number;
-  maxConviction: number;
-  minEnactmentDelay: number;
-  windowSpan: number;
-  minTurnout: string;
-  approvalThresholdNumerator: number;
-  approvalThresholdDenominator: number;
-  parliamentQuorumBps: number;
-  targetBodySizes: Record<GovernanceBodyKey, number>;
+  networkId: typeof TAIRA_GOVERNANCE_NETWORK_ID;
+  currentHeight: string;
+  networkPrefix: typeof TAIRA_GOVERNANCE_NETWORK_PREFIX;
+  abiVersion: typeof TAIRA_GOVERNANCE_ABI_VERSION;
+  dataModelVersion: typeof TAIRA_GOVERNANCE_DATA_MODEL_VERSION;
+  approvalMode: "PARLIAMENT_ATTEMPT_TIMED_OVN_V1";
+  privateBallotProtocol: "TIMED_OVN_TLE_THRESHOLD_BLS_V1";
+  mandatoryPrivateBallots: true;
+  proposalBackedReferendumBallotsSupported: false;
+  standalonePlainBallotsSupported: true;
+  standaloneZkBallotsSupported: true;
+  citizenshipAssetId: typeof TAIRA_GOVERNANCE_XOR_ASSET_ID;
+  citizenshipBondAmount: "10000";
+  citizenshipEscrowAccount: typeof TAIRA_GOVERNANCE_ESCROW_ACCOUNT;
+  votingAssetId: typeof TAIRA_GOVERNANCE_XOR_ASSET_ID;
+  minBondAmount: "150";
+  bondEscrowAccount: typeof TAIRA_GOVERNANCE_ESCROW_ACCOUNT;
+  minEnactmentDelay: 600;
+  invitationPhaseBlocks: 3_600;
+  registrationPhaseBlocks: 3_600;
+  survivorFreezePhaseBlocks: 1_000;
+  commitmentPhaseBlocks: 3_600;
+  releaseDelayBlocks: 600;
+  openingPhaseBlocks: 600;
+  maxBallotRetries: 3;
+  maxCorpusEntries: 1_000;
+  targetBodySizes: {
+    [Body in GovernanceBodyKey]: (typeof TAIRA_GOVERNANCE_TARGET_BODY_SIZES)[Body];
+  };
   supportedProposalKinds: Array<
     (typeof GOVERNANCE_REQUIRED_PROPOSAL_KINDS)[number]
   >;
-  supportedRoutes: string[];
+  supportedRoutes: Array<(typeof GOVERNANCE_REQUIRED_ROUTES)[number]>;
 }
 
 const GOVERNANCE_CAPABILITIES_CONTRACT_FINGERPRINT_DOMAIN =
   "iroha.wallet.governance-capabilities-contract.v1";
 
-/**
- * Fingerprint the immutable governance contract used for a reviewed write.
- * currentHeight is intentionally excluded because it is an observation that
- * may advance between prepare and confirmation without changing the contract.
- */
+/** Fingerprint the immutable write contract, excluding only moving height. */
 export function governanceCapabilitiesContractFingerprintV1(
   capabilities: Readonly<GovernanceCapabilitiesV1>,
 ): string {
   const contract = {
     schema: capabilities.schema,
     version: capabilities.version,
-    chainId: capabilities.chainId,
-    genesisHash: capabilities.genesisHash,
+    networkId: capabilities.networkId,
     networkPrefix: capabilities.networkPrefix,
     abiVersion: capabilities.abiVersion,
     dataModelVersion: capabilities.dataModelVersion,
     approvalMode: capabilities.approvalMode,
-    plainVotingEnabled: capabilities.plainVotingEnabled,
-    autoFinalizePlain: capabilities.autoFinalizePlain,
-    autoFinalizePlainScope: capabilities.autoFinalizePlainScope,
-    validationFeePlainRequiresExplicitFinalization:
-      capabilities.validationFeePlainRequiresExplicitFinalization,
-    validationFeePlainElectorateRules:
-      capabilities.validationFeePlainElectorateRules,
+    privateBallotProtocol: capabilities.privateBallotProtocol,
+    mandatoryPrivateBallots: capabilities.mandatoryPrivateBallots,
+    proposalBackedReferendumBallotsSupported:
+      capabilities.proposalBackedReferendumBallotsSupported,
+    standalonePlainBallotsSupported:
+      capabilities.standalonePlainBallotsSupported,
+    standaloneZkBallotsSupported: capabilities.standaloneZkBallotsSupported,
     citizenshipAssetId: capabilities.citizenshipAssetId,
     citizenshipBondAmount: capabilities.citizenshipBondAmount,
     citizenshipEscrowAccount: capabilities.citizenshipEscrowAccount,
     votingAssetId: capabilities.votingAssetId,
     minBondAmount: capabilities.minBondAmount,
     bondEscrowAccount: capabilities.bondEscrowAccount,
-    convictionStepBlocks: capabilities.convictionStepBlocks,
-    maxConviction: capabilities.maxConviction,
     minEnactmentDelay: capabilities.minEnactmentDelay,
-    windowSpan: capabilities.windowSpan,
-    minTurnout: capabilities.minTurnout,
-    approvalThresholdNumerator: capabilities.approvalThresholdNumerator,
-    approvalThresholdDenominator: capabilities.approvalThresholdDenominator,
-    parliamentQuorumBps: capabilities.parliamentQuorumBps,
+    invitationPhaseBlocks: capabilities.invitationPhaseBlocks,
+    registrationPhaseBlocks: capabilities.registrationPhaseBlocks,
+    survivorFreezePhaseBlocks: capabilities.survivorFreezePhaseBlocks,
+    commitmentPhaseBlocks: capabilities.commitmentPhaseBlocks,
+    releaseDelayBlocks: capabilities.releaseDelayBlocks,
+    openingPhaseBlocks: capabilities.openingPhaseBlocks,
+    maxBallotRetries: capabilities.maxBallotRetries,
+    maxCorpusEntries: capabilities.maxCorpusEntries,
     targetBodySizes: GOVERNANCE_BODY_KEYS.map((body) => [
       body,
       capabilities.targetBodySizes[body],
@@ -177,41 +181,45 @@ const CAPABILITY_KEYS = Object.freeze(
   [
     "abi_version",
     "approval_mode",
-    "approval_threshold_denominator",
-    "approval_threshold_numerator",
-    "auto_finalize_plain",
-    "auto_finalize_plain_scope",
     "bond_escrow_account",
-    "chain_id",
     "citizenship_asset_id",
     "citizenship_bond_amount",
     "citizenship_escrow_account",
-    "conviction_step_blocks",
+    "commitment_phase_blocks",
     "current_height",
     "data_model_version",
-    "genesis_hash",
-    "max_conviction",
+    "invitation_phase_blocks",
+    "mandatory_private_ballots",
+    "max_ballot_retries",
+    "max_corpus_entries",
     "min_bond_amount",
     "min_enactment_delay",
-    "min_turnout",
+    "network_id",
     "network_prefix",
-    "parliament_quorum_bps",
-    "plain_voting_enabled",
+    "opening_phase_blocks",
+    "private_ballot_protocol",
+    "proposal_backed_referendum_ballots_supported",
+    "registration_phase_blocks",
+    "release_delay_blocks",
     "schema",
+    "standalone_plain_ballots_supported",
+    "standalone_zk_ballots_supported",
     "supported_proposal_kinds",
     "supported_routes",
+    "survivor_freeze_phase_blocks",
     "target_body_sizes",
-    "validation_fee_plain_electorate_rules",
-    "validation_fee_plain_requires_explicit_finalization",
     "version",
     "voting_asset_id",
-    "window_span",
   ].sort(),
 );
 
 const record = (value: unknown, label: string): PlainRecord => {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError(`${label} must be an object.`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${label} must be a plain object.`);
   }
   return value as PlainRecord;
 };
@@ -221,7 +229,17 @@ const exactKeys = (
   expected: readonly string[],
   label: string,
 ): void => {
-  const actual = Object.keys(value).sort();
+  const ownKeys = Reflect.ownKeys(value);
+  if (
+    ownKeys.some((key) => typeof key !== "string") ||
+    ownKeys.some((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return !descriptor?.enumerable || !("value" in descriptor);
+    })
+  ) {
+    throw new TypeError(`${label} must contain enumerable JSON data fields.`);
+  }
+  const actual = (ownKeys as string[]).sort();
   if (
     actual.length !== expected.length ||
     actual.some((key, index) => key !== expected[index])
@@ -241,24 +259,34 @@ const exactText = (value: unknown, label: string): string => {
   return value;
 };
 
-const exactTairaAccount = (value: unknown, label: string): string => {
-  const literal = exactText(value, label);
-  let canonical: string;
-  try {
-    canonical = normalizeCanonicalAccountIdLiteral(
-      literal,
-      label,
-      TAIRA_GOVERNANCE_NETWORK_PREFIX,
-    );
-  } catch (error) {
-    throw new TypeError(
-      `${label} must be an exact Taira account literal: ${String(error)}`,
-    );
+const U64_MAX = (1n << 64n) - 1n;
+
+const exactU64Text = (
+  value: unknown,
+  label: string,
+  options: { positive?: boolean } = {},
+): string => {
+  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value)) {
+    throw new TypeError(`${label} must be a canonical uint64 string.`);
   }
-  if (canonical !== literal) {
-    throw new TypeError(`${label} must use its exact canonical Taira literal.`);
+  const parsed = BigInt(value);
+  if (parsed > U64_MAX || (options.positive && parsed === 0n)) {
+    throw new TypeError(`${label} is outside uint64.`);
   }
-  return literal;
+  return value;
+};
+
+const exactSafeInteger = (
+  value: unknown,
+  label: string,
+  options: { positive?: boolean } = {},
+): number => {
+  const literal = exactU64Text(value, label, options);
+  const parsed = BigInt(literal);
+  if (parsed > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new TypeError(`${label} is outside the exactly representable range.`);
+  }
+  return Number(parsed);
 };
 
 const exactDecimal = (
@@ -282,24 +310,24 @@ const exactDecimal = (
   return literal;
 };
 
-const safeInteger = (
-  value: unknown,
-  label: string,
-  options: { positive?: boolean } = {},
-): number => {
-  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value)) {
+const exactTairaAccount = (value: unknown, label: string): string => {
+  const literal = exactText(value, label);
+  let canonical: string;
+  try {
+    canonical = normalizeCanonicalAccountIdLiteral(
+      literal,
+      label,
+      TAIRA_GOVERNANCE_NETWORK_PREFIX,
+    );
+  } catch (error) {
     throw new TypeError(
-      `${label} must be a complete canonical decimal-integer string.`,
+      `${label} must be an exact Taira account literal: ${String(error)}`,
     );
   }
-  const parsed = BigInt(value);
-  if (
-    parsed > BigInt(Number.MAX_SAFE_INTEGER) ||
-    (options.positive && parsed === 0n)
-  ) {
-    throw new TypeError(`${label} is outside the exactly representable range.`);
+  if (canonical !== literal) {
+    throw new TypeError(`${label} must use its exact canonical Taira literal.`);
   }
-  return Number(parsed);
+  return literal;
 };
 
 const exactStringArray = (value: unknown, label: string): string[] => {
@@ -310,91 +338,28 @@ const exactStringArray = (value: unknown, label: string): string[] => {
         typeof entry !== "string" ||
         entry.length === 0 ||
         entry.trim() !== entry,
-    )
+    ) ||
+    new Set(value).size !== value.length
   ) {
-    throw new TypeError(`${label} must be an array of canonical strings.`);
+    throw new TypeError(
+      `${label} must be an array of unique canonical strings.`,
+    );
   }
   return [...value];
 };
 
-const validationFeePlainElectorateRules = (
-  value: unknown,
-): GovernanceValidationFeePlainElectorateRulesV1 => {
-  const rules = record(
-    value,
-    "governance capabilities.validation_fee_plain_electorate_rules",
-  );
-  exactKeys(
-    rules,
-    [
-      "approval_threshold_denominator",
-      "approval_threshold_numerator",
-      "ballot_amount",
-      "ballot_duration_blocks",
-      "bond_escrow_account",
-      "citizenship_amount",
-      "conviction_step_blocks",
-      "eligibility_rule",
-      "max_conviction",
-      "max_members",
-      "min_turnout",
-      "slash_receiver_account",
-      "voting_asset_id",
-    ],
-    "governance capabilities.validation_fee_plain_electorate_rules",
-  );
-  const eligibility = record(
-    rules.eligibility_rule,
-    "governance capabilities.validation_fee_plain_electorate_rules.eligibility_rule",
-  );
-  exactKeys(
-    eligibility,
-    ["rule", "value"],
-    "governance capabilities.validation_fee_plain_electorate_rules.eligibility_rule",
-  );
+const exactSet = <T extends string>(
+  actual: string[],
+  expected: readonly T[],
+  label: string,
+): T[] => {
   if (
-    rules.voting_asset_id !== TAIRA_GOVERNANCE_XOR_ASSET_ID ||
-    rules.ballot_amount !== "150" ||
-    rules.ballot_duration_blocks !== "3600" ||
-    rules.citizenship_amount !== "10000" ||
-    rules.max_members !== "256" ||
-    rules.conviction_step_blocks !== "100" ||
-    rules.max_conviction !== "6" ||
-    rules.min_turnout !== "1" ||
-    rules.approval_threshold_numerator !== "1" ||
-    rules.approval_threshold_denominator !== "2" ||
-    eligibility.rule !==
-      "proposal_operator_at_or_before_gate_others_after_gate" ||
-    eligibility.value !== null
+    actual.length !== expected.length ||
+    expected.some((entry) => !actual.includes(entry))
   ) {
-    throw new TypeError(
-      "governance capabilities validation-fee PLAIN electorate rules differ from Taira.",
-    );
+    throw new TypeError(`${label} differs from the first-release contract.`);
   }
-  return {
-    votingAssetId: TAIRA_GOVERNANCE_XOR_ASSET_ID,
-    bondEscrowAccount: exactTairaAccount(
-      rules.bond_escrow_account,
-      "governance capabilities.validation_fee_plain_electorate_rules.bond_escrow_account",
-    ),
-    slashReceiverAccount: exactTairaAccount(
-      rules.slash_receiver_account,
-      "governance capabilities.validation_fee_plain_electorate_rules.slash_receiver_account",
-    ),
-    ballotAmount: "150",
-    ballotDurationBlocks: "3600",
-    citizenshipAmount: "10000",
-    maxMembers: "256",
-    convictionStepBlocks: "100",
-    maxConviction: "6",
-    minTurnout: "1",
-    approvalThresholdNumerator: "1",
-    approvalThresholdDenominator: "2",
-    eligibilityRule: {
-      rule: "proposal_operator_at_or_before_gate_others_after_gate",
-      value: null,
-    },
-  };
+  return actual as T[];
 };
 
 const targetBodySizes = (value: unknown): Record<GovernanceBodyKey, number> => {
@@ -407,7 +372,7 @@ const targetBodySizes = (value: unknown): Record<GovernanceBodyKey, number> => {
   return Object.fromEntries(
     GOVERNANCE_BODY_KEYS.map((body) => [
       body,
-      safeInteger(
+      exactSafeInteger(
         sizes[body],
         `governance capabilities.target_body_sizes.${body}`,
         { positive: true },
@@ -416,25 +381,9 @@ const targetBodySizes = (value: unknown): Record<GovernanceBodyKey, number> => {
   ) as Record<GovernanceBodyKey, number>;
 };
 
-const assertRequiredSet = (
-  actual: string[],
-  required: readonly string[],
-  label: string,
-): void => {
-  if (
-    actual.length !== new Set(actual).size ||
-    required.some((entry) => !actual.includes(entry))
-  ) {
-    throw new TypeError(
-      `${label} does not expose the required Taira contract.`,
-    );
-  }
-};
-
 /**
- * Parse the single public governance readiness contract. This intentionally
- * rejects aliases and unknown fields so a node upgrade cannot silently change
- * what the wallet is about to sign.
+ * Parse the current Torii V1 readiness projection. Aliases, retired fields,
+ * and unreviewed values are rejected before a governance write can be drafted.
  */
 export function parseGovernanceCapabilitiesV1(
   value: unknown,
@@ -451,40 +400,30 @@ export function parseGovernanceCapabilitiesV1(
     );
   }
 
-  const chainId = exactText(
-    capabilities.chain_id,
-    "governance capabilities.chain_id",
+  const networkId = exactText(
+    capabilities.network_id,
+    "governance capabilities.network_id",
   );
-  const genesisHash = exactText(
-    capabilities.genesis_hash,
-    "governance capabilities.genesis_hash",
-  );
-  if (!/^[0-9a-f]{64}$/u.test(genesisHash) || /^0+$/u.test(genesisHash)) {
+  if (
+    !/^hash:[0-9A-F]{64}#[0-9A-F]{4}$/u.test(networkId) ||
+    networkId !== TAIRA_GOVERNANCE_NETWORK_ID
+  ) {
     throw new TypeError(
-      "governance capabilities.genesis_hash must be non-zero lowercase 32-byte hex.",
-    );
-  }
-  const approvalMode = capabilities.approval_mode;
-  if (approvalMode !== "PARLIAMENT_SORTITION_JIT") {
-    throw new TypeError(
-      "governance capabilities must advertise JIT Parliament sortition.",
+      "governance capabilities.network_id differs from the reviewed Taira NetworkId.",
     );
   }
   if (
-    capabilities.plain_voting_enabled !== true ||
-    capabilities.auto_finalize_plain !== true ||
-    capabilities.auto_finalize_plain_scope !==
-      "GENERIC_NON_VALIDATION_FEE_ONLY" ||
-    capabilities.validation_fee_plain_requires_explicit_finalization !== true
+    capabilities.approval_mode !== "PARLIAMENT_ATTEMPT_TIMED_OVN_V1" ||
+    capabilities.private_ballot_protocol !== "TIMED_OVN_TLE_THRESHOLD_BLS_V1" ||
+    capabilities.mandatory_private_ballots !== true ||
+    capabilities.proposal_backed_referendum_ballots_supported !== false ||
+    capabilities.standalone_plain_ballots_supported !== true ||
+    capabilities.standalone_zk_ballots_supported !== true
   ) {
     throw new TypeError(
-      "governance capabilities must scope automatic PLAIN finalization away from validation-fee proposals.",
+      "governance capabilities do not require the reviewed timed-OVN private Parliament contract.",
     );
   }
-
-  const validationFeeElectorateRules = validationFeePlainElectorateRules(
-    capabilities.validation_fee_plain_electorate_rules,
-  );
 
   const bodySizes = targetBodySizes(capabilities.target_body_sizes);
   for (const body of GOVERNANCE_BODY_KEYS) {
@@ -495,80 +434,53 @@ export function parseGovernanceCapabilitiesV1(
     }
   }
 
-  const supportedProposalKinds = exactStringArray(
-    capabilities.supported_proposal_kinds,
-    "governance capabilities.supported_proposal_kinds",
-  );
-  assertRequiredSet(
-    supportedProposalKinds,
+  const supportedProposalKinds = exactSet(
+    exactStringArray(
+      capabilities.supported_proposal_kinds,
+      "governance capabilities.supported_proposal_kinds",
+    ),
     GOVERNANCE_REQUIRED_PROPOSAL_KINDS,
     "governance capabilities.supported_proposal_kinds",
   );
-  if (
-    supportedProposalKinds.some(
-      (kind) =>
-        !GOVERNANCE_REQUIRED_PROPOSAL_KINDS.includes(
-          kind as (typeof GOVERNANCE_REQUIRED_PROPOSAL_KINDS)[number],
-        ),
-    )
-  ) {
-    throw new TypeError(
-      "governance capabilities advertises an unsupported proposal kind.",
-    );
-  }
-
-  const supportedRoutes = exactStringArray(
-    capabilities.supported_routes,
-    "governance capabilities.supported_routes",
-  );
-  assertRequiredSet(
-    supportedRoutes,
+  const supportedRoutes = exactSet(
+    exactStringArray(
+      capabilities.supported_routes,
+      "governance capabilities.supported_routes",
+    ),
     GOVERNANCE_REQUIRED_ROUTES,
     "governance capabilities.supported_routes",
   );
-  if (
-    supportedRoutes.some(
-      (route) =>
-        !GOVERNANCE_REQUIRED_ROUTES.includes(
-          route as (typeof GOVERNANCE_REQUIRED_ROUTES)[number],
-        ),
-    )
-  ) {
-    throw new TypeError(
-      "governance capabilities advertises an unsupported route.",
-    );
-  }
 
-  const parsed: GovernanceCapabilitiesV1 = {
-    schema: "iroha.governance.capabilities.v1",
-    version: 1,
-    chainId,
-    genesisHash,
-    currentHeight: safeInteger(
+  const parsed = {
+    schema: "iroha.governance.capabilities.v1" as const,
+    version: 1 as const,
+    networkId: networkId as typeof TAIRA_GOVERNANCE_NETWORK_ID,
+    currentHeight: exactU64Text(
       capabilities.current_height,
       "governance capabilities.current_height",
+      { positive: true },
     ),
-    networkPrefix: safeInteger(
+    networkPrefix: exactSafeInteger(
       capabilities.network_prefix,
       "governance capabilities.network_prefix",
       { positive: true },
     ),
-    abiVersion: safeInteger(
+    abiVersion: exactSafeInteger(
       capabilities.abi_version,
       "governance capabilities.abi_version",
       { positive: true },
     ),
-    dataModelVersion: safeInteger(
+    dataModelVersion: exactSafeInteger(
       capabilities.data_model_version,
       "governance capabilities.data_model_version",
       { positive: true },
     ),
-    approvalMode,
-    plainVotingEnabled: true,
-    autoFinalizePlain: true,
-    autoFinalizePlainScope: "GENERIC_NON_VALIDATION_FEE_ONLY",
-    validationFeePlainRequiresExplicitFinalization: true,
-    validationFeePlainElectorateRules: validationFeeElectorateRules,
+    approvalMode: "PARLIAMENT_ATTEMPT_TIMED_OVN_V1" as const,
+    privateBallotProtocol: "TIMED_OVN_TLE_THRESHOLD_BLS_V1" as const,
+    mandatoryPrivateBallots: true as const,
+    proposalBackedReferendumBallotsSupported: false as const,
+    standalonePlainBallotsSupported: true as const,
+    standaloneZkBallotsSupported: true as const,
     citizenshipAssetId: exactText(
       capabilities.citizenship_asset_id,
       "governance capabilities.citizenship_asset_id",
@@ -578,7 +490,7 @@ export function parseGovernanceCapabilitiesV1(
       "governance capabilities.citizenship_bond_amount",
       { positive: true },
     ),
-    citizenshipEscrowAccount: exactText(
+    citizenshipEscrowAccount: exactTairaAccount(
       capabilities.citizenship_escrow_account,
       "governance capabilities.citizenship_escrow_account",
     ),
@@ -595,84 +507,88 @@ export function parseGovernanceCapabilitiesV1(
       capabilities.bond_escrow_account,
       "governance capabilities.bond_escrow_account",
     ),
-    convictionStepBlocks: safeInteger(
-      capabilities.conviction_step_blocks,
-      "governance capabilities.conviction_step_blocks",
-      { positive: true },
-    ),
-    maxConviction: safeInteger(
-      capabilities.max_conviction,
-      "governance capabilities.max_conviction",
-      { positive: true },
-    ),
-    minEnactmentDelay: safeInteger(
+    minEnactmentDelay: exactSafeInteger(
       capabilities.min_enactment_delay,
       "governance capabilities.min_enactment_delay",
       { positive: true },
     ),
-    windowSpan: safeInteger(
-      capabilities.window_span,
-      "governance capabilities.window_span",
+    invitationPhaseBlocks: exactSafeInteger(
+      capabilities.invitation_phase_blocks,
+      "governance capabilities.invitation_phase_blocks",
       { positive: true },
     ),
-    minTurnout: exactDecimal(
-      capabilities.min_turnout,
-      "governance capabilities.min_turnout",
+    registrationPhaseBlocks: exactSafeInteger(
+      capabilities.registration_phase_blocks,
+      "governance capabilities.registration_phase_blocks",
       { positive: true },
     ),
-    approvalThresholdNumerator: safeInteger(
-      capabilities.approval_threshold_numerator,
-      "governance capabilities.approval_threshold_numerator",
+    survivorFreezePhaseBlocks: exactSafeInteger(
+      capabilities.survivor_freeze_phase_blocks,
+      "governance capabilities.survivor_freeze_phase_blocks",
       { positive: true },
     ),
-    approvalThresholdDenominator: safeInteger(
-      capabilities.approval_threshold_denominator,
-      "governance capabilities.approval_threshold_denominator",
+    commitmentPhaseBlocks: exactSafeInteger(
+      capabilities.commitment_phase_blocks,
+      "governance capabilities.commitment_phase_blocks",
       { positive: true },
     ),
-    parliamentQuorumBps: safeInteger(
-      capabilities.parliament_quorum_bps,
-      "governance capabilities.parliament_quorum_bps",
+    releaseDelayBlocks: exactSafeInteger(
+      capabilities.release_delay_blocks,
+      "governance capabilities.release_delay_blocks",
+      { positive: true },
+    ),
+    openingPhaseBlocks: exactSafeInteger(
+      capabilities.opening_phase_blocks,
+      "governance capabilities.opening_phase_blocks",
+      { positive: true },
+    ),
+    maxBallotRetries: exactSafeInteger(
+      capabilities.max_ballot_retries,
+      "governance capabilities.max_ballot_retries",
+    ),
+    maxCorpusEntries: exactSafeInteger(
+      capabilities.max_corpus_entries,
+      "governance capabilities.max_corpus_entries",
       { positive: true },
     ),
     targetBodySizes: bodySizes,
-    supportedProposalKinds:
-      supportedProposalKinds as GovernanceCapabilitiesV1["supportedProposalKinds"],
+    supportedProposalKinds,
     supportedRoutes,
   };
 
   if (
-    parsed.chainId !== TAIRA_GOVERNANCE_CHAIN_ID ||
-    parsed.genesisHash !== TAIRA_GOVERNANCE_GENESIS_HASH ||
     parsed.networkPrefix !== TAIRA_GOVERNANCE_NETWORK_PREFIX ||
     parsed.abiVersion !== TAIRA_GOVERNANCE_ABI_VERSION ||
     parsed.dataModelVersion !== TAIRA_GOVERNANCE_DATA_MODEL_VERSION ||
-    parsed.windowSpan !== TAIRA_GOVERNANCE_WINDOW_SPAN ||
-    parsed.minEnactmentDelay !== TAIRA_GOVERNANCE_MIN_ENACTMENT_DELAY ||
     parsed.citizenshipAssetId !== TAIRA_GOVERNANCE_XOR_ASSET_ID ||
     parsed.citizenshipBondAmount !== "10000" ||
     parsed.citizenshipEscrowAccount !== TAIRA_GOVERNANCE_ESCROW_ACCOUNT ||
     parsed.votingAssetId !== TAIRA_GOVERNANCE_XOR_ASSET_ID ||
     parsed.minBondAmount !== "150" ||
     parsed.bondEscrowAccount !== TAIRA_GOVERNANCE_ESCROW_ACCOUNT ||
-    parsed.validationFeePlainElectorateRules.bondEscrowAccount !==
-      TAIRA_GOVERNANCE_ESCROW_ACCOUNT ||
-    parsed.validationFeePlainElectorateRules.slashReceiverAccount !==
-      TAIRA_GOVERNANCE_ESCROW_ACCOUNT ||
-    parsed.validationFeePlainElectorateRules.bondEscrowAccount !==
-      parsed.bondEscrowAccount ||
-    parsed.convictionStepBlocks !== 100 ||
-    parsed.maxConviction !== 6 ||
-    parsed.minTurnout !== "1" ||
-    parsed.approvalThresholdNumerator !== 1 ||
-    parsed.approvalThresholdDenominator !== 2 ||
-    parsed.approvalThresholdNumerator >= parsed.approvalThresholdDenominator ||
-    parsed.parliamentQuorumBps !== 6_667
+    parsed.minEnactmentDelay !==
+      TAIRA_GOVERNANCE_PRIVATE_BALLOT_BOUNDS.minEnactmentDelay ||
+    parsed.invitationPhaseBlocks !==
+      TAIRA_GOVERNANCE_PRIVATE_BALLOT_BOUNDS.invitationPhaseBlocks ||
+    parsed.registrationPhaseBlocks !==
+      TAIRA_GOVERNANCE_PRIVATE_BALLOT_BOUNDS.registrationPhaseBlocks ||
+    parsed.survivorFreezePhaseBlocks !==
+      TAIRA_GOVERNANCE_PRIVATE_BALLOT_BOUNDS.survivorFreezePhaseBlocks ||
+    parsed.commitmentPhaseBlocks !==
+      TAIRA_GOVERNANCE_PRIVATE_BALLOT_BOUNDS.commitmentPhaseBlocks ||
+    parsed.releaseDelayBlocks !==
+      TAIRA_GOVERNANCE_PRIVATE_BALLOT_BOUNDS.releaseDelayBlocks ||
+    parsed.openingPhaseBlocks !==
+      TAIRA_GOVERNANCE_PRIVATE_BALLOT_BOUNDS.openingPhaseBlocks ||
+    parsed.maxBallotRetries !==
+      TAIRA_GOVERNANCE_PRIVATE_BALLOT_BOUNDS.maxBallotRetries ||
+    parsed.maxCorpusEntries !==
+      TAIRA_GOVERNANCE_PRIVATE_BALLOT_BOUNDS.maxCorpusEntries
   ) {
     throw new TypeError(
       "governance capabilities do not match the reviewed Taira release.",
     );
   }
 
-  return parsed;
+  return parsed as GovernanceCapabilitiesV1;
 }

@@ -5,73 +5,138 @@ export type ParsedAssetReference = {
   accountId: string;
 };
 
-const NORITO_PREFIX = "norito:";
-const NORITO_HEX_BODY_PATTERN = /^[0-9a-f]+$/;
-const ACCOUNT_REFERENCE_PATTERN =
-  /^(?:[^#@]+@[^#]+|testu.+|sorau.+|ｓｏｒａu.+|n\d{1,4}u.+)$/u;
-const OPAQUE_PREVIEW_HEAD = 8;
-const OPAQUE_PREVIEW_TAIL = 8;
-const OPAQUE_ASSET_LITERAL_PATTERN = /\bnorito:[A-Za-z0-9._:@#-]+/gi;
-const ASSET_HOLDING_DATASPACE_SUFFIX_PATTERN = /#dataspace:[^#\s]+$/i;
-const ASSET_DEFINITION_ADDRESS_VERSION = 1;
-const ASSET_DEFINITION_ADDRESS_LEN = 21;
-const BARE_ASSET_DEFINITION_LEN = 16;
 const BASE58_ALPHABET =
   "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const BASE58_ASSET_DEFINITION_ID_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{28}$/u;
+const ASSET_DEFINITION_ADDRESS_VERSION = 1;
+const ASSET_DEFINITION_ADDRESS_LENGTH = 21;
+const ASSET_DEFINITION_UUID_OFFSET = 1;
+const ASSET_DEFINITION_UUID_LENGTH = 16;
+const ASSET_DEFINITION_CHECKSUM_LENGTH = 4;
+const DATASPACE_SCOPE_PATTERN = /^dataspace:(?:0|[1-9]\d*)$/u;
+const MAX_DATASPACE_ID = 0xffff_ffff_ffff_ffffn;
 const SORA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+
+const bytesEqual = (left: Uint8Array, right: Uint8Array) =>
+  left.length === right.length &&
+  left.every((byte, index) => byte === right[index]);
+
+const decodeBase58 = (literal: string): Uint8Array | null => {
+  if (!BASE58_ASSET_DEFINITION_ID_PATTERN.test(literal)) {
+    return null;
+  }
+
+  const bytes = [0];
+  for (const character of literal) {
+    const digit = BASE58_ALPHABET.indexOf(character);
+    if (digit < 0) {
+      return null;
+    }
+    let carry = digit;
+    for (let index = 0; index < bytes.length; index += 1) {
+      const next = bytes[index]! * 58 + carry;
+      bytes[index] = next & 0xff;
+      carry = next >> 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+
+  let leadingZeroCount = 0;
+  while (literal[leadingZeroCount] === "1") {
+    leadingZeroCount += 1;
+  }
+  while (leadingZeroCount > 0) {
+    bytes.push(0);
+    leadingZeroCount -= 1;
+  }
+  return Uint8Array.from(bytes.reverse());
+};
+
+const isUuidV4 = (bytes: Uint8Array) =>
+  bytes.length === ASSET_DEFINITION_UUID_LENGTH &&
+  bytes[6]! >> 4 === 0b0100 &&
+  (bytes[8]! & 0b1100_0000) === 0b1000_0000;
+
+export const isCanonicalAssetDefinitionId = (
+  value: string | null | undefined,
+) => {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.trim() !== value
+  ) {
+    return false;
+  }
+  const decoded = decodeBase58(value);
+  if (
+    decoded === null ||
+    decoded.length !== ASSET_DEFINITION_ADDRESS_LENGTH ||
+    decoded[0] !== ASSET_DEFINITION_ADDRESS_VERSION
+  ) {
+    return false;
+  }
+  const uuid = decoded.subarray(
+    ASSET_DEFINITION_UUID_OFFSET,
+    ASSET_DEFINITION_UUID_OFFSET + ASSET_DEFINITION_UUID_LENGTH,
+  );
+  if (!isUuidV4(uuid)) {
+    return false;
+  }
+  const checksumOffset =
+    ASSET_DEFINITION_ADDRESS_LENGTH - ASSET_DEFINITION_CHECKSUM_LENGTH;
+  return bytesEqual(
+    decoded.subarray(checksumOffset),
+    blake3(decoded.subarray(0, checksumOffset)).subarray(
+      0,
+      ASSET_DEFINITION_CHECKSUM_LENGTH,
+    ),
+  );
+};
+
+const isCanonicalAccountSegment = (value: string) =>
+  value.length > 0 &&
+  value.trim() === value &&
+  !value.includes("#") &&
+  Array.from(value).every((character) => character >= " ");
+
+const normalizeDataspaceScope = (value: string) => {
+  if (!DATASPACE_SCOPE_PATTERN.test(value)) {
+    return null;
+  }
+  const id = BigInt(value.slice("dataspace:".length));
+  return id <= MAX_DATASPACE_ID ? value : null;
+};
 
 export const splitAssetReference = (
   value: string | null | undefined,
 ): ParsedAssetReference => {
-  const literal = String(value ?? "").trim();
-  if (!literal) {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.trim() !== value
+  ) {
     return { definitionId: "", accountId: "" };
   }
+  if (isCanonicalAssetDefinitionId(value)) {
+    return { definitionId: value, accountId: "" };
+  }
 
-  if (literal.includes("##")) {
-    const [definitionId, ...accountTail] = literal.split("##");
+  const parts = value.split("#");
+  if (
+    (parts.length === 2 || parts.length === 3) &&
+    isCanonicalAssetDefinitionId(parts[0]) &&
+    isCanonicalAccountSegment(parts[1]!) &&
+    (parts.length === 2 || normalizeDataspaceScope(parts[2]!) !== null)
+  ) {
     return {
-      definitionId: (definitionId ?? "").trim(),
-      accountId: accountTail.join("##").trim(),
+      definitionId: parts[0]!,
+      accountId: parts.slice(1).join("#"),
     };
   }
-
-  const hashParts = literal.split("#");
-  if (hashParts.length === 2) {
-    const [definitionId, accountId] = hashParts;
-    const normalizedAccountId = (accountId ?? "").trim();
-    if (ACCOUNT_REFERENCE_PATTERN.test(normalizedAccountId)) {
-      return {
-        definitionId: (definitionId ?? "").trim(),
-        accountId: normalizedAccountId,
-      };
-    }
-  }
-
-  if (hashParts.length >= 3) {
-    const [definitionId, accountId, ...suffixParts] = hashParts;
-    const normalizedAccountId = (accountId ?? "").trim();
-    const suffix = suffixParts.join("#").trim();
-    if (
-      (definitionId ?? "").trim() &&
-      ACCOUNT_REFERENCE_PATTERN.test(normalizedAccountId) &&
-      suffix.toLowerCase().startsWith("dataspace:")
-    ) {
-      return {
-        definitionId: (definitionId ?? "").trim(),
-        accountId: `${normalizedAccountId}#${suffix}`,
-      };
-    }
-  }
-
-  if (hashParts.length >= 3) {
-    return {
-      definitionId: hashParts.slice(0, 2).join("#"),
-      accountId: hashParts.slice(2).join("#"),
-    };
-  }
-
-  return { definitionId: literal, accountId: "" };
+  return { definitionId: "", accountId: "" };
 };
 
 export const extractAssetDefinitionId = (
@@ -81,81 +146,9 @@ export const extractAssetDefinitionId = (
 export const extractAssetHoldingDataspaceSuffix = (
   value: string | null | undefined,
 ): string => {
-  const literal = String(value ?? "").trim();
-  return literal.match(ASSET_HOLDING_DATASPACE_SUFFIX_PATTERN)?.[0] ?? "";
-};
-
-const parseHexBytes = (value: string) => {
-  const literal = value.trim();
-  if (
-    !literal ||
-    literal.length % 2 !== 0 ||
-    !NORITO_HEX_BODY_PATTERN.test(literal)
-  ) {
-    return null;
-  }
-
-  const out = new Uint8Array(literal.length / 2);
-  for (let index = 0; index < literal.length; index += 2) {
-    const byte = Number.parseInt(literal.slice(index, index + 2), 16);
-    if (Number.isNaN(byte)) {
-      return null;
-    }
-    out[index / 2] = byte;
-  }
-  return out;
-};
-
-const encodeBase58 = (bytes: Uint8Array) => {
-  if (!bytes.length) {
-    return "";
-  }
-
-  const digits = [0];
-  for (const byte of bytes) {
-    let carry = byte;
-    for (let index = 0; index < digits.length; index += 1) {
-      const next = digits[index]! * 256 + carry;
-      digits[index] = next % 58;
-      carry = Math.floor(next / 58);
-    }
-    while (carry > 0) {
-      digits.push(carry % 58);
-      carry = Math.floor(carry / 58);
-    }
-  }
-
-  let leadingZeroCount = 0;
-  while (leadingZeroCount < bytes.length && bytes[leadingZeroCount] === 0) {
-    leadingZeroCount += 1;
-  }
-
-  let out = "1".repeat(leadingZeroCount);
-  for (let index = digits.length - 1; index >= 0; index -= 1) {
-    out += BASE58_ALPHABET[digits[index]!]!;
-  }
-  return out;
-};
-
-export const decodeNoritoAssetDefinitionId = (
-  value: string | null | undefined,
-) => {
-  const definitionId = extractAssetDefinitionId(value);
-  if (!isNoritoAssetDefinitionId(definitionId)) {
-    return null;
-  }
-
-  const bodyHex = definitionId.slice(NORITO_PREFIX.length);
-  const bareBytes = parseHexBytes(bodyHex);
-  if (!bareBytes || bareBytes.length !== BARE_ASSET_DEFINITION_LEN) {
-    return null;
-  }
-
-  const payload = new Uint8Array(ASSET_DEFINITION_ADDRESS_LEN);
-  payload[0] = ASSET_DEFINITION_ADDRESS_VERSION;
-  payload.set(bareBytes, 1);
-  payload.set(blake3(payload.slice(0, 17)).slice(0, 4), 17);
-  return encodeBase58(payload);
+  const parsed = splitAssetReference(value);
+  const scope = parsed.accountId.split("#")[1];
+  return scope ? `#${scope}` : "";
 };
 
 export const buildAssetHoldingIdLiteral = (input: {
@@ -163,145 +156,63 @@ export const buildAssetHoldingIdLiteral = (input: {
   accountId: string | null | undefined;
   dataspaceSuffix?: string | null | undefined;
 }): string => {
-  const rawAssetDefinitionId = String(input.assetDefinitionId ?? "").trim();
-  const definitionId =
-    decodeNoritoAssetDefinitionId(rawAssetDefinitionId) ||
-    extractAssetDefinitionId(rawAssetDefinitionId).trim();
-  const accountId = String(input.accountId ?? "").trim();
-  const dataspaceSuffix = (
-    input.dataspaceSuffix ??
-    extractAssetHoldingDataspaceSuffix(rawAssetDefinitionId)
-  )
-    .trim()
-    .replace(/^#?/, "#");
-  const normalizedDataspaceSuffix =
-    dataspaceSuffix === "#" ||
-    !dataspaceSuffix.toLowerCase().startsWith("#dataspace:")
-      ? ""
-      : dataspaceSuffix;
-
-  if (!definitionId || !accountId) {
-    return "";
+  const definitionId = extractAssetDefinitionId(input.assetDefinitionId);
+  const accountId = input.accountId;
+  if (
+    !definitionId ||
+    typeof accountId !== "string" ||
+    !isCanonicalAccountSegment(accountId)
+  ) {
+    throw new Error(
+      "Asset holding ID requires an exact Base58 asset definition and canonical account literal.",
+    );
   }
-  return `${definitionId}#${accountId}${normalizedDataspaceSuffix}`;
-};
 
-const normalizeComparableAssetDefinitionId = (
-  value: string | null | undefined,
-) => {
-  const definitionId = extractAssetDefinitionId(value).trim();
-  if (!definitionId) {
-    return "";
+  const inheritedSuffix = extractAssetHoldingDataspaceSuffix(
+    input.assetDefinitionId,
+  );
+  const requestedSuffix = input.dataspaceSuffix ?? inheritedSuffix;
+  if (requestedSuffix === null || requestedSuffix === "") {
+    return `${definitionId}#${accountId}`;
   }
-  return decodeNoritoAssetDefinitionId(definitionId)?.trim() || definitionId;
+  if (
+    typeof requestedSuffix !== "string" ||
+    !requestedSuffix.startsWith("#") ||
+    normalizeDataspaceScope(requestedSuffix.slice(1)) === null
+  ) {
+    throw new Error("Asset holding dataspace suffix must be canonical.");
+  }
+  return `${definitionId}#${accountId}${requestedSuffix}`;
 };
 
 export const areAssetDefinitionIdsEquivalent = (
   left: string | null | undefined,
   right: string | null | undefined,
 ) => {
-  const normalizedLeft = extractAssetDefinitionId(left).trim();
-  const normalizedRight = extractAssetDefinitionId(right).trim();
-  if (!normalizedLeft || !normalizedRight) {
-    return false;
-  }
-  if (normalizedLeft === normalizedRight) {
-    return true;
-  }
-  const decodedLeft = decodeNoritoAssetDefinitionId(normalizedLeft)?.trim();
-  const decodedRight = decodeNoritoAssetDefinitionId(normalizedRight)?.trim();
-  if (!decodedLeft && !decodedRight) {
-    return false;
-  }
-  return (decodedLeft || normalizedLeft) === (decodedRight || normalizedRight);
+  const normalizedLeft = extractAssetDefinitionId(left);
+  const normalizedRight = extractAssetDefinitionId(right);
+  return Boolean(normalizedLeft) && normalizedLeft === normalizedRight;
 };
-
-const shortenOpaqueAssetLiteral = (value: string) => {
-  const literal = value.trim();
-  if (!literal) {
-    return "";
-  }
-  const body = literal.startsWith(NORITO_PREFIX)
-    ? literal.slice(NORITO_PREFIX.length)
-    : literal;
-  if (body.length <= 12) {
-    return body;
-  }
-  return `${body.slice(0, OPAQUE_PREVIEW_HEAD)}...${body.slice(
-    -OPAQUE_PREVIEW_TAIL,
-  )}`;
-};
-
-export const isNoritoAssetDefinitionId = (value: string | null | undefined) =>
-  extractAssetDefinitionId(value).trim().startsWith(NORITO_PREFIX);
-
-const SYMBOL_PATTERN = /^[a-z0-9._-]{1,16}$/i;
 
 export const deriveAssetSymbol = (
   value: string | null | undefined,
   fallback = "ASSET",
-) => {
-  const definitionId = extractAssetDefinitionId(value);
-  if (!definitionId) {
-    return fallback;
-  }
-
-  if (definitionId === SORA_XOR_ASSET_DEFINITION_ID) {
-    return "XOR";
-  }
-  if (definitionId.startsWith(NORITO_PREFIX)) {
-    return fallback;
-  }
-
-  const legacySymbol = definitionId.split("#")[0]?.trim();
-  if (legacySymbol && SYMBOL_PATTERN.test(legacySymbol)) {
-    return legacySymbol.toUpperCase();
-  }
-
-  const namespaceSymbol = definitionId.split(":")[0]?.trim();
-  if (namespaceSymbol && SYMBOL_PATTERN.test(namespaceSymbol)) {
-    return namespaceSymbol.toUpperCase();
-  }
-
-  if (SYMBOL_PATTERN.test(definitionId)) {
-    return definitionId.toUpperCase();
-  }
-
-  return fallback;
-};
+) =>
+  extractAssetDefinitionId(value) === SORA_XOR_ASSET_DEFINITION_ID
+    ? "XOR"
+    : fallback;
 
 export const formatAssetDefinitionLabel = (
   value: string | null | undefined,
   fallback = "—",
-) => {
-  const definitionId = extractAssetDefinitionId(value);
-  if (!definitionId) {
-    return fallback;
-  }
-  if (!isNoritoAssetDefinitionId(definitionId)) {
-    return definitionId;
-  }
-  return (
-    decodeNoritoAssetDefinitionId(definitionId) ||
-    shortenOpaqueAssetLiteral(definitionId) ||
-    fallback
-  );
-};
+) => extractAssetDefinitionId(value) || fallback;
 
 export const formatAssetReferenceLabel = (
   value: string | null | undefined,
   fallback = "—",
 ) => {
-  const literal = String(value ?? "").trim();
-  if (!literal) {
-    return fallback;
-  }
-  if (!isNoritoAssetDefinitionId(literal)) {
-    return literal;
-  }
-  const { definitionId, accountId } = splitAssetReference(literal);
-  const definitionLabel = formatAssetDefinitionLabel(definitionId, fallback);
-  return accountId ? `${definitionLabel} | ${accountId}` : definitionLabel;
+  const parsed = splitAssetReference(value);
+  return parsed.definitionId ? String(value) : fallback;
 };
 
 export const resolveToriiXorAsset = <
@@ -310,42 +221,26 @@ export const resolveToriiXorAsset = <
   assets: TAsset[],
   preferredAssetDefinitionIds: Array<string | null | undefined> = [],
 ) => {
-  const preferredDefinitionIds = preferredAssetDefinitionIds
-    .map((value) => extractAssetDefinitionId(value).trim())
-    .filter(Boolean);
-  const candidates = assets
-    .map((asset) => {
-      const assetId = String(asset.asset_id ?? "").trim();
-      const definitionId = extractAssetDefinitionId(assetId).trim();
-      if (!assetId || !definitionId) {
-        return null;
-      }
-
-      const quantity = Number(String(asset.quantity ?? "").trim());
-      return {
-        asset,
-        definitionId,
-        isPositive: Number.isFinite(quantity) && quantity > 0,
-      };
-    })
-    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
-
-  for (const preferredDefinitionId of preferredDefinitionIds) {
-    const preferredCandidates = candidates.filter((candidate) =>
-      areAssetDefinitionIdsEquivalent(
-        candidate.definitionId,
-        preferredDefinitionId,
-      ),
-    );
-    const preferredCandidate =
-      preferredCandidates.find((candidate) => candidate.isPositive) ??
-      preferredCandidates[0];
-    if (preferredCandidate) {
-      return preferredCandidate.asset;
-    }
+  const preferredDefinitionIds = new Set(
+    preferredAssetDefinitionIds
+      .map((value) => extractAssetDefinitionId(value))
+      .filter(Boolean),
+  );
+  if (preferredDefinitionIds.size === 0) {
+    return null;
   }
 
-  return null;
+  const candidates = assets.filter((asset) =>
+    preferredDefinitionIds.has(extractAssetDefinitionId(asset.asset_id)),
+  );
+  return (
+    candidates.find((asset) => {
+      const quantity = Number(asset.quantity);
+      return Number.isFinite(quantity) && quantity > 0;
+    }) ??
+    candidates[0] ??
+    null
+  );
 };
 
 export const shouldReplaceConfiguredAssetDefinitionId = (input: {
@@ -353,48 +248,29 @@ export const shouldReplaceConfiguredAssetDefinitionId = (input: {
   detectedAssetDefinitionId: string | null | undefined;
   knownAssetIds?: Array<string | null | undefined>;
 }) => {
+  const configuredLiteral =
+    typeof input.configuredAssetDefinitionId === "string"
+      ? input.configuredAssetDefinitionId
+      : "";
   const configured = extractAssetDefinitionId(
     input.configuredAssetDefinitionId,
-  ).trim();
-  const detected = extractAssetDefinitionId(
-    input.detectedAssetDefinitionId,
-  ).trim();
-  if (!detected) {
+  );
+  const detected = extractAssetDefinitionId(input.detectedAssetDefinitionId);
+  if (
+    !detected ||
+    configured === detected ||
+    (configuredLiteral.length > 0 && !configured)
+  ) {
     return false;
   }
 
-  if (areAssetDefinitionIdsEquivalent(configured, detected)) {
-    return false;
-  }
-  if (!configured) {
-    return true;
-  }
-
-  const configuredLooksLegacy = configured.includes("#");
-  const comparableConfigured = normalizeComparableAssetDefinitionId(configured);
-  const comparableDetected = normalizeComparableAssetDefinitionId(detected);
-  const knownAssetDefinitionIds = new Set(
+  const known = new Set(
     (input.knownAssetIds ?? [])
-      .map((value) => normalizeComparableAssetDefinitionId(value))
+      .map((value) => extractAssetDefinitionId(value))
       .filter(Boolean),
   );
-  if (knownAssetDefinitionIds.size > 0) {
-    if (!knownAssetDefinitionIds.has(comparableDetected)) {
-      return false;
-    }
-    if (configuredLooksLegacy) {
-      return true;
-    }
-    return !knownAssetDefinitionIds.has(comparableConfigured);
+  if (known.size === 0) {
+    return !configured;
   }
-
-  return configuredLooksLegacy;
+  return known.has(detected) && (!configured || !known.has(configured));
 };
-
-export const formatOpaqueAssetLiteralsInText = (
-  value: string | null | undefined,
-) =>
-  String(value ?? "").replace(
-    OPAQUE_ASSET_LITERAL_PATTERN,
-    (literal) => formatAssetReferenceLabel(literal, literal) || literal,
-  );

@@ -14,10 +14,13 @@ describe("current live surface contract", () => {
       'warnings.push("Nexus lifecycle telemetry is unavailable.")',
     );
     expect(source).toContain(
-      "return parseNexusLifecycleJson(await response.text())",
+      'await readBoundedExactJsonTextResponse(response, "Nexus lifecycle")',
     );
     expect(source).toContain("fetchNexusLifecycle(toriiUrl, signal)");
-    expect(source).toContain("fetchNexusLifecycle(config.toriiUrl)");
+    expect(source).toContain(
+      'const { toriiUrl } = requireFirstReleaseIpcInput(config, "toriiConfig")',
+    );
+    expect(source).toContain("return fetchNexusLifecycle(toriiUrl)");
     expect(source).toContain("/v1/nexus/public-lanes/");
     expect(source).not.toContain("/v1/nexus/public_lanes/");
   });
@@ -33,14 +36,14 @@ describe("current live surface contract", () => {
     const source = preloadSource();
 
     expect(source).not.toContain("listOfflineAllowances");
-    expect(source).toContain('"/v1/offline/readiness"');
+    expect(source).not.toContain('"/v1/offline/readiness"');
     expect(source).not.toContain("metadata.zk.policy");
     expect(source).not.toContain('"zk.policy"');
   });
 
   it("builds transparent transfers only from the configured canonical asset", () => {
     const source = preloadSource();
-    const start = source.indexOf("async transferAsset(input)");
+    const start = source.indexOf("async transferAsset(rendererInput)");
     const end = source.indexOf("setIrohaConnectContext(input)", start);
     const transferSource = source.slice(start, end);
 

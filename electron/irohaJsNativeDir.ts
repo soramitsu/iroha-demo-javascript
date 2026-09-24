@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -9,18 +9,29 @@ import {
 } from "./irohaJsNativeProvenance";
 
 const NATIVE_MODULE_FILENAME = "iroha_js_host.node";
+const ACTIVE_SDK_NATIVE_PATH_SEGMENTS = [
+  "node_modules",
+  ".cache",
+  "iroha-sdk-compat",
+  "active",
+  "native",
+] as const;
 const REQUIRED_NATIVE_EXPORTS = [
   "accountAddressParseEncoded",
   "accountAddressRender",
   "deriveConfidentialReceiveAddressV2",
-  "buildConfidentialTransferProofV2",
-  "buildConfidentialUnshieldProofV2",
-  "buildConfidentialUnshieldProofV3",
   "buildIvmProvedTransactionPayload",
   "signQuotedIvmProvedTransactionPayload",
+  "buildTransactionPayload",
+  "signQuotedTransactionPayload",
+  "encodeSignedTransactionVersioned",
+  "hashSignedTransaction",
+  "decodeTransactionReceiptJson",
   "noritoDecodeInstruction",
   "noritoEncodeInstruction",
   "inspectSubscriptionTriggerAction",
+  "validationFeeHijiriQuoteRequestV1",
+  "validationFeeVerifyHijiriQuoteResponseV1",
   "validationFeePolicyProposalFingerprintV1",
   "validationFeePayoutLifecycleProposalFingerprintV1",
   "connectNoritoBridgeAbiVersion",
@@ -29,38 +40,19 @@ const REQUIRED_NATIVE_EXPORTS = [
   "securePrivateFileRead",
   "securePrivateFileWriteAtomic",
 ] as const;
-const REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION = 21;
+const REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION = 23;
 export const REQUIRED_SECURE_PRIVATE_FILE_ABI_VERSION = 1;
-const REQUIRED_VALIDATION_FEE_POLICY_FINGERPRINT =
-  "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90";
-const REQUIRED_VALIDATION_FEE_PAYOUT_FINGERPRINT =
-  "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b";
-const REQUIRED_VALIDATION_FEE_PLAIN_RULES_JSON = JSON.stringify({
-  voting_asset_id: "5dHF5UNffENuEg9mhjYwY1jcZ1K5",
-  bond_escrow_account: "sorauﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K",
-  slash_receiver_account:
-    "sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX",
-  ballot_amount: "150",
-  ballot_duration_blocks: "3600",
-  citizenship_amount: "10000",
-  max_members: "256",
-  conviction_step_blocks: "100",
-  max_conviction: "6",
-  min_turnout: "1",
-  approval_threshold_numerator: "1",
-  approval_threshold_denominator: "2",
-  eligibility_rule: {
-    rule: "proposal_operator_at_or_before_gate_others_after_gate",
-    value: null,
-  },
-});
+const REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR =
+  "sorauﾛ1Pｽp8zXFQﾗｷPsFﾒｶﾑ3ｵmﾉbｼｽUｱｶヱﾚBXヱﾊCﾋﾘﾈvuKFKM346";
+const REQUIRED_VALIDATION_FEE_SECOND_PROPOSAL_OPERATOR =
+  "sorauﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K";
 const REQUIRED_VALIDATION_FEE_POLICY_JSON = JSON.stringify({
   schema_version: 1,
-  chain_id: "validation-fee-js-test",
-  genesis_hash: "12".repeat(32),
+  network_id:
+    "hash:1313131313131313131313131313131313131313131313131313131313131313#9CE1",
   policy_version: "1",
   previous_policy_hash: null,
-  ds_asset_id: "6REzUFWXnmqZyzE6chiczVVuW4m5",
+  ds_asset_id: "7FF2EKZbaWzi5QTD6hewE2voveah",
   ds_scale: 2,
   fee: "0.1",
   treasury_account_id: "sorauﾛ1PaQｽGh1ｴ6pAﾜnqｸfJuｿMﾑVqﾏvQﾐﾚｼｾﾋaﾈｳﾊc1ｺﾊ1GGM2D",
@@ -75,15 +67,15 @@ const REQUIRED_VALIDATION_FEE_POLICY_JSON = JSON.stringify({
 });
 const REQUIRED_VALIDATION_FEE_PAYOUT_BINDING_JSON = JSON.stringify({
   contract_address:
-    "tairac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9ggff82m7",
+    "irohac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9gg4yxgjw",
   code_hash: "34".repeat(32),
   entrypoint: "autonomous_validation_fee_tick",
-  treasury_account_id: "sorauﾛ1PﾏYfvYvｽhｽqVﾎ7nｱﾏUAｺﾗTaGeﾘhxWCrﾊｾﾋﾏkﾚQvR5TU4J",
-  sbd_asset_id: "6REzUFWXnmqZyzE6chiczVVuW4m5",
+  treasury_account_id: "sorauﾛ1PZﾗidｱJJHofｸXNｵｿcﾐﾃgﾀﾔzBYﾜcﾈｦfｶxKfﾁｼ1pG871VMK",
+  ds_asset_id: "7FF2EKZbaWzi5QTD6hewE2voveah",
   xor_asset_id: "5dHF5UNffENuEg9mhjYwY1jcZ1K5",
   pool_vault_account_id:
     "sorauﾛ1PTYｷEヱｿsYbe7ｾｵﾆﾐﾓﾕiﾋｵYヱfﾍuGFTmｺiSaHxgﾅｼ3BYUD1",
-  batch_sbd: "10",
+  batch_ds: "10",
   min_xor_out: "4",
   max_xor_out: "100",
   recipients: [
@@ -105,6 +97,10 @@ const REQUIRED_VALIDATION_FEE_PAYOUT_BINDING_JSON = JSON.stringify({
     },
   ],
 });
+const REQUIRED_VALIDATION_FEE_POLICY_FINGERPRINT_HEX =
+  "4742b1f274928767564c6effa414e640e6f635874d74684b06b95414c5afa16e";
+const REQUIRED_VALIDATION_FEE_PAYOUT_FINGERPRINT_HEX =
+  "8fd84f6599e22db4da15f7152a914dc0091dd73a7906d5981cce37d485191c25";
 
 const trimString = (value: unknown): string => String(value ?? "").trim();
 const hasOwn = (value: object, key: string): boolean =>
@@ -213,40 +209,100 @@ export const hasRequiredIrohaJsNativeExports = (
     ) {
       return false;
     }
-    const policyFingerprint = (
+    const computePolicyFingerprint =
       typedNativeModule.validationFeePolicyProposalFingerprintV1 as (
+        proposalOperator: string,
         policyJson: string,
         payoutLifecycleProposalId: null,
-        plainElectorateRulesJson: string,
-      ) => unknown
-    )(
+      ) => unknown;
+    const policyFingerprint = computePolicyFingerprint(
+      REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR,
       REQUIRED_VALIDATION_FEE_POLICY_JSON,
       null,
-      REQUIRED_VALIDATION_FEE_PLAIN_RULES_JSON,
+    );
+    const repeatedPolicyFingerprint = computePolicyFingerprint(
+      REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR,
+      REQUIRED_VALIDATION_FEE_POLICY_JSON,
+      null,
+    );
+    const secondOperatorFingerprint = computePolicyFingerprint(
+      REQUIRED_VALIDATION_FEE_SECOND_PROPOSAL_OPERATOR,
+      REQUIRED_VALIDATION_FEE_POLICY_JSON,
+      null,
+    );
+    const requiredPolicyFingerprint = Buffer.from(
+      REQUIRED_VALIDATION_FEE_POLICY_FINGERPRINT_HEX,
+      "hex",
     );
     if (
       !Buffer.isBuffer(policyFingerprint) ||
       policyFingerprint.length !== 32 ||
-      policyFingerprint.toString("hex") !==
-        REQUIRED_VALIDATION_FEE_POLICY_FINGERPRINT
+      !Buffer.isBuffer(repeatedPolicyFingerprint) ||
+      repeatedPolicyFingerprint.length !== 32 ||
+      !policyFingerprint.equals(requiredPolicyFingerprint) ||
+      !policyFingerprint.equals(repeatedPolicyFingerprint) ||
+      !Buffer.isBuffer(secondOperatorFingerprint) ||
+      secondOperatorFingerprint.length !== 32 ||
+      policyFingerprint.equals(secondOperatorFingerprint)
     ) {
       return false;
     }
-    const payoutFingerprint = (
+
+    const computePayoutFingerprint =
       typedNativeModule.validationFeePayoutLifecycleProposalFingerprintV1 as (
+        proposalOperator: string,
         payoutBindingJson: string,
-        plainElectorateRulesJson: string,
-      ) => unknown
-    )(
+      ) => unknown;
+    const payoutFingerprint = computePayoutFingerprint(
+      REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR,
       REQUIRED_VALIDATION_FEE_PAYOUT_BINDING_JSON,
-      REQUIRED_VALIDATION_FEE_PLAIN_RULES_JSON,
     );
-    return (
-      Buffer.isBuffer(payoutFingerprint) &&
-      payoutFingerprint.length === 32 &&
-      payoutFingerprint.toString("hex") ===
-        REQUIRED_VALIDATION_FEE_PAYOUT_FINGERPRINT
+    const repeatedPayoutFingerprint = computePayoutFingerprint(
+      REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR,
+      REQUIRED_VALIDATION_FEE_PAYOUT_BINDING_JSON,
     );
+    const secondOperatorPayoutFingerprint = computePayoutFingerprint(
+      REQUIRED_VALIDATION_FEE_SECOND_PROPOSAL_OPERATOR,
+      REQUIRED_VALIDATION_FEE_PAYOUT_BINDING_JSON,
+    );
+    const requiredPayoutFingerprint = Buffer.from(
+      REQUIRED_VALIDATION_FEE_PAYOUT_FINGERPRINT_HEX,
+      "hex",
+    );
+    if (
+      !Buffer.isBuffer(payoutFingerprint) ||
+      payoutFingerprint.length !== 32 ||
+      !Buffer.isBuffer(repeatedPayoutFingerprint) ||
+      repeatedPayoutFingerprint.length !== 32 ||
+      !payoutFingerprint.equals(requiredPayoutFingerprint) ||
+      !payoutFingerprint.equals(repeatedPayoutFingerprint) ||
+      !Buffer.isBuffer(secondOperatorPayoutFingerprint) ||
+      secondOperatorPayoutFingerprint.length !== 32 ||
+      payoutFingerprint.equals(secondOperatorPayoutFingerprint)
+    ) {
+      return false;
+    }
+
+    let rejectedInvalidPolicy = false;
+    try {
+      computePolicyFingerprint(
+        REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR,
+        "{}",
+        null,
+      );
+    } catch (error) {
+      rejectedInvalidPolicy = String(error).includes(
+        "validation-fee policy must contain exactly",
+      );
+    }
+    if (!rejectedInvalidPolicy) return false;
+
+    try {
+      computePayoutFingerprint(REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR, "{}");
+      return false;
+    } catch (error) {
+      return String(error).includes("payout binding must contain exactly");
+    }
   } catch {
     return false;
   }
@@ -255,48 +311,37 @@ export const hasRequiredIrohaJsNativeExports = (
 const resolveNativeCandidates = (moduleUrl: string): NativeCandidate[] => {
   const baseDir = dirname(fileURLToPath(moduleUrl));
   const packagedRuntime = isPackagedElectronModuleUrl(moduleUrl);
-  return [
-    {
-      nativeDir: resolve(
-        baseDir,
-        "..",
-        "node_modules",
-        "@iroha",
-        "iroha-js",
-        "native",
-      ),
-      packaged: packagedRuntime,
-    },
-    {
-      nativeDir: resolve(
-        baseDir,
-        "..",
-        "..",
-        "node_modules",
-        "@iroha",
-        "iroha-js",
-        "native",
-      ),
-      packaged: packagedRuntime,
-    },
-    {
-      nativeDir: resolve(
-        baseDir,
-        "..",
-        "..",
-        "..",
-        "node_modules",
-        "@iroha",
-        "iroha-js",
-        "native",
-      ),
-      packaged: packagedRuntime,
-    },
-    {
-      nativeDir: resolve(baseDir, "..", "native"),
-      packaged: true,
-    },
+  if (packagedRuntime) {
+    return [
+      {
+        nativeDir: resolve(baseDir, "..", "native"),
+        packaged: true,
+      },
+    ];
+  }
+  const projectRootCandidates = [
+    resolve(baseDir, ".."),
+    resolve(baseDir, "..", ".."),
   ];
+  return [...new Set(projectRootCandidates)].map((projectRoot) => ({
+    nativeDir: resolve(projectRoot, ...ACTIVE_SDK_NATIVE_PATH_SEGMENTS),
+    packaged: false,
+  }));
+};
+
+const samePhysicalNativeDirectory = (
+  configured: string,
+  selected: string,
+): boolean => {
+  if (!isAbsolute(configured) || resolve(configured) !== configured) {
+    return false;
+  }
+  if (configured === selected) return true;
+  try {
+    return realpathSync.native(configured) === realpathSync.native(selected);
+  } catch {
+    return false;
+  }
 };
 
 const isCompatibleNativeDir = (
@@ -369,7 +414,18 @@ export const configureIrohaJsNativeDir = (
         "IROHA_JS_NATIVE_DIR cannot override the provenance-bound native binding in a packaged Electron application.",
       );
     }
-    return existing;
+    const selected = resolveIrohaJsNativeDir(
+      moduleUrl,
+      fileExists,
+      loadNativeModule,
+      materializePackagedNativeSnapshot,
+    );
+    if (selected === null || !samePhysicalNativeDirectory(existing, selected)) {
+      throw new Error(
+        "IROHA_JS_NATIVE_DIR must identify the native directory from the active SDK selected by iroha-sdk-compat.",
+      );
+    }
+    return selected;
   }
   const resolved = resolveIrohaJsNativeDir(
     moduleUrl,
@@ -406,7 +462,7 @@ export const loadIrohaJsNativeBinding = (
     );
   if (!nativeDir) {
     throw new Error(
-      "The @iroha/iroha-js native binding is required. Run npm install in this app and npm run build:native inside ../iroha/javascript/iroha_js.",
+      "The @iroha/iroha-js native binding is required. Run node scripts/build-iroha-native.mjs --sdk-root ../iroha/javascript/iroha_js from the wallet checkout.",
     );
   }
 
@@ -417,7 +473,7 @@ export const loadIrohaJsNativeBinding = (
     );
     if (!hasRequiredIrohaJsNativeExports(nativeModule)) {
       throw new Error(
-        "The @iroha/iroha-js native binding is stale or incomplete; rebuild ../iroha/javascript/iroha_js before signing transactions.",
+        "The @iroha/iroha-js native binding is stale or incomplete; rebuild it with node scripts/build-iroha-native.mjs --sdk-root ../iroha/javascript/iroha_js before signing transactions.",
       );
     }
     return nativeModule;

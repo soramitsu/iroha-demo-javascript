@@ -2,6 +2,8 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import AxeBuilder from "@axe-core/playwright";
+import { ed25519 } from "@noble/curves/ed25519";
+import { AccountAddress } from "@iroha/iroha-js/address";
 import { chromium } from "playwright";
 import { createServer } from "vite";
 import vue from "@vitejs/plugin-vue";
@@ -17,15 +19,109 @@ const targetSizeFailures = [];
 const primaryActionFailures = [];
 const layoutFailures = [];
 
-const E2E_ACCOUNT_ID = "testu2Ze2e111111111111111111111111111111111111111111";
 const E2E_PUBLIC_KEY_HEX =
-  "abababababababababababababababababababababababababababababababab";
+  "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737";
+const E2E_ACCOUNT_ID = AccountAddress.fromAccount({
+  publicKey: Uint8Array.from(Buffer.from(E2E_PUBLIC_KEY_HEX, "hex")),
+}).toI105(369);
 const E2E_PRIVATE_KEY_HEX =
   "1111111111111111111111111111111111111111111111111111111111111111";
 const TAIRA_TORII_URL = "https://taira.sora.org";
 const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
+const TAIRA_NETWORK_ID =
+  "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94";
+const TAIRA_GOVERNANCE_ESCROW_ACCOUNT =
+  "testuﾛ1NfｷgﾉﾓﾉBｦKﾌﾘﾒoﾇﾂﾛrG81ﾋjWﾎﾕVncwﾌSｱ3pﾘﾋﾉhUS9Q76";
 const XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 const XOR_ASSET_ID = `${XOR_ASSET_DEFINITION_ID}#${E2E_ACCOUNT_ID}`;
+
+const governanceFixtureAccount = (seedByte) =>
+  AccountAddress.fromAccount({
+    publicKey: ed25519.getPublicKey(new Uint8Array(32).fill(seedByte)),
+  }).toI105(369);
+
+const GOVERNANCE_FIXTURE_ACCOUNTS = Object.freeze({
+  treasury: governanceFixtureAccount(0x21),
+  poolVault: governanceFixtureAccount(0x22),
+  recipients: Object.freeze(
+    [0x23, 0x24, 0x25, 0x26].map(governanceFixtureAccount),
+  ),
+});
+
+// Keep this normalized fixture aligned with GovernanceCapabilitiesV1. Retired
+// proposal-backed PLAIN ballot, manual finalization, and enactment routes are
+// intentionally absent.
+const GOVERNANCE_CAPABILITIES_FIXTURE = Object.freeze({
+  schema: "iroha.governance.capabilities.v1",
+  version: 1,
+  networkId: TAIRA_NETWORK_ID,
+  currentHeight: "98765",
+  networkPrefix: 369,
+  abiVersion: 1,
+  dataModelVersion: 4,
+  approvalMode: "PARLIAMENT_ATTEMPT_TIMED_OVN_V1",
+  privateBallotProtocol: "TIMED_OVN_TLE_THRESHOLD_BLS_V1",
+  mandatoryPrivateBallots: true,
+  proposalBackedReferendumBallotsSupported: false,
+  standalonePlainBallotsSupported: true,
+  standaloneZkBallotsSupported: true,
+  citizenshipAssetId: XOR_ASSET_DEFINITION_ID,
+  citizenshipBondAmount: "10000",
+  citizenshipEscrowAccount: TAIRA_GOVERNANCE_ESCROW_ACCOUNT,
+  votingAssetId: XOR_ASSET_DEFINITION_ID,
+  minBondAmount: "150",
+  bondEscrowAccount: TAIRA_GOVERNANCE_ESCROW_ACCOUNT,
+  minEnactmentDelay: 600,
+  invitationPhaseBlocks: 3_600,
+  registrationPhaseBlocks: 3_600,
+  survivorFreezePhaseBlocks: 1_000,
+  commitmentPhaseBlocks: 3_600,
+  releaseDelayBlocks: 600,
+  openingPhaseBlocks: 600,
+  maxBallotRetries: 3,
+  maxCorpusEntries: 1_000,
+  targetBodySizes: {
+    rules_committee: 7,
+    agenda_council: 9,
+    interest_panel: 11,
+    review_panel: 13,
+    coordination_council: 150,
+    mpc_committee: 50,
+    fma_committee: 5,
+    oversight_committee: 7,
+    policy_jury: 25,
+    confirmation_jury: 1_000,
+  },
+  supportedProposalKinds: [
+    "DEPLOY_CONTRACT",
+    "RUNTIME_UPGRADE",
+    "SCCP_ROUTE_GOVERNANCE",
+    "VALIDATION_FEE_POLICY",
+    "VALIDATION_FEE_PAYOUT_LIFECYCLE",
+    "MUSUBI_REGISTRY_GOVERNANCE",
+    "SORAFS_PROVIDER_GOVERNANCE",
+    "CONTRACT_LIFECYCLE_GOVERNANCE",
+    "CONTRACT_EMERGENCY_HOLD",
+    "GLOBAL_DATA_TRIGGER_PERMISSION_GOVERNANCE",
+  ],
+  supportedRoutes: [
+    "/v1/gov/capabilities",
+    "/v1/gov/citizens/draft",
+    "/v1/gov/parliament/attempts/draft",
+    "/v1/gov/parliament/attempts/{governance_attempt_id}",
+    "/v1/gov/parliament/ballots/{ballot_attempt_id}/casting-context",
+    "/v1/gov/parliament/ballots/{ballot_attempt_id}/casting-proof",
+    "/v1/gov/parliament/ballots/{ballot_attempt_id}/release-context",
+    "/v1/gov/parliament/ballots/{ballot_attempt_id}/partial-release",
+    "/v1/gov/parliament/transitions/draft",
+    "/v1/gov/ballots/plain",
+    "/v1/gov/ballots/zk-v1",
+    "/v1/gov/ballots/zk-v1/ballot-proof",
+    "/v1/validation-fee/proposals",
+    "/v1/validation-fee/proposals/{proposal_id}",
+    "/v1/validation-fee/proposals/draft",
+  ],
+});
 
 const routeChecks = [
   ["/wallet", "Wallet"],
@@ -37,7 +133,6 @@ const routeChecks = [
   ["/staking", "Stake XOR"],
   ["/governance", "Governance"],
   ["/explore", "Explore"],
-  ["/offline", "Offline"],
   ["/kaigi", "Kaigi"],
   ["/vpn", "Sora VPN"],
   ["/setup", "Advanced settings"],
@@ -99,7 +194,8 @@ function assert(condition, message) {
 function buildInitScript() {
   const useSyntheticMedia = !useRealMedia;
   const sessionPayload = {
-    hydrated: false,
+    schema: "iroha-demo-public-session",
+    version: 1,
     connection: {
       toriiUrl: TAIRA_TORII_URL,
       chainId: TAIRA_CHAIN_ID,
@@ -108,7 +204,7 @@ function buildInitScript() {
     },
     authority: {
       accountId: "",
-      privateKeyHex: "",
+      signingAlgorithm: "ed25519",
       hasStoredSecret: false,
     },
     accounts: [
@@ -116,16 +212,13 @@ function buildInitScript() {
         displayName: "E2E Wallet",
         domain: "default",
         accountId: E2E_ACCOUNT_ID,
-        i105AccountId: E2E_ACCOUNT_ID,
-        i105DefaultAccountId: E2E_ACCOUNT_ID,
         publicKeyHex: E2E_PUBLIC_KEY_HEX,
-        privateKeyHex: "",
+        signingAlgorithm: "ed25519",
         hasStoredSecret: true,
         localOnly: false,
       },
     ],
     activeAccountId: E2E_ACCOUNT_ID,
-    customChains: [],
   };
 
   return `(() => {
@@ -136,11 +229,12 @@ function buildInitScript() {
     const chainId = ${JSON.stringify(TAIRA_CHAIN_ID)};
     const xorAssetDefinitionId = ${JSON.stringify(XOR_ASSET_DEFINITION_ID)};
     const xorAssetId = ${JSON.stringify(XOR_ASSET_ID)};
+    const governanceFixtureAccounts = ${JSON.stringify(GOVERNANCE_FIXTURE_ACCOUNTS)};
+    const governanceCapabilitiesFixture = ${JSON.stringify(GOVERNANCE_CAPABILITIES_FIXTURE)};
     const sessionPayload = ${JSON.stringify(sessionPayload)};
     const useSyntheticMedia = ${JSON.stringify(useSyntheticMedia)};
     const fixture = {
       walletFunded: true,
-      confidentialMode: "convertible",
       vpnMode: "ready",
     };
     const now = () => Date.now();
@@ -235,24 +329,21 @@ function buildInitScript() {
           items: [{ asset_id: xorAssetId, quantity: "12500" }],
         }
       : { total: 0, items: [] };
-    const confidentialPolicy = () => {
-      const transparentOnly = fixture.confidentialMode === "transparent-only";
-      return ({
+    const confidentialPolicy = () => ({
       asset_id: xorAssetDefinitionId,
       block_height: 98765,
-      current_mode: transparentOnly ? "TransparentOnly" : "Convertible",
-      effective_mode: transparentOnly ? "TransparentOnly" : "Convertible",
-      allow_shield: !transparentOnly,
-      allow_unshield: !transparentOnly,
-      vk_transfer: transparentOnly ? null : "zk::transfer",
-      vk_unshield: "zk::unshield",
-      vk_shield: "zk::shield",
+      current_mode: "TransparentOnly",
+      effective_mode: "TransparentOnly",
+      allow_shield: false,
+      allow_unshield: false,
+      vk_transfer: null,
+      vk_unshield: null,
+      vk_shield: null,
       vk_set_hash: null,
       poseidon_params_id: null,
       pedersen_params_id: null,
       pending_transition: null,
-      });
-    };
+    });
     const confidentialBalance = () => ({
       resolvedAssetId: xorAssetDefinitionId,
       quantity: fixture.walletFunded ? "8" : "0",
@@ -268,61 +359,37 @@ function buildInitScript() {
     const governanceProposalId = "0x" + "a".repeat(64);
     const governanceProposalSummary = () => ({
       proposalId: governanceProposalId,
-      referendumId: "referendum-e2e",
       proposer: accountId,
-      createdHeight: "98700",
+      createdHeight: 98700,
       status: "Proposed",
-      referendumStatus: "Open",
-      votingMode: "Plain",
       kindType: "ValidationFeePayoutLifecycle",
       kindLabelKey: "Validation fee payout lifecycle",
-      currentStage: "Agenda",
     });
     const governanceProposalDetail = () => ({
       summary: governanceProposalSummary(),
       kind: {
         type: "ValidationFeePayoutLifecycle",
+        proposalOperator: accountId,
         raw: {},
         payoutBinding: {
-          contract_address: "tairac1governancee2epayoutcontract",
+          contract_address: "ivm:payout-contract",
+          code_hash: "b".repeat(64),
+          entrypoint: "autonomous_validation_fee_tick",
+          treasury_account_id: governanceFixtureAccounts.treasury,
+          ds_asset_id: "7ZepsJTHCVLKsrFFNZGSRGZgvBhv",
+          xor_asset_id: xorAssetDefinitionId,
+          pool_vault_account_id: governanceFixtureAccounts.poolVault,
+          batch_ds: "10",
+          min_xor_out: "4",
+          max_xor_out: "100",
+          recipients: governanceFixtureAccounts.recipients.map((account_id) => ({
+            account_id,
+            share: "0.25",
+          })),
         },
-        lifecycleSeal: null,
       },
-      referendum: {
-        id: "referendum-e2e",
-        hStart: "98700",
-        hEnd: "99000",
-        status: "Open",
-        mode: "Plain",
-      },
-      tally: { approve: "10", reject: "2", abstain: "1" },
-      locks: [],
-      pipeline: [
-        {
-          stage: "Admit",
-          startedAt: "98700",
-          deadline: null,
-          completedAt: "98700",
-          failure: null,
-        },
-        {
-          stage: "Rules",
-          startedAt: "98701",
-          deadline: null,
-          completedAt: "98701",
-          failure: null,
-        },
-        {
-          stage: "Agenda",
-          startedAt: "98702",
-          deadline: "99000",
-          completedAt: null,
-          failure: null,
-        },
-      ],
-      parliamentRosters: [],
-      parliamentOutcomes: [],
       currentHeight: "98765",
+      governanceCertificate: null,
       raw: {},
     });
     const sumeragiStatus = () => ({
@@ -705,12 +772,11 @@ function buildInitScript() {
               "accountOnboarding",
               "assetTransfers",
               "faucetClaim",
-              "confidentialTransfers",
               "kaigiMeetings",
               "governanceWrites",
               "stakingWrites",
               "subscriptionWrites",
-              "soraCloudDeploy",
+              "soraCloudHfSharedLease",
               "vpnSessions",
               "irohaConnectSessions",
               "zkProofJobs",
@@ -737,6 +803,9 @@ function buildInitScript() {
       isSecureVaultAvailable: async () => true,
       storeAccountSecret: async () => {},
       listAccountSecretFlags: async ({ accountIds }) => Object.fromEntries((accountIds || []).map((id) => [id, true])),
+      getSigningAlgorithms: async () => [
+        { id: "ed25519", label: "Ed25519", isDefault: true },
+      ],
       deriveAccountAddress: () => ({
         accountId,
         i105AccountId: accountId,
@@ -745,15 +814,10 @@ function buildInitScript() {
         accountIdWarning: "",
       }),
       derivePublicKey: () => ({ publicKeyHex }),
-      deriveConfidentialOwnerTag: () => ({ ownerTagHex: "1".repeat(64) }),
-      deriveConfidentialReceiveAddress: () => ({
-        ownerTagHex: "1".repeat(64),
-        diversifierHex: "2".repeat(64),
-      }),
       createConfidentialPaymentAddress: async () => ({
         schema: "iroha-confidential-payment-address/v3",
-        receiveKeyId: "receive-e2e-key",
-        receivePublicKeyBase64Url: "receiveE2ePublicKey",
+        receiveKeyId: "A".repeat(24),
+        receivePublicKeyBase64Url: "A".repeat(43),
         shieldedOwnerTagHex: "1".repeat(64),
         shieldedDiversifierHex: "2".repeat(64),
         recoveryHint: "one-time-receive-key",
@@ -773,17 +837,6 @@ function buildInitScript() {
       getConfidentialAssetPolicy: async () => confidentialPolicy(),
       getConfidentialAssetBalance: async () => confidentialBalance(),
       scanConfidentialWallet: async () => confidentialBalance(),
-      getConfidentialWalletState: async () => confidentialBalance(),
-      getPrivateKaigiConfidentialXorState: async () => ({
-        assetDefinitionId: xorAssetDefinitionId,
-        resolvedAssetId: xorAssetDefinitionId,
-        policyMode: "hybrid",
-        shieldedBalance: "5",
-        shieldedBalanceExact: true,
-        transparentBalance: "12500",
-        canSelfShield: true,
-      }),
-      selfShieldPrivateKaigiXor: async () => finalizedTransaction("kaigi-shield"),
       fetchAccountAssets: async () => assets(),
       fetchAccountTransactions: async () => ({
         total: 1,
@@ -808,82 +861,8 @@ function buildInitScript() {
           { name: "CanEnactGovernance", payload: null },
         ],
       }),
-      getGovernanceCapabilities: async () => ({
-        schema: "iroha.governance.capabilities.v1",
-        version: 1,
-        chainId,
-        genesisHash: "1".repeat(63) + "3",
-        currentHeight: 98765,
-        networkPrefix: 369,
-        abiVersion: 1,
-        dataModelVersion: 3,
-        approvalMode: "PARLIAMENT_SORTITION_JIT",
-        plainVotingEnabled: true,
-        autoFinalizePlain: true,
-        autoFinalizePlainScope: "GENERIC_NON_VALIDATION_FEE_ONLY",
-        validationFeePlainRequiresExplicitFinalization: true,
-        validationFeePlainElectorateRules: {
-          votingAssetId: xorAssetDefinitionId,
-          bondEscrowAccount: "ballot-escrow@governance",
-          slashReceiverAccount: "slash-receiver@governance",
-          ballotAmount: "150",
-          ballotDurationBlocks: 3600,
-          citizenshipAmount: "10000",
-          maxMembers: 256,
-          convictionStepBlocks: 100,
-          maxConviction: 6,
-          minTurnout: "1",
-          approvalThresholdNumerator: 1,
-          approvalThresholdDenominator: 2,
-          eligibilityRule: {
-            rule: "proposal_operator_at_or_before_gate_others_after_gate",
-            value: null,
-          },
-        },
-        citizenshipAssetId: xorAssetDefinitionId,
-        citizenshipBondAmount: "10000",
-        citizenshipEscrowAccount: "citizenship-escrow@governance",
-        votingAssetId: xorAssetDefinitionId,
-        minBondAmount: "1",
-        bondEscrowAccount: "ballot-escrow@governance",
-        convictionStepBlocks: 720,
-        maxConviction: 6,
-        minEnactmentDelay: 600,
-        windowSpan: 3600,
-        minTurnout: "1000",
-        approvalThresholdNumerator: 1,
-        approvalThresholdDenominator: 2,
-        parliamentQuorumBps: 6700,
-        targetBodySizes: {
-          rules_committee: 7,
-          agenda_council: 9,
-          interest_panel: 11,
-          review_panel: 13,
-          policy_jury: 25,
-          oversight_committee: 7,
-          fma_committee: 5,
-        },
-        supportedProposalKinds: [
-          "VALIDATION_FEE_PAYOUT_LIFECYCLE",
-          "VALIDATION_FEE_POLICY",
-        ],
-        supportedRoutes: [
-          "/v1/gov/capabilities",
-          "/v1/gov/citizens",
-          "/v1/gov/citizens/{account_id}",
-          "/v1/gov/citizens/draft",
-          "/v1/validation-fee/proposals",
-          "/v1/validation-fee/proposals/{proposal_id}",
-          "/v1/validation-fee/proposals/{proposal_id}/enactment-proof",
-          "/v1/validation-fee/proposals/draft",
-          "/v1/validation-fee/proposals/{proposal_id}/plain-electorate/draft",
-          "/v1/validation-fee/proposals/{proposal_id}/plain-ballot/draft",
-          "/v1/validation-fee/proposals/{proposal_id}/finalization/draft",
-          "/v1/gov/enact",
-          "/v1/gov/parliament/ballots",
-          "/v1/gov/ballots/plain",
-        ],
-      }),
+      getGovernanceCapabilities: async () =>
+        structuredClone(governanceCapabilitiesFixture),
       getGovernanceCitizenStatus: async () => ({
         state: "not-citizen",
         accountId,
@@ -985,47 +964,41 @@ function buildInitScript() {
           },
         },
       }),
-      deploySoraCloudHf: async (input) => {
-        window.__e2e.calls.push({ method: "deploySoraCloudHf", input });
-        launchedSoraCloudServices.splice(0, launchedSoraCloudServices.length, {
-          id: input.serviceName,
-          name: input.serviceName,
-          status: "deploying",
-          currentVersion: "hf-generated-v1",
-          revisionCount: 1,
-          configEntryCount: 0,
-          secretEntryCount: 0,
-          routeHost: "taira.sora.org",
-          publicUrls: ["https://taira.sora.org/api/v1/"],
-          rolloutStage: "Canary",
-          rolloutPercent: 20,
-          leaseStatus: "Active",
-          leaseExpiresSequence: 1,
-          remainingRuntimeBalanceNanos: "9999",
-          latestSequence: 1,
-          signedBy: "ed25519:e2e",
-          raw: {},
+      getSoraCloudHfSharedLeaseStatus: async (input) => {
+        window.__e2e.calls.push({
+          method: "getSoraCloudHfSharedLeaseStatus",
+          input,
         });
-        const tx_hash_hex = txHash("soracloud");
         return {
-          ok: true,
-          settlement_status: "confirmed",
-          finality: finalityFor(tx_hash_hex),
-          action: "Join",
-          service_name: input.serviceName,
-          sequence: 1,
-          tx_hash_hex,
-          storage_base_fee: "0.00001",
-          actual_storage_charge: "0.00001",
-          max_compute_reservation_fee: "0.0000075",
-          actual_compute_charge: "0",
-          raw: {},
+          found: true,
+          source: {
+            schemaVersion: 1,
+            sourceId:
+              "hash:1313131313131313131313131313131313131313131313131313131313131313#9CE1",
+            repoId: input.repoId,
+            resolvedRevision: input.revision,
+            createdAtMs: now(),
+            updatedAtMs: now(),
+          },
+          pool: null,
+          member: null,
+          latestAuditEvent: null,
+          auditEventCount: 0,
+          storageBaseFee: "0",
+          raw: {
+            schema_version: 1,
+            source: {
+              repo_id: input.repoId,
+              resolved_revision: input.revision,
+            },
+            pool: null,
+            member: null,
+            latest_audit_event: null,
+            audit_event_count: 0,
+            storage_base_fee: "0",
+          },
         };
       },
-      reconcileSoraCloudHfLaunch: async () => {
-        throw new Error("No SoraCloud settlement is pending in the deterministic fixture.");
-      },
-      getSoraCloudHfStatus: async () => ({ found: false, raw: null }),
       getParameters: async () => ({}),
       getVpnAvailability: async () => {
         const unavailable = fixture.vpnMode === "unavailable";
@@ -1088,42 +1061,7 @@ function buildInitScript() {
         return vpnStatus;
       },
       repairVpn: async () => ({ ...emptyVpnStatus }),
-      listVpnReceipts: async () => vpnStatus.state === "connected" ? [] : [
-        {
-          sessionId: "vpn-e2e-old",
-          accountId,
-          exitClass: "standard",
-          relayEndpoint: "vpn.taira.e2e:443",
-          meterFamily: "xor",
-          connectedAtMs: now() - 60000,
-          disconnectedAtMs: now() - 30000,
-          durationMs: 30000,
-          bytesIn: 1024,
-          bytesOut: 2048,
-          status: "closed",
-          receiptSource: "local-fallback",
-        },
-      ],
-      listOfflineAllowances: async () => ({
-        total: 1,
-        items: [
-          {
-            certificate_id_hex: "a".repeat(64),
-            controller_id: "offline-e2e",
-            controller_display: "Offline E2E device",
-            asset_id: xorAssetId,
-            registered_at_ms: now() - 100000,
-            expires_at_ms: now() + 86400000,
-            policy_expires_at_ms: now() + 86400000,
-            refresh_at_ms: now() + 43200000,
-            verdict_id_hex: null,
-            attestation_nonce_hex: null,
-            remaining_amount: "50",
-            record: {},
-            integrity_metadata: { policy: "e2e" },
-          },
-        ],
-      }),
+      listVpnReceipts: async () => [],
       onboardAccount: async () => {
         const hash = txHash("onboard");
         return {
@@ -1160,9 +1098,11 @@ function buildInitScript() {
         createdAtMs: now(),
         live: true,
         ended: false,
-        privacyMode: "private",
-        peerIdentityReveal: "Hidden",
-        rosterRootHex: "0".repeat(64),
+        hostAccountId: accountId,
+        hostDisplayName: "E2E Wallet",
+        hostParticipantId: "e2e-wallet",
+        participantCount: 1,
+        privacyMode: "transparent",
         offerDescription: { type: "offer", sdp: "v=0\\r\\na=ice-ufrag:e2eoffer\\r\\n" },
       }),
       joinKaigiMeeting: async () => finalizedTransaction("kaigi-join"),
@@ -1260,6 +1200,10 @@ async function startRendererServer() {
       host: "127.0.0.1",
       port: 0,
       strictPort: false,
+      hmr: false,
+      watch: {
+        ignored: ["**/*"],
+      },
     },
     logLevel: "warn",
     clearScreen: false,
@@ -1283,9 +1227,6 @@ async function waitForRouteTitle(page, title) {
   await heading.waitFor({ state: "visible", timeout: 10000 });
   return heading;
 }
-
-const canonicalRoute = (route) =>
-  route === "/parliament" ? "/governance" : route;
 
 async function assertNativeModal(page, selector, label) {
   const dialog = page.locator(selector);
@@ -1319,8 +1260,7 @@ async function assertNativeModal(page, selector, label) {
 }
 
 async function clickNavDestination(page, route) {
-  const nextRoute = canonicalRoute(route);
-  const href = `#${nextRoute}`;
+  const href = `#${route}`;
   const viewport = page.viewportSize();
   if ((viewport?.width ?? 1440) <= 760) {
     const trigger = page.locator(".mobile-nav-trigger");
@@ -1343,19 +1283,18 @@ async function clickNavDestination(page, route) {
 }
 
 async function navigate(page, route, title) {
-  const nextRoute = canonicalRoute(route);
   const currentRoute = await page.evaluate(
     () => window.location.hash.replace(/^#/, "") || "/",
   );
-  if (currentRoute === nextRoute) {
-    const alternate = nextRoute === "/wallet" ? "/settings" : "/wallet";
+  if (currentRoute === route) {
+    const alternate = route === "/wallet" ? "/settings" : "/wallet";
     await clickNavDestination(page, alternate);
     await page.waitForFunction(
       (expected) => window.location.hash === `#${expected}`,
       alternate,
     );
   }
-  await clickNavDestination(page, nextRoute);
+  await clickNavDestination(page, route);
   const heading = await waitForRouteTitle(page, title);
   await page.waitForFunction(
     () =>
@@ -1367,8 +1306,8 @@ async function navigate(page, route, title) {
   assert(
     (await page.evaluate(
       () => window.location.hash.replace(/^#/, "").split("?")[0],
-    )) === nextRoute,
-    `${route} did not resolve to its canonical URL ${nextRoute}.`,
+    )) === route,
+    `${route} did not resolve to its exact URL ${route}.`,
   );
   assert(
     await heading.evaluate((element) => document.activeElement === element),
@@ -1542,7 +1481,7 @@ async function assertPrimaryActionVisibility(page, route) {
       "[data-ui-primary-action], .parliament-proposal-workspace .card-header button",
     "/vpn": "[data-ui-primary-action]",
   };
-  const selector = selectors[canonicalRoute(route)];
+  const selector = selectors[route];
   if (!selector) return;
   const action = page.locator(selector).filter({ visible: true }).first();
   if ((await action.count()) === 0) return;
@@ -1685,7 +1624,7 @@ async function checkRouteSmoke(page) {
 
 async function checkReceiveQr(page) {
   await navigate(page, "/receive", "Receive");
-  await page.locator(".receive-shell .qr svg").waitFor({ state: "visible" });
+  await page.locator(".receive-shell .qr img").waitFor({ state: "visible" });
   await page.getByRole("button", { name: /Share QR/i }).click();
   await page
     .getByText(/QR shared\.|QR payload copied to clipboard\./)
@@ -1695,23 +1634,12 @@ async function checkReceiveQr(page) {
   console.log("✓ receive QR renders automatically and shares");
 }
 
-async function checkSendFormAndCamera(page) {
+async function checkSendForm(page) {
   await navigate(page, "/send", "Send");
-  const scanButton = page.getByRole("button", { name: /Scan payment QR/i });
-  await scanButton.focus();
-  await scanButton.click();
-  const scannerDialog = await assertNativeModal(
-    page,
-    "dialog.ui-dialog[open]",
-    "QR scanner",
-  );
-  await page.locator(".scanner video").waitFor({ state: "visible" });
-  await page.waitForTimeout(500);
-  await scannerDialog.getByRole("button", { name: "Cancel" }).click();
-  await scannerDialog.waitFor({ state: "hidden" });
   assert(
-    await scanButton.evaluate((element) => document.activeElement === element),
-    "QR scanner did not restore focus to its opener.",
+    (await page.getByRole("button", { name: /Scan payment QR/i }).count()) ===
+      0,
+    "Transparent-only Send unexpectedly exposed the retired QR/private-send scanner.",
   );
   await page
     .getByTestId("destination-account-input")
@@ -1723,14 +1651,14 @@ async function checkSendFormAndCamera(page) {
   await page.getByTestId("send-review-button").click();
   await page.getByTestId("send-confirm-button").click();
   await page
-    .getByText(
-      /Transaction finalized on-chain:|Private shielded transfer finalized on-chain:/,
-    )
+    .getByText(/Transaction finalized on-chain:/)
     .waitFor({ state: "visible", timeout: 5000 });
-  console.log("✓ send form finalizes and camera scanner opens/stops");
+  console.log(
+    "✓ transparent send form finalizes without retired private controls",
+  );
 }
 
-async function checkSoraCloudLaunchFlow(page) {
+async function checkSoraCloudSharedLeaseFlow(page) {
   await navigate(page, "/soracloud", "SoraCloud");
   await page.getByText("Live API ready").first().waitFor({ state: "visible" });
   await page
@@ -1740,81 +1668,62 @@ async function checkSoraCloudLaunchFlow(page) {
     });
   await page
     .locator(".ui-segmented")
-    .getByRole("button", { name: "Launch instance", exact: true })
+    .getByRole("button", { name: "HF shared lease", exact: true })
     .click();
+  await page.getByText("Lease joining is read-only").waitFor({
+    state: "visible",
+  });
+  const joinButton = page.getByRole("button", {
+    name: "Join shared lease unavailable",
+  });
+  assert(
+    await joinButton.isDisabled(),
+    "SoraCloud shared-lease join must remain disabled without the exact SDK encoder.",
+  );
   await page.getByLabel("Hugging Face repo").waitFor({ state: "visible" });
 
   await page
     .getByLabel("Hugging Face repo")
     .fill("sentence-transformers/all-MiniLM-L6-v2");
-  await page.getByLabel("Model name").waitFor({ state: "visible" });
-  const modelName = await page.getByLabel("Model name").inputValue();
-  assert(
-    modelName === "all-minilm-l6-v2",
-    `SoraCloud model name was not auto-derived: ${modelName}`,
-  );
-
-  await page.getByRole("button", { name: "Next" }).click();
-  await page.getByText("If this is empty, claim XOR in Wallet first.").waitFor({
-    state: "visible",
+  const revision = "0123456789abcdef0123456789abcdef01234567";
+  await page.getByLabel("Full commit revision").fill(revision);
+  const statusButton = page.getByRole("button", {
+    name: "Check shared lease",
   });
-  const settlementAsset = page.getByLabel("Settlement asset");
-  const initialAsset = await settlementAsset.inputValue();
+  await statusButton.waitFor({ state: "visible" });
   assert(
-    initialAsset === XOR_ASSET_DEFINITION_ID,
-    `SoraCloud did not prefill the exact funded asset definition: ${initialAsset}`,
+    await statusButton.isEnabled(),
+    "SoraCloud shared-lease status did not enable for an exact query.",
   );
-  await settlementAsset.fill("61CtjvNd9T3THAR65GsMVHr82Bjc");
-  await page.getByLabel("Base fee nanos").fill("10000");
-
-  await page.getByRole("button", { name: "Next" }).click();
-  const launchButton = page.getByRole("button", {
-    name: "Launch live instance",
-  });
-  await launchButton.waitFor({ state: "visible" });
-  assert(
-    await launchButton.isEnabled(),
-    "SoraCloud launch button did not enable for valid input.",
-  );
-  await launchButton.click();
-
-  await page
-    .getByText(
-      /Launch finalized and settlement confirmed|Transaction finalized — settlement indexing/,
-    )
-    .waitFor({
-      state: "visible",
-      timeout: 10000,
-    });
-  await page.getByText("all-minilm-l6-v2").first().waitFor({
+  await statusButton.click();
+  await page.getByTestId("hf-shared-lease-status").waitFor({
     state: "visible",
     timeout: 10000,
   });
-  await page
-    .locator(".ui-segmented")
-    .getByRole("button", { name: "Live services", exact: true })
-    .click();
-  await page
-    .locator(".soracloud-deployment-row")
-    .getByText("hf-generated-v1", { exact: false })
-    .waitFor({
-      state: "visible",
-      timeout: 10000,
-    });
 
-  const deployCall = await page.evaluate(() =>
-    window.__e2e.calls.find((call) => call.method === "deploySoraCloudHf"),
+  const statusCall = await page.evaluate(() =>
+    window.__e2e.calls.find(
+      (call) => call.method === "getSoraCloudHfSharedLeaseStatus",
+    ),
   );
-  assert(deployCall, "SoraCloud launch did not call deploySoraCloudHf.");
+  assert(statusCall, "SoraCloud shared-lease status did not call the bridge.");
   assert(
-    deployCall.input.leaseAssetDefinitionId === "61CtjvNd9T3THAR65GsMVHr82Bjc",
-    `SoraCloud deploy used wrong lease asset: ${deployCall.input.leaseAssetDefinitionId}`,
+    statusCall.input.revision === revision,
+    `SoraCloud shared-lease query used wrong revision: ${statusCall.input.revision}`,
   );
   assert(
-    deployCall.input.repoId === "sentence-transformers/all-MiniLM-L6-v2",
-    `SoraCloud deploy used wrong repo: ${deployCall.input.repoId}`,
+    statusCall.input.repoId === "sentence-transformers/all-MiniLM-L6-v2",
+    `SoraCloud shared-lease query used wrong repo: ${statusCall.input.repoId}`,
   );
-  console.log("✓ soracloud guided launch flow submits real bridge payload");
+  const bridgeSurface = await page.evaluate(() => Object.keys(window.iroha));
+  assert(
+    !bridgeSurface.includes("deploySoraCloudHf") &&
+      !bridgeSurface.includes("joinSoraCloudHf"),
+    "SoraCloud exposed a write bridge without an exact provenance encoder.",
+  );
+  console.log(
+    "✓ soracloud shared-lease status is exact and join is fail-closed",
+  );
 }
 
 async function checkSubscriptionModes(page) {
@@ -1835,37 +1744,6 @@ async function checkSubscriptionModes(page) {
     .getByRole("button", { name: "Create subscription" })
     .waitFor({ state: "visible" });
   console.log("✓ subscriptions switches from records to subscribe mode");
-}
-
-async function checkOfflineModes(page) {
-  await navigate(page, "/offline", "Offline");
-  const control = page.getByTestId("offline-mode-control");
-  const modes = [
-    ["Wallet", "offline-mode-setup"],
-    ["Request payment", "offline-mode-request"],
-    ["Create payment", "offline-mode-pay"],
-    ["Accept payment", "offline-mode-accept"],
-    ["Move to online wallet", "offline-mode-online"],
-  ];
-  const modeButtons = control.getByRole("button");
-  assert(
-    (await modeButtons.count()) === modes.length,
-    `Offline mode control exposed ${await modeButtons.count()} options instead of ${modes.length}.`,
-  );
-  for (const [index, [label, testId]] of modes.entries()) {
-    const button = modeButtons.nth(index);
-    assert(
-      (await button.innerText()).replace(/\s+/g, " ").trim() === label,
-      `Offline mode ${index + 1} was not labelled ${label}.`,
-    );
-    await button.click();
-    await page.getByTestId(testId).waitFor({ state: "visible" });
-  }
-  await modeButtons.first().click();
-  await page.getByTestId("offline-mode-setup").waitFor({ state: "visible" });
-  await assertUsableViewport(page, "offline workspace at 1440px");
-  await saveUiScreenshot(page, "quiet-sakura-offline-1440-final");
-  console.log("✓ offline workspace exposes each explicit mode");
 }
 
 async function checkKaigi(page) {
@@ -1949,7 +1827,7 @@ async function checkKaigi(page) {
     await page.getByRole("button", { name: "Find working camera" }).click();
     await page
       .getByText("Local media is ready.")
-      .waitFor({ state: "visible", timeout: 10000 });
+      .waitFor({ state: "visible", timeout: 20000 });
     await page.getByText("Preview live").waitFor({ state: "visible" });
     await page.waitForFunction(
       () => window.__e2e.mediaRequests.length >= 2,
@@ -2358,16 +2236,37 @@ async function checkHeaderPreferencePersistence(page) {
       document.documentElement.getAttribute("data-theme") === "light" &&
       document.documentElement.lang === "fr-FR",
   );
-  const persisted = await page.evaluate(() => ({
-    theme: localStorage.getItem("iroha-demo:theme"),
-    locale: localStorage.getItem("iroha-demo:locale"),
-    documentTheme: document.documentElement.getAttribute("data-theme"),
-    documentLocale: document.documentElement.lang,
-    direction: document.documentElement.dir,
-  }));
+  const persisted = await page.evaluate(() => {
+    const readEnvelope = (key) => {
+      const raw = localStorage.getItem(key);
+      if (raw === null) return null;
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return raw;
+      }
+    };
+    return {
+      theme: readEnvelope("iroha-demo:theme"),
+      locale: readEnvelope("iroha-demo:locale"),
+      documentTheme: document.documentElement.getAttribute("data-theme"),
+      documentLocale: document.documentElement.lang,
+      direction: document.documentElement.dir,
+    };
+  });
   assert(
-    persisted.theme === "light" &&
-      persisted.locale === "fr-FR" &&
+    JSON.stringify(persisted.theme) ===
+      JSON.stringify({
+        schema: "iroha-demo-theme",
+        version: 1,
+        theme: "light",
+      }) &&
+      JSON.stringify(persisted.locale) ===
+        JSON.stringify({
+          schema: "iroha-demo-locale",
+          version: 1,
+          locale: "fr-FR",
+        }) &&
       persisted.documentTheme === "light" &&
       persisted.documentLocale === "fr-FR" &&
       persisted.direction === "ltr",
@@ -2750,35 +2649,7 @@ async function checkAdversarialFixtureStates(page) {
   );
   await assertAxeClean(page, "unfunded wallet fixture");
 
-  await setFixture(page, {
-    walletFunded: true,
-    confidentialMode: "convertible",
-  });
-  await navigate(page, "/send", "Send");
-  const privateMode = page.getByRole("button", {
-    name: "Private",
-    exact: true,
-  });
-  await privateMode.click();
-  assert(
-    (await privateMode.getAttribute("aria-pressed")) === "true",
-    "Private send fixture did not activate private mode.",
-  );
-  assert(
-    await page.getByTestId("send-review-button").isVisible(),
-    "Private send did not retain the review action.",
-  );
-
-  await setFixture(page, { confidentialMode: "transparent-only" });
-  await navigate(page, "/send", "Send");
-  await page.waitForFunction(() => {
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (element) => element.textContent?.trim() === "Private",
-    );
-    return button instanceof HTMLButtonElement && button.disabled;
-  });
-
-  await setFixture(page, { vpnMode: "repair" });
+  await setFixture(page, { walletFunded: true, vpnMode: "repair" });
   await navigate(page, "/vpn", "Sora VPN");
   await page.getByRole("button", { name: "Repair VPN" }).waitFor({
     state: "visible",
@@ -2789,10 +2660,9 @@ async function checkAdversarialFixtureStates(page) {
 
   await setFixture(page, {
     walletFunded: true,
-    confidentialMode: "convertible",
     vpnMode: "ready",
   });
-  console.log("✓ unfunded, private-send, and VPN fixtures render");
+  console.log("✓ unfunded wallet and VPN fixtures render");
 }
 
 function attachPageDiagnostics(page) {
@@ -2800,7 +2670,11 @@ function attachPageDiagnostics(page) {
   const pageErrors = [];
   page.on("console", (message) => {
     if (message.type() === "error") {
-      consoleErrors.push(message.text());
+      const location = message.location();
+      const source = location.url
+        ? ` (${location.url}:${location.lineNumber + 1}:${location.columnNumber + 1})`
+        : "";
+      consoleErrors.push(`${message.text()}${source}`);
     }
   });
   page.on("pageerror", (error) => {
@@ -2854,15 +2728,14 @@ async function main() {
     await setTheme(page, "dark");
     await checkAdversarialFixtureStates(page);
     await checkReceiveQr(page);
-    await checkSendFormAndCamera(page);
+    await checkSendForm(page);
     await checkSubscriptionModes(page);
-    await checkSoraCloudLaunchFlow(page);
+    await checkSoraCloudSharedLeaseFlow(page);
     await checkKaigi(page);
     await checkExplorer(page);
     await checkStaking(page);
     await checkParliament(page);
     await checkVpn(page);
-    await checkOfflineModes(page);
     await checkResponsiveUsability(page);
     await checkResponsiveHeaderPreferences(page);
     await checkHeaderPreferencePersistence(page);

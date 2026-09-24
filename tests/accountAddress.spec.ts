@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { secp256k1 } from "@noble/curves/secp256k1";
 import { AccountAddress } from "@iroha/iroha-js";
-import { generateKeyPair } from "@iroha/iroha-js/crypto";
 import {
   deriveAccountAddressView,
   parseAccountAddressLiteral,
   normalizeCanonicalAccountIdLiteral,
-  normalizeCompatAccountIdLiteral,
+  requireAccountIdBoundToPublicKey,
 } from "../electron/accountAddress";
 
 const SAMPLE_PUBLIC_KEY_HEX =
@@ -66,7 +66,41 @@ const toFullwidthKanaI105 = (literal: string): string =>
   ).join("");
 
 describe("accountAddress helper", () => {
-  it("derives both compatibility and native I105 account literals", () => {
+  it("rejects oversized or whitespace-padded key material before decoding", () => {
+    expect(() =>
+      deriveAccountAddressView({
+        domain: "default",
+        publicKeyHex: ` ${SAMPLE_PUBLIC_KEY_HEX}`,
+        networkPrefix: 369,
+      }),
+    ).toThrow(/canonical even-length hex/u);
+    expect(() =>
+      deriveAccountAddressView({
+        domain: "default",
+        publicKeyHex: "aa".repeat(16 * 1024 + 1),
+        networkPrefix: 369,
+      }),
+    ).toThrow(/bounded canonical/u);
+  });
+
+  it("bounds the local-only domain label even though it does not affect the address", () => {
+    expect(() =>
+      deriveAccountAddressView({
+        domain: ` ${"a".repeat(10)}`,
+        publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
+        networkPrefix: 369,
+      }),
+    ).toThrow(/domain must be bounded canonical/u);
+    expect(() =>
+      deriveAccountAddressView({
+        domain: "a".repeat(257),
+        publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
+        networkPrefix: 369,
+      }),
+    ).toThrow(/domain must be bounded canonical/u);
+  });
+
+  it("derives one canonical I105 account literal for the configured network", () => {
     const derived = deriveAccountAddressView({
       domain: "default",
       publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
@@ -78,11 +112,12 @@ describe("accountAddress helper", () => {
         publicKey: Buffer.from(SAMPLE_PUBLIC_KEY_HEX, "hex"),
       }).toI105(369),
     );
+    expect(derived.i105AccountId).toBe(derived.accountId);
     expect(derived.i105AccountId.startsWith("testu")).toBe(true);
     expect(derived.i105DefaultAccountId.startsWith("sorau")).toBe(true);
   });
 
-  it("converts native TAIRA I105 literals into the compatibility literal", () => {
+  it("accepts an exact canonical literal through the incoming-ID helper", () => {
     const derived = deriveAccountAddressView({
       domain: "default",
       publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
@@ -90,11 +125,40 @@ describe("accountAddress helper", () => {
     });
 
     expect(
-      normalizeCompatAccountIdLiteral(derived.i105AccountId, "accountId", 369),
+      normalizeCanonicalAccountIdLiteral(
+        derived.i105AccountId,
+        "accountId",
+        369,
+      ),
     ).toBe(derived.accountId);
   });
 
-  it("preserves detected native account prefixes when no network override is supplied", () => {
+  it("binds a stored account ID to the exact signing public key", () => {
+    const accountId = AccountAddress.fromAccount({
+      publicKey: Buffer.from(SAMPLE_PUBLIC_KEY_HEX, "hex"),
+      algorithm: "ed25519",
+    }).toI105(369);
+
+    expect(
+      requireAccountIdBoundToPublicKey({
+        accountId,
+        publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
+        networkPrefix: 369,
+        signingAlgorithm: "ed25519",
+      }),
+    ).toBe(accountId);
+    expect(() =>
+      requireAccountIdBoundToPublicKey({
+        accountId,
+        publicKeyHex:
+          "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        networkPrefix: 369,
+        signingAlgorithm: "ed25519",
+      }),
+    ).toThrow(/does not match the supplied signing key/u);
+  });
+
+  it("requires the caller to supply the exact network prefix", () => {
     const taira = deriveAccountAddressView({
       domain: "default",
       publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
@@ -106,38 +170,56 @@ describe("accountAddress helper", () => {
       networkPrefix: 753,
     });
 
+    expect(() =>
+      normalizeCanonicalAccountIdLiteral(
+        taira.i105AccountId,
+        "accountId",
+        undefined as unknown as number,
+      ),
+    ).toThrow(/networkPrefix must be an integer/i);
     expect(
-      normalizeCanonicalAccountIdLiteral(taira.i105AccountId, "accountId"),
-    ).toBe(taira.i105AccountId);
-    expect(
-      normalizeCanonicalAccountIdLiteral(mainnet.i105AccountId, "accountId"),
+      normalizeCanonicalAccountIdLiteral(
+        mainnet.i105AccountId,
+        "accountId",
+        753,
+      ),
     ).toBe(mainnet.i105AccountId);
+    expect(
+      normalizeCanonicalAccountIdLiteral(taira.i105AccountId, "accountId", 369),
+    ).toBe(taira.i105AccountId);
   });
 
-  it("rewrites old SORA compatibility literals to the active network prefix", () => {
+  it("rejects a valid account literal from a different network prefix", () => {
     const derived = deriveAccountAddressView({
       domain: "default",
       publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
       networkPrefix: 369,
     });
 
-    expect(
-      normalizeCompatAccountIdLiteral(
+    expect(() =>
+      normalizeCanonicalAccountIdLiteral(
         derived.i105DefaultAccountId,
         "accountId",
         369,
       ),
-    ).toBe(derived.accountId);
+    ).toThrow(/network prefix 369/i);
+    expect(() =>
+      parseAccountAddressLiteral(
+        derived.i105DefaultAccountId,
+        "accountId",
+        369,
+      ),
+    ).toThrow(/network prefix 369/i);
   });
 
-  it("canonicalizes compatibility literals for Torii wire requests", () => {
+  it("returns an exact canonical literal unchanged for Torii wire requests", () => {
     const derived = deriveAccountAddressView({
       domain: "default",
       publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
       networkPrefix: 369,
     });
     const canonicalAccountId = normalizeCanonicalAccountIdLiteral(
-      derived.i105DefaultAccountId,
+      derived.i105AccountId,
       "accountId",
       369,
     );
@@ -146,16 +228,23 @@ describe("accountAddress helper", () => {
     expect(
       normalizeCanonicalAccountIdLiteral(derived.accountId, "accountId", 369),
     ).toBe(canonicalAccountId);
-    expect(
+    expect(() =>
       normalizeCanonicalAccountIdLiteral(
-        derived.i105AccountId,
+        ` ${derived.i105AccountId}`,
         "accountId",
         369,
       ),
-    ).toBe(canonicalAccountId);
+    ).toThrow(/without surrounding whitespace/i);
+    expect(() =>
+      normalizeCanonicalAccountIdLiteral(
+        `${derived.i105AccountId}\n`,
+        "accountId",
+        369,
+      ),
+    ).toThrow(/without surrounding whitespace/i);
   });
 
-  it("accepts half-width katakana compatibility literals from Python tooling", () => {
+  it("accepts an exact canonical half-width I105 literal", () => {
     const halfWidthLiteral =
       "testuﾛ1NﾐヱﾇCﾍUovﾏﾊｺｸﾛJbｵVtﾍykRﾗﾊhﾄﾏKqTjUｺwﾒrym3GS93U";
 
@@ -164,7 +253,7 @@ describe("accountAddress helper", () => {
     ).toBe(halfWidthLiteral);
   });
 
-  it("accepts full-width kana account literals as UTF-8 input", () => {
+  it("rejects noncanonical full-width kana variants", () => {
     const derived = deriveAccountAddressView({
       domain: "default",
       publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
@@ -176,27 +265,27 @@ describe("accountAddress helper", () => {
     expect(Buffer.from(fullwidthLiteral, "utf8").length).toBeGreaterThan(
       fullwidthLiteral.length,
     );
-    expect(
+    expect(() =>
       normalizeCanonicalAccountIdLiteral(fullwidthLiteral, "accountId", 369),
-    ).toBe(derived.i105AccountId);
+    ).toThrow(/canonical I105 account ID/i);
+    expect(() =>
+      parseAccountAddressLiteral(fullwidthLiteral, "accountId", 369),
+    ).toThrow(/canonical I105 account ID/i);
+
     expect(
-      normalizeCompatAccountIdLiteral(fullwidthLiteral, "accountId", 369),
-    ).toBe(derived.accountId);
-    expect(
-      Buffer.from(
-        parseAccountAddressLiteral(
-          fullwidthLiteral,
-          "accountId",
-          369,
-        ).canonicalBytes(),
-      ).toString("hex"),
-    ).toBe(
       Buffer.from(
         parseAccountAddressLiteral(
           derived.i105AccountId,
           "accountId",
           369,
         ).canonicalBytes(),
+      ).toString("hex"),
+    ).toBe(
+      Buffer.from(
+        AccountAddress.parseEncoded(
+          derived.i105AccountId,
+          369,
+        ).address.canonicalBytes(),
       ).toString("hex"),
     );
   });
@@ -221,10 +310,10 @@ describe("accountAddress helper", () => {
   });
 
   it("uses the selected signing algorithm when deriving I105 account literals", () => {
-    const { publicKey } = generateKeyPair({
-      algorithm: "secp256k1",
-      seed: Buffer.alloc(32, 0x42),
-    });
+    const publicKey = secp256k1.getPublicKey(
+      Uint8Array.from({ length: 32 }, () => 0x42),
+      true,
+    );
     const publicKeyHex = Buffer.from(publicKey).toString("hex");
     const derived = deriveAccountAddressView({
       domain: "default",

@@ -163,7 +163,11 @@
           <div v-if="showRestorePanel" class="backup-panel restore-panel">
             <label>
               {{ t("Recovery Phrase") }}
-              <textarea v-model.trim="restorePhraseInput" rows="4"></textarea>
+              <textarea
+                v-model.trim="restorePhraseInput"
+                rows="4"
+                :maxlength="MAX_MNEMONIC_PHRASE_LENGTH"
+              ></textarea>
             </label>
             <div class="actions">
               <button
@@ -400,7 +404,11 @@
       <div v-if="showRestorePanel" class="backup-panel restore-panel">
         <label>
           {{ t("Recovery Phrase") }}
-          <textarea v-model.trim="restorePhraseInput" rows="4"></textarea>
+          <textarea
+            v-model.trim="restorePhraseInput"
+            rows="4"
+            :maxlength="MAX_MNEMONIC_PHRASE_LENGTH"
+          ></textarea>
         </label>
         <div class="actions">
           <button
@@ -560,7 +568,7 @@
             <input
               ref="connectScanner.fileInputRef"
               type="file"
-              accept="image/*"
+              accept="image/png,image/jpeg,image/webp"
               class="sr-only"
               :aria-label="t('Upload QR image')"
               @change="connectScanner.decodeFile"
@@ -586,9 +594,15 @@
               <span class="kv-label">{{ t("Session ID") }}</span>
               <span class="kv-value">{{ scannedConnectSession.sid }}</span>
             </div>
-            <div v-if="scannedConnectSession.chainId" class="kv monospace">
+            <div class="kv monospace">
               <span class="kv-label">{{ t("Chain ID") }}</span>
-              <span class="kv-value">{{ scannedConnectSession.chainId }}</span>
+              <span class="kv-value">{{ session.connection.chainId }}</span>
+            </div>
+            <div class="kv monospace">
+              <span class="kv-label">NetworkId</span>
+              <span class="kv-value">{{
+                scannedConnectSession.networkId
+              }}</span>
             </div>
             <div v-if="scannedConnectSession.node" class="kv monospace">
               <span class="kv-label">{{ t("Endpoint") }}</span>
@@ -775,11 +789,13 @@ import {
 } from "@/services/iroha";
 import {
   generateMnemonicWords,
+  MAX_MNEMONIC_PHRASE_LENGTH,
   mnemonicToPrivateKeyHex,
   normalizeMnemonicPhrase,
 } from "@/utils/mnemonic";
 import {
   buildWalletBackupPayload,
+  MAX_WALLET_BACKUP_JSON_BYTES,
   parseWalletBackupPayload,
   type ConfidentialWalletBackupMetadata,
 } from "@/utils/walletBackup";
@@ -802,6 +818,7 @@ import {
   base64ToBytes,
   bytesToBase64,
   decodeConnectFrame,
+  readIrohaConnectRelayFrame,
   type ConnectPermissions,
 } from "@/utils/soraswapConnectWire";
 
@@ -1103,8 +1120,8 @@ const selectAccountFlow = (mode: string) => {
 const applyBackupMetadata = (payload: {
   displayName?: string;
   domain?: string;
-  signingAlgorithm?: string;
-  confidentialWallet?: ConfidentialWalletBackupMetadata;
+  signingAlgorithm: string;
+  confidentialWallet: ConfidentialWalletBackupMetadata;
 }) => {
   if (typeof payload.displayName === "string") {
     aliasInput.value = payload.displayName;
@@ -1112,10 +1129,8 @@ const applyBackupMetadata = (payload: {
   if (typeof payload.domain === "string" && payload.domain.trim()) {
     domainInput.value = payload.domain;
   }
-  if (typeof payload.signingAlgorithm === "string") {
-    selectedSigningAlgorithm.value = payload.signingAlgorithm;
-  }
-  pendingConfidentialWalletBackup.value = payload.confidentialWallet ?? null;
+  selectedSigningAlgorithm.value = payload.signingAlgorithm;
+  pendingConfidentialWalletBackup.value = payload.confidentialWallet;
 };
 
 const openBackupImportPicker = () => {
@@ -1265,6 +1280,9 @@ const handleBackupFileSelection = async (event: Event) => {
 
   try {
     restoring.value = true;
+    if (file.size > MAX_WALLET_BACKUP_JSON_BYTES) {
+      throw new Error(t("Invalid backup file."));
+    }
     const payload = parseWalletBackupPayload(await file.text());
     selectedSigningAlgorithm.value = payload.signingAlgorithm;
     await restoreFromPhrase(payload.mnemonic, payload.signingAlgorithm);
@@ -1311,6 +1329,7 @@ const persistGeneratedIdentity = async (localOnly: boolean) => {
   }
   await storeAccountSecret({
     accountId,
+    networkPrefix: connectionForm.networkPrefix,
     privateKeyHex: generatedKeys.value.privateKeyHex,
     signingAlgorithm: generatedKeys.value.signingAlgorithm,
   });
@@ -1397,18 +1416,25 @@ const downloadBackup = async (target: "manual" | "icloud" | "google") => {
     return;
   }
   onboardingError.value = "";
-  let confidentialWallet: ConfidentialWalletBackupMetadata | undefined;
-  if (generatedAccountId.value) {
+  if (!generatedAccountId.value) {
+    onboardingError.value = t("Generate a keypair first.");
+    return;
+  }
+  let confidentialWallet: ConfidentialWalletBackupMetadata;
+  try {
     confidentialWallet = await exportConfidentialWalletBackup({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
       networkPrefix: session.connection.networkPrefix,
       accountId: generatedAccountId.value,
       mnemonic: recoveryMnemonic.value,
-    }).catch((error) => {
-      console.warn("Failed to export confidential wallet backup state", error);
-      return pendingConfidentialWalletBackup.value ?? undefined;
     });
+  } catch (error) {
+    onboardingError.value = toUserFacingErrorMessage(
+      error,
+      t("Invalid backup file."),
+    );
+    return;
   }
   const payload = buildWalletBackupPayload({
     mnemonic: recoveryMnemonic.value,
@@ -1555,7 +1581,12 @@ const pendingConnectionDetails = computed<IrohaConnectDetail[]>(() => {
     { label: t("Session ID"), value: parsed.sid, monospace: true },
     {
       label: t("Chain ID"),
-      value: displayOptional(parsed.chainId),
+      value: session.connection.chainId,
+      monospace: true,
+    },
+    {
+      label: "NetworkId",
+      value: displayOptional(parsed.networkId),
       monospace: true,
     },
     {
@@ -1658,22 +1689,6 @@ const waitForConnectSocketOpen = (socket: WebSocket) =>
     );
   });
 
-const connectEventBytes = async (data: MessageEvent["data"]) => {
-  if (data instanceof Uint8Array) {
-    return data;
-  }
-  if (data instanceof ArrayBuffer) {
-    return new Uint8Array(data);
-  }
-  if (ArrayBuffer.isView(data)) {
-    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-  }
-  if (data instanceof Blob) {
-    return new Uint8Array(await data.arrayBuffer());
-  }
-  throw new Error("IrohaConnect relay returned a non-binary frame.");
-};
-
 const requireCurrentScannedConnection = (socket: WebSocket) => {
   if (
     socket !== scannedConnectSocket ||
@@ -1693,7 +1708,7 @@ const approveOpenConnectFrame = async (
   socket: WebSocket,
   parsed: ParsedIrohaConnectUri,
   appPublicKeyHex: string,
-  requestedChainId: string,
+  requestedNetworkId: string,
   permissions: ConnectPermissions | null,
 ) => {
   const network = requireCurrentScannedConnection(socket);
@@ -1708,9 +1723,19 @@ const approveOpenConnectFrame = async (
     throw new Error("IrohaConnect relay sent a duplicate Open frame.");
   }
   scannedConnectOpenApprovalInFlight = true;
-  validateIrohaConnectNetworkClaim({ chainId: requestedChainId }, network, {
+  if (appPublicKeyHex !== parsed.appPublicKeyHex) {
+    throw new Error(
+      "The IrohaConnect Open frame app key does not match the scanned session.",
+    );
+  }
+  if (requestedNetworkId !== parsed.networkId) {
+    throw new Error(
+      "The IrohaConnect Open frame NetworkId does not match the scanned session.",
+    );
+  }
+  validateIrohaConnectNetworkClaim({ networkId: requestedNetworkId }, network, {
     label: "The IrohaConnect relay request",
-    requireChainId: true,
+    requireNetworkId: true,
   });
   const accountId = scannedConnectApprovedAccountId;
   if (!accountId) {
@@ -1725,8 +1750,9 @@ const approveOpenConnectFrame = async (
     },
     sid: parsed.sid,
     appPublicKeyHex,
+    nonceBase64Url: parsed.nonceBase64Url,
     relayToken: parsed.relayToken,
-    requestedChainId,
+    requestedNetworkId,
     permissions,
   });
   requireCurrentScannedConnection(socket);
@@ -1798,7 +1824,7 @@ const handleScannedConnectMessage = async (
 ) => {
   try {
     requireCurrentScannedConnection(socket);
-    const bytes = await connectEventBytes(event.data);
+    const bytes = await readIrohaConnectRelayFrame(event.data);
     requireCurrentScannedConnection(socket);
     const frame = decodeConnectFrame(bytes);
     if (frame.sid !== parsed.sid || frame.direction !== "app_to_wallet") {
@@ -1843,7 +1869,7 @@ const handleScannedConnectMessage = async (
       socket,
       parsed,
       frame.control.appPublicKeyHex,
-      frame.control.constraints.chainId,
+      frame.control.constraints.networkId,
       frame.control.permissions,
     );
   } catch (error) {
@@ -1881,7 +1907,7 @@ const approveScannedConnectSession = async (parsed: ParsedIrohaConnectUri) => {
       parsed,
       session.connection,
       {
-        requireChainId: true,
+        requireNetworkId: true,
         requireNode: true,
       },
     );
@@ -1897,9 +1923,7 @@ const approveScannedConnectSession = async (parsed: ParsedIrohaConnectUri) => {
     assertIrohaConnectEndpointCanPair(inspection);
     const validatedSession: ParsedIrohaConnectUri = {
       ...parsed,
-      chainId: network.chainId,
       node: network.toriiUrl,
-      networkPrefix: network.networkPrefix,
     };
     setIrohaConnectContext({
       toriiUrl: network.toriiUrl,
@@ -1910,7 +1934,7 @@ const approveScannedConnectSession = async (parsed: ParsedIrohaConnectUri) => {
     scannedConnectBoundaryInitialized = true;
 
     const socket = new WebSocket(
-      buildIrohaConnectWebSocketUrl(validatedSession, network.toriiUrl),
+      buildIrohaConnectWebSocketUrl(validatedSession),
       [buildIrohaConnectTokenProtocol(parsed.token)],
     );
     approvalSocket = socket;

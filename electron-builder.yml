@@ -6,20 +6,25 @@ directories:
   buildResources: buildResources
 afterPack: scripts/after-pack.mjs
 afterSign: scripts/after-sign.mjs
+forceCodeSigning: true
 asarUnpack:
   - dist/native/iroha_js_host.node
 files:
-  - dist/**
+  - dist/main/**
+  - dist/preload/**
+  - dist/renderer/**
+  - dist/native/iroha_js_host.node
+  - dist/native/iroha_js_host.checksums.json
   - package.json
-extraResources:
-  - from: resources/governance-referendum-source.json
-    to: governance/governance-referendum-source.json
+  - "!node_modules/@iroha/iroha-js/**"
 protocols:
   - name: Iroha
     schemes:
       - iroha
 mac:
   category: public.app-category.finance
+  signIgnore:
+    - /Contents/Helpers/SoraVpnController\.app(?:/|$)
   target:
     - dmg
     - zip
@@ -30,11 +35,6 @@ mac:
   extendInfo:
     NSCameraUsageDescription: SORA Wallet uses the camera for Kaigi video calls and QR scanning.
     NSMicrophoneUsageDescription: SORA Wallet uses the microphone for Kaigi audio calls.
-  extraResources:
-    - from: dist-native/vpn/${os}
-      to: vpn
-      filter:
-        - "**/*"
 win:
   signExts:
     - .exe
@@ -61,4 +61,4 @@ linux:
     - from: dist-native/vpn/${os}
       to: vpn
       filter:
-        - "**/*"
+        - sora-vpn-controller

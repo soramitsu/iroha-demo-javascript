@@ -22,17 +22,16 @@ export const normalizeStoredSigningAlgorithm = (
   if (value === null || value === undefined) {
     return DEFAULT_SIGNING_ALGORITHM;
   }
-  if (typeof value !== "string") {
-    return DEFAULT_SIGNING_ALGORITHM;
+  if (
+    typeof value !== "string" ||
+    !Object.prototype.hasOwnProperty.call(SIGNING_ALGORITHM_LABELS, value)
+  ) {
+    throw new TypeError("Unsupported signing algorithm.");
   }
-  const normalized = value.trim().toLowerCase();
-  if (!normalized || !/^[\x20-\x7e]{1,128}$/.test(normalized)) {
-    return DEFAULT_SIGNING_ALGORITHM;
-  }
-  return normalized || DEFAULT_SIGNING_ALGORITHM;
+  return value;
 };
 
 export const signingAlgorithmLabel = (value: unknown): string => {
   const normalized = normalizeStoredSigningAlgorithm(value);
-  return SIGNING_ALGORITHM_LABELS[normalized] ?? normalized;
+  return SIGNING_ALGORITHM_LABELS[normalized]!;
 };

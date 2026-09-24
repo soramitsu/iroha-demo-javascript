@@ -111,58 +111,108 @@ describe("Kaigi helpers", () => {
     ).toThrow("Kaigi packet kind must match the session description.");
   });
 
-  it("accepts a raw session description object when the expected kind is known", () => {
-    expect(
-      parseKaigiSignalInput(
-        JSON.stringify({
-          type: "offer",
-          sdp: "v=0\r\na=ice-ufrag:test\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
-        }),
-        "offer",
-      ),
-    ).toEqual({
-      kind: "offer",
-      description: {
-        type: "offer",
-        sdp: "v=0\r\na=ice-ufrag:test\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
-      },
-    });
-  });
-
-  it("accepts an sdp fragment without the outer envelope", () => {
-    expect(
-      parseKaigiSignalInput(
-        [
-          '"sdp": "v=0\\r\\na=ice-ufrag:test\\r\\nm=audio 9 UDP/TLS/RTP/SAVPF 111\\r\\n",',
-          '"roomId": "daily-standup",',
-          '"participantName": "Bob"',
-        ].join("\n"),
-        "offer",
-      ),
-    ).toEqual({
+  it("accepts only the exact versioned manual signal envelope", () => {
+    const exactPacket = JSON.stringify({
+      schema: "kaigi-manual-signal/v1",
       kind: "offer",
       roomId: "daily-standup",
+      participantId: "bob",
       participantName: "Bob",
       description: {
         type: "offer",
         sdp: "v=0\r\na=ice-ufrag:test\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
       },
+      createdAtMs: 1234,
     });
-  });
 
-  it("accepts plain sdp text when the caller already knows the signal kind", () => {
-    expect(
-      parseKaigiSignalInput(
-        "v=0\r\na=ice-ufrag:test\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
-        "answer",
-      ),
-    ).toEqual({
-      kind: "answer",
+    expect(parseKaigiSignalInput(exactPacket, "offer")).toEqual({
+      schema: "kaigi-manual-signal/v1",
+      kind: "offer",
+      roomId: "daily-standup",
+      participantId: "bob",
+      participantName: "Bob",
       description: {
-        type: "answer",
+        type: "offer",
         sdp: "v=0\r\na=ice-ufrag:test\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
       },
+      createdAtMs: 1234,
     });
+
+    expect(() =>
+      parseKaigiSignalInput(
+        JSON.stringify({ type: "offer", sdp: "v=0\r\n" }),
+        "offer",
+      ),
+    ).toThrow();
+    expect(() =>
+      parseKaigiSignalInput(
+        '"sdp": "v=0\\r\\na=ice-ufrag:test\\r\\n"',
+        "offer",
+      ),
+    ).toThrow();
+    expect(() =>
+      parseKaigiSignalInput("v=0\r\na=ice-ufrag:test\r\n", "offer"),
+    ).toThrow();
+  });
+
+  it("rejects ambiguous, coerced, and non-canonical envelope fields", () => {
+    const base = {
+      schema: "kaigi-manual-signal/v1",
+      kind: "answer",
+      roomId: "daily-standup",
+      participantId: "bob",
+      participantName: "Bob",
+      description: { type: "answer", sdp: "v=0\r\n" },
+      createdAtMs: 1234,
+    };
+
+    expect(() =>
+      parseKaigiSignalInput(
+        JSON.stringify({ ...base, legacy: true }),
+        "answer",
+      ),
+    ).toThrow("Kaigi packet has an invalid shape.");
+    expect(() =>
+      parseKaigiSignalInput(
+        JSON.stringify({ ...base, createdAtMs: "1234" }),
+        "answer",
+      ),
+    ).toThrow("Kaigi packet creation time is invalid.");
+    expect(() =>
+      parseKaigiSignalInput(
+        JSON.stringify({ ...base, participantId: "Bob" }),
+        "answer",
+      ),
+    ).toThrow("Kaigi packet participant ID is invalid.");
+    expect(() =>
+      parseKaigiSignalInput(
+        JSON.stringify({
+          ...base,
+          description: { ...base.description, candidate: "legacy" },
+        }),
+        "answer",
+      ),
+    ).toThrow("Kaigi packet description has an invalid shape.");
+    expect(() =>
+      parseKaigiSignalInput(
+        '{"schema":"kaigi-manual-signal/v1","kind":"answer","kind":"offer","roomId":"daily-standup","participantId":"bob","participantName":"Bob","description":{"type":"answer","sdp":"v=0\\r\\n"},"createdAtMs":1234}',
+        "answer",
+      ),
+    ).toThrow("Kaigi packet is invalid.");
+  });
+
+  it("requires the packet kind expected by the current signaling step", () => {
+    const packet = buildKaigiSignalEnvelope({
+      kind: "offer",
+      roomId: "daily-standup",
+      participantId: "bob",
+      participantName: "Bob",
+      description: { type: "offer", sdp: "v=0\r\n" },
+      createdAtMs: 1234,
+    });
+    expect(() =>
+      parseKaigiSignalInput(stringifyKaigiSignalEnvelope(packet), "answer"),
+    ).toThrow("Kaigi packet kind must be answer.");
   });
 
   it("merges remote tracks even when the track event omits streams", () => {

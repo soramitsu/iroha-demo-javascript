@@ -1,10 +1,6 @@
 import { createHash } from "node:crypto";
 
-import {
-  inspectSubscriptionTriggerAction,
-  noritoDecodeInstruction,
-} from "@iroha/iroha-js";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   configureIrohaJsNativeDir,
   hasRequiredIrohaJsNativeExports,
@@ -15,15 +11,47 @@ import { hasRequiredPackagedIrohaJsNativeProvenance } from "../electron/irohaJsN
 
 const REVIEWED_IROHA_SOURCE_GIT_REVISION =
   "1bcb05eb208d8bda1610789d827a7ed97e66e56c";
+const DEVELOPMENT_MODULE_URL =
+  "file:///Users/test/app/dist/preload/preload.mjs";
+const DEVELOPMENT_ACTIVE_NATIVE_DIR =
+  "/Users/test/app/node_modules/.cache/iroha-sdk-compat/active/native";
+const DEVELOPMENT_ACTIVE_NATIVE_PATH = `${DEVELOPMENT_ACTIVE_NATIVE_DIR}/iroha_js_host.node`;
+const developmentNativeExists = (path: string): boolean =>
+  path === DEVELOPMENT_ACTIVE_NATIVE_PATH;
 
-const assertCurrentPlainElectorateCustody = (value: unknown): void => {
-  const rules = JSON.parse(String(value)) as Record<string, unknown>;
-  expect(rules.bond_escrow_account).toBe(
-    "sorauﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K",
+const PROPOSAL_OPERATOR =
+  "sorauﾛ1Pｽp8zXFQﾗｷPsFﾒｶﾑ3ｵmﾉbｼｽUｱｶヱﾚBXヱﾊCﾋﾘﾈvuKFKM346";
+const SECOND_PROPOSAL_OPERATOR =
+  "sorauﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K";
+const POLICY_FINGERPRINT = Buffer.from(
+  "4742b1f274928767564c6effa414e640e6f635874d74684b06b95414c5afa16e",
+  "hex",
+);
+const PAYOUT_FINGERPRINT = Buffer.from(
+  "8fd84f6599e22db4da15f7152a914dc0091dd73a7906d5981cce37d485191c25",
+  "hex",
+);
+
+const currentOperatorBoundFingerprint = (
+  proposalOperator: unknown,
+  policyJson: unknown,
+  payoutLifecycleProposalId: unknown,
+): Buffer => {
+  if (policyJson === "{}") {
+    throw new Error(
+      "validation-fee policy must contain exactly [current fields]",
+    );
+  }
+  const policy = JSON.parse(String(policyJson)) as Record<string, unknown>;
+  expect(policy.network_id).toBe(
+    "hash:1313131313131313131313131313131313131313131313131313131313131313#9CE1",
   );
-  expect(rules.slash_receiver_account).toBe(
-    "sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX",
-  );
+  expect(payoutLifecycleProposalId).toBeNull();
+  if (proposalOperator === PROPOSAL_OPERATOR) return POLICY_FINGERPRINT;
+  if (proposalOperator === SECOND_PROPOSAL_OPERATOR) {
+    return Buffer.alloc(32, 0x86);
+  }
+  throw new Error("unexpected proposal operator");
 };
 
 const compatibleNativeModule = () => ({
@@ -34,11 +62,19 @@ const compatibleNativeModule = () => ({
     return null;
   },
   deriveConfidentialReceiveAddressV2() {},
-  buildConfidentialTransferProofV2() {},
-  buildConfidentialUnshieldProofV2() {},
-  buildConfidentialUnshieldProofV3() {},
   buildIvmProvedTransactionPayload() {},
   signQuotedIvmProvedTransactionPayload() {},
+  buildTransactionPayload() {},
+  signQuotedTransactionPayload() {},
+  encodeSignedTransactionVersioned(bytes: Uint8Array) {
+    return Buffer.from(bytes);
+  },
+  hashSignedTransaction() {
+    return Buffer.alloc(32);
+  },
+  decodeTransactionReceiptJson() {
+    return "{}";
+  },
   noritoDecodeInstruction() {
     return JSON.stringify({ trusted: "decode" });
   },
@@ -48,32 +84,40 @@ const compatibleNativeModule = () => ({
   inspectSubscriptionTriggerAction() {
     return JSON.stringify({ trusted: "inspection" });
   },
+  validationFeeHijiriQuoteRequestV1() {},
+  validationFeeVerifyHijiriQuoteResponseV1() {},
   validationFeePolicyProposalFingerprintV1(
-    _policy: unknown,
+    proposalOperator: unknown,
+    policyJson: unknown,
     _payoutLifecycleProposalId: unknown,
-    _plainElectorateRules: unknown,
   ) {
-    void _policy;
-    void _payoutLifecycleProposalId;
-    assertCurrentPlainElectorateCustody(_plainElectorateRules);
-    return Buffer.from(
-      "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90",
-      "hex",
+    return currentOperatorBoundFingerprint(
+      proposalOperator,
+      policyJson,
+      _payoutLifecycleProposalId,
     );
   },
   validationFeePayoutLifecycleProposalFingerprintV1(
-    _payoutBinding: unknown,
-    _plainElectorateRules: unknown,
+    proposalOperator: unknown,
+    payoutBindingJson: unknown,
   ) {
-    void _payoutBinding;
-    assertCurrentPlainElectorateCustody(_plainElectorateRules);
-    return Buffer.from(
-      "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b",
-      "hex",
-    );
+    if (payoutBindingJson === "{}") {
+      throw new Error("payout binding must contain exactly [contract_address]");
+    }
+    const payoutBinding = JSON.parse(String(payoutBindingJson)) as Record<
+      string,
+      unknown
+    >;
+    expect(payoutBinding.ds_asset_id).toBe("7FF2EKZbaWzi5QTD6hewE2voveah");
+    expect(payoutBinding.xor_asset_id).toBe("5dHF5UNffENuEg9mhjYwY1jcZ1K5");
+    if (proposalOperator === PROPOSAL_OPERATOR) return PAYOUT_FINGERPRINT;
+    if (proposalOperator === SECOND_PROPOSAL_OPERATOR) {
+      return Buffer.alloc(32, 0x90);
+    }
+    throw new Error("unexpected proposal operator");
   },
   connectNoritoBridgeAbiVersion() {
-    return 21;
+    return 23;
   },
   securePrivateFileAbiVersion() {
     return 1;
@@ -108,57 +152,69 @@ const GOVERNANCE_FINGERPRINT_EXPORTS = [
   "validationFeePolicyProposalFingerprintV1",
   "validationFeePayoutLifecycleProposalFingerprintV1",
 ] as const;
+const TRANSACTION_RUNTIME_NATIVE_EXPORTS = [
+  "buildTransactionPayload",
+  "signQuotedTransactionPayload",
+  "encodeSignedTransactionVersioned",
+  "hashSignedTransaction",
+  "decodeTransactionReceiptJson",
+] as const;
 
 describe("irohaJsNativeDir", () => {
-  it("resolves the installed package from TypeScript source layout", () => {
+  it("resolves the active SDK native directory from TypeScript source layout", () => {
     const resolved = resolveIrohaJsNativeDir(
       "file:///Users/test/app/electron/secureBoundedJson.ts",
       (path) =>
         path ===
-        "/Users/test/app/node_modules/@iroha/iroha-js/native/iroha_js_host.node",
+        "/Users/test/app/node_modules/.cache/iroha-sdk-compat/active/native/iroha_js_host.node",
       () => compatibleNativeModule(),
     );
 
     expect(resolved).toBe(
-      "/Users/test/app/node_modules/@iroha/iroha-js/native",
+      "/Users/test/app/node_modules/.cache/iroha-sdk-compat/active/native",
     );
   });
 
-  it("prefers the installed iroha-js native directory when dist/native is absent", () => {
+  it("resolves the active SDK native directory from built Electron layout", () => {
     const seenPaths: string[] = [];
     const resolved = resolveIrohaJsNativeDir(
-      "file:///Users/test/app/dist/preload/preload.mjs",
+      DEVELOPMENT_MODULE_URL,
       (path) => {
         seenPaths.push(path);
-        return (
-          path ===
-          "/Users/test/app/node_modules/@iroha/iroha-js/native/iroha_js_host.node"
-        );
+        return developmentNativeExists(path);
       },
       () => compatibleNativeModule(),
     );
 
-    expect(resolved).toBe(
-      "/Users/test/app/node_modules/@iroha/iroha-js/native",
-    );
-    expect(seenPaths[1]).toBe(
-      "/Users/test/app/node_modules/@iroha/iroha-js/native/iroha_js_host.node",
-    );
+    expect(resolved).toBe(DEVELOPMENT_ACTIVE_NATIVE_DIR);
+    expect(seenPaths[1]).toBe(DEVELOPMENT_ACTIVE_NATIVE_PATH);
   });
 
-  it("does not overwrite an explicit native-dir override", () => {
+  it("accepts only a native-dir setting that matches the active SDK", () => {
     const env = {
-      IROHA_JS_NATIVE_DIR: "/custom/native",
+      IROHA_JS_NATIVE_DIR: DEVELOPMENT_ACTIVE_NATIVE_DIR,
     } as NodeJS.ProcessEnv;
 
     const resolved = configureIrohaJsNativeDir(
-      "file:///Users/test/app/dist/preload/preload.mjs",
+      DEVELOPMENT_MODULE_URL,
       env,
-      () => false,
+      developmentNativeExists,
+      () => compatibleNativeModule(),
     );
 
-    expect(resolved).toBe("/custom/native");
-    expect(env.IROHA_JS_NATIVE_DIR).toBe("/custom/native");
+    expect(resolved).toBe(DEVELOPMENT_ACTIVE_NATIVE_DIR);
+    expect(env.IROHA_JS_NATIVE_DIR).toBe(DEVELOPMENT_ACTIVE_NATIVE_DIR);
+  });
+
+  it("rejects a development native-dir override from another SDK root", () => {
+    expect(() =>
+      configureIrohaJsNativeDir(
+        DEVELOPMENT_MODULE_URL,
+        { IROHA_JS_NATIVE_DIR: "/custom/native" } as NodeJS.ProcessEnv,
+        developmentNativeExists,
+        () => compatibleNativeModule(),
+      ),
+    ).toThrow("must identify the native directory from the active SDK");
   });
 
   it("rejects an explicit native-dir override inside a packaged Electron app", () => {
@@ -172,27 +228,36 @@ describe("irohaJsNativeDir", () => {
     );
   });
 
-  it("falls back to dist/native when the installed package native binary is incompatible", () => {
+  it("does not inspect physical installed-package or non-ASAR dist fallbacks", () => {
+    const seenPaths: string[] = [];
     const resolved = resolveIrohaJsNativeDir(
-      "file:///Users/test/app/dist/preload/preload.mjs",
-      (path) =>
-        path.endsWith(
-          "/node_modules/@iroha/iroha-js/native/iroha_js_host.node",
-        ) || path.endsWith("/dist/native/iroha_js_host.node"),
-      (_moduleUrl, nativeModulePath) =>
-        nativeModulePath.endsWith("/dist/native/iroha_js_host.node")
-          ? compatibleNativeModule()
-          : {},
-      (nativeDir) => nativeDir,
+      DEVELOPMENT_MODULE_URL,
+      (path) => {
+        seenPaths.push(path);
+        return (
+          path.endsWith(
+            "/node_modules/@iroha/iroha-js/native/iroha_js_host.node",
+          ) || path.endsWith("/dist/native/iroha_js_host.node")
+        );
+      },
+      () => compatibleNativeModule(),
     );
 
-    expect(resolved).toBe("/Users/test/app/dist/native");
+    expect(resolved).toBeNull();
+    expect(seenPaths).not.toHaveLength(0);
+    expect(
+      seenPaths.some(
+        (path) =>
+          path.includes("node_modules/@iroha/iroha-js") ||
+          path.endsWith("/dist/native/iroha_js_host.node"),
+      ),
+    ).toBe(false);
   });
 
   it("never returns a packaged binding whose release provenance is invalid", () => {
     const resolved = resolveIrohaJsNativeDir(
-      "file:///Users/test/app/dist/preload/preload.mjs",
-      (path) => path.endsWith("/dist/native/iroha_js_host.node"),
+      "file:///Applications/SORA.app/Contents/Resources/app.asar/dist/preload/preload.mjs",
+      (path) => path.endsWith("app.asar/dist/native/iroha_js_host.node"),
       () => compatibleNativeModule(),
       () => null,
     );
@@ -200,7 +265,7 @@ describe("irohaJsNativeDir", () => {
     expect(resolved).toBeNull();
   });
 
-  it("requires provenance for every candidate when running from app.asar", () => {
+  it("considers only the staged native pair when running from app.asar", () => {
     const checked: string[] = [];
     const resolved = resolveIrohaJsNativeDir(
       "file:///Applications/SORA.app/Contents/Resources/app.asar/dist/preload/preload.mjs",
@@ -216,9 +281,6 @@ describe("irohaJsNativeDir", () => {
       "/Applications/SORA.app/Contents/Resources/app.asar/dist/native",
     );
     expect(checked).toEqual([
-      "/Applications/SORA.app/Contents/Resources/app.asar/dist/node_modules/@iroha/iroha-js/native",
-      "/Applications/SORA.app/Contents/Resources/app.asar/node_modules/@iroha/iroha-js/native",
-      "/Applications/SORA.app/Contents/Resources/node_modules/@iroha/iroha-js/native",
       "/Applications/SORA.app/Contents/Resources/app.asar/dist/native",
     ]);
   });
@@ -281,10 +343,10 @@ describe("irohaJsNativeDir", () => {
     const nativeModule = compatibleNativeModule();
     expect(
       installGlobalIrohaJsNativeBinding(
-        "file:///Users/test/app/dist/preload/preload.mjs",
-        { IROHA_JS_NATIVE_DIR: "/mock/native" } as NodeJS.ProcessEnv,
+        DEVELOPMENT_MODULE_URL,
+        {} as NodeJS.ProcessEnv,
         () => nativeModule,
-        undefined,
+        developmentNativeExists,
         undefined,
         globalTarget,
       ),
@@ -493,7 +555,7 @@ describe("hasRequiredPackagedIrohaJsNativeProvenance", () => {
 });
 
 describe("hasRequiredIrohaJsNativeExports", () => {
-  it("accepts binaries that expose confidential, quoted IVM, and governance helpers", () => {
+  it("accepts binaries that expose receive-address, quoted IVM, and governance helpers", () => {
     expect(hasRequiredIrohaJsNativeExports(compatibleNativeModule())).toBe(
       true,
     );
@@ -503,15 +565,20 @@ describe("hasRequiredIrohaJsNativeExports", () => {
     expect(
       hasRequiredIrohaJsNativeExports({
         deriveConfidentialReceiveAddressV2() {},
-        buildConfidentialTransferProofV2() {},
-        buildConfidentialUnshieldProofV2() {},
-        buildConfidentialUnshieldProofV3() {},
       }),
     ).toBe(false);
   });
 
   it("rejects binaries missing either validation-fee fingerprint export", () => {
     for (const exportName of GOVERNANCE_FINGERPRINT_EXPORTS) {
+      const nativeModule = compatibleNativeModule();
+      Reflect.deleteProperty(nativeModule, exportName);
+      expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(false);
+    }
+  });
+
+  it("rejects binaries missing an active transaction runtime export", () => {
+    for (const exportName of TRANSACTION_RUNTIME_NATIVE_EXPORTS) {
       const nativeModule = compatibleNativeModule();
       Reflect.deleteProperty(nativeModule, exportName);
       expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(false);
@@ -564,7 +631,7 @@ describe("hasRequiredIrohaJsNativeExports", () => {
     expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(false);
   });
 
-  it("accepts opaque N-API fingerprint arities when known-answer vectors pass", () => {
+  it("accepts opaque N-API fingerprint arities when semantic probes pass", () => {
     const nativeModule = compatibleNativeModule();
     const policyFingerprint =
       nativeModule.validationFeePolicyProposalFingerprintV1;
@@ -592,7 +659,100 @@ describe("hasRequiredIrohaJsNativeExports", () => {
     expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(true);
   });
 
-  it("rejects a native Connect bridge ABI other than 21", () => {
+  it("rejects deterministic fingerprints that miss either exact known-answer vector", () => {
+    const wrongPolicyModule = compatibleNativeModule();
+    const policyFingerprint =
+      wrongPolicyModule.validationFeePolicyProposalFingerprintV1;
+    wrongPolicyModule.validationFeePolicyProposalFingerprintV1 = function (
+      proposalOperator: unknown,
+      policyJson: unknown,
+      payoutLifecycleProposalId: unknown,
+    ) {
+      const result = policyFingerprint(
+        proposalOperator,
+        policyJson,
+        payoutLifecycleProposalId,
+      );
+      return proposalOperator === PROPOSAL_OPERATOR
+        ? Buffer.alloc(32, 0x47)
+        : result;
+    };
+    expect(hasRequiredIrohaJsNativeExports(wrongPolicyModule)).toBe(false);
+
+    const wrongPayoutModule = compatibleNativeModule();
+    const payoutFingerprint =
+      wrongPayoutModule.validationFeePayoutLifecycleProposalFingerprintV1;
+    wrongPayoutModule.validationFeePayoutLifecycleProposalFingerprintV1 =
+      function (proposalOperator: unknown, payoutBindingJson: unknown) {
+        const result = payoutFingerprint(proposalOperator, payoutBindingJson);
+        return proposalOperator === PROPOSAL_OPERATOR
+          ? Buffer.alloc(32, 0x8f)
+          : result;
+      };
+    expect(hasRequiredIrohaJsNativeExports(wrongPayoutModule)).toBe(false);
+  });
+
+  it("rejects nondeterministic or operator-insensitive policy fingerprints", () => {
+    const nondeterministicModule = compatibleNativeModule();
+    let primaryCalls = 0;
+    const policyFingerprint =
+      nondeterministicModule.validationFeePolicyProposalFingerprintV1;
+    nondeterministicModule.validationFeePolicyProposalFingerprintV1 = function (
+      proposalOperator: unknown,
+      policyJson: unknown,
+      payoutLifecycleProposalId: unknown,
+    ) {
+      const result = policyFingerprint(
+        proposalOperator,
+        policyJson,
+        payoutLifecycleProposalId,
+      );
+      if (proposalOperator !== PROPOSAL_OPERATOR || policyJson === "{}") {
+        return result;
+      }
+      primaryCalls += 1;
+      return primaryCalls === 1 ? result : Buffer.alloc(32, 0x48);
+    };
+    expect(hasRequiredIrohaJsNativeExports(nondeterministicModule)).toBe(false);
+
+    const insensitiveModule = compatibleNativeModule();
+    insensitiveModule.validationFeePolicyProposalFingerprintV1 = function (
+      proposalOperator: unknown,
+      policyJson: unknown,
+      _payoutLifecycleProposalId: unknown,
+    ) {
+      if (policyJson === "{}") {
+        throw new Error(
+          "validation-fee policy must contain exactly [current fields]",
+        );
+      }
+      void proposalOperator;
+      void _payoutLifecycleProposalId;
+      return POLICY_FINGERPRINT;
+    };
+    expect(hasRequiredIrohaJsNativeExports(insensitiveModule)).toBe(false);
+  });
+
+  it("rejects a policy helper that accepts the malformed rejection probe", () => {
+    const nativeModule = compatibleNativeModule();
+    const policyFingerprint =
+      nativeModule.validationFeePolicyProposalFingerprintV1;
+    nativeModule.validationFeePolicyProposalFingerprintV1 = function (
+      proposalOperator: unknown,
+      policyJson: unknown,
+      payoutLifecycleProposalId: unknown,
+    ) {
+      if (policyJson === "{}") return Buffer.alloc(32);
+      return policyFingerprint(
+        proposalOperator,
+        policyJson,
+        payoutLifecycleProposalId,
+      );
+    };
+    expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(false);
+  });
+
+  it("rejects a native Connect bridge ABI other than 23", () => {
     const nativeModule = compatibleNativeModule();
     nativeModule.connectNoritoBridgeAbiVersion = () => 20;
 
@@ -608,78 +768,37 @@ describe("hasRequiredIrohaJsNativeExports", () => {
     expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(false);
   });
 
-  it("rejects binaries whose fingerprint helpers fail the canonical Rust vectors", () => {
+  it("rejects binaries whose payout fingerprint helper accepts the invalid probe", () => {
     const nativeModule = compatibleNativeModule();
     nativeModule.validationFeePayoutLifecycleProposalFingerprintV1 = function (
-      _payoutBinding: unknown,
-      _plainElectorateRules: unknown,
+      _proposalOperator: unknown,
+      _payoutBindingJson: unknown,
     ) {
-      void _payoutBinding;
-      void _plainElectorateRules;
+      void _proposalOperator;
+      void _payoutBindingJson;
       return Buffer.alloc(32);
     };
 
     expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(false);
   });
 
-  it("installs the resolved native module for SDK calls bundled through Electron", () => {
+  it("configures the active SDK native pair before installing the app singleton", () => {
     const nativeModule = compatibleNativeModule();
     const globalTarget = {} as Record<string, unknown>;
+    const env = {} as NodeJS.ProcessEnv;
 
     const installed = installGlobalIrohaJsNativeBinding(
-      "file:///Users/test/app/dist/preload/preload.mjs",
-      { IROHA_JS_NATIVE_DIR: "/mock/native" } as NodeJS.ProcessEnv,
+      DEVELOPMENT_MODULE_URL,
+      env,
       () => nativeModule,
-      undefined,
+      developmentNativeExists,
       undefined,
       globalTarget,
     );
 
     expect(installed).toBe(nativeModule);
+    expect(env.IROHA_JS_NATIVE_DIR).toBe(DEVELOPMENT_ACTIVE_NATIVE_DIR);
     expect(globalTarget.__IROHA_NATIVE_BINDING__).toBe(nativeModule);
     expect(globalTarget.__IROHA_NORITO_BINDING__).toBe(nativeModule);
-  });
-
-  it("routes active SDK Norito surfaces through the one installed binding", () => {
-    const nativeDescriptor = Object.getOwnPropertyDescriptor(
-      globalThis,
-      "__IROHA_NATIVE_BINDING__",
-    );
-    const noritoDescriptor = Object.getOwnPropertyDescriptor(
-      globalThis,
-      "__IROHA_NORITO_BINDING__",
-    );
-    const nativeModule = compatibleNativeModule();
-    const decode = vi.spyOn(nativeModule, "noritoDecodeInstruction");
-    const inspect = vi.spyOn(nativeModule, "inspectSubscriptionTriggerAction");
-
-    try {
-      Reflect.deleteProperty(globalThis, "__IROHA_NATIVE_BINDING__");
-      Reflect.deleteProperty(globalThis, "__IROHA_NORITO_BINDING__");
-      installGlobalIrohaJsNativeBinding(
-        "file:///Users/test/app/dist/preload/preload.mjs",
-        { IROHA_JS_NATIVE_DIR: "/mock/native" } as NodeJS.ProcessEnv,
-        () => nativeModule,
-      );
-
-      expect(noritoDecodeInstruction(Buffer.from([0]))).toEqual({
-        trusted: "decode",
-      });
-      expect(inspectSubscriptionTriggerAction("canonical-action")).toEqual({
-        trusted: "inspection",
-      });
-      expect(decode).toHaveBeenCalledOnce();
-      expect(inspect).toHaveBeenCalledOnce();
-    } finally {
-      for (const [slot, descriptor] of [
-        ["__IROHA_NATIVE_BINDING__", nativeDescriptor],
-        ["__IROHA_NORITO_BINDING__", noritoDescriptor],
-      ] as const) {
-        Reflect.deleteProperty(globalThis, slot);
-        if (descriptor !== undefined) {
-          Object.defineProperty(globalThis, slot, descriptor);
-        }
-      }
-    }
   });
 });

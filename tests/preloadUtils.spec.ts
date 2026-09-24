@@ -1,11 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { AccountAddress } from "@iroha/iroha-js/address";
 import {
+  assertConfidentialPolicyProjectionAgreement,
   assertExplorerAccountQrMatchesRequestedAccount,
-  confidentialModeSupportsShield,
   extractApiErrorDetail,
   formatOnboardingError,
-  isPositiveWholeAmount,
-  normalizeAccountAssetListPayload,
+  normalizeAccountAssetListPayload as decodeAccountAssetListPayload,
   normalizeAssetDefinitionConfidentialPolicy,
   normalizeBaseUrl,
   normalizeConfidentialAssetPolicyPayload,
@@ -14,7 +14,6 @@ import {
   normalizeGovernanceCouncilCurrentPayload,
   normalizeGovernanceUnlockStatsPayload,
   normalizeNexusLifecyclePayload,
-  normalizeOfflineReadinessPayload,
   normalizePublicLaneRewardsPayload,
   normalizePublicLaneStakePayload,
   normalizePublicLaneValidatorsPayload,
@@ -26,43 +25,52 @@ import {
   stripConfidentialFeeSponsor,
 } from "../electron/preload-utils";
 
-const offlineReadinessPayload = (overrides: Record<string, unknown> = {}) => ({
-  required_bridge_abi_version: 21,
-  cash_handoff_capability: "cash_handoff_v1",
-  max_hops: 8,
-  asset_definition_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-  asset_scale: null,
-  evaluated_block_height: 44_916,
-  evaluated_block_hash: "2f".repeat(32),
-  active_transfer_verifier: null,
-  active_topup_shield_verifier: null,
-  active_unshield_verifier: null,
-  active_recursive_step_eq_verifier: null,
-  active_recursive_step_ep_verifier: null,
-  artifact_set: null,
-  proof_backend_available: false,
-  recursive_lineage_supported: false,
-  ready: false,
-  blockers: [
-    {
-      code: "proof_backend_unavailable",
-      message: "The proof backend is unavailable.",
-    },
-  ],
-  ...overrides,
-});
+const XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const accountIdFor = (publicKeyHex: string) =>
+  AccountAddress.fromAccount({
+    publicKey: Uint8Array.from(
+      publicKeyHex.match(/.{2}/gu)!.map((byte) => Number.parseInt(byte, 16)),
+    ),
+  }).toI105(753);
+const ACCOUNT_ID = accountIdFor(
+  "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+);
+const OTHER_ACCOUNT_ID = accountIdFor(
+  "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+);
+const normalizeAccountAssetListPayload = (payload: unknown) =>
+  decodeAccountAssetListPayload(payload, {
+    expectedAccountId: ACCOUNT_ID,
+    networkPrefix: 753,
+    maximumItems: 500,
+  });
 
 describe("preload utils", () => {
   it("normalizes Torii base URLs", () => {
-    expect(normalizeBaseUrl(" https://torii.example/ ")).toBe(
+    expect(normalizeBaseUrl("https://torii.example/")).toBe(
       "https://torii.example",
     );
     expect(normalizeBaseUrl("http://127.0.0.1:8080")).toBe(
       "http://127.0.0.1:8080",
     );
     expect(() => normalizeBaseUrl("127.0.0.1:8080")).toThrow(
-      "Torii URL must include http or https scheme",
+      "valid absolute URL",
     );
+    expect(() => normalizeBaseUrl(" https://torii.example")).toThrow(
+      "canonical non-empty text",
+    );
+    expect(() => normalizeBaseUrl("https://user:pass@torii.example")).toThrow(
+      "without credentials",
+    );
+    expect(() => normalizeBaseUrl("https://torii.example?route=other")).toThrow(
+      "without credentials",
+    );
+    expect(() => normalizeBaseUrl("http://torii.example")).toThrow(
+      "must use HTTPS",
+    );
+    expect(() =>
+      normalizeBaseUrl(`https://${"a".repeat(2_048)}.example`),
+    ).toThrow("canonical non-empty text");
   });
 
   it("strips fee sponsorship from confidential relay metadata while preserving gas asset hints", () => {
@@ -241,6 +249,20 @@ describe("preload utils", () => {
     );
   });
 
+  it("does not buffer oversized API error bodies", async () => {
+    const response = new Response("must not be read", {
+      status: 502,
+      headers: {
+        "content-length": String(64 * 1024 + 1),
+        "content-type": "text/plain",
+      },
+    });
+    const arrayBuffer = vi.spyOn(response, "arrayBuffer");
+
+    await expect(readApiErrorDetail(response)).resolves.toBe("");
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
   it("reads HTML gateway API errors without leaking markup", async () => {
     const htmlResponse = new Response(
       "<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>nginx/1.29.8</center></body></html>",
@@ -320,23 +342,23 @@ describe("preload utils", () => {
     );
   });
 
-  it("maps explorer QR snake_case payloads to renderer contract fields", () => {
+  it("accepts only the current SDK explorer QR response", () => {
     const normalized = normalizeExplorerAccountQrPayload({
-      canonical_id: "testuSampleCanonical",
-      literal: "testuSampleLiteral",
-      network_prefix: 369,
-      error_correction: "M",
-      modules: 33,
-      qr_version: 4,
+      canonicalId: "testuSampleCanonical",
+      literal: "testuSampleCanonical",
+      networkPrefix: 369,
+      errorCorrection: "M",
+      modules: 192,
+      qrVersion: 4,
       svg: "<svg/>",
     });
 
     expect(normalized).toEqual({
       canonicalId: "testuSampleCanonical",
-      literal: "testuSampleLiteral",
+      literal: "testuSampleCanonical",
       networkPrefix: 369,
       errorCorrection: "M",
-      modules: 33,
+      modules: 192,
       qrVersion: 4,
       svg: "<svg/>",
     });
@@ -344,21 +366,54 @@ describe("preload utils", () => {
     expect(() =>
       normalizeExplorerAccountQrPayload({
         canonical_id: "testuSampleCanonical",
+        literal: "testuSampleCanonical",
+        network_prefix: 369,
+        error_correction: "M",
+        modules: 192,
+        qr_version: 4,
         svg: "<svg/>",
       }),
-    ).toThrow("Explorer QR response was missing required fields.");
+    ).toThrow(/must contain exactly/u);
+    expect(() =>
+      normalizeExplorerAccountQrPayload({
+        ...normalized,
+        errorCorrection: "H",
+      }),
+    ).toThrow("must be exactly M");
+    expect(() =>
+      normalizeExplorerAccountQrPayload({
+        ...normalized,
+        modules: 33,
+      }),
+    ).toThrow("must be exactly 192");
   });
 
   it("rejects explorer QR payloads for another account", () => {
     expect(() =>
       assertExplorerAccountQrMatchesRequestedAccount(
         {
-          canonical_id: "testuOtherCanonical",
+          canonicalId: "testuOtherCanonical",
           literal: "testuOtherAccount",
-          network_prefix: 369,
-          error_correction: "M",
-          modules: 33,
-          qr_version: 4,
+          networkPrefix: 369,
+          errorCorrection: "M",
+          modules: 192,
+          qrVersion: 4,
+          svg: "<svg/>",
+        },
+        "testuRequestedAccount",
+      ),
+    ).toThrow(
+      "Explorer QR response account did not match the requested account.",
+    );
+    expect(() =>
+      assertExplorerAccountQrMatchesRequestedAccount(
+        {
+          canonicalId: "testuOtherCanonical",
+          literal: "testuRequestedAccount",
+          networkPrefix: 369,
+          errorCorrection: "M",
+          modules: 192,
+          qrVersion: 4,
           svg: "<svg/>",
         },
         "testuRequestedAccount",
@@ -368,45 +423,34 @@ describe("preload utils", () => {
     );
   });
 
-  it("normalizes account asset list payloads from legacy and split-field responses", () => {
+  it("normalizes the exact first-release account asset response", () => {
     expect(
       normalizeAccountAssetListPayload({
         items: [
           {
-            asset_id: "xor#sora#alice",
-            quantity: "25000",
-          },
-        ],
-        total: 1,
-      }),
-    ).toEqual({
-      items: [
-        {
-          asset_id: "xor#sora#alice",
-          quantity: "25000",
-        },
-      ],
-      total: 1,
-    });
-
-    expect(
-      normalizeAccountAssetListPayload({
-        items: [
-          {
-            account_id: "sorauAlice",
+            account_id: ACCOUNT_ID,
             asset: "5PeSrQmLNwwKtruJvDZrbrm9RuMw",
             asset_alias: null,
             asset_name: "Localnet Fee",
+            scope: "global",
             quantity: "25000",
+            primary_alias: null,
+            primary_alias_name: null,
+            primary_alias_dataspace: null,
+            primary_alias_domain: null,
+            has_primary_alias: false,
           },
         ],
         total: 1,
+        has_more: false,
+        count_mode: "exact",
       }),
     ).toEqual({
       items: [
         {
-          asset_id: "5PeSrQmLNwwKtruJvDZrbrm9RuMw#sorauAlice",
+          asset_id: `5PeSrQmLNwwKtruJvDZrbrm9RuMw#${ACCOUNT_ID}`,
           quantity: "25000",
+          scope: "global",
           asset_name: "Localnet Fee",
           asset_definition_id: "5PeSrQmLNwwKtruJvDZrbrm9RuMw",
         },
@@ -418,14 +462,24 @@ describe("preload utils", () => {
       normalizeAccountAssetListPayload({
         items: [
           {
-            account_id: "testuAlice",
+            account_id: ACCOUNT_ID,
             asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+            asset_alias: null,
+            asset_name: "XOR",
+            scope: "global",
             quantity: "25000",
+            primary_alias: null,
+            primary_alias_name: null,
+            primary_alias_dataspace: null,
+            primary_alias_domain: null,
+            has_primary_alias: false,
           },
         ],
         total: 1,
+        has_more: false,
+        count_mode: "exact",
       }),
-    ).toThrow("outside the first-release account asset contract");
+    ).toThrow("must contain exactly");
   });
 
   it("preserves account asset aliases for renderer labels", () => {
@@ -433,25 +487,122 @@ describe("preload utils", () => {
       normalizeAccountAssetListPayload({
         items: [
           {
-            account_id: "sorauAlice",
+            account_id: ACCOUNT_ID,
             asset: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-            asset_alias: "@xor",
+            asset_alias: "xor#universal",
+            asset_name: "XOR",
+            scope: "dataspace:7",
             quantity: "42",
+            primary_alias: null,
+            primary_alias_name: null,
+            primary_alias_dataspace: null,
+            primary_alias_domain: null,
+            has_primary_alias: false,
           },
         ],
         total: 1,
+        has_more: false,
+        count_mode: "exact",
       }),
     ).toEqual({
       items: [
         {
-          asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw#sorauAlice",
+          asset_id: `6TEAJqbb8oEPmLncoNiMRbLEK6tw#${ACCOUNT_ID}#dataspace:7`,
           quantity: "42",
-          asset_alias: "xor",
+          scope: "dataspace:7",
+          asset_alias: "xor#universal",
+          asset_name: "XOR",
           asset_definition_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
         },
       ],
       total: 1,
     });
+  });
+
+  it("binds account asset rows and limits to the exact request", () => {
+    const response = {
+      items: [
+        {
+          account_id: OTHER_ACCOUNT_ID,
+          asset: XOR_ASSET_DEFINITION_ID,
+          asset_alias: null,
+          asset_name: "XOR",
+          scope: "global",
+          quantity: "1",
+          primary_alias: null,
+          primary_alias_name: null,
+          primary_alias_dataspace: null,
+          primary_alias_domain: null,
+          has_primary_alias: false,
+        },
+      ],
+      total: 1,
+      has_more: false,
+      count_mode: "exact",
+    };
+
+    expect(() => normalizeAccountAssetListPayload(response)).toThrow(
+      "does not match the requested account",
+    );
+    expect(() =>
+      decodeAccountAssetListPayload(
+        {
+          ...response,
+          items: [{ ...response.items[0], account_id: ACCOUNT_ID }],
+        },
+        {
+          expectedAccountId: ACCOUNT_ID,
+          networkPrefix: 753,
+          maximumItems: 0,
+        },
+      ),
+    ).toThrow("exceeds the requested item limit");
+
+    expect(() =>
+      decodeAccountAssetListPayload(
+        {
+          ...response,
+          items: [{ ...response.items[0], account_id: ACCOUNT_ID }],
+        },
+        {
+          expectedAccountId: ACCOUNT_ID,
+          expectedAssetDefinitionId: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+          networkPrefix: 753,
+          maximumItems: 1,
+        },
+      ),
+    ).toThrow("does not match the requested asset definition");
+  });
+
+  it("rejects duplicate account holdings in one exact page", () => {
+    const item = {
+      account_id: ACCOUNT_ID,
+      asset: XOR_ASSET_DEFINITION_ID,
+      asset_alias: null,
+      asset_name: "XOR",
+      scope: "global",
+      quantity: "1",
+      primary_alias: null,
+      primary_alias_name: null,
+      primary_alias_dataspace: null,
+      primary_alias_domain: null,
+      has_primary_alias: false,
+    };
+    expect(() =>
+      decodeAccountAssetListPayload(
+        {
+          items: [item, { ...item, quantity: "2" }],
+          total: 2,
+          has_more: false,
+          count_mode: "exact",
+        },
+        {
+          expectedAccountId: ACCOUNT_ID,
+          networkPrefix: 753,
+          maximumItems: 2,
+        },
+      ),
+    ).toThrow("duplicates an account asset holding");
   });
 
   it("rejects ambiguous and camelCase account asset response shapes", () => {
@@ -464,22 +615,24 @@ describe("preload utils", () => {
           },
         ],
         total: 1,
+        has_more: false,
+        count_mode: "exact",
       }),
-    ).toThrow("outside the first-release account asset contract");
+    ).toThrow("must contain exactly");
 
     expect(() =>
       normalizeAccountAssetListPayload({
         items: [
           {
             asset_id: "xor#sora#alice",
-            asset: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-            account_id: "sorauAlice",
             quantity: "1",
           },
         ],
         total: 1,
+        has_more: false,
+        count_mode: "exact",
       }),
-    ).toThrow("must use exactly one first-release shape");
+    ).toThrow("must contain exactly");
 
     expect(() =>
       normalizeAccountAssetListPayload({
@@ -490,8 +643,52 @@ describe("preload utils", () => {
           },
         ],
         total: 1,
+        has_more: false,
+        count_mode: "exact",
       }),
-    ).toThrow("must use exactly one first-release shape");
+    ).toThrow("must contain exactly");
+
+    expect(() =>
+      normalizeAccountAssetListPayload({
+        items: [],
+        total: 0,
+        has_more: false,
+        count_mode: "exact",
+        next_cursor: "unexpected",
+      }),
+    ).toThrow("account asset list response must contain exactly");
+
+    expect(() =>
+      normalizeAccountAssetListPayload({
+        items: [],
+        total: 0,
+        has_more: false,
+        count_mode: "bounded",
+      }),
+    ).toThrow('count_mode must be "exact"');
+
+    expect(() =>
+      normalizeAccountAssetListPayload({
+        items: [
+          {
+            account_id: ACCOUNT_ID,
+            asset: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+            asset_alias: undefined,
+            asset_name: "XOR",
+            scope: "global",
+            quantity: "1",
+            primary_alias: null,
+            primary_alias_name: null,
+            primary_alias_dataspace: null,
+            primary_alias_domain: null,
+            has_primary_alias: false,
+          },
+        ],
+        total: 1,
+        has_more: false,
+        count_mode: "exact",
+      }),
+    ).toThrow(/asset_alias/u);
   });
 
   it("normalizes the exact current governance council payload", () => {
@@ -668,7 +865,7 @@ describe("preload utils", () => {
   });
 
   it("normalizes public lane validators payloads", () => {
-    const normalized = normalizePublicLaneValidatorsPayload({
+    const payload = {
       lane_id: 7,
       total: 1,
       items: [
@@ -694,11 +891,19 @@ describe("preload utils", () => {
           },
         },
       ],
-    });
+    };
+    const normalized = normalizePublicLaneValidatorsPayload(payload);
 
     expect(normalized.lane_id).toBe(7);
     expect(normalized.items[0].validator).toBe("validator@wonderland");
     expect(normalized.items[0].peer_id).toBe("peer:validator");
+
+    expect(() =>
+      normalizePublicLaneValidatorsPayload({
+        ...payload,
+        items: [{ ...payload.items[0], peer_id: null }],
+      }),
+    ).toThrow(/peer_id/u);
     expect(normalized.items[0].status.type).toBe("Active");
     expect(normalized.items[0].activation_epoch).toBe(3);
   });
@@ -752,7 +957,7 @@ describe("preload utils", () => {
         total: 0,
         items: [],
       }),
-    ).toThrow("validators.laneId is not part of the current contract");
+    ).toThrow("validators must contain exactly");
 
     expect(() =>
       normalizePublicLaneStakePayload({
@@ -769,7 +974,7 @@ describe("preload utils", () => {
           },
         ],
       }),
-    ).toThrow("contains fields outside the current contract");
+    ).toThrow("must contain exactly");
 
     expect(() =>
       normalizePublicLaneRewardsPayload({
@@ -786,7 +991,7 @@ describe("preload utils", () => {
           },
         ],
       }),
-    ).toThrow("contains fields outside the current contract");
+    ).toThrow("must contain exactly");
   });
 
   it("requires complete first-release public lane collection envelopes", () => {
@@ -795,39 +1000,39 @@ describe("preload utils", () => {
         lane_id: 7,
         items: [],
       }),
-    ).toThrow("validators.total must be a non-negative integer");
+    ).toThrow("validators must contain exactly");
     expect(() =>
       normalizePublicLaneValidatorsPayload({
         lane_id: 7,
         total: 0,
       }),
-    ).toThrow("validators.items must be an array");
+    ).toThrow("validators must contain exactly");
 
     expect(() =>
       normalizePublicLaneStakePayload({
         lane_id: 4,
         items: [],
       }),
-    ).toThrow("stake.total must be a non-negative integer");
+    ).toThrow("stake must contain exactly");
     expect(() =>
       normalizePublicLaneStakePayload({
         lane_id: 4,
         total: 0,
       }),
-    ).toThrow("stake.items must be an array");
+    ).toThrow("stake must contain exactly");
 
     expect(() =>
       normalizePublicLaneRewardsPayload({
         lane_id: 4,
         items: [],
       }),
-    ).toThrow("rewards.total must be a non-negative integer");
+    ).toThrow("rewards must contain exactly");
     expect(() =>
       normalizePublicLaneRewardsPayload({
         lane_id: 4,
         total: 0,
       }),
-    ).toThrow("rewards.items must be an array");
+    ).toThrow("rewards must contain exactly");
   });
 
   it("normalizes the current Nexus lifecycle lane catalog", () => {
@@ -878,9 +1083,9 @@ describe("preload utils", () => {
 
   it("accepts only canonical non-negative safe integers in Nexus lifecycle", () => {
     const lifecycle = (laneId: unknown) => ({
-      version: "1",
+      version: 1,
       nexus_enabled: true,
-      lane_count: "1",
+      lane_count: 1,
       lanes: [
         {
           id: laneId,
@@ -896,11 +1101,12 @@ describe("preload utils", () => {
       ],
     });
 
-    expect(normalizeNexusLifecyclePayload(lifecycle("0")).lanes[0].id).toBe(0);
+    expect(normalizeNexusLifecyclePayload(lifecycle(0)).lanes[0].id).toBe(0);
     for (const invalid of [
       1.5,
       -1,
       Number.MAX_SAFE_INTEGER + 1,
+      "0",
       "01",
       "1.0",
       "1e3",
@@ -908,7 +1114,7 @@ describe("preload utils", () => {
       true,
     ]) {
       expect(() => normalizeNexusLifecyclePayload(lifecycle(invalid))).toThrow(
-        "nexus lifecycle.lanes[0].id must be a non-negative integer.",
+        "nexus lifecycle.lanes[0].id must be a non-negative JSON integer.",
       );
     }
   });
@@ -958,144 +1164,20 @@ describe("preload utils", () => {
     ).toThrow("must be a canonical non-negative decimal integer");
   });
 
-  it("normalizes current offline readiness blockers", () => {
-    const readiness = normalizeOfflineReadinessPayload(
-      offlineReadinessPayload(),
-    );
-
-    expect(readiness.ready).toBe(false);
-    expect(readiness.asset_scale).toBeNull();
-    expect(readiness.blockers[0].code).toBe("proof_backend_unavailable");
-    expect(readiness.active_transfer_verifier).toBeNull();
-    expect(readiness.cash_handoff_capability).toBe("cash_handoff_v1");
-  });
-
-  it("requires the exact ABI 21 cash-handoff readiness shape", () => {
-    const missingArtifactSet = offlineReadinessPayload();
-    Reflect.deleteProperty(missingArtifactSet, "artifact_set");
-    expect(() => normalizeOfflineReadinessPayload(missingArtifactSet)).toThrow(
-      "offline readiness must contain exactly",
-    );
-    const missingCashHandoffCapability = offlineReadinessPayload();
-    Reflect.deleteProperty(
-      missingCashHandoffCapability,
-      "cash_handoff_capability",
-    );
-    expect(() =>
-      normalizeOfflineReadinessPayload(missingCashHandoffCapability),
-    ).toThrow("offline readiness must contain exactly");
-    expect(() =>
-      normalizeOfflineReadinessPayload(
-        offlineReadinessPayload({ compatibility_hint: "legacy" }),
-      ),
-    ).toThrow("offline readiness must contain exactly");
-    expect(() =>
-      normalizeOfflineReadinessPayload(
-        offlineReadinessPayload({ required_bridge_abi_version: 20 }),
-      ),
-    ).toThrow(
-      "offline readiness.required_bridge_abi_version must be exactly 21.",
-    );
-    expect(() =>
-      normalizeOfflineReadinessPayload(
-        offlineReadinessPayload({
-          cash_handoff_capability: "cash_handoff_v0",
-        }),
-      ),
-    ).toThrow(
-      'offline readiness.cash_handoff_capability must be exactly "cash_handoff_v1".',
-    );
-    expect(() =>
-      normalizeOfflineReadinessPayload(
-        offlineReadinessPayload({ max_hops: 7 }),
-      ),
-    ).toThrow("offline readiness.max_hops must be exactly 8.");
-  });
-
-  it("rejects coerced integers and malformed readiness evidence", () => {
-    expect(() =>
-      normalizeOfflineReadinessPayload(
-        offlineReadinessPayload({ evaluated_block_height: "44916" }),
-      ),
-    ).toThrow(
-      "offline readiness.evaluated_block_height must be a non-negative JSON integer.",
-    );
-    expect(() =>
-      normalizeOfflineReadinessPayload(
-        offlineReadinessPayload({ asset_scale: "0" }),
-      ),
-    ).toThrow(
-      "offline readiness.asset_scale must be a non-negative JSON integer.",
-    );
-    expect(() =>
-      normalizeOfflineReadinessPayload(
-        offlineReadinessPayload({ evaluated_block_hash: "2F".repeat(32) }),
-      ),
-    ).toThrow(
-      "offline readiness.evaluated_block_hash must be a lowercase 32-byte hash.",
-    );
-    expect(() =>
-      normalizeOfflineReadinessPayload(
-        offlineReadinessPayload({ active_transfer_verifier: [] }),
-      ),
-    ).toThrow("offline readiness.active_transfer_verifier must be an object.");
-  });
-
-  it("cross-checks blocker shape and the ready invariant", () => {
-    expect(() =>
-      normalizeOfflineReadinessPayload(
-        offlineReadinessPayload({
-          blockers: [
-            {
-              code: "Not-Canonical",
-              message: "The proof backend is unavailable.",
-            },
-          ],
-        }),
-      ),
-    ).toThrow("offline readiness.blockers[0].code is malformed.");
-    expect(() =>
-      normalizeOfflineReadinessPayload(
-        offlineReadinessPayload({
-          ready: false,
-          blockers: [],
-        }),
-      ),
-    ).toThrow(
-      "offline readiness.ready must be true exactly when blockers is empty.",
-    );
-    expect(() =>
-      normalizeOfflineReadinessPayload(
-        offlineReadinessPayload({
-          asset_scale: null,
-          ready: true,
-          blockers: [],
-        }),
-      ),
-    ).toThrow("A ready offline response must include a supported asset scale.");
-  });
-
-  it("rejects offline readiness for a different requested asset", () => {
-    expect(() =>
-      normalizeOfflineReadinessPayload(
-        offlineReadinessPayload({
-          asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
-        }),
-        "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-      ),
-    ).toThrow(
-      "offline readiness.asset_definition_id must match the requested asset definition.",
-    );
-  });
-
   it("reads only the current top-level confidential policy", () => {
     expect(
       normalizeAssetDefinitionConfidentialPolicy({
         confidential_policy: {
           mode: "Convertible",
+          allow_shield: true,
+          allow_unshield: true,
+          vk_transfer: "halo2/ipa::vk_transfer",
+          vk_unshield: "halo2/ipa::vk_unshield",
+          vk_shield: "halo2/ipa::vk_shield",
           vk_set_hash: null,
           poseidon_params_id: null,
           pedersen_params_id: null,
+          pending_transition: null,
         },
         metadata: {
           "zk.policy": {
@@ -1105,14 +1187,15 @@ describe("preload utils", () => {
       }),
     ).toEqual({
       mode: "Convertible",
-      allow_shield: null,
-      allow_unshield: null,
-      vk_transfer: null,
-      vk_unshield: null,
-      vk_shield: null,
+      allow_shield: true,
+      allow_unshield: true,
+      vk_transfer: "halo2/ipa::vk_transfer",
+      vk_unshield: "halo2/ipa::vk_unshield",
+      vk_shield: "halo2/ipa::vk_shield",
       vk_set_hash: null,
       poseidon_params_id: null,
       pedersen_params_id: null,
+      pending_transition: null,
     });
     expect(
       normalizeAssetDefinitionConfidentialPolicy({
@@ -1123,12 +1206,12 @@ describe("preload utils", () => {
 
   it("normalizes confidential asset policy payloads", () => {
     const normalized = normalizeConfidentialAssetPolicyPayload({
-      asset_id: "norito:abcdef0123456789",
-      block_height: 41,
-      current_mode: "TransparentOnly",
+      asset_id: XOR_ASSET_DEFINITION_ID,
+      block_height: 46,
+      current_mode: "Convertible",
       effective_mode: "Convertible",
       allow_shield: true,
-      allow_unshield: false,
+      allow_unshield: true,
       vk_transfer: "halo2/ipa::vk_transfer",
       vk_unshield: "halo2/ipa::vk_unshield",
       vk_shield: "halo2/ipa::vk_shield",
@@ -1137,7 +1220,7 @@ describe("preload utils", () => {
       pedersen_params_id: 9,
       pending_transition: {
         transition_id: "BB".repeat(32),
-        previous_mode: "TransparentOnly",
+        previous_mode: "Convertible",
         new_mode: "ShieldedOnly",
         effective_height: 55,
         conversion_window: 10,
@@ -1145,20 +1228,98 @@ describe("preload utils", () => {
       },
     });
 
-    expect(normalized.asset_id).toBe("norito:abcdef0123456789");
+    expect(normalized.asset_id).toBe(XOR_ASSET_DEFINITION_ID);
     expect(normalized.effective_mode).toBe("Convertible");
     expect(normalized.allow_shield).toBe(true);
-    expect(normalized.allow_unshield).toBe(false);
+    expect(normalized.allow_unshield).toBe(true);
     expect(normalized.vk_transfer).toBe("halo2/ipa::vk_transfer");
     expect(normalized.vk_unshield).toBe("halo2/ipa::vk_unshield");
     expect(normalized.vk_shield).toBe("halo2/ipa::vk_shield");
     expect(normalized.pending_transition?.effective_height).toBe(55);
     expect(normalized.pending_transition?.conversion_window).toBe(10);
+    expect(
+      assertConfidentialPolicyProjectionAgreement(normalized, {
+        id: XOR_ASSET_DEFINITION_ID,
+        confidential_policy: {
+          mode: "Convertible",
+          allow_shield: true,
+          allow_unshield: true,
+          vk_transfer: "halo2/ipa::vk_transfer",
+          vk_unshield: "halo2/ipa::vk_unshield",
+          vk_shield: "halo2/ipa::vk_shield",
+          vk_set_hash: `hash:${"AA".repeat(32)}#1234`,
+          poseidon_params_id: 7,
+          pedersen_params_id: 9,
+          pending_transition: {
+            new_mode: "ShieldedOnly",
+            effective_height: 55,
+            previous_mode: "Convertible",
+            transition_id: `hash:${"BB".repeat(32)}#5678`,
+            conversion_window: 10,
+          },
+        },
+      }),
+    ).toBe(normalized);
   });
 
-  it("rejects legacy or truthy confidential policy compatibility fields", () => {
+  it("rejects disagreement between the transition and asset-definition projections", () => {
+    const policy = normalizeConfidentialAssetPolicyPayload({
+      asset_id: XOR_ASSET_DEFINITION_ID,
+      block_height: 41,
+      current_mode: "Convertible",
+      effective_mode: "Convertible",
+      allow_shield: true,
+      allow_unshield: true,
+      vk_transfer: "halo2/ipa::vk_transfer",
+      vk_unshield: "halo2/ipa::vk_unshield",
+      vk_shield: "halo2/ipa::vk_shield",
+      vk_set_hash: null,
+      poseidon_params_id: 7,
+      pedersen_params_id: 9,
+      pending_transition: null,
+    });
+    expect(() =>
+      assertConfidentialPolicyProjectionAgreement(policy, {
+        id: XOR_ASSET_DEFINITION_ID,
+        confidential_policy: {
+          mode: "ShieldedOnly",
+          allow_shield: true,
+          allow_unshield: true,
+          vk_transfer: "halo2/ipa::vk_transfer",
+          vk_unshield: "halo2/ipa::vk_unshield",
+          vk_shield: "halo2/ipa::vk_shield",
+          vk_set_hash: null,
+          poseidon_params_id: 7,
+          pedersen_params_id: 9,
+          pending_transition: null,
+        },
+      }),
+    ).toThrow("does not exactly match");
+    expect(() =>
+      assertConfidentialPolicyProjectionAgreement(policy, {
+        id: XOR_ASSET_DEFINITION_ID,
+        confidential_policy: {
+          mode: "Convertible",
+          allow_shield: true,
+          allow_unshield: false,
+          vk_transfer: "halo2/ipa::vk_transfer",
+          vk_unshield: "halo2/ipa::vk_unshield",
+          vk_shield: "halo2/ipa::vk_shield",
+          vk_set_hash: null,
+          poseidon_params_id: 7,
+          pedersen_params_id: 9,
+          pending_transition: null,
+        },
+      }),
+    ).toThrow("does not exactly match");
+    expect(() =>
+      assertConfidentialPolicyProjectionAgreement(policy, {}),
+    ).toThrow("missing the top-level confidential_policy");
+  });
+
+  it("rejects noncanonical confidential policy fields and modes", () => {
     const exact = {
-      asset_id: "norito:abcdef0123456789",
+      asset_id: XOR_ASSET_DEFINITION_ID,
       block_height: 41,
       current_mode: "Convertible",
       effective_mode: "Convertible",
@@ -1176,34 +1337,21 @@ describe("preload utils", () => {
     expect(() =>
       normalizeConfidentialAssetPolicyPayload({
         ...exact,
-        allow_shield: "true",
+        allow_shield: null,
       }),
-    ).toThrow("confidential.allow_shield must be a boolean or null");
+    ).toThrow("confidential.allow_shield must be an explicit boolean");
     expect(() =>
       normalizeConfidentialAssetPolicyPayload({
         ...exact,
-        effectiveMode: "Convertible",
+        allowShield: true,
       }),
-    ).toThrow("fields outside the first-release contract");
-  });
-
-  it("detects which confidential modes support shielding", () => {
-    expect(confidentialModeSupportsShield("ShieldedOnly")).toBe(true);
-    expect(confidentialModeSupportsShield("convertible")).toBe(true);
-    expect(confidentialModeSupportsShield("zk_native")).toBe(true);
-    expect(confidentialModeSupportsShield("TransparentOnly")).toBe(false);
-    expect(confidentialModeSupportsShield(undefined)).toBe(false);
-  });
-
-  it("accepts only positive whole-number shielding amounts", () => {
-    expect(isPositiveWholeAmount("1")).toBe(true);
-    expect(isPositiveWholeAmount("25")).toBe(true);
-    expect(isPositiveWholeAmount(" 7 ")).toBe(true);
-
-    expect(isPositiveWholeAmount("0")).toBe(false);
-    expect(isPositiveWholeAmount("10.5")).toBe(false);
-    expect(isPositiveWholeAmount("-4")).toBe(false);
-    expect(isPositiveWholeAmount("abc")).toBe(false);
+    ).toThrow("must contain exactly");
+    expect(() =>
+      normalizeConfidentialAssetPolicyPayload({
+        ...exact,
+        effective_mode: "convertible",
+      }),
+    ).toThrow("must be exactly TransparentOnly, ShieldedOnly, or Convertible");
   });
 
   it("extracts nexus unbonding delay from configuration payloads", () => {

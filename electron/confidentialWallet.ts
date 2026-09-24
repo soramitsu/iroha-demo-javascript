@@ -1,30 +1,31 @@
 import { randomBytes } from "node:crypto";
+import type { NetworkId } from "@iroha/iroha-js";
 import {
   deriveConfidentialNoteV2,
   deriveConfidentialNullifierV2,
   deriveConfidentialOwnerTagV2,
   deriveConfidentialReceiveAddressV2,
 } from "@iroha/iroha-js/crypto";
-import type { ConfidentialReceiveKeyRecord } from "./secureVault";
 import {
-  decryptPayloadForAccount,
-  encryptPayloadForAccountId,
-} from "./accountSealedBox";
+  SECURE_VAULT_MAX_RECEIVE_KEYS_PER_ACCOUNT,
+  type ConfidentialReceiveKeyRecord,
+} from "./secureVault";
 import {
   decryptKaigiPayload,
-  encryptKaigiPayload,
+  KAIGI_ENCRYPTED_PAYLOAD_MAX_BYTES,
+  KAIGI_SEALED_BOX_SCHEMA,
   type KaigiSealedBox,
 } from "./kaigiCrypto";
-import { extractAssetDefinitionId } from "../src/utils/assetId";
+import { isCanonicalAssetDefinitionId } from "../src/utils/assetId";
+import {
+  FIRST_RELEASE_CONFIDENTIAL_NOTE_MAX_ASSETS,
+  FIRST_RELEASE_CONFIDENTIAL_NOTE_MAX_ITEMS_PER_ASSET,
+} from "./firstReleaseResourceLimits";
 
 export const CONFIDENTIAL_WALLET_METADATA_KEY =
   "iroha_demo_confidential_wallet";
 export const CONFIDENTIAL_WALLET_METADATA_SCHEMA =
   "iroha-demo-confidential-wallet/v3";
-export const CONFIDENTIAL_WALLET_METADATA_SCHEMA_V2 =
-  "iroha-demo-confidential-wallet/v2";
-export const CONFIDENTIAL_WALLET_METADATA_SCHEMA_LEGACY =
-  "iroha-demo-confidential-wallet/v1";
 export const CONFIDENTIAL_WALLET_NOTE_SCHEMA =
   "iroha-demo-confidential-note/v3";
 
@@ -39,12 +40,6 @@ export type WalletConfidentialTransactionLike = {
   block?: number;
   note_index_order?: number;
   metadata?: unknown;
-  transaction_metadata?: unknown;
-  tx_metadata?: unknown;
-  transaction?: unknown;
-  tx?: unknown;
-  payload?: unknown;
-  record?: unknown;
   instructions?: Array<ConfidentialInstructionLike | null | undefined>;
 };
 
@@ -63,19 +58,15 @@ export type WalletConfidentialNote = {
 type WalletParsedNote = { kind: "current"; note: WalletConfidentialNote };
 
 type WalletConfidentialMetadataRecord = {
-  schema:
-    | typeof CONFIDENTIAL_WALLET_METADATA_SCHEMA
-    | typeof CONFIDENTIAL_WALLET_METADATA_SCHEMA_V2
-    | typeof CONFIDENTIAL_WALLET_METADATA_SCHEMA_LEGACY;
+  schema: typeof CONFIDENTIAL_WALLET_METADATA_SCHEMA;
   outputs: Array<{
     commitment_hex: string;
     envelope: KaigiSealedBox;
-    receive_key_id?: string;
-    public_key_base64url?: string;
+    receive_key_id: string;
   }>;
 };
 
-export type WalletSpendableConfidentialNote = WalletConfidentialNote & {
+export type WalletRecoveredConfidentialNote = WalletConfidentialNote & {
   nullifier_hex: string;
   source_tx_hash: string;
   leaf_index: number;
@@ -83,9 +74,8 @@ export type WalletSpendableConfidentialNote = WalletConfidentialNote & {
 
 export type WalletConfidentialLedger = {
   exact: boolean;
-  notes: WalletSpendableConfidentialNote[];
+  notes: WalletRecoveredConfidentialNote[];
   spendableQuantity: string;
-  legacyQuantity: string;
   treeCommitmentsHex: string[];
 };
 
@@ -106,104 +96,180 @@ type ParsedUnshieldInstruction = {
   outputs: string[];
 };
 
-const HEX_RE = /^[0-9a-fA-F]+$/;
+const MAX_CONFIDENTIAL_TRANSACTIONS =
+  FIRST_RELEASE_CONFIDENTIAL_NOTE_MAX_ASSETS *
+  FIRST_RELEASE_CONFIDENTIAL_NOTE_MAX_ITEMS_PER_ASSET;
+const MAX_CONFIDENTIAL_INSTRUCTIONS_PER_TRANSACTION = 64;
+const MAX_CONFIDENTIAL_INPUTS_PER_INSTRUCTION = 64;
+const MAX_CONFIDENTIAL_OUTPUTS_PER_TRANSACTION = 64;
+const MAX_CONFIDENTIAL_AMOUNT_DIGITS = 78;
+const MAX_CONFIDENTIAL_NOTE_CIPHERTEXT_BYTES = 4 * 1024;
 
-const trimString = (value: unknown): string => String(value ?? "").trim();
-
-const isPlainRecord = (value: unknown): value is JsonRecord =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const parseJsonRecord = (value: unknown): JsonRecord | null => {
-  if (isPlainRecord(value)) {
-    return value;
+const isPlainRecord = (value: unknown): value is JsonRecord => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
   }
-  if (typeof value !== "string") {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
+
+const hasExactKeys = (
+  value: JsonRecord,
+  expectedKeys: readonly string[],
+): boolean => {
+  const expected = new Set(expectedKeys);
+  let count = 0;
+  for (const key in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      continue;
+    }
+    count += 1;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (
+      count > expectedKeys.length ||
+      !expected.has(key) ||
+      !descriptor?.enumerable ||
+      !("value" in descriptor)
+    ) {
+      return false;
+    }
+  }
+  return count === expectedKeys.length;
+};
+
+const readDenseArray = (
+  value: unknown,
+  maximumItems: number,
+): readonly unknown[] | null => {
+  if (
+    !Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Array.prototype ||
+    value.length > maximumItems
+  ) {
     return null;
   }
+  let enumerableItemCount = 0;
+  for (const key in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      continue;
+    }
+    if (!/^(?:0|[1-9]\d*)$/u.test(key) || Number(key) >= value.length) {
+      return null;
+    }
+    enumerableItemCount += 1;
+  }
+  if (enumerableItemCount !== value.length) {
+    return null;
+  }
+  const snapshot: unknown[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      return null;
+    }
+    snapshot.push(descriptor.value);
+  }
+  return snapshot;
+};
+
+const readCanonicalBase64Url = (
+  value: unknown,
+  expectedByteLength?: number,
+  maximumByteLength = expectedByteLength,
+): string | null => {
+  const encodedLengthLimit =
+    maximumByteLength === undefined
+      ? null
+      : Math.ceil((maximumByteLength * 4) / 3);
+  if (
+    typeof value !== "string" ||
+    (encodedLengthLimit !== null && value.length > encodedLengthLimit) ||
+    (expectedByteLength !== undefined && value.length !== encodedLengthLimit) ||
+    !/^[A-Za-z0-9_-]+$/u.test(value)
+  ) {
+    return null;
+  }
+  const bytes = Buffer.from(value, "base64url");
   try {
-    const parsed = JSON.parse(value);
-    return isPlainRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
+    if (
+      bytes.length === 0 ||
+      (expectedByteLength !== undefined &&
+        bytes.length !== expectedByteLength) ||
+      bytes.toString("base64url") !== value
+    ) {
+      return null;
+    }
+    return value;
+  } finally {
+    bytes.fill(0);
   }
 };
 
-const parsePositiveWholeAmount = (value: unknown, label: string): bigint => {
-  const normalized = trimString(value);
-  if (!/^\d+$/.test(normalized) || /^0+$/.test(normalized)) {
-    throw new Error(`${label} must be a whole number greater than zero.`);
+const readReceiveKeyId = (value: unknown): string | null =>
+  readCanonicalBase64Url(value, 18);
+
+const parseKaigiSealedBox = (value: unknown): KaigiSealedBox | null => {
+  if (
+    !isPlainRecord(value) ||
+    !hasExactKeys(value, [
+      "schema",
+      "ephemeralPublicKeyBase64Url",
+      "saltBase64Url",
+      "ivBase64Url",
+      "ciphertextBase64Url",
+      "authTagBase64Url",
+    ]) ||
+    value.schema !== KAIGI_SEALED_BOX_SCHEMA
+  ) {
+    return null;
   }
-  return BigInt(normalized);
+  const ephemeralPublicKeyBase64Url = readCanonicalBase64Url(
+    value.ephemeralPublicKeyBase64Url,
+    32,
+  );
+  const saltBase64Url = readCanonicalBase64Url(value.saltBase64Url, 16);
+  const ivBase64Url = readCanonicalBase64Url(value.ivBase64Url, 12);
+  const ciphertextBase64Url = readCanonicalBase64Url(
+    value.ciphertextBase64Url,
+    undefined,
+    Math.min(
+      KAIGI_ENCRYPTED_PAYLOAD_MAX_BYTES,
+      MAX_CONFIDENTIAL_NOTE_CIPHERTEXT_BYTES,
+    ),
+  );
+  const authTagBase64Url = readCanonicalBase64Url(value.authTagBase64Url, 16);
+  if (
+    !ephemeralPublicKeyBase64Url ||
+    !saltBase64Url ||
+    !ivBase64Url ||
+    !ciphertextBase64Url ||
+    !authTagBase64Url
+  ) {
+    return null;
+  }
+  return {
+    schema: KAIGI_SEALED_BOX_SCHEMA,
+    ephemeralPublicKeyBase64Url,
+    saltBase64Url,
+    ivBase64Url,
+    ciphertextBase64Url,
+    authTagBase64Url,
+  };
 };
 
 const addWholeAmounts = (left: string, right: string): string =>
   (BigInt(left) + BigInt(right)).toString();
 
 const readFixedBytesHex = (value: unknown): string | null => {
-  if (typeof value === "string") {
-    const normalized = trimString(value).replace(/^0x/i, "");
-    return normalized.length === 64 && HEX_RE.test(normalized)
-      ? normalized.toLowerCase()
-      : null;
-  }
-  if (Array.isArray(value)) {
-    const bytes = Buffer.from(value);
-    return bytes.length === 32 ? bytes.toString("hex") : null;
-  }
-  if (Buffer.isBuffer(value)) {
-    return value.length === 32 ? value.toString("hex") : null;
-  }
-  if (ArrayBuffer.isView(value)) {
-    const bytes = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
-    return bytes.length === 32 ? bytes.toString("hex") : null;
-  }
-  if (value instanceof ArrayBuffer) {
-    const bytes = Buffer.from(value);
-    return bytes.length === 32 ? bytes.toString("hex") : null;
-  }
-  return null;
+  return typeof value === "string" && /^[0-9a-f]{64}$/u.test(value)
+    ? value
+    : null;
 };
 
 const extractTransactionMetadata = (
   transaction: WalletConfidentialTransactionLike,
-): JsonRecord | null => {
-  const directCandidates = [
-    transaction.metadata,
-    transaction.transaction_metadata,
-    transaction.tx_metadata,
-  ];
-  for (const candidate of directCandidates) {
-    const record = parseJsonRecord(candidate);
-    if (record) {
-      return record;
-    }
-  }
-
-  const nestedCandidates = [
-    parseJsonRecord(transaction.transaction),
-    parseJsonRecord(transaction.tx),
-    parseJsonRecord(transaction.payload),
-    parseJsonRecord(transaction.record),
-  ];
-  for (const candidate of nestedCandidates) {
-    if (!candidate) {
-      continue;
-    }
-    const nestedMetadata = [
-      candidate.metadata,
-      candidate.transaction_metadata,
-      candidate.tx_metadata,
-    ];
-    for (const nestedCandidate of nestedMetadata) {
-      const record = parseJsonRecord(nestedCandidate);
-      if (record) {
-        return record;
-      }
-    }
-  }
-
-  return null;
-};
+): JsonRecord | null =>
+  isPlainRecord(transaction.metadata) ? transaction.metadata : null;
 
 const parseWalletConfidentialNote = (
   value: unknown,
@@ -211,35 +277,51 @@ const parseWalletConfidentialNote = (
   if (!isPlainRecord(value)) {
     return null;
   }
-  const schema = trimString(value.schema);
-  if (schema !== CONFIDENTIAL_WALLET_NOTE_SCHEMA) {
+  if (
+    !hasExactKeys(value, [
+      "schema",
+      "note_id",
+      "asset_definition_id",
+      "amount",
+      "rho_hex",
+      "owner_tag_hex",
+      "diversifier_hex",
+      "commitment_hex",
+      "created_at_ms",
+    ]) ||
+    value.schema !== CONFIDENTIAL_WALLET_NOTE_SCHEMA
+  ) {
     return null;
   }
-  const noteId = trimString(value.note_id ?? value.noteId);
-  const assetDefinitionId = trimString(
-    value.asset_definition_id ?? value.assetDefinitionId,
-  );
-  const amount = trimString(value.amount);
-  const rhoHex = trimString(value.rho_hex ?? value.rhoHex).toLowerCase();
-  const ownerTagHex = trimString(
-    value.owner_tag_hex ?? value.ownerTagHex ?? value.ownerTag,
-  ).toLowerCase();
-  const diversifierHex = trimString(
-    value.diversifier_hex ?? value.diversifierHex ?? value.diversifier,
-  ).toLowerCase();
-  const commitmentHex = trimString(
-    value.commitment_hex ?? value.commitmentHex,
-  ).toLowerCase();
-  const createdAtMs = Number(value.created_at_ms ?? value.createdAtMs);
+  const noteId = value.note_id;
+  const assetDefinitionId = value.asset_definition_id;
+  const amount = value.amount;
+  const rhoHex = value.rho_hex;
+  const ownerTagHex = value.owner_tag_hex;
+  const diversifierHex = value.diversifier_hex;
+  const commitmentHex = value.commitment_hex;
+  const createdAtMs = value.created_at_ms;
   if (
-    !noteId ||
+    typeof noteId !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(noteId) ||
+    typeof assetDefinitionId !== "string" ||
     !assetDefinitionId ||
-    !/^\d+$/.test(amount) ||
-    !/^[0-9a-f]{64}$/.test(rhoHex) ||
-    !/^[0-9a-f]{64}$/.test(ownerTagHex) ||
-    !/^[0-9a-f]{64}$/.test(diversifierHex) ||
-    !/^[0-9a-f]{64}$/.test(commitmentHex) ||
-    !Number.isFinite(createdAtMs) ||
+    assetDefinitionId.trim() !== assetDefinitionId ||
+    !isCanonicalAssetDefinitionId(assetDefinitionId) ||
+    typeof amount !== "string" ||
+    amount.length > MAX_CONFIDENTIAL_AMOUNT_DIGITS ||
+    !/^[1-9]\d*$/u.test(amount) ||
+    typeof rhoHex !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(rhoHex) ||
+    typeof ownerTagHex !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(ownerTagHex) ||
+    typeof diversifierHex !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(diversifierHex) ||
+    typeof commitmentHex !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(commitmentHex) ||
+    noteId !== commitmentHex ||
+    typeof createdAtMs !== "number" ||
+    !Number.isSafeInteger(createdAtMs) ||
     createdAtMs < 0
   ) {
     return null;
@@ -253,7 +335,7 @@ const parseWalletConfidentialNote = (
     owner_tag_hex: ownerTagHex,
     diversifier_hex: diversifierHex,
     commitment_hex: commitmentHex,
-    created_at_ms: Math.trunc(createdAtMs),
+    created_at_ms: createdAtMs,
   };
 };
 
@@ -270,46 +352,52 @@ const parseWalletConfidentialMetadataRecord = (
   if (!isPlainRecord(value)) {
     return null;
   }
-  const schema = trimString(value.schema);
   if (
-    schema !== CONFIDENTIAL_WALLET_METADATA_SCHEMA &&
-    schema !== CONFIDENTIAL_WALLET_METADATA_SCHEMA_V2 &&
-    schema !== CONFIDENTIAL_WALLET_METADATA_SCHEMA_LEGACY
+    !hasExactKeys(value, ["schema", "outputs"]) ||
+    value.schema !== CONFIDENTIAL_WALLET_METADATA_SCHEMA ||
+    !Array.isArray(value.outputs)
   ) {
     return null;
   }
-  const outputs = Array.isArray(value.outputs) ? value.outputs : [];
-  const normalizedOutputs = outputs
-    .map((entry) => {
-      if (!isPlainRecord(entry) || !isPlainRecord(entry.envelope)) {
-        return null;
-      }
-      const commitmentHex = trimString(
-        entry.commitment_hex ?? entry.commitmentHex,
-      ).toLowerCase();
-      if (!/^[0-9a-f]{64}$/.test(commitmentHex)) {
-        return null;
-      }
-      return {
-        commitment_hex: commitmentHex,
-        envelope: entry.envelope as unknown as KaigiSealedBox,
-        receive_key_id: trimString(entry.receive_key_id ?? entry.receiveKeyId),
-        public_key_base64url: trimString(
-          entry.public_key_base64url ?? entry.publicKeyBase64Url,
-        ),
-      };
-    })
-    .filter(Boolean) as WalletConfidentialMetadataRecord["outputs"];
-
-  return {
-    schema:
-      schema === CONFIDENTIAL_WALLET_METADATA_SCHEMA
-        ? CONFIDENTIAL_WALLET_METADATA_SCHEMA
-        : schema === CONFIDENTIAL_WALLET_METADATA_SCHEMA_V2
-          ? CONFIDENTIAL_WALLET_METADATA_SCHEMA_V2
-          : CONFIDENTIAL_WALLET_METADATA_SCHEMA_LEGACY,
-    outputs: normalizedOutputs,
-  };
+  const rawOutputs = readDenseArray(
+    value.outputs,
+    MAX_CONFIDENTIAL_OUTPUTS_PER_TRANSACTION,
+  );
+  if (!rawOutputs || rawOutputs.length === 0) {
+    return null;
+  }
+  const commitments = new Set<string>();
+  const receiveKeyIds = new Set<string>();
+  const outputs: WalletConfidentialMetadataRecord["outputs"] = [];
+  for (const entry of rawOutputs) {
+    if (
+      !isPlainRecord(entry) ||
+      !hasExactKeys(entry, ["commitment_hex", "receive_key_id", "envelope"])
+    ) {
+      return null;
+    }
+    const commitmentHex = entry.commitment_hex;
+    const receiveKeyId = readReceiveKeyId(entry.receive_key_id);
+    const envelope = parseKaigiSealedBox(entry.envelope);
+    if (
+      typeof commitmentHex !== "string" ||
+      !/^[0-9a-f]{64}$/u.test(commitmentHex) ||
+      !receiveKeyId ||
+      !envelope ||
+      commitments.has(commitmentHex) ||
+      receiveKeyIds.has(receiveKeyId)
+    ) {
+      return null;
+    }
+    commitments.add(commitmentHex);
+    receiveKeyIds.add(receiveKeyId);
+    outputs.push({
+      commitment_hex: commitmentHex,
+      receive_key_id: receiveKeyId,
+      envelope,
+    });
+  }
+  return { schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA, outputs };
 };
 
 const readWalletMetadataRecord = (
@@ -319,13 +407,53 @@ const readWalletMetadataRecord = (
   if (!metadata) {
     return null;
   }
-  return parseWalletConfidentialMetadataRecord(
-    metadata[CONFIDENTIAL_WALLET_METADATA_KEY],
+  const descriptor = Object.getOwnPropertyDescriptor(
+    metadata,
+    CONFIDENTIAL_WALLET_METADATA_KEY,
   );
+  if (!descriptor) {
+    return null;
+  }
+  if (!descriptor.enumerable || !("value" in descriptor)) {
+    throw new Error(
+      "Confidential wallet metadata must be an enumerable data field.",
+    );
+  }
+  const parsed = parseWalletConfidentialMetadataRecord(descriptor.value);
+  if (!parsed) {
+    throw new Error(
+      "Confidential wallet metadata does not match the exact current contract.",
+    );
+  }
+  return parsed;
 };
 
-const normalizeAssetDefinitionId = (value: string): string =>
-  extractAssetDefinitionId(value).trim();
+const readAssetDefinitionId = (value: unknown): string | null =>
+  typeof value === "string" && isCanonicalAssetDefinitionId(value)
+    ? value
+    : null;
+
+const requireFixedBytesHexArray = (
+  value: unknown,
+  label: string,
+  options: { allowEmpty: boolean },
+): string[] => {
+  const raw = readDenseArray(value, MAX_CONFIDENTIAL_INPUTS_PER_INSTRUCTION);
+  if (!raw || (!options.allowEmpty && raw.length === 0)) {
+    throw new Error(`${label} must be an exact bounded fixed-bytes array.`);
+  }
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of raw) {
+    const normalized = readFixedBytesHex(candidate);
+    if (!normalized || seen.has(normalized)) {
+      throw new Error(`${label} must be an exact bounded fixed-bytes array.`);
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+};
 
 const parseShieldInstruction = (
   instruction: ConfidentialInstructionLike | null | undefined,
@@ -341,24 +469,31 @@ const parseShieldInstruction = (
     return null;
   }
   const shield = zk.Shield;
-  if (!isPlainRecord(shield)) {
+  if (shield === undefined) {
     return null;
   }
-  const assetDefinitionId = normalizeAssetDefinitionId(
-    trimString(shield.asset),
-  );
+  if (!isPlainRecord(shield)) {
+    throw new Error("Confidential Shield instruction must be an object.");
+  }
+  const assetDefinitionId = readAssetDefinitionId(shield.asset);
+  if (!assetDefinitionId) {
+    throw new Error(
+      "Confidential Shield instruction has a noncanonical asset definition.",
+    );
+  }
   if (!assetDefinitionIds.has(assetDefinitionId)) {
     return null;
   }
-  const commitmentHex =
-    readFixedBytesHex(shield.note_commitment ?? shield.noteCommitment) ??
-    readFixedBytesHex(shield.note_commitment_hex ?? shield.noteCommitmentHex);
-  return commitmentHex
-    ? {
-        asset_definition_id: assetDefinitionId,
-        commitment_hex: commitmentHex,
-      }
-    : null;
+  const commitmentHex = readFixedBytesHex(shield.note_commitment);
+  if (!commitmentHex) {
+    throw new Error(
+      "Confidential Shield instruction has a noncanonical note commitment.",
+    );
+  }
+  return {
+    asset_definition_id: assetDefinitionId,
+    commitment_hex: commitmentHex,
+  };
 };
 
 const parseTransferInstruction = (
@@ -375,23 +510,33 @@ const parseTransferInstruction = (
     return null;
   }
   const transfer = zk.ZkTransfer;
-  if (!isPlainRecord(transfer)) {
+  if (transfer === undefined) {
     return null;
   }
-  const assetDefinitionId = normalizeAssetDefinitionId(
-    trimString(transfer.asset),
-  );
+  if (!isPlainRecord(transfer)) {
+    throw new Error("Confidential ZkTransfer instruction must be an object.");
+  }
+  const assetDefinitionId = readAssetDefinitionId(transfer.asset);
+  if (!assetDefinitionId) {
+    throw new Error(
+      "Confidential ZkTransfer instruction has a noncanonical asset definition.",
+    );
+  }
   if (!assetDefinitionIds.has(assetDefinitionId)) {
     return null;
   }
   return {
     asset_definition_id: assetDefinitionId,
-    inputs: (Array.isArray(transfer.inputs) ? transfer.inputs : [])
-      .map(readFixedBytesHex)
-      .filter((value): value is string => Boolean(value)),
-    outputs: (Array.isArray(transfer.outputs) ? transfer.outputs : [])
-      .map(readFixedBytesHex)
-      .filter((value): value is string => Boolean(value)),
+    inputs: requireFixedBytesHexArray(
+      transfer.inputs,
+      "Confidential ZkTransfer inputs",
+      { allowEmpty: false },
+    ),
+    outputs: requireFixedBytesHexArray(
+      transfer.outputs,
+      "Confidential ZkTransfer outputs",
+      { allowEmpty: false },
+    ),
   };
 };
 
@@ -409,30 +554,40 @@ const parseUnshieldInstruction = (
     return null;
   }
   const unshield = zk.Unshield;
-  if (!isPlainRecord(unshield)) {
+  if (unshield === undefined) {
     return null;
   }
-  const assetDefinitionId = normalizeAssetDefinitionId(
-    trimString(unshield.asset),
-  );
+  if (!isPlainRecord(unshield)) {
+    throw new Error("Confidential Unshield instruction must be an object.");
+  }
+  const assetDefinitionId = readAssetDefinitionId(unshield.asset);
+  if (!assetDefinitionId) {
+    throw new Error(
+      "Confidential Unshield instruction has a noncanonical asset definition.",
+    );
+  }
   if (!assetDefinitionIds.has(assetDefinitionId)) {
     return null;
   }
   return {
     asset_definition_id: assetDefinitionId,
-    inputs: (Array.isArray(unshield.inputs) ? unshield.inputs : [])
-      .map(readFixedBytesHex)
-      .filter((value): value is string => Boolean(value)),
-    outputs: (Array.isArray(unshield.outputs) ? unshield.outputs : [])
-      .map(readFixedBytesHex)
-      .filter((value): value is string => Boolean(value)),
+    inputs: requireFixedBytesHexArray(
+      unshield.inputs,
+      "Confidential Unshield inputs",
+      { allowEmpty: false },
+    ),
+    outputs: requireFixedBytesHexArray(
+      unshield.outputs,
+      "Confidential Unshield outputs",
+      { allowEmpty: true },
+    ),
   };
 };
 
 const readWalletNotesForTransaction = (
   transaction: WalletConfidentialTransactionLike,
   input: {
-    privateKeyHex?: string;
+    privateKeyHex: string;
     receiveKeys?: ConfidentialReceiveKeyRecord[];
     assetDefinitionIds: Set<string>;
   },
@@ -446,47 +601,60 @@ const readWalletNotesForTransaction = (
     (input.receiveKeys ?? []).map((record) => [record.keyId, record]),
   );
   for (const output of metadata.outputs) {
-    try {
-      const parsed =
-        metadata.schema === CONFIDENTIAL_WALLET_METADATA_SCHEMA
-          ? (() => {
-              const receiveKeyId = trimString(output.receive_key_id);
-              if (!receiveKeyId) {
-                return null;
-              }
-              const receiveKey = receiveKeysById.get(receiveKeyId);
-              if (!receiveKey) {
-                return null;
-              }
-              return parseWalletConfidentialNoteEnvelope(
-                decryptKaigiPayload(output.envelope, {
-                  publicKeyBase64Url: receiveKey.publicKeyBase64Url,
-                  privateKeyBase64Url: receiveKey.privateKeyBase64Url,
-                }),
-              );
-            })()
-          : input.privateKeyHex
-            ? parseWalletConfidentialNoteEnvelope(
-                decryptPayloadForAccount(output.envelope, input.privateKeyHex),
-              )
-            : null;
-      if (!parsed) {
-        continue;
-      }
-      if (
-        !input.assetDefinitionIds.has(
-          normalizeAssetDefinitionId(parsed.note.asset_definition_id),
-        )
-      ) {
-        continue;
-      }
-      if (parsed.note.commitment_hex !== output.commitment_hex) {
-        continue;
-      }
-      notesByCommitment.set(output.commitment_hex, parsed);
-    } catch {
+    const receiveKey = receiveKeysById.get(output.receive_key_id);
+    if (!receiveKey) {
       continue;
     }
+    let decrypted: unknown;
+    try {
+      decrypted = decryptKaigiPayload(output.envelope, {
+        publicKeyBase64Url: receiveKey.publicKeyBase64Url,
+        privateKeyBase64Url: receiveKey.privateKeyBase64Url,
+      });
+    } catch {
+      throw new Error(
+        "Confidential note envelope could not be authenticated for its receive key.",
+      );
+    }
+    const parsed = parseWalletConfidentialNoteEnvelope(decrypted);
+    if (!parsed) {
+      throw new Error(
+        "Decrypted confidential note does not match the exact current contract.",
+      );
+    }
+    if (
+      parsed.note.owner_tag_hex !== receiveKey.ownerTagHex ||
+      parsed.note.diversifier_hex !== receiveKey.diversifierHex ||
+      parsed.note.owner_tag_hex !==
+        deriveWalletConfidentialOwnerTagHex({
+          privateKeyHex: input.privateKeyHex,
+          diversifierHex: parsed.note.diversifier_hex,
+        })
+    ) {
+      throw new Error(
+        "Confidential note owner material is not bound to the wallet receive key.",
+      );
+    }
+    if (!input.assetDefinitionIds.has(parsed.note.asset_definition_id)) {
+      throw new Error(
+        "Confidential note asset does not match the tracked instruction asset.",
+      );
+    }
+    const derivedCommitment = deriveConfidentialNoteV2({
+      assetDefinitionId: parsed.note.asset_definition_id,
+      amount: parsed.note.amount,
+      rhoHex: parsed.note.rho_hex,
+      ownerTagHex: parsed.note.owner_tag_hex,
+    }).commitmentHex;
+    if (
+      parsed.note.commitment_hex !== output.commitment_hex ||
+      derivedCommitment !== output.commitment_hex
+    ) {
+      throw new Error(
+        "Confidential note contents do not match the committed ledger output.",
+      );
+    }
+    notesByCommitment.set(output.commitment_hex, parsed);
   }
   return notesByCommitment;
 };
@@ -495,272 +663,360 @@ const compareTransactionsChronologically = (
   left: WalletConfidentialTransactionLike & { __index: number },
   right: WalletConfidentialTransactionLike & { __index: number },
 ) => {
-  const leftBlock = Number.isFinite(left.block)
-    ? Math.trunc(Number(left.block))
-    : Number.MAX_SAFE_INTEGER;
-  const rightBlock = Number.isFinite(right.block)
-    ? Math.trunc(Number(right.block))
-    : Number.MAX_SAFE_INTEGER;
+  const leftBlock = left.block ?? Number.MAX_SAFE_INTEGER;
+  const rightBlock = right.block ?? Number.MAX_SAFE_INTEGER;
   if (leftBlock !== rightBlock) {
     return leftBlock - rightBlock;
   }
-  const leftOrder = Number.isFinite(left.note_index_order)
-    ? Math.trunc(Number(left.note_index_order))
-    : left.__index;
-  const rightOrder = Number.isFinite(right.note_index_order)
-    ? Math.trunc(Number(right.note_index_order))
-    : right.__index;
+  const leftOrder = left.note_index_order ?? left.__index;
+  const rightOrder = right.note_index_order ?? right.__index;
   if (leftOrder !== rightOrder) {
     return leftOrder - rightOrder;
   }
-  return trimString(left.entrypoint_hash).localeCompare(
-    trimString(right.entrypoint_hash),
-  );
-};
-
-export const createWalletConfidentialNote = (input: {
-  assetDefinitionId: string;
-  amount: string;
-  ownerTagHex: string;
-  diversifierHex: string;
-  createdAtMs?: number;
-  rhoHex?: string;
-}): WalletConfidentialNote => {
-  const assetDefinitionId = trimString(input.assetDefinitionId);
-  if (!assetDefinitionId) {
-    throw new Error("assetDefinitionId is required.");
-  }
-  const amount = parsePositiveWholeAmount(input.amount, "amount").toString();
-  const ownerTagHex = trimString(input.ownerTagHex).toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(ownerTagHex)) {
-    throw new Error("ownerTagHex must be a 32-byte hex string.");
-  }
-  const diversifierHex = trimString(input.diversifierHex).toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(diversifierHex)) {
-    throw new Error("diversifierHex must be a 32-byte hex string.");
-  }
-  const createdAtMs = Math.trunc(input.createdAtMs ?? Date.now());
-  if (!Number.isFinite(createdAtMs) || createdAtMs < 0) {
-    throw new Error("createdAtMs must be a non-negative integer.");
-  }
-  const rhoHex = trimString(
-    input.rhoHex ?? randomBytes(32).toString("hex"),
-  ).toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(rhoHex)) {
-    throw new Error("rhoHex must be a 32-byte hex string.");
-  }
-  const { commitmentHex } = deriveConfidentialNoteV2({
-    assetDefinitionId,
-    amount,
-    rhoHex,
-    ownerTagHex,
-  });
-  return {
-    schema: CONFIDENTIAL_WALLET_NOTE_SCHEMA,
-    note_id: commitmentHex,
-    asset_definition_id: assetDefinitionId,
-    amount,
-    rho_hex: rhoHex,
-    owner_tag_hex: ownerTagHex,
-    diversifier_hex: diversifierHex,
-    commitment_hex: commitmentHex,
-    created_at_ms: createdAtMs,
-  };
+  return left.entrypoint_hash!.localeCompare(right.entrypoint_hash!);
 };
 
 export const deriveWalletConfidentialOwnerTagHex = (input: {
   privateKeyHex: string;
   diversifierHex: string;
 }): string => {
-  const privateKeyHex = trimString(input.privateKeyHex);
-  if (!/^[0-9a-f]{64}$/i.test(privateKeyHex)) {
+  const privateKeyHex = input.privateKeyHex;
+  if (!/^[0-9a-f]{64}$/u.test(privateKeyHex)) {
     throw new Error("privateKeyHex must be a 32-byte hex string.");
   }
-  const diversifierHex = trimString(input.diversifierHex).toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(diversifierHex)) {
+  const diversifierHex = input.diversifierHex;
+  if (!/^[0-9a-f]{64}$/u.test(diversifierHex)) {
     throw new Error("diversifierHex must be a 32-byte hex string.");
   }
-  return Buffer.from(
-    deriveConfidentialOwnerTagV2(Buffer.from(privateKeyHex, "hex"), {
-      diversifierHex,
-    }),
-  ).toString("hex");
+  const spendKey = Buffer.from(privateKeyHex, "hex");
+  try {
+    return Buffer.from(
+      deriveConfidentialOwnerTagV2(spendKey, { diversifierHex }),
+    ).toString("hex");
+  } finally {
+    spendKey.fill(0);
+  }
 };
 
 export const deriveWalletConfidentialReceiveAddress = (input: {
   privateKeyHex: string;
   diversifierSeedHex?: string;
 }): { ownerTagHex: string; diversifierHex: string } => {
-  const privateKeyHex = trimString(input.privateKeyHex);
-  if (!/^[0-9a-f]{64}$/i.test(privateKeyHex)) {
+  const privateKeyHex = input.privateKeyHex;
+  if (!/^[0-9a-f]{64}$/u.test(privateKeyHex)) {
     throw new Error("privateKeyHex must be a 32-byte hex string.");
   }
-  const diversifierSeedHex = trimString(
-    input.diversifierSeedHex ?? randomBytes(32).toString("hex"),
-  ).toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(diversifierSeedHex)) {
+  const diversifierSeedHex =
+    input.diversifierSeedHex ?? randomBytes(32).toString("hex");
+  if (!/^[0-9a-f]{64}$/u.test(diversifierSeedHex)) {
     throw new Error("diversifierSeedHex must be a 32-byte hex string.");
   }
-  const address = deriveConfidentialReceiveAddressV2({
-    spendKey: Buffer.from(privateKeyHex, "hex"),
-    diversifierSeed: Buffer.from(diversifierSeedHex, "hex"),
-  });
-  return {
-    ownerTagHex: address.ownerTagHex,
-    diversifierHex: address.diversifierHex,
-  };
+  const spendKey = Buffer.from(privateKeyHex, "hex");
+  const diversifierSeed = Buffer.from(diversifierSeedHex, "hex");
+  try {
+    const address = deriveConfidentialReceiveAddressV2({
+      spendKey,
+      diversifierSeed,
+    });
+    return {
+      ownerTagHex: address.ownerTagHex,
+      diversifierHex: address.diversifierHex,
+    };
+  } finally {
+    spendKey.fill(0);
+    diversifierSeed.fill(0);
+  }
 };
 
 export const deriveWalletConfidentialNullifierHex = (input: {
   privateKeyHex: string;
   assetDefinitionId: string;
-  chainId: string;
+  networkId: NetworkId;
   rhoHex: string;
 }): string => {
-  const privateKeyHex = trimString(input.privateKeyHex);
-  const assetDefinitionId = trimString(input.assetDefinitionId);
-  const chainId = trimString(input.chainId);
-  const rhoHex = trimString(input.rhoHex).toLowerCase();
-  if (!/^[0-9a-f]{64}$/i.test(privateKeyHex)) {
+  const privateKeyHex = input.privateKeyHex;
+  const assetDefinitionId = input.assetDefinitionId;
+  const rhoHex = input.rhoHex;
+  if (!/^[0-9a-f]{64}$/u.test(privateKeyHex)) {
     throw new Error("privateKeyHex must be a 32-byte hex string.");
   }
-  if (!assetDefinitionId) {
-    throw new Error("assetDefinitionId is required.");
+  if (!isCanonicalAssetDefinitionId(assetDefinitionId)) {
+    throw new Error("assetDefinitionId must be a canonical definition ID.");
   }
-  if (!chainId) {
-    throw new Error("chainId is required.");
-  }
-  if (!/^[0-9a-f]{64}$/.test(rhoHex)) {
+  if (!/^[0-9a-f]{64}$/u.test(rhoHex)) {
     throw new Error("rhoHex must be a 32-byte hex string.");
   }
-  return deriveConfidentialNullifierV2({
-    chainId,
-    assetDefinitionId,
-    spendKey: Buffer.from(privateKeyHex, "hex"),
-    rhoHex,
-  }).nullifierHex;
+  const spendKey = Buffer.from(privateKeyHex, "hex");
+  try {
+    return deriveConfidentialNullifierV2({
+      networkId: input.networkId,
+      assetDefinitionId,
+      spendKey,
+      rhoHex,
+    }).nullifierHex;
+  } finally {
+    spendKey.fill(0);
+  }
 };
 
-export const buildWalletConfidentialMetadata = (input: {
-  baseMetadata?: Record<string, unknown>;
-  outputs: Array<{
-    note: WalletConfidentialNote;
-    receiveKeyId?: string;
-    recipientPublicKeyBase64Url?: string;
-    recipientAccountId?: string;
-  }>;
-}): Record<string, unknown> => {
-  const nextMetadata = isPlainRecord(input.baseMetadata)
-    ? { ...input.baseMetadata }
-    : {};
-  const useReceiveKeys = input.outputs.every(
-    (output) =>
-      trimString(output.receiveKeyId) &&
-      trimString(output.recipientPublicKeyBase64Url),
+const requireReceiveKeys = (
+  value: ConfidentialReceiveKeyRecord[] | undefined,
+): ConfidentialReceiveKeyRecord[] => {
+  if (value === undefined) {
+    return [];
+  }
+  const records = readDenseArray(
+    value,
+    SECURE_VAULT_MAX_RECEIVE_KEYS_PER_ACCOUNT,
   );
-  nextMetadata[CONFIDENTIAL_WALLET_METADATA_KEY] = useReceiveKeys
-    ? {
-        schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA,
-        outputs: input.outputs.map(
-          ({ note, receiveKeyId, recipientPublicKeyBase64Url }) => ({
-            commitment_hex: note.commitment_hex,
-            receive_key_id: trimString(receiveKeyId),
-            envelope: encryptKaigiPayload(
-              note,
-              trimString(recipientPublicKeyBase64Url),
-            ),
-          }),
-        ),
-      }
-    : {
-        schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA_V2,
-        outputs: input.outputs.map(({ note, recipientAccountId }) => ({
-          commitment_hex: note.commitment_hex,
-          envelope: encryptPayloadForAccountId(
-            note,
-            trimString(recipientAccountId),
-          ),
-        })),
-      };
-  return nextMetadata;
+  if (!records) {
+    throw new Error("receiveKeys must be an exact bounded array.");
+  }
+  const normalized: ConfidentialReceiveKeyRecord[] = [];
+  const seen = new Set<string>();
+  for (const candidate of records) {
+    if (
+      !isPlainRecord(candidate) ||
+      !hasExactKeys(candidate, [
+        "keyId",
+        "accountId",
+        "ownerTagHex",
+        "diversifierHex",
+        "publicKeyBase64Url",
+        "privateKeyBase64Url",
+        "createdAtMs",
+      ])
+    ) {
+      throw new Error("receiveKeys contains an unsupported record.");
+    }
+    const keyId = readReceiveKeyId(candidate.keyId);
+    const publicKeyBase64Url = readCanonicalBase64Url(
+      candidate.publicKeyBase64Url,
+      32,
+    );
+    const privateKeyBase64Url = readCanonicalBase64Url(
+      candidate.privateKeyBase64Url,
+      32,
+    );
+    if (
+      !keyId ||
+      seen.has(keyId) ||
+      typeof candidate.accountId !== "string" ||
+      candidate.accountId.length === 0 ||
+      candidate.accountId.trim() !== candidate.accountId ||
+      candidate.accountId.normalize("NFC") !== candidate.accountId ||
+      Buffer.byteLength(candidate.accountId, "utf8") > 512 ||
+      typeof candidate.ownerTagHex !== "string" ||
+      !/^[0-9a-f]{64}$/u.test(candidate.ownerTagHex) ||
+      typeof candidate.diversifierHex !== "string" ||
+      !/^[0-9a-f]{64}$/u.test(candidate.diversifierHex) ||
+      !publicKeyBase64Url ||
+      !privateKeyBase64Url ||
+      typeof candidate.createdAtMs !== "number" ||
+      !Number.isSafeInteger(candidate.createdAtMs) ||
+      candidate.createdAtMs < 0
+    ) {
+      throw new Error("receiveKeys contains noncanonical receive material.");
+    }
+    seen.add(keyId);
+    normalized.push({
+      keyId,
+      accountId: candidate.accountId,
+      ownerTagHex: candidate.ownerTagHex,
+      diversifierHex: candidate.diversifierHex,
+      publicKeyBase64Url,
+      privateKeyBase64Url,
+      createdAtMs: candidate.createdAtMs,
+    });
+  }
+  return normalized;
 };
 
-export const buildWalletConfidentialMetadataV3 = (input: {
-  baseMetadata?: Record<string, unknown>;
-  outputs: Array<{
-    note: WalletConfidentialNote;
-    receiveKeyId: string;
-    recipientPublicKeyBase64Url: string;
-  }>;
-}): Record<string, unknown> => {
-  const nextMetadata = isPlainRecord(input.baseMetadata)
-    ? { ...input.baseMetadata }
-    : {};
-  nextMetadata[CONFIDENTIAL_WALLET_METADATA_KEY] = {
-    schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA,
-    outputs: input.outputs.map(
-      ({ note, receiveKeyId, recipientPublicKeyBase64Url }) => ({
-        commitment_hex: note.commitment_hex,
-        receive_key_id: trimString(receiveKeyId),
-        envelope: encryptKaigiPayload(
-          note,
-          trimString(recipientPublicKeyBase64Url),
-        ),
-      }),
-    ),
-  };
-  return nextMetadata;
+const requireOptionalSafeInteger = (
+  value: unknown,
+  label: string,
+  minimum: number,
+): number | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    Object.is(value, -0) ||
+    value < minimum
+  ) {
+    throw new Error(`${label} must be a canonical safe integer.`);
+  }
+  return value;
+};
+
+const requireConfidentialTransactions = (
+  value: Array<WalletConfidentialTransactionLike | null | undefined>,
+): Array<WalletConfidentialTransactionLike & { __index: number }> => {
+  const records = readDenseArray(value, MAX_CONFIDENTIAL_TRANSACTIONS);
+  if (!records) {
+    throw new Error("transactions must be an exact bounded array.");
+  }
+  const seenHashes = new Set<string>();
+  const allowedKeys = new Set([
+    "entrypoint_hash",
+    "result_ok",
+    "authority",
+    "block",
+    "note_index_order",
+    "metadata",
+    "instructions",
+  ]);
+  return records.map((candidate, index) => {
+    if (!isPlainRecord(candidate) || candidate.result_ok !== true) {
+      throw new Error(
+        `transactions[${index}] must be a successful transaction object.`,
+      );
+    }
+    let fieldCount = 0;
+    for (const key in candidate) {
+      if (!Object.prototype.hasOwnProperty.call(candidate, key)) {
+        continue;
+      }
+      fieldCount += 1;
+      const descriptor = Object.getOwnPropertyDescriptor(candidate, key);
+      if (
+        fieldCount > allowedKeys.size ||
+        !allowedKeys.has(key) ||
+        !descriptor?.enumerable ||
+        !("value" in descriptor)
+      ) {
+        throw new Error(`transactions[${index}] has an unsupported shape.`);
+      }
+    }
+    const entrypointHash = readFixedBytesHex(candidate.entrypoint_hash);
+    if (!entrypointHash || seenHashes.has(entrypointHash)) {
+      throw new Error(
+        `transactions[${index}].entrypoint_hash must be unique canonical lowercase hex.`,
+      );
+    }
+    seenHashes.add(entrypointHash);
+    const instructions = readDenseArray(
+      candidate.instructions,
+      MAX_CONFIDENTIAL_INSTRUCTIONS_PER_TRANSACTION,
+    );
+    if (
+      !instructions ||
+      instructions.length === 0 ||
+      instructions.some((instruction) => !isPlainRecord(instruction))
+    ) {
+      throw new Error(
+        `transactions[${index}].instructions must be an exact bounded object array.`,
+      );
+    }
+    if (
+      candidate.metadata !== undefined &&
+      candidate.metadata !== null &&
+      !isPlainRecord(candidate.metadata)
+    ) {
+      throw new Error(`transactions[${index}].metadata must be an object.`);
+    }
+    if (
+      candidate.authority !== undefined &&
+      (typeof candidate.authority !== "string" ||
+        candidate.authority.length === 0 ||
+        candidate.authority.trim() !== candidate.authority ||
+        candidate.authority.normalize("NFC") !== candidate.authority ||
+        Buffer.byteLength(candidate.authority, "utf8") > 2_048)
+    ) {
+      throw new Error(
+        `transactions[${index}].authority must be canonical bounded text.`,
+      );
+    }
+    return {
+      entrypoint_hash: entrypointHash,
+      result_ok: true,
+      authority: candidate.authority as string | undefined,
+      block: requireOptionalSafeInteger(
+        candidate.block,
+        `transactions[${index}].block`,
+        1,
+      ),
+      note_index_order: requireOptionalSafeInteger(
+        candidate.note_index_order,
+        `transactions[${index}].note_index_order`,
+        0,
+      ),
+      metadata: candidate.metadata,
+      instructions: instructions as Record<string, unknown>[],
+      __index: index,
+    };
+  });
 };
 
 export const collectWalletConfidentialLedger = (
   transactions: Array<WalletConfidentialTransactionLike | null | undefined>,
   input: {
     privateKeyHex: string;
-    chainId: string;
-    assetDefinitionIds: Array<string | null | undefined>;
+    networkId: NetworkId;
+    assetDefinitionIds: string[];
     receiveKeys?: ConfidentialReceiveKeyRecord[];
     markUnrecognizedTransfersInexact?: boolean;
   },
 ): WalletConfidentialLedger => {
-  const assetDefinitionIds = new Set(
-    input.assetDefinitionIds
-      .map((value) => normalizeAssetDefinitionId(trimString(value)))
-      .filter(Boolean),
+  if (!/^[0-9a-f]{64}$/u.test(input.privateKeyHex)) {
+    throw new Error("privateKeyHex must be a 32-byte hex string.");
+  }
+  const rawAssetDefinitionIds = readDenseArray(
+    input.assetDefinitionIds,
+    FIRST_RELEASE_CONFIDENTIAL_NOTE_MAX_ASSETS,
+  );
+  if (!rawAssetDefinitionIds) {
+    throw new Error("assetDefinitionIds must be an exact bounded array.");
+  }
+  const assetDefinitionIds = new Set<string>();
+  for (const value of rawAssetDefinitionIds) {
+    if (
+      typeof value !== "string" ||
+      !isCanonicalAssetDefinitionId(value) ||
+      assetDefinitionIds.has(value)
+    ) {
+      throw new Error(
+        "assetDefinitionIds must contain unique canonical definition IDs.",
+      );
+    }
+    assetDefinitionIds.add(value);
+  }
+  const receiveKeys = requireReceiveKeys(input.receiveKeys);
+  if (
+    input.markUnrecognizedTransfersInexact !== undefined &&
+    typeof input.markUnrecognizedTransfersInexact !== "boolean"
+  ) {
+    throw new Error("markUnrecognizedTransfersInexact must be a boolean.");
+  }
+  const txList = requireConfidentialTransactions(transactions).sort(
+    compareTransactionsChronologically,
   );
   if (!assetDefinitionIds.size) {
     return {
       exact: true,
       notes: [],
       spendableQuantity: "0",
-      legacyQuantity: "0",
       treeCommitmentsHex: [],
     };
   }
 
-  const spendableNotesByNullifier = new Map<
+  const recoveredNotesByNullifier = new Map<
     string,
-    WalletSpendableConfidentialNote
+    WalletRecoveredConfidentialNote
   >();
   const spentNullifiers = new Set<string>();
+  const observedSpentNullifiers = new Set<string>();
+  const observedCommitments = new Set<string>();
   const treeCommitmentsHex: string[] = [];
-  const txList = transactions
-    .filter((transaction): transaction is WalletConfidentialTransactionLike =>
-      Boolean(transaction),
-    )
-    .map((transaction, index) => ({ ...transaction, __index: index }))
-    .sort(compareTransactionsChronologically);
   let exact = true;
-  const legacyQuantity = "0";
 
   for (const transaction of txList) {
-    if (transaction.result_ok === false) {
-      continue;
-    }
-    const txHash =
-      trimString(transaction.entrypoint_hash) || `tx-${transaction.__index}`;
+    const txHash = transaction.entrypoint_hash!;
     const notesByCommitment = readWalletNotesForTransaction(transaction, {
       privateKeyHex: input.privateKeyHex,
-      receiveKeys: input.receiveKeys,
+      receiveKeys,
       assetDefinitionIds,
     });
 
@@ -770,6 +1026,10 @@ export const collectWalletConfidentialLedger = (
       )
       .filter((entry): entry is ParsedShieldInstruction => Boolean(entry));
     for (const shield of shieldInstructions) {
+      if (observedCommitments.has(shield.commitment_hex)) {
+        throw new Error("Confidential ledger contains a duplicate commitment.");
+      }
+      observedCommitments.add(shield.commitment_hex);
       const leafIndex = treeCommitmentsHex.length;
       treeCommitmentsHex.push(shield.commitment_hex);
       const decrypted = notesByCommitment.get(shield.commitment_hex);
@@ -777,10 +1037,13 @@ export const collectWalletConfidentialLedger = (
         const nullifierHex = deriveWalletConfidentialNullifierHex({
           privateKeyHex: input.privateKeyHex,
           assetDefinitionId: decrypted.note.asset_definition_id,
-          chainId: input.chainId,
+          networkId: input.networkId,
           rhoHex: decrypted.note.rho_hex,
         });
-        spendableNotesByNullifier.set(nullifierHex, {
+        if (recoveredNotesByNullifier.has(nullifierHex)) {
+          throw new Error("Confidential ledger contains a duplicate note.");
+        }
+        recoveredNotesByNullifier.set(nullifierHex, {
           ...decrypted.note,
           nullifier_hex: nullifierHex,
           source_tx_hash: txHash,
@@ -796,12 +1059,22 @@ export const collectWalletConfidentialLedger = (
       .filter((entry): entry is ParsedTransferInstruction => Boolean(entry));
     for (const transfer of transferInstructions) {
       for (const nullifierHex of transfer.inputs) {
-        if (spendableNotesByNullifier.has(nullifierHex)) {
+        if (observedSpentNullifiers.has(nullifierHex)) {
+          throw new Error("Confidential ledger contains a repeated nullifier.");
+        }
+        observedSpentNullifiers.add(nullifierHex);
+        if (recoveredNotesByNullifier.has(nullifierHex)) {
           spentNullifiers.add(nullifierHex);
         }
       }
       let recognizedOutput = false;
       for (const commitmentHex of transfer.outputs) {
+        if (observedCommitments.has(commitmentHex)) {
+          throw new Error(
+            "Confidential ledger contains a duplicate commitment.",
+          );
+        }
+        observedCommitments.add(commitmentHex);
         const leafIndex = treeCommitmentsHex.length;
         treeCommitmentsHex.push(commitmentHex);
         const decrypted = notesByCommitment.get(commitmentHex);
@@ -810,10 +1083,13 @@ export const collectWalletConfidentialLedger = (
           const nullifierHex = deriveWalletConfidentialNullifierHex({
             privateKeyHex: input.privateKeyHex,
             assetDefinitionId: decrypted.note.asset_definition_id,
-            chainId: input.chainId,
+            networkId: input.networkId,
             rhoHex: decrypted.note.rho_hex,
           });
-          spendableNotesByNullifier.set(nullifierHex, {
+          if (recoveredNotesByNullifier.has(nullifierHex)) {
+            throw new Error("Confidential ledger contains a duplicate note.");
+          }
+          recoveredNotesByNullifier.set(nullifierHex, {
             ...decrypted.note,
             nullifier_hex: nullifierHex,
             source_tx_hash: txHash,
@@ -837,12 +1113,22 @@ export const collectWalletConfidentialLedger = (
       .filter((entry): entry is ParsedUnshieldInstruction => Boolean(entry));
     for (const unshield of unshieldInstructions) {
       for (const nullifierHex of unshield.inputs) {
-        if (spendableNotesByNullifier.has(nullifierHex)) {
+        if (observedSpentNullifiers.has(nullifierHex)) {
+          throw new Error("Confidential ledger contains a repeated nullifier.");
+        }
+        observedSpentNullifiers.add(nullifierHex);
+        if (recoveredNotesByNullifier.has(nullifierHex)) {
           spentNullifiers.add(nullifierHex);
         }
       }
       let recognizedOutput = false;
       for (const commitmentHex of unshield.outputs) {
+        if (observedCommitments.has(commitmentHex)) {
+          throw new Error(
+            "Confidential ledger contains a duplicate commitment.",
+          );
+        }
+        observedCommitments.add(commitmentHex);
         const leafIndex = treeCommitmentsHex.length;
         treeCommitmentsHex.push(commitmentHex);
         const decrypted = notesByCommitment.get(commitmentHex);
@@ -851,10 +1137,13 @@ export const collectWalletConfidentialLedger = (
           const nullifierHex = deriveWalletConfidentialNullifierHex({
             privateKeyHex: input.privateKeyHex,
             assetDefinitionId: decrypted.note.asset_definition_id,
-            chainId: input.chainId,
+            networkId: input.networkId,
             rhoHex: decrypted.note.rho_hex,
           });
-          spendableNotesByNullifier.set(nullifierHex, {
+          if (recoveredNotesByNullifier.has(nullifierHex)) {
+            throw new Error("Confidential ledger contains a duplicate note.");
+          }
+          recoveredNotesByNullifier.set(nullifierHex, {
             ...decrypted.note,
             nullifier_hex: nullifierHex,
             source_tx_hash: txHash,
@@ -872,7 +1161,7 @@ export const collectWalletConfidentialLedger = (
     }
   }
 
-  const notes = [...spendableNotesByNullifier.values()]
+  const notes = [...recoveredNotesByNullifier.values()]
     .filter((note) => !spentNullifiers.has(note.nullifier_hex))
     .sort((left, right) => {
       if (left.leaf_index !== right.leaf_index) {
@@ -892,141 +1181,6 @@ export const collectWalletConfidentialLedger = (
     exact,
     notes,
     spendableQuantity,
-    legacyQuantity,
     treeCommitmentsHex,
   };
-};
-
-export const selectWalletConfidentialNotes = (
-  notes: ReadonlyArray<WalletSpendableConfidentialNote>,
-  amount: string,
-): {
-  selected: WalletSpendableConfidentialNote[];
-  total: string;
-  change: string;
-} => {
-  const target = parsePositiveWholeAmount(amount, "amount");
-  const candidates: Array<{
-    selected: WalletSpendableConfidentialNote[];
-    total: bigint;
-  }> = [];
-
-  for (const note of notes) {
-    const noteAmount = parsePositiveWholeAmount(note.amount, "note.amount");
-    if (noteAmount === target) {
-      return {
-        selected: [note],
-        total: target.toString(),
-        change: "0",
-      };
-    }
-    if (noteAmount > target) {
-      candidates.push({ selected: [note], total: noteAmount });
-    }
-  }
-
-  for (let leftIndex = 0; leftIndex < notes.length; leftIndex += 1) {
-    const left = notes[leftIndex];
-    if (!left) {
-      continue;
-    }
-    const leftAmount = parsePositiveWholeAmount(left.amount, "note.amount");
-    for (
-      let rightIndex = leftIndex + 1;
-      rightIndex < notes.length;
-      rightIndex += 1
-    ) {
-      const right = notes[rightIndex];
-      if (!right) {
-        continue;
-      }
-      const total =
-        leftAmount + parsePositiveWholeAmount(right.amount, "note.amount");
-      if (total === target) {
-        return {
-          selected: [left, right],
-          total: target.toString(),
-          change: "0",
-        };
-      }
-      if (total > target) {
-        candidates.push({ selected: [left, right], total });
-      }
-    }
-  }
-
-  candidates.sort((left, right) => {
-    const leftChange = left.total - target;
-    const rightChange = right.total - target;
-    if (leftChange !== rightChange) {
-      return leftChange < rightChange ? -1 : 1;
-    }
-    if (left.selected.length !== right.selected.length) {
-      return left.selected.length - right.selected.length;
-    }
-    return left.selected[0]!.leaf_index - right.selected[0]!.leaf_index;
-  });
-
-  const best = candidates[0];
-  if (!best) {
-    throw new Error(
-      "Insufficient shielded balance in one or two spendable notes. Re-shield or consolidate first.",
-    );
-  }
-  return {
-    selected: best.selected,
-    total: best.total.toString(),
-    change: (best.total - target).toString(),
-  };
-};
-
-export const selectWalletConfidentialNotesForExactAmount = (
-  notes: ReadonlyArray<WalletSpendableConfidentialNote>,
-  amount: string,
-): {
-  selected: WalletSpendableConfidentialNote[];
-  total: string;
-  change: string;
-} => {
-  const target = parsePositiveWholeAmount(amount, "amount");
-
-  for (const note of notes) {
-    if (parsePositiveWholeAmount(note.amount, "note.amount") === target) {
-      return {
-        selected: [note],
-        total: target.toString(),
-        change: "0",
-      };
-    }
-  }
-
-  for (let leftIndex = 0; leftIndex < notes.length; leftIndex += 1) {
-    const left = notes[leftIndex];
-    if (!left) {
-      continue;
-    }
-    const leftAmount = parsePositiveWholeAmount(left.amount, "note.amount");
-    for (
-      let rightIndex = leftIndex + 1;
-      rightIndex < notes.length;
-      rightIndex += 1
-    ) {
-      const right = notes[rightIndex];
-      if (!right) {
-        continue;
-      }
-      const rightAmount = parsePositiveWholeAmount(right.amount, "note.amount");
-      if (leftAmount + rightAmount === target) {
-        return {
-          selected: [left, right],
-          total: target.toString(),
-          change: "0",
-        };
-      }
-    }
-  }
-
-  throw new Error(
-    "Unable to match the requested amount with an exact one- or two-note shielded spend. Re-shield or consolidate first.",
-  );
 };

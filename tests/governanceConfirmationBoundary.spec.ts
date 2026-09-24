@@ -34,15 +34,15 @@ describe("governance confirmation capability boundary", () => {
     expect(revalidation).toBeGreaterThanOrEqual(0);
     expect(fingerprint).toBeGreaterThan(revalidation);
     expect(pendingReview).toBeGreaterThan(fingerprint);
-    expect(prepare).toContain(
-      "getClient(input.context.toriiUrl).quoteFees(payload,",
-    );
+    expect(prepare).toContain("buildFirstReleaseAuthorityTransactionDraft({");
+    expect(prepare).toContain("await fetchFirstReleaseAuthorityFeeQuote({");
+    expect(prepare).not.toContain("getClient(");
   });
 
   it("revalidates and rejects capability drift before vault access or signing", () => {
     const confirm = between(
       "const confirmPreparedGovernanceAction",
-      "const createPrivateKaigiNonce",
+      "const assertIrohaConnectWalletContext",
     );
     const revalidation = confirm.indexOf(
       "await assertGovernanceWriteCapabilities({",
@@ -54,7 +54,7 @@ describe("governance confirmation capability boundary", () => {
       "prepared.governanceCapabilitiesFingerprint",
     );
     const vaultAccess = confirm.indexOf("resolveSigningMaterial({");
-    const signing = confirm.indexOf("signQuotedTransactionPayload({");
+    const signing = confirm.indexOf("signFirstReleaseAuthorityTransaction({");
 
     expect(revalidation).toBeGreaterThanOrEqual(0);
     expect(fingerprint).toBeGreaterThan(revalidation);
@@ -71,50 +71,24 @@ describe("governance confirmation capability boundary", () => {
     );
   });
 
-  it("revalidates the immutable electorate and live ballot state before vault access", () => {
+  it("cannot construct a retired ballot or enactment review", () => {
     const confirm = between(
       "const confirmPreparedGovernanceAction",
-      "const createPrivateKaigiNonce",
+      "const assertIrohaConnectWalletContext",
     );
-    const ballotBranch = confirm.indexOf(
-      'prepared.view.operation === "plain-ballot"',
+    const types = readFileSync(
+      resolve(process.cwd(), "src/types/iroha.d.ts"),
+      "utf8",
     );
-    const contractReload = confirm.indexOf(
-      "await fetchGovernancePlainReferendumContract({",
-      ballotBranch,
+    const prepareBoundary = preload.slice(
+      preload.indexOf("const prepareGovernanceCitizenRegistrationAction"),
+      preload.indexOf("const confirmPreparedGovernanceAction"),
     );
-    const fingerprint = confirm.indexOf(
-      "plainReferendum.contractFingerprint !== ballot.contractFingerprint",
-      contractReload,
-    );
-    const citizenship = confirm.indexOf(
-      "await assertCurrentBondedGovernanceCitizen(",
-      fingerprint,
-    );
-    const proposalReload = confirm.indexOf(
-      "await fetchGovernanceProposalDetail({",
-      citizenship,
-    );
-    const binding = confirm.indexOf(
-      "assertGovernancePlainReferendumBallotBinding(plainReferendum",
-      proposalReload,
-    );
-    const vaultAccess = confirm.indexOf("resolveSigningMaterial({");
-    const signing = confirm.indexOf("signQuotedTransactionPayload({");
 
-    expect(ballotBranch).toBeGreaterThanOrEqual(0);
-    expect(contractReload).toBeGreaterThan(ballotBranch);
-    expect(fingerprint).toBeGreaterThan(contractReload);
-    expect(citizenship).toBeGreaterThan(fingerprint);
-    expect(proposalReload).toBeGreaterThan(citizenship);
-    expect(binding).toBeGreaterThan(proposalReload);
-    expect(vaultAccess).toBeGreaterThan(binding);
-    expect(signing).toBeGreaterThan(vaultAccess);
-    expect(confirm.slice(ballotBranch, vaultAccess)).toContain(
-      "hasExistingLock: proposal.locks.some",
-    );
-    expect(confirm.slice(ballotBranch, vaultAccess)).toContain(
-      "plainReferendum.artifactSha256 !== ballot.artifactSha256",
-    );
+    for (const source of [prepareBoundary, confirm, types]) {
+      expect(source).not.toMatch(
+        /plain-ballot|parliament-ballot|enact-referendum|CastPlainBallot|CastParliamentBallot|EnactReferendum/u,
+      );
+    }
   });
 });

@@ -6,7 +6,7 @@ access, signing, and transaction submission stay in Electron.
 
 ## Requirements
 
-- Node.js 20 or newer
+- Node.js 24 or newer
 - The current Iroha checkout at `../iroha`
 - Rust and the native build prerequisites required by `@iroha/iroha-js`
 
@@ -39,61 +39,19 @@ npm run build
 `npm run verify` runs lint, both renderer and Electron typechecks, and the test
 suite.
 
-## SCCP bridge setup
+## SCCP operator artifacts (runtime disabled)
 
-The `/sccp` page is intentionally TAIRA-only. It remains disabled unless the active connection uses the public Sumeragi-v2 TAIRA chain ID `fc56984b-2be7-431d-840e-21514d1883f0` and network prefix `369`, even when another endpoint advertises SCCP metadata.
+The first desktop release does not ship an SCCP route or preload API. The
+current sibling SDK does not provide the exact governed first-release
+implementation, so exposing bridge reads, proving, signing, or submission
+would create an unsafe compatibility path. The /sccp route is therefore absent,
+SCCP WalletConnect/runtime configuration is not exposed, and no SCCP payload
+can reach a wallet write.
 
-Set the WalletConnect project ID before starting the renderer if you need TRON wallet connection:
-
-```bash
-VITE_WALLETCONNECT_PROJECT_ID="<project-id>" npm run dev
-```
-
-Optional browser-safe prover module URLs:
-
-- `VITE_SCCP_TRON_PROVER_MODULE_URL` for TAIRA -> TRON destination proofs.
-- `VITE_SCCP_TRON_SOURCE_PROVER_MODULE_URL` for TRON -> TAIRA source proofs. If omitted, the worker falls back to `VITE_SCCP_TRON_PROVER_MODULE_URL`.
-
-Prover module URLs must be deterministic package-relative paths, HTTPS URLs, or loopback HTTP URLs without credentials, query strings, or fragments.
-
-End users must connect TRON mainnet wallets through WalletConnect/AppKit with namespace `tron`, chain ID `tron:0x2b6653dc`, method `tron_signTransaction`, and `tron_method_version: "v1"`. The app stores only non-secret WalletConnect session metadata, requires the stable WalletConnect topic before reusing a session for signing, and never imports TRON private keys, seed phrases, or generated end-user TRON wallets. Connected TRON TRX and `TairaXOR` token balances are read through Electron preload TRON gateway wrappers, not renderer `fetch()`.
-
-TRON contract deployment uses the separate operator helper in the sibling SDK checkout:
-
-```bash
-(cd ../iroha && node scripts/sccp_tron_taira_xor_deploy.mjs generate-deployer)
-(cd ../iroha && node scripts/sccp_tron_taira_xor_deploy.mjs doctor --require-secret true --require-verifier true)
-(cd ../iroha && node scripts/sccp_tron_taira_xor_deploy.mjs estimate-budget)
-```
-
-Fund the printed deployer address before running broadcast deployment. The helper writes ignored artifacts under `../iroha/artifacts/sccp-tron/`; do not reuse the deployer for end-user bridge transfers. After TRON deployment and live readback, use the sibling helper's offline `route-manifest` command to generate the `taira_tron_xor` manifest draft. It validates deployment evidence, the TAIRA burn-record contract artifact, canonical settlement asset ID, verifier material, VK reference, and the computed destination binding hash/key before it can mark `productionReady: true`. Wallet-side route readiness rejects placeholder-sized or oversized burn-record artifacts before enabling live smoke.
-
-After deployment evidence is activated on TAIRA, run the wallet-side read-only route preflight before live transfer smoke:
-
-```bash
-SCCP_TAIRA_TORII_URL="https://taira.sora.org" npm run e2e:sccp:preflight
-```
-
-The preflight checks TAIRA chain identity, SCCP submit capabilities, `taira_tron_xor` manifest readiness, TRON mainnet contract/verifier/binding material, and TAIRA burn-record material. It does not submit proofs or broadcast TRON transactions.
-
-After the route manifest is live, add read-only TRON contract view checks:
-
-```bash
-npm run e2e:sccp:preflight -- --check-tron-contracts true --tron-endpoint https://api.trongrid.io
-```
-
-That mode verifies `TairaXOR.bridge()`, `TairaXOR.bridgeLocked()`, `SccpTronSourceBridge.owner()`, and both bridge/verifier `destinationBindingHash()` values against the advertised route manifest.
-
-Before the two live transfer smokes, run the app-side readiness gate as well:
-
-```bash
-VITE_WALLETCONNECT_PROJECT_ID="<project-id>" \
-VITE_SCCP_TRON_PROVER_MODULE_URL="https://example.invalid/sccp-tron-prover.js" \
-VITE_SCCP_TRON_SOURCE_PROVER_MODULE_URL="https://example.invalid/sccp-tron-source-prover.js" \
-npm run e2e:sccp:smoke-readiness -- --check-tron-contracts true --tron-endpoint https://api.trongrid.io
-```
-
-This still does not sign, submit, or broadcast. It combines route preflight with the renderer prerequisites required for a real tiny `TAIRA -> TRON` transfer and a real tiny `TRON -> TAIRA` transfer: WalletConnect project ID plus browser-safe destination/source prover modules.
+The SCCP source, tests, and operator scripts below are dormant development
+artifacts only. They are not imported by either renderer or preload runtime.
+They may be used to prepare and independently review exact Solana testnet
+governance/deployment material, but they do not enable the desktop bridge.
 
 ## Solana testnet SCCP: exact first release
 
@@ -632,36 +590,30 @@ supports:
 
 - fail-closed `/v1/gov/capabilities` validation for the exact Taira chain
   `fc56984b-2be7-431d-840e-21514d1883f0`, network prefix `369`, ABI `1`, and
-  data model `3`;
+  data model `4`;
 - typed validation-fee list/detail reads with exact-ID deep links;
-- the seven concurrent Parliament bodies, including members-only FMA voting;
-- automatic finalization only for generic non-validation-fee PLAIN proposals,
-  plus validation-fee lifecycle/finalization evidence inspection;
+- exact inspection of the ten-body timed-OVN Parliament capability contract;
+- validation-fee lifecycle, certificate, and finalized-evidence inspection;
 - reviewed citizenship registration through the Core citizen-draft route;
 - typed payout-lifecycle composition followed by an exact linked
   validation-fee policy;
 - quote, review, vault-backed signing, and commit in separate prepare/confirm
   phases.
 
-ZK voting is disabled unless the current SDK exposes the complete supported
-flow. The application does not silently downgrade a requested ZK ballot to a
-Plain ballot.
+The wallet exposes no ballot, Parliament ceremony/transition, or enactment
+control. Standalone PLAIN/ZK and timed-OVN routes required by the capability
+contract remain server capabilities, not callable renderer or preload APIs.
+Unsupported proposal kinds are inspect-only and there is no fallback ballot
+or signing path.
 
 Governance transactions never accept private keys from renderer or HTTP
-fields. The Electron bridge reviews the exact Core draft and fee quote, then
-resolves the signer from the OS vault only when the user confirms. There is no
-manual finalize action or legacy signed-policy path.
-
-Validation-fee citizen voting loads the operator-produced
-`sora.parliament.plain-referendum.v2` artifact through the packaged
-`resources/governance-referendum-source.json`. Electron fetches a same-origin
-handoff descriptor and its content-addressed artifact, verifies raw SHA-256,
-byte length, Taira chain/genesis/proposal/window/electorate coordinates, and
-persists a private rollback/equivocation watermark. The renderer cannot supply
-an artifact, URL, checkpoint, or finality override. Validation-fee ballots are
-prepared only through the artifact-bound
-`/v1/validation-fee/proposals/{proposal_id}/plain-ballot/draft` route; the
-generic PLAIN route remains limited to non-validation-fee referenda.
+fields. The explicit **Decode and quote** action permits Electron to resolve
+the vault key only to authenticate the exact draft and fee-quote requests; it
+cannot sign or submit the transaction. The separate **Sign and commit** action
+revalidates the capability contract, account, and signing algorithm before
+resolving the key again and signing the already-reviewed payload. There is no
+manual finalize action, ballot action, enactment action, historical signer, or
+signed-policy fallback.
 
 ## Validation-fee trust boundary
 
@@ -741,12 +693,10 @@ exact same projection, checks every runtime ledger/Parliament/payout
 coordinate, and rejects rollback or same-coordinate equivocation. Any failed
 read clears the renderer state; no stale cached policy is served.
 
-Governance authorization, vote review, finalization, and enactment use only the
-strict typed proposal-detail response and its canonical decimal-string tally,
-lock, and finalization fields. The older `getGovernanceTally` and
-`getGovernanceLocks` bridge helpers expose number-coerced SDK diagnostics; they
-are non-evidence UI diagnostics only and must never authorize a write, prove a
-vote, or satisfy a finalization check.
+Governance proposal lifecycle, certificate, and finalized evidence use only
+the strict typed validation-fee proposal-detail response and canonical
+decimal-string fields. No generic tally, lock, referendum, ballot, or enactment
+bridge helper is part of the first-release API.
 
 ## Architecture
 
@@ -768,6 +718,13 @@ npm run dist:mac
 npm run dist:win
 npm run dist:linux
 ```
+
+Every installer-producing command first verifies the exact reviewed Iroha SDK
+release source and native provenance. `npm run build` is the local development
+build; there is intentionally no ungated development-installer command.
+GitHub release jobs import the reviewed public OpenPGP key into an isolated
+keyring, run `install:release`, and make Vite/native staging use that same
+verified physical SDK package.
 
 See [RELEASE.md](RELEASE.md) for signing variables and the tag-based release
 workflow.

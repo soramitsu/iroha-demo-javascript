@@ -1,18 +1,22 @@
-import { normalizeMnemonicPhrase, type MnemonicWordCount } from "./mnemonic";
 import {
-  DEFAULT_SIGNING_ALGORITHM,
-  normalizeStoredSigningAlgorithm,
-} from "./signingAlgorithms";
+  mnemonicToPrivateKeyHex,
+  normalizeMnemonicPhrase,
+  type MnemonicWordCount,
+} from "./mnemonic";
+import { parseJsonWithoutDuplicateObjectKeys } from "./json";
+import { normalizeStoredSigningAlgorithm } from "./signingAlgorithms";
 
 export type WalletBackupTarget = "manual" | "icloud" | "google";
-export const CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V1 =
-  "iroha-demo-confidential-wallet-backup/v1";
+export const WALLET_BACKUP_SCHEMA = "iroha-demo-wallet-backup/v1";
 export const CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2 =
   "iroha-demo-confidential-wallet-backup/v2";
 export const CONFIDENTIAL_WALLET_BACKUP_KDF_INFO =
   "iroha-demo:confidential-wallet-backup:v2";
+export const MAX_WALLET_BACKUP_JSON_BYTES = 6 * 1024 * 1024;
+export const CONFIDENTIAL_WALLET_BACKUP_CIPHERTEXT_MAX_CHARACTERS = 5_600_000;
 
 export type WalletBackupPayload = {
+  schema: typeof WALLET_BACKUP_SCHEMA;
   mnemonic: string;
   wordCount: MnemonicWordCount;
   signingAlgorithm: string;
@@ -20,17 +24,7 @@ export type WalletBackupPayload = {
   target: WalletBackupTarget;
   displayName?: string;
   domain?: string;
-  confidentialWallet?: ConfidentialWalletBackupMetadata;
-};
-
-export type ConfidentialWalletBackupMetadataV1 = {
-  schema: typeof CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V1;
-  chainId: string;
-  accountId: string;
-  addressCursor: number;
-  scanWatermarkBlock: number | null;
-  encryptedNotes: unknown[];
-  spentNullifiers: string[];
+  confidentialWallet: ConfidentialWalletBackupMetadataV2;
 };
 
 export type ConfidentialWalletBackupStateBoxV2 = {
@@ -51,75 +45,124 @@ export type ConfidentialWalletBackupMetadataV2 = {
 };
 
 export type ConfidentialWalletBackupMetadata =
-  | ConfidentialWalletBackupMetadataV1
-  | ConfidentialWalletBackupMetadataV2;
-
-type ConfidentialWalletBackupMetadataDraft =
-  | ConfidentialWalletBackupMetadata
-  | {
-      chainId?: string;
-      accountId?: string;
-      addressCursor?: number;
-      scanWatermarkBlock?: number | null;
-      encryptedNotes?: unknown[];
-      spentNullifiers?: string[];
-    };
+  ConfidentialWalletBackupMetadataV2;
 
 const trimString = (value: unknown): string => String(value ?? "").trim();
 
 const normalizeWordCount = (value: unknown): MnemonicWordCount | null => {
-  const count = Number(value);
-  if (count === 12 || count === 24) {
-    return count;
+  if (value === 12 || value === 24) {
+    return value;
   }
   return null;
 };
 
 const normalizeNonNegativeInteger = (value: unknown): number | null => {
-  const normalized = Number(value);
-  if (Number.isInteger(normalized) && normalized >= 0) {
-    return normalized;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return value;
   }
   return null;
 };
 
-const isBase64Url = (value: string): boolean => /^[A-Za-z0-9_-]+$/.test(value);
+const BASE64URL_ALPHABET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+const isCanonicalBase64Url = (value: string): boolean => {
+  if (!/^[A-Za-z0-9_-]+$/.test(value) || value.length % 4 === 1) {
+    return false;
+  }
+  const lastValue = BASE64URL_ALPHABET.indexOf(value[value.length - 1] ?? "");
+  if (lastValue < 0) {
+    return false;
+  }
+  if (value.length % 4 === 2) {
+    return lastValue % 16 === 0;
+  }
+  if (value.length % 4 === 3) {
+    return lastValue % 4 === 0;
+  }
+  return true;
+};
+
+const hasExactKeys = (
+  record: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): boolean => {
+  const keys = Object.keys(record);
+  const allowed = new Set([...required, ...optional]);
+  return (
+    required.every((key) =>
+      Object.prototype.hasOwnProperty.call(record, key),
+    ) && keys.every((key) => allowed.has(key))
+  );
+};
+
+const readCanonicalText = (
+  value: unknown,
+  label: string,
+  maxLength: number,
+): string => {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be text.`);
+  }
+  const normalized = value.trim();
+  if (
+    !normalized ||
+    normalized !== value ||
+    normalized.length > maxLength ||
+    normalized.normalize("NFC") !== normalized ||
+    Array.from(normalized).some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 0x1f || codePoint === 0x7f;
+    })
+  ) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return normalized;
+};
+
+const requireCanonicalIsoTimestamp = (
+  value: unknown,
+  label: string,
+): string => {
+  const timestamp = readCanonicalText(value, label, 64);
+  let canonical: string;
+  try {
+    canonical = new Date(timestamp).toISOString();
+  } catch {
+    throw new Error(`${label} is invalid.`);
+  }
+  if (canonical !== timestamp) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return timestamp;
+};
 
 const parseConfidentialWalletBackupMetadata = (
   value: unknown,
-): ConfidentialWalletBackupMetadata | undefined => {
+): ConfidentialWalletBackupMetadataV2 => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
+    throw new Error("Confidential wallet backup metadata is invalid.");
   }
   const record = value as Record<string, unknown>;
-  const chainId = trimString(record.chainId);
-  const accountId = trimString(record.accountId);
-  if (!chainId || !accountId) {
-    return undefined;
+  if (
+    !hasExactKeys(record, [
+      "schema",
+      "chainId",
+      "accountId",
+      "scanWatermarkBlock",
+      "stateBox",
+    ]) ||
+    record.schema !== CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2
+  ) {
+    throw new Error("Confidential wallet backup metadata is invalid.");
   }
-  if (record.schema === CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V1) {
-    return {
-      schema: CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V1,
-      chainId,
-      accountId,
-      addressCursor: normalizeNonNegativeInteger(record.addressCursor) ?? 0,
-      scanWatermarkBlock:
-        record.scanWatermarkBlock === null
-          ? null
-          : normalizeNonNegativeInteger(record.scanWatermarkBlock),
-      encryptedNotes: Array.isArray(record.encryptedNotes)
-        ? [...record.encryptedNotes]
-        : [],
-      spentNullifiers: Array.isArray(record.spentNullifiers)
-        ? record.spentNullifiers
-            .map((entry) => trimString(entry))
-            .filter((entry) => /^[0-9a-f]{64}$/i.test(entry))
-        : [],
-    };
-  }
-  if (record.schema !== CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2) {
-    return undefined;
-  }
+  const chainId = readCanonicalText(record.chainId, "Backup chain ID", 256);
+  const accountId = readCanonicalText(
+    record.accountId,
+    "Backup account ID",
+    512,
+  );
   const stateBox =
     record.stateBox &&
     typeof record.stateBox === "object" &&
@@ -127,30 +170,64 @@ const parseConfidentialWalletBackupMetadata = (
       ? (record.stateBox as Record<string, unknown>)
       : null;
   if (!stateBox) {
-    return undefined;
+    throw new Error("Confidential wallet backup state box is invalid.");
   }
-  const saltBase64Url = trimString(stateBox.saltBase64Url);
-  const ivBase64Url = trimString(stateBox.ivBase64Url);
-  const ciphertextBase64Url = trimString(stateBox.ciphertextBase64Url);
-  const authTagBase64Url = trimString(stateBox.authTagBase64Url);
   if (
-    trimString(stateBox.kdf) !== "HKDF-SHA256" ||
-    trimString(stateBox.cipher) !== "AES-256-GCM" ||
-    !isBase64Url(saltBase64Url) ||
-    !isBase64Url(ivBase64Url) ||
-    !isBase64Url(ciphertextBase64Url) ||
-    !isBase64Url(authTagBase64Url)
+    !hasExactKeys(stateBox, [
+      "kdf",
+      "cipher",
+      "saltBase64Url",
+      "ivBase64Url",
+      "ciphertextBase64Url",
+      "authTagBase64Url",
+    ])
   ) {
-    return undefined;
+    throw new Error("Confidential wallet backup state box is invalid.");
+  }
+  const saltBase64Url = readCanonicalText(
+    stateBox.saltBase64Url,
+    "Backup salt",
+    43,
+  );
+  const ivBase64Url = readCanonicalText(stateBox.ivBase64Url, "Backup IV", 16);
+  const ciphertextBase64Url = readCanonicalText(
+    stateBox.ciphertextBase64Url,
+    "Backup ciphertext",
+    CONFIDENTIAL_WALLET_BACKUP_CIPHERTEXT_MAX_CHARACTERS,
+  );
+  const authTagBase64Url = readCanonicalText(
+    stateBox.authTagBase64Url,
+    "Backup authentication tag",
+    22,
+  );
+  if (
+    stateBox.kdf !== "HKDF-SHA256" ||
+    stateBox.cipher !== "AES-256-GCM" ||
+    saltBase64Url.length !== 43 ||
+    !isCanonicalBase64Url(saltBase64Url) ||
+    ivBase64Url.length !== 16 ||
+    !isCanonicalBase64Url(ivBase64Url) ||
+    ciphertextBase64Url.length === 0 ||
+    ciphertextBase64Url.length >
+      CONFIDENTIAL_WALLET_BACKUP_CIPHERTEXT_MAX_CHARACTERS ||
+    !isCanonicalBase64Url(ciphertextBase64Url) ||
+    authTagBase64Url.length !== 22 ||
+    !isCanonicalBase64Url(authTagBase64Url)
+  ) {
+    throw new Error("Confidential wallet backup state box is invalid.");
+  }
+  const scanWatermarkBlock =
+    record.scanWatermarkBlock === null
+      ? null
+      : normalizeNonNegativeInteger(record.scanWatermarkBlock);
+  if (record.scanWatermarkBlock !== null && scanWatermarkBlock === null) {
+    throw new Error("Confidential wallet backup watermark is invalid.");
   }
   return {
     schema: CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2,
     chainId,
     accountId,
-    scanWatermarkBlock:
-      record.scanWatermarkBlock === null
-        ? null
-        : normalizeNonNegativeInteger(record.scanWatermarkBlock),
+    scanWatermarkBlock,
     stateBox: {
       kdf: "HKDF-SHA256",
       cipher: "AES-256-GCM",
@@ -170,71 +247,63 @@ export const buildWalletBackupPayload = (input: {
   createdAt?: string;
   displayName?: string;
   domain?: string;
-  confidentialWallet?: ConfidentialWalletBackupMetadataDraft;
+  confidentialWallet: ConfidentialWalletBackupMetadataV2;
 }): WalletBackupPayload => {
+  const mnemonic = normalizeMnemonicPhrase(input.mnemonic);
+  mnemonicToPrivateKeyHex(mnemonic);
+  const wordCount = normalizeWordCount(input.wordCount);
+  if (!wordCount || mnemonic.split(" ").length !== wordCount) {
+    throw new Error("Backup word count does not match its recovery phrase.");
+  }
+  if (!(["manual", "icloud", "google"] as const).includes(input.target)) {
+    throw new Error("Backup target is invalid.");
+  }
+  const createdAt = requireCanonicalIsoTimestamp(
+    trimString(input.createdAt) || new Date().toISOString(),
+    "Backup creation timestamp",
+  );
+  const confidentialWallet = parseConfidentialWalletBackupMetadata(
+    input.confidentialWallet,
+  );
   const payload: WalletBackupPayload = {
-    mnemonic: normalizeMnemonicPhrase(input.mnemonic),
-    wordCount: input.wordCount,
+    schema: WALLET_BACKUP_SCHEMA,
+    mnemonic,
+    wordCount,
     signingAlgorithm: normalizeStoredSigningAlgorithm(input.signingAlgorithm),
-    createdAt: trimString(input.createdAt) || new Date().toISOString(),
+    createdAt,
     target: input.target,
+    confidentialWallet,
   };
 
   const displayName = trimString(input.displayName);
   if (displayName) {
+    if (displayName.length > 128) {
+      throw new Error("Backup display name is invalid.");
+    }
     payload.displayName = displayName;
   }
 
   const domain = trimString(input.domain);
   if (domain) {
+    if (domain.length > 255) {
+      throw new Error("Backup domain is invalid.");
+    }
     payload.domain = domain;
-  }
-
-  const parsedConfidentialWallet = parseConfidentialWalletBackupMetadata(
-    input.confidentialWallet,
-  );
-  if (parsedConfidentialWallet) {
-    payload.confidentialWallet = parsedConfidentialWallet;
-    return payload;
-  }
-
-  const confidentialWalletDraft = (input.confidentialWallet ?? {}) as Record<
-    string,
-    unknown
-  >;
-  const confidentialChainId = trimString(confidentialWalletDraft.chainId);
-  const confidentialAccountId = trimString(confidentialWalletDraft.accountId);
-  if (confidentialChainId && confidentialAccountId) {
-    payload.confidentialWallet = {
-      schema: CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V1,
-      chainId: confidentialChainId,
-      accountId: confidentialAccountId,
-      addressCursor:
-        normalizeNonNegativeInteger(confidentialWalletDraft.addressCursor) ?? 0,
-      scanWatermarkBlock:
-        confidentialWalletDraft.scanWatermarkBlock === null
-          ? null
-          : (normalizeNonNegativeInteger(
-              confidentialWalletDraft.scanWatermarkBlock,
-            ) ?? null),
-      encryptedNotes: Array.isArray(confidentialWalletDraft.encryptedNotes)
-        ? [...confidentialWalletDraft.encryptedNotes]
-        : [],
-      spentNullifiers: Array.isArray(confidentialWalletDraft.spentNullifiers)
-        ? confidentialWalletDraft.spentNullifiers
-            .map((entry: unknown) => trimString(entry))
-            .filter((entry: string) => /^[0-9a-f]{64}$/i.test(entry))
-        : [],
-    };
   }
 
   return payload;
 };
 
 export const parseWalletBackupPayload = (raw: string) => {
+  if (
+    typeof raw !== "string" ||
+    new TextEncoder().encode(raw).byteLength > MAX_WALLET_BACKUP_JSON_BYTES
+  ) {
+    throw new Error("Invalid backup file.");
+  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = parseJsonWithoutDuplicateObjectKeys(raw, "Wallet backup");
   } catch (_error) {
     throw new Error("Invalid backup file.");
   }
@@ -244,26 +313,77 @@ export const parseWalletBackupPayload = (raw: string) => {
   }
 
   const payload = parsed as Record<string, unknown>;
-  const mnemonic = normalizeMnemonicPhrase(trimString(payload.mnemonic));
-  if (!mnemonic) {
+  if (
+    !hasExactKeys(
+      payload,
+      [
+        "schema",
+        "mnemonic",
+        "wordCount",
+        "signingAlgorithm",
+        "createdAt",
+        "target",
+        "confidentialWallet",
+      ],
+      ["displayName", "domain"],
+    ) ||
+    payload.schema !== WALLET_BACKUP_SCHEMA
+  ) {
+    throw new Error("Invalid backup file schema.");
+  }
+  if (typeof payload.mnemonic !== "string") {
     throw new Error("Backup file is missing a recovery phrase.");
   }
+  const mnemonic = normalizeMnemonicPhrase(payload.mnemonic);
+  if (!mnemonic || mnemonic !== payload.mnemonic) {
+    throw new Error("Backup recovery phrase is not canonical.");
+  }
+  mnemonicToPrivateKeyHex(mnemonic);
 
   const derivedWordCount = normalizeWordCount(
     mnemonic.split(" ").filter(Boolean).length,
   );
 
+  const wordCount = normalizeWordCount(payload.wordCount);
+  if (!wordCount || wordCount !== derivedWordCount) {
+    throw new Error("Backup word count does not match its recovery phrase.");
+  }
+  let signingAlgorithm: string;
+  try {
+    signingAlgorithm = normalizeStoredSigningAlgorithm(
+      payload.signingAlgorithm,
+    );
+  } catch {
+    throw new Error("Backup signing algorithm is invalid.");
+  }
+  const createdAt = requireCanonicalIsoTimestamp(
+    payload.createdAt,
+    "Backup creation timestamp",
+  );
+  if (!new Set<unknown>(["manual", "icloud", "google"]).has(payload.target)) {
+    throw new Error("Backup target is invalid.");
+  }
+  const displayName =
+    payload.displayName === undefined
+      ? ""
+      : readCanonicalText(payload.displayName, "Backup display name", 128);
+  const domain =
+    payload.domain === undefined
+      ? ""
+      : readCanonicalText(payload.domain, "Backup domain", 255);
   const confidentialWallet = parseConfidentialWalletBackupMetadata(
     payload.confidentialWallet,
   );
+  const target = payload.target as WalletBackupTarget;
   return {
+    schema: WALLET_BACKUP_SCHEMA,
     mnemonic,
-    wordCount: normalizeWordCount(payload.wordCount) ?? derivedWordCount,
-    signingAlgorithm: normalizeStoredSigningAlgorithm(
-      payload.signingAlgorithm ?? DEFAULT_SIGNING_ALGORITHM,
-    ),
-    displayName: trimString(payload.displayName),
-    domain: trimString(payload.domain),
-    ...(confidentialWallet ? { confidentialWallet } : {}),
-  };
+    wordCount,
+    signingAlgorithm,
+    createdAt,
+    target,
+    ...(displayName ? { displayName } : {}),
+    ...(domain ? { domain } : {}),
+    confidentialWallet,
+  } satisfies WalletBackupPayload;
 };

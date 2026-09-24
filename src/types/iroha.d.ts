@@ -3,7 +3,6 @@ import type {
   ConfidentialWalletBackupMetadataV2,
 } from "@/utils/walletBackup";
 import type {
-  GovernanceParliamentDecision,
   GovernanceProposalDetail,
   GovernanceProposalList,
   GovernanceWritableProposalKindId,
@@ -12,6 +11,7 @@ import type {
   EndpointInspection,
   EndpointNetworkContext,
 } from "@/types/endpointInspection";
+import type { SoraCloudHfStatusView } from "@/utils/soracloud";
 
 export type ToriiHealth = ({ status: string } & Record<string, unknown>) | null;
 
@@ -40,6 +40,7 @@ export interface AccountAliasResolutionResponse {
 export interface AccountAssetItem {
   asset_id: string;
   quantity: string;
+  scope: string;
   asset_alias?: string | null;
   asset_name?: string | null;
   asset_definition_id?: string | null;
@@ -60,7 +61,7 @@ export interface AccountTransactionItem {
   result_ok: boolean;
   authority?: string;
   timestamp_ms?: number;
-  [key: string]: unknown;
+  memo?: string;
 }
 
 export interface AccountPermissionItem {
@@ -88,60 +89,6 @@ export interface GovernanceCitizenStatusResponse {
 export interface GovernanceCitizenCountResponse {
   total: number | null;
   endpointAvailable: boolean;
-}
-
-export interface OfflineAllowanceItem {
-  certificate_id_hex: string;
-  controller_id: string;
-  controller_display: string;
-  asset_id: string;
-  registered_at_ms: number;
-  expires_at_ms: number;
-  policy_expires_at_ms: number;
-  refresh_at_ms: number | null;
-  verdict_id_hex: string | null;
-  attestation_nonce_hex: string | null;
-  remaining_amount: string;
-  deadline_kind?: string | null;
-  deadline_state?: string | null;
-  deadline_ms?: number | null;
-  deadline_ms_remaining?: number | null;
-  record: Record<string, unknown>;
-  integrity_metadata: {
-    policy: string;
-    provisioned?: {
-      inspector_public_key: string;
-      manifest_schema: string;
-      manifest_version: number | null;
-      max_manifest_age_ms: number | null;
-      manifest_digest_hex: string | null;
-    };
-  } | null;
-}
-
-export interface OfflineReadinessBlockerView {
-  code: string;
-  message: string;
-}
-
-export interface OfflineReadinessView {
-  required_bridge_abi_version: 21;
-  cash_handoff_capability: "cash_handoff_v1";
-  max_hops: number;
-  asset_definition_id: string;
-  asset_scale: number | null;
-  evaluated_block_height: number;
-  evaluated_block_hash: string;
-  active_transfer_verifier: Record<string, unknown> | null;
-  active_topup_shield_verifier: Record<string, unknown> | null;
-  active_unshield_verifier: Record<string, unknown> | null;
-  active_recursive_step_eq_verifier: Record<string, unknown> | null;
-  active_recursive_step_ep_verifier: Record<string, unknown> | null;
-  artifact_set: Record<string, unknown> | null;
-  proof_backend_available: boolean;
-  recursive_lineage_supported: boolean;
-  ready: boolean;
-  blockers: OfflineReadinessBlockerView[];
 }
 
 export interface ExplorerMetricsResponse {
@@ -282,15 +229,14 @@ export interface ConfidentialPaymentAddress {
 }
 
 export type VpnExitClass = "standard" | "low-latency" | "high-security";
-export type VpnReceiptSource = "torii" | "local-fallback";
+export type VpnCanonicalReceiptSource = "torii" | "relay" | "wsv";
+export type VpnReceiptSource = VpnCanonicalReceiptSource;
 
-export interface VpnAuthContext {
+export interface VpnConnectionContext {
   toriiUrl: string;
   accountId: string;
-  privateKeyHex: string;
-  signingAlgorithm?: string;
-  chainId?: string;
-  networkPrefix?: number;
+  chainId: string;
+  networkPrefix: number;
 }
 
 export interface VpnAvailability {
@@ -330,9 +276,21 @@ export interface VpnProfile {
   tunnelAddresses: string[];
   mtuBytes: number;
   displayBillingLabel: string;
+  operatorAccountId: string;
+  leaseFee: string;
+  settlementGraceSecs: number;
+  flowLabelBits: 24;
+  paddingBudgetMs: number;
+  relayIdHex: string;
+  relayMldsa65PublicKeyHex: string;
+  descriptorCommitHex: string;
+  tlsServerName: string;
+  relayTlsSpkiSha256Hex: string;
+  relayCertificateSha256Hex: string;
+  directorySnapshotDigestHex: string;
 }
 
-export interface VpnReceipt {
+interface VpnReceiptBase {
   sessionId: string;
   accountId: string;
   exitClass: VpnExitClass;
@@ -344,8 +302,30 @@ export interface VpnReceipt {
   bytesIn: number;
   bytesOut: number;
   status: string;
-  receiptSource: VpnReceiptSource;
 }
+
+export type VpnReceipt = VpnReceiptBase & {
+  receiptSource: VpnCanonicalReceiptSource;
+  status:
+    | "disconnected"
+    | "expired"
+    | "replaced"
+    | "settlement_pending"
+    | "settled";
+  quoteId: string;
+  paymentTxHash: string;
+  feeAssetId: string;
+  escrowAccountId: string;
+  operatorAccountId: string;
+  leaseFee: string;
+  earnedFee: string;
+  refundedFee: string;
+  leaseIdHex: string;
+  settleLeaseInstruction: {
+    wireId: string;
+    payloadHex: string;
+  } | null;
+};
 
 export interface VpnStatus {
   state:
@@ -354,7 +334,7 @@ export interface VpnStatus {
     | "connected"
     | "disconnecting"
     | "reconciling"
-    | "remote-delete-pending"
+    | "remote-expiry-pending"
     | "repair-needed"
     | "error";
   sessionId: string | null;
@@ -400,23 +380,16 @@ export interface AccountFaucetResponse {
   tx_hash_hex: string;
   status: string;
   finality: TransactionFinalityProof;
-  fee?: TransactionFeeView | string | number | null;
 }
 
-export interface TransactionFeeView {
-  amount?: string | number | null;
-  quantity?: string | number | null;
-  assetId?: string | null;
-  asset_id?: string | null;
-  asset?: string | null;
-  feeAssetId?: string | null;
-  fee_asset_id?: string | null;
-  fee_amount?: string | number | null;
-  feeAmount?: string | number | null;
-  gas_asset_id?: string | null;
-  gasAssetId?: string | null;
-  source?: string | null;
-  estimated?: boolean | null;
+export interface TransactionFeeQuoteView {
+  payer: "authority" | "sponsor";
+  components: Array<{
+    kind: "nexus" | "pipeline_gas";
+    assetDefinitionId: string;
+    maxAmount: string;
+  }>;
+  nextBlockHeight: string;
 }
 
 export interface TransactionFinalityProof {
@@ -430,7 +403,7 @@ export interface TransactionFinalityProof {
 export interface TransactionSubmissionResult {
   hash: string;
   finality: TransactionFinalityProof;
-  fee?: TransactionFeeView | string | number | null;
+  feeQuote?: TransactionFeeQuoteView;
 }
 
 export interface ConfidentialAssetBalanceView {
@@ -494,8 +467,7 @@ export interface KaigiSignalKeyPair {
   privateKeyBase64Url: string;
 }
 
-export type KaigiMeetingPrivacy = "private" | "transparent";
-export type KaigiPeerIdentityReveal = "Hidden" | "RevealAfterJoin";
+export type KaigiMeetingPrivacy = "transparent";
 
 export interface KaigiOfferDescription {
   type: "offer";
@@ -511,7 +483,7 @@ export interface KaigiMeetingView {
   callId: string;
   meetingCode: string;
   title?: string;
-  hostAccountId?: string;
+  hostAccountId: string;
   hostDisplayName?: string;
   hostParticipantId?: string;
   hostKaigiPublicKeyBase64Url: string;
@@ -522,28 +494,15 @@ export interface KaigiMeetingView {
   ended: boolean;
   endedAtMs?: number;
   privacyMode: KaigiMeetingPrivacy;
-  peerIdentityReveal: KaigiPeerIdentityReveal;
-  rosterRootHex: string;
   offerDescription: KaigiOfferDescription;
-}
-
-export interface PrivateKaigiConfidentialXorState {
-  assetDefinitionId: string;
-  resolvedAssetId: string;
-  policyMode: string;
-  shieldedBalance: string | null;
-  shieldedBalanceExact: boolean;
-  transparentBalance: string;
-  canSelfShield: boolean;
-  message?: string;
 }
 
 export interface KaigiMeetingSignalRecord {
   entrypointHash: string;
-  authority?: string;
-  timestampMs?: number;
+  authority: string;
+  timestampMs: number;
   callId: string;
-  participantAccountId?: string;
+  participantAccountId: string;
   participantId: string;
   participantName: string;
   walletIdentity?: string;
@@ -733,7 +692,7 @@ export interface SubscriptionActionResponseView {
   finality: TransactionFinalityProof;
   state_status: "confirmed" | "advanced" | "indexing";
   reconciliation_message?: string;
-  fee?: TransactionFeeView | string | number | null;
+  feeQuote?: TransactionFeeQuoteView;
   billing_trigger_id?: string;
   usage_trigger_id?: string | null;
   first_charge_ms?: number;
@@ -754,7 +713,7 @@ export interface SoraCloudServiceSummaryView {
   rolloutStage: string | null;
   rolloutPercent: number | null;
   leaseStatus: string | null;
-  leaseExpiresSequence: number | null;
+  leaseExpiresHeight: number | null;
   remainingRuntimeBalanceNanos: string | null;
   latestSequence: number | null;
   signedBy: string | null;
@@ -773,522 +732,7 @@ export interface SoraCloudStatusResponseView {
   raw: Record<string, unknown> | null;
 }
 
-export interface SoraCloudHfDeployResponseView {
-  ok: true;
-  settlement_status: "confirmed" | "indexing";
-  finality: TransactionFinalityProof;
-  action: string | null;
-  service_name: string;
-  sequence: number | null;
-  current_version?: string | null;
-  revision_count?: number | null;
-  tx_hash_hex: string;
-  storage_base_fee: string;
-  actual_storage_charge: string | null;
-  max_compute_reservation_fee: string;
-  actual_compute_charge: string | null;
-  reconciliation_message?: string;
-  fee?: TransactionFeeView | string | number | null;
-  rollout_handle?: string | null;
-  rollout_stage?: string | null;
-  rollout_percent?: number | null;
-  raw: Record<string, unknown> | null;
-}
-
-export interface SccpCodecCapabilityView {
-  id: number;
-  key: string;
-  description: string;
-}
-
-export interface SccpCounterpartyCapabilityView {
-  domain: number;
-  chain: string;
-  verifierBackendKey: string;
-  messageBackend: string;
-  registryBackend: string;
-  counterpartyAccountCodec: number;
-  counterpartyAccountCodecKey: string;
-  destinationRollout: SccpDestinationRolloutView | null;
-  productionReady: boolean;
-  disabledReason: string | null;
-}
-
-export interface SccpCapabilitiesResponse {
-  localDomain: number;
-  localChain: string;
-  proofFamily: string;
-  burnBundlePath: string;
-  messageBundlePath: string;
-  messageProofPath: string;
-  messageJobPath: string;
-  recentMessagesPath: string;
-  proofManifestPath: string;
-  burnRegistryBackend: string;
-  proofSubmitPath: string | null;
-  messageSubmitPath: string | null;
-  messagePayloadKinds: readonly string[];
-  codecs: readonly SccpCodecCapabilityView[];
-  counterparties: readonly SccpCounterpartyCapabilityView[];
-}
-
-export interface SccpDestinationBindingView {
-  version: number;
-  key: string;
-  bindingHash: string;
-}
-
-export interface SccpDestinationRolloutView {
-  version: number;
-  verifierPlan: string;
-  immutableVerifierReady: boolean;
-  anchorsReady: boolean;
-  verifierIdentity: string | null;
-  verifierCodeHash: string | null;
-  verifierKeyHash: string | null;
-  destinationNetworkId: string | null;
-  destinationBridgeAddress: string | null;
-  destinationBindingKey: string | null;
-  destinationBindingHash: string | null;
-  anchorId: string | null;
-  blockers: readonly string[];
-}
-
-export interface SccpSubmissionArgumentView {
-  key: string;
-  description: string;
-}
-
-export interface SccpCounterpartySubmissionTemplateView {
-  version: number;
-  encoding: string;
-  submissionKind: string;
-  verifierEntrypoint: string;
-  requiredArguments: readonly SccpSubmissionArgumentView[];
-}
-
-export interface SccpTairaXorBurnRecordMaterialView {
-  settlementAssetDefinitionId: string;
-  contractArtifactB64: string;
-  artifactSha256?: string;
-  vkRef: {
-    backend: string;
-    name: string;
-  };
-  gasLimit?: number;
-}
-
-export interface SccpPostDeployLiveEvidenceView {
-  fullTomlReady: boolean;
-  sourceBridgeConfigHash: string;
-  sourceEventTransactionId: string;
-  routeCanaryEvidenceHash: string;
-  routeCanaryTransactionId: string;
-  offlineFullTomlSha256?: string;
-}
-
-export interface SccpProofManifestView {
-  version: number;
-  routeId?: string;
-  assetKey?: string;
-  localDomain: number;
-  localChain: string;
-  counterpartyDomain: number;
-  chain: string;
-  proofFamily: string;
-  securityModel: string;
-  anchorGovernance: string;
-  destinationBinding: SccpDestinationBindingView;
-  verifierBackendKey: string;
-  messageBackend: string;
-  registryBackend: string;
-  counterpartyAccountCodec: number;
-  counterpartyAccountCodecKey: string;
-  finalityModel: string;
-  verifierTarget: string;
-  manifestSeed: string;
-  requiredPublicInputs: readonly string[];
-  messagePayloadKinds: readonly string[];
-  destinationRollout: SccpDestinationRolloutView | null;
-  productionReady: boolean;
-  disabledReason: string | null;
-  tronBridgeAddress?: string;
-  tairaXorBridgeAddress?: string;
-  tairaXorTokenAddress?: string;
-  sccpTronSourceBridgeAddress?: string;
-  tronSourceBridgeAddress?: string;
-  tronVerifierAddress?: string;
-  postDeployLiveEvidence?: SccpPostDeployLiveEvidenceView;
-  submissionTemplate: SccpCounterpartySubmissionTemplateView;
-  tairaXorBurnRecord: SccpTairaXorBurnRecordMaterialView | null;
-}
-
-export interface SccpProofManifestSetResponse {
-  localDomain: number;
-  localChain: string;
-  proofFamily: string;
-  manifests: readonly SccpProofManifestView[];
-  routes?: readonly Record<string, unknown>[];
-}
-
-export interface SccpSoraOutboundMaterialResponse {
-  version: 1;
-  registry_revision: string;
-  route_key: {
-    lane_id: {
-      source: { network: string; profile: null };
-      target: { network: string; profile: null };
-    };
-    route_id: string;
-    asset_key: string;
-    revision: number;
-  };
-  route_configuration_hash: string;
-  destination_binding_hash: string;
-  settlement_asset_definition_id: string;
-  policy: {
-    version: 1;
-    semantics: "ivm_proved_record_sccp_message_v1";
-    contract_artifact_sha256: string;
-    vk_ref: {
-      backend: string;
-      name: string;
-      version: number;
-      commitment: string;
-    };
-    gas_limit: number;
-  };
-  contract_artifact_b64: string;
-  contract_code_hash: string;
-  verifying_key_version: number;
-}
-
-export interface SccpRecentMessagesResponse {
-  items: Record<string, unknown>[];
-  total: number;
-  raw: Record<string, unknown>;
-}
-
-export interface SccpDestinationProofMaterialInput {
-  networkIdHex?: string;
-  verifierAddressHex?: string;
-  bridgeAddressHex?: string;
-  verifierCodeHashHex?: string;
-  verifierKeyHashHex?: string;
-  expectedDestinationBindingHashHex?: string;
-  tronVerifierAddress?: string;
-  proofBytesHex?: string;
-}
-
-export interface SccpMessageProofInput
-  extends SccpDestinationProofMaterialInput {
-  toriiUrl: string;
-  messageId: string;
-}
-
-export interface SccpMessageProofBundleInput {
-  toriiUrl: string;
-  messageId: string;
-}
-
-export interface SccpBscProofGenerateInput {
-  request: Record<string, unknown>;
-  proverModuleUrl?: string;
-  proverConfigUrl?: string;
-  timeoutMs?: number;
-}
-
-export interface SccpBscSourceProofGenerateInput {
-  input: Record<string, unknown>;
-  proverModuleUrl?: string;
-  proverConfigUrl?: string;
-  timeoutMs?: number;
-}
-
-export interface SccpSourceProofDeploymentRebuildInput {
-  proofPackage: Record<string, unknown>;
-  sourceVerifierMaterial: Record<string, unknown>;
-  sourceAdapterEngineDeployment: Record<string, unknown>;
-  label?: string;
-}
-
-export interface SccpBridgeProofSubmitInput
-  extends SccpDestinationProofMaterialInput {
-  toriiUrl: string;
-  accountId: string;
-  destinationProofB64?: string;
-  burnBundle?: Record<string, unknown>;
-  messageBundle?: Record<string, unknown>;
-  publicKeyHex?: string;
-  signatureB64?: string;
-  transactionPayloadB64?: string;
-  creationTimeMs?: number | string;
-}
-
-export interface SccpBridgeMessageSubmitInput
-  extends SccpDestinationProofMaterialInput {
-  toriiUrl: string;
-  accountId: string;
-  nativeProofB64?: string;
-  messageBundle?: Record<string, unknown>;
-  publicKeyHex?: string;
-  signatureB64?: string;
-  transactionPayloadB64?: string;
-  receiptLane?: number | string;
-  settlement?: Record<string, unknown>;
-  creationTimeMs?: number | string;
-}
-
-export interface SccpRecentMessagesInput {
-  toriiUrl: string;
-  routeId?: string;
-  limit?: number;
-  offset?: number;
-}
-
-export interface SoraCloudHfStatusResponseView {
-  found: boolean;
-  statusCode?: number;
-  message?: string;
-  raw: Record<string, unknown> | null;
-}
-
-export interface ZkIvmVerifyingKeyRefInput {
-  backend: string;
-  name: string;
-}
-
-export interface ZkIvmRequestInput {
-  toriiUrl: string;
-  chainId: string;
-  networkPrefix: number;
-  vkRef: ZkIvmVerifyingKeyRefInput;
-  authority: string;
-  metadata?: Record<string, unknown>;
-  bytecode: string | number[] | Record<string, unknown>;
-  proved?: Record<string, unknown>;
-}
-
-export interface ZkIvmProveJobInput {
-  toriiUrl: string;
-  chainId: string;
-  networkPrefix: number;
-  jobId: string;
-}
-
-export interface ZkIvmProvedTransactionSubmitInput {
-  toriiUrl: string;
-  chainId: string;
-  accountId: string;
-  networkPrefix: number;
-  privateKeyHex?: never;
-  proved: Record<string, unknown>;
-  attachment: Record<string, unknown>;
-  gasLimit?: string | number;
-  metadata?: Record<string, unknown>;
-  creationTimeMs?: number;
-  ttlMs?: number;
-  nonce?: number;
-}
-
-export interface TronGatewayInput {
-  endpoint?: string;
-}
-
-export interface TronTransactionInput extends TronGatewayInput {
-  txId: string;
-}
-
-export interface TronAccountInput extends TronGatewayInput {
-  address: string;
-}
-
-export interface TronBlockInput extends TronGatewayInput {
-  blockNumber?: number | string;
-}
-
-export interface TronEventsInput extends TronGatewayInput {
-  txId: string;
-}
-
-export interface TronBroadcastInput extends TronGatewayInput {
-  transaction: Record<string, unknown>;
-}
-
-export interface SccpNileTestTronSignerStatus {
-  enabled: boolean;
-  network: "nile";
-  address: string;
-  reason?: string;
-}
-
-export interface SccpNileTestTronTransactionSignInput {
-  transaction: Record<string, unknown>;
-  ownerAddress?: string;
-}
-
-export type TronContractParameterInput =
-  | {
-      parameter: string;
-      callData?: never;
-    }
-  | {
-      callData: string;
-      parameter?: never;
-    }
-  | {
-      parameter?: undefined;
-      callData?: undefined;
-    };
-
-export type TronTriggerSmartContractInput = TronGatewayInput &
-  TronContractParameterInput & {
-    ownerAddress: string;
-    contractAddress: string;
-    functionSelector: string;
-    feeLimit?: number | string;
-    callValue?: number | string;
-    permissionId?: number | string;
-  };
-
-export type TronConstantContractInput = TronGatewayInput &
-  TronContractParameterInput & {
-    ownerAddress: string;
-    contractAddress: string;
-    functionSelector: string;
-  };
-
-export interface EvmRpcInput {
-  endpoint?: string;
-}
-
-export interface EvmRpcCallInput extends EvmRpcInput {
-  method: string;
-  params?: unknown[];
-}
-
-export interface EvmTransactionInput extends EvmRpcInput {
-  txHash: string;
-}
-
-export interface EvmAddressInput extends EvmRpcInput {
-  address: string;
-  blockTag?: string;
-}
-
-export interface EvmCallInput extends EvmRpcInput {
-  to: string;
-  data: string;
-  from?: string;
-  value?: string;
-  blockTag?: string;
-}
-
-export interface EvmLogsInput extends EvmRpcInput {
-  address?: string | string[];
-  blockHash?: string;
-  fromBlock?: string;
-  toBlock?: string;
-  topics?: Array<string | string[] | null>;
-}
-
-export interface SolanaRpcInput {
-  endpoint?: string;
-}
-
-export interface SolanaRpcCallInput extends SolanaRpcInput {
-  method: string;
-  params?: unknown[];
-}
-
-export interface SolanaAddressInput extends SolanaRpcInput {
-  address: string;
-}
-
-export interface SolanaTokenBalanceInput extends SolanaRpcInput {
-  ownerAddress: string;
-  mintAddress: string;
-}
-
-export interface SolanaAssociatedTokenAccountInput extends SolanaRpcInput {
-  payerAddress: string;
-  ownerAddress: string;
-  mintAddress: string;
-}
-
-export interface SolanaTransactionInput extends SolanaRpcInput {
-  signature: string;
-}
-
-export interface SolanaBroadcastInput extends SolanaRpcInput {
-  transactionB64: string;
-  expectedUnsignedTransactionB64: string;
-}
-
-export interface SolanaInstructionAccountMetaInput {
-  pubkey: string;
-  isSigner?: boolean;
-  signer?: boolean;
-  isWritable?: boolean;
-  writable?: boolean;
-}
-
-export interface SolanaInstructionInput {
-  programId: string;
-  accounts?: SolanaInstructionAccountMetaInput[];
-  dataHex: string;
-}
-
-export interface SolanaBuildTransactionInput extends SolanaRpcInput {
-  feePayer: string;
-  instructions: SolanaInstructionInput[];
-  recentBlockhash?: string;
-}
-
-export interface SolanaPreparedAssociatedTokenAccount {
-  associatedTokenAddress: string;
-  exists: boolean;
-  createInstruction: SolanaInstructionInput | null;
-}
-
-export type GovernanceBallotDirection = "Aye" | "Nay" | "Abstain";
-
-export interface GovernanceProposalResult {
-  found: boolean;
-  proposal: Record<string, unknown> | null;
-}
-
-export interface GovernanceReferendumResult {
-  found: boolean;
-  referendum: Record<string, unknown> | null;
-}
-
-export interface GovernanceTallyView {
-  referendum_id: string;
-  approve: number;
-  reject: number;
-  abstain: number;
-}
-
-export interface GovernanceTallyResult {
-  found: boolean;
-  referendum_id: string;
-  tally: GovernanceTallyView | null;
-}
-
-export interface GovernanceLockRecord {
-  owner: string;
-  amount: number;
-  expiry_height: number;
-  direction: number;
-  duration_blocks: number;
-}
-
-export interface GovernanceLocksResult {
-  found: boolean;
-  referendum_id: string;
-  locks: Record<string, GovernanceLockRecord>;
-}
+export type SoraCloudHfSharedLeaseStatusResponseView = SoraCloudHfStatusView;
 
 export interface GovernanceUnlockStatsResponse {
   height_current: number;
@@ -1313,183 +757,96 @@ export interface GovernanceCouncilCurrentResponse {
 export interface GovernanceCapabilitiesV1 {
   schema: "iroha.governance.capabilities.v1";
   version: 1;
-  chainId: string;
-  genesisHash: string;
-  currentHeight: number;
-  networkPrefix: number;
-  abiVersion: number;
-  dataModelVersion: number;
-  approvalMode: "PARLIAMENT_SORTITION_JIT";
-  plainVotingEnabled: true;
-  autoFinalizePlain: true;
-  autoFinalizePlainScope: "GENERIC_NON_VALIDATION_FEE_ONLY";
-  validationFeePlainRequiresExplicitFinalization: true;
-  validationFeePlainElectorateRules: GovernancePlainElectorateRules;
-  citizenshipAssetId: string;
-  citizenshipBondAmount: string;
+  networkId: "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94";
+  currentHeight: string;
+  networkPrefix: 369;
+  abiVersion: 1;
+  dataModelVersion: 4;
+  approvalMode: "PARLIAMENT_ATTEMPT_TIMED_OVN_V1";
+  privateBallotProtocol: "TIMED_OVN_TLE_THRESHOLD_BLS_V1";
+  mandatoryPrivateBallots: true;
+  proposalBackedReferendumBallotsSupported: false;
+  standalonePlainBallotsSupported: true;
+  standaloneZkBallotsSupported: true;
+  citizenshipAssetId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+  citizenshipBondAmount: "10000";
   citizenshipEscrowAccount: string;
-  votingAssetId: string;
-  minBondAmount: string;
-  bondEscrowAccount: string;
-  convictionStepBlocks: number;
-  maxConviction: number;
-  minEnactmentDelay: number;
-  windowSpan: number;
-  minTurnout: string;
-  approvalThresholdNumerator: number;
-  approvalThresholdDenominator: number;
-  parliamentQuorumBps: number;
-  targetBodySizes: Record<string, number>;
-  supportedProposalKinds: Array<
-    "VALIDATION_FEE_PAYOUT_LIFECYCLE" | "VALIDATION_FEE_POLICY"
-  >;
-  supportedRoutes: string[];
-}
-
-export interface GovernancePlainReferendumCitizen {
-  accountId: string;
-  amount: "10000";
-  bondedHeight: string;
-}
-
-export interface GovernancePostParliamentRegistrationGate {
-  schema: "taira.governance-post-parliament-registration-gate.v1";
-  chainId: string;
-  genesisHash: string;
-  inputsSha256: string;
-  proposalId: string;
-  referendumId: string;
-  hStart: string;
-  hEnd: string;
-  mode: "Plain";
-  operatorAccountId: string;
-  eligibleCitizenRosterSha256: string;
-  gateHeight: string;
-  gateObservationSequence: string;
-  networkCheckpointSha256: string;
-  parliamentSnapshotSha256: string;
-  approvedBodyProgressSha256: string;
-}
-
-export interface GovernancePlainReferendumContract {
-  schema: "sora.parliament.plain-referendum.v2";
-  chainId: string;
-  genesisHash: string;
-  inputsSha256: string;
-  proposalId: string;
-  referendumId: string;
-  hStart: string;
-  hEnd: string;
-  mode: "Plain";
-  postParliamentRegistrationGate: GovernancePostParliamentRegistrationGate;
-  eligibleCitizenRosterSha256: string;
-  eligibleCitizenCount: string;
-  eligibleCitizens: GovernancePlainReferendumCitizen[];
-  snapshotFinalizedHeight: string;
-  snapshotObservationSequence: string;
-  networkCheckpointSha256: string;
-  eligibleCitizenSnapshotSha256: string;
-  plainElectorate: {
-    rules: GovernancePlainElectorateRules;
-    parliamentApprovalGateHeight: string;
-    sealedAtHeight: string;
-    rosterRoot: string;
-    electorateSealHash: string;
-    members: GovernancePlainReferendumCitizen[];
-  };
-  ballot: {
-    draftRoute: string;
-    requestVersion: 1;
-    amount: "150";
-    durationBlocks: "3600";
-    directions: ["Aye", "Nay", "Abstain"];
-    termsDerivedByCore: true;
-    oneEffectiveBallotPerAccount: true;
-  };
-}
-
-export interface GovernancePlainElectorateRules {
   votingAssetId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+  minBondAmount: "150";
   bondEscrowAccount: string;
-  slashReceiverAccount: string;
-  ballotAmount: "150";
-  ballotDurationBlocks: "3600";
-  citizenshipAmount: "10000";
-  maxMembers: "256";
-  convictionStepBlocks: "100";
-  maxConviction: "6";
-  minTurnout: "1";
-  approvalThresholdNumerator: "1";
-  approvalThresholdDenominator: "2";
-  eligibilityRule: {
-    rule: "proposal_operator_at_or_before_gate_others_after_gate";
-    value: null;
+  minEnactmentDelay: 600;
+  invitationPhaseBlocks: 3600;
+  registrationPhaseBlocks: 3600;
+  survivorFreezePhaseBlocks: 1000;
+  commitmentPhaseBlocks: 3600;
+  releaseDelayBlocks: 600;
+  openingPhaseBlocks: 600;
+  maxBallotRetries: 3;
+  maxCorpusEntries: 1000;
+  targetBodySizes: {
+    rules_committee: 7;
+    agenda_council: 9;
+    interest_panel: 11;
+    review_panel: 13;
+    coordination_council: 150;
+    mpc_committee: 50;
+    fma_committee: 5;
+    oversight_committee: 7;
+    policy_jury: 25;
+    confirmation_jury: 1000;
   };
-}
-
-export interface GovernancePlainReferendumContractResult {
-  contract: GovernancePlainReferendumContract;
-  contractFingerprint: string;
-  artifactSha256: string;
-  source: {
-    descriptorUrl: string;
-    artifactUrl: string;
-  };
-}
-
-export interface GovernanceDraftInstruction {
-  wire_id: string;
-  payload_hex?: string | null;
-}
-
-export interface GovernanceDraftResponse {
-  ok: boolean;
-  proposal_id: string | null;
-  tx_instructions: GovernanceDraftInstruction[];
-  accepted?: boolean;
-  reason?: string | null;
+  supportedProposalKinds: Array<
+    | "DEPLOY_CONTRACT"
+    | "RUNTIME_UPGRADE"
+    | "SCCP_ROUTE_GOVERNANCE"
+    | "VALIDATION_FEE_POLICY"
+    | "VALIDATION_FEE_PAYOUT_LIFECYCLE"
+    | "MUSUBI_REGISTRY_GOVERNANCE"
+    | "SORAFS_PROVIDER_GOVERNANCE"
+    | "CONTRACT_LIFECYCLE_GOVERNANCE"
+    | "CONTRACT_EMERGENCY_HOLD"
+    | "GLOBAL_DATA_TRIGGER_PERMISSION_GOVERNANCE"
+  >;
+  supportedRoutes: Array<
+    | "/v1/gov/capabilities"
+    | "/v1/gov/citizens/draft"
+    | "/v1/gov/parliament/attempts/draft"
+    | "/v1/gov/parliament/attempts/{governance_attempt_id}"
+    | "/v1/gov/parliament/ballots/{ballot_attempt_id}/casting-context"
+    | "/v1/gov/parliament/ballots/{ballot_attempt_id}/casting-proof"
+    | "/v1/gov/parliament/ballots/{ballot_attempt_id}/release-context"
+    | "/v1/gov/parliament/ballots/{ballot_attempt_id}/partial-release"
+    | "/v1/gov/parliament/transitions/draft"
+    | "/v1/gov/ballots/plain"
+    | "/v1/gov/ballots/zk-v1"
+    | "/v1/gov/ballots/zk-v1/ballot-proof"
+    | "/v1/validation-fee/proposals"
+    | "/v1/validation-fee/proposals/{proposal_id}"
+    | "/v1/validation-fee/proposals/draft"
+  >;
 }
 
 export interface GovernanceProposalListInput {
   toriiUrl: string;
-  status?: string | null;
-  kind?: string | null;
-  proposer?: string | null;
   limit?: number;
   cursor?: string | null;
 }
 
 export interface GovernanceProposalDetailInput {
   toriiUrl: string;
+  networkPrefix: number;
   proposalId: string;
-  accountId?: string | null;
 }
 
-export type GovernanceWriteOperation =
-  | "register-citizen"
-  | "propose"
-  | "plain-ballot"
-  | "parliament-ballot"
-  | "enact";
-
-export interface GovernanceFeeQuoteView {
-  payer: "authority" | "sponsor";
-  components: Array<{
-    kind: string;
-    assetDefinitionId: string;
-    maxAmount: string;
-  }>;
-  nextBlockHeight: string;
-}
+export type GovernanceWriteOperation = "register-citizen" | "propose";
 
 export interface GovernancePreparedAction {
   reviewId: string;
   operation: GovernanceWriteOperation;
   title: string;
   proposalId: string | null;
-  referendumId: string | null;
   decodedInstruction: Record<string, unknown>;
-  fee: GovernanceFeeQuoteView;
+  fee: TransactionFeeQuoteView;
   expiresAtMs: number;
 }
 
@@ -1506,29 +863,9 @@ export interface GovernanceProposalPrepareInput
   payload: Record<string, unknown>;
 }
 
-export interface GovernancePlainBallotPrepareInput
-  extends GovernancePrepareContext {
-  proposalId: string;
-  referendumId: string;
-  amount: string;
-  durationBlocks: string;
-  direction: GovernanceBallotDirection;
-}
-
-export interface GovernanceParliamentBallotPrepareInput
-  extends GovernancePrepareContext {
-  proposalId: string;
-  body: string;
-  decision: GovernanceParliamentDecision;
-}
-
 export interface GovernanceCitizenRegistrationPrepareInput
   extends GovernancePrepareContext {
   amount: string;
-}
-
-export interface GovernanceEnactPrepareInput extends GovernancePrepareContext {
-  proposalId: string;
 }
 
 export interface GovernanceConfirmActionInput {
@@ -1539,14 +876,48 @@ export interface GovernanceConfirmActionInput {
 export interface GovernanceFinalizedAction extends TransactionSubmissionResult {
   operation: GovernanceWriteOperation;
   proposalId: string | null;
-  referendumId: string | null;
   status: "finalized";
+}
+
+export interface GovernanceValidationFeePayoutBindingView {
+  contract_address: string;
+  code_hash: string;
+  entrypoint: "autonomous_validation_fee_tick";
+  treasury_account_id: string;
+  ds_asset_id: "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
+  xor_asset_id: string;
+  pool_vault_account_id: string;
+  batch_ds: "10";
+  min_xor_out: "4";
+  max_xor_out: "100";
+  recipients: Array<{ account_id: string; share: "0.25" }>;
+}
+
+export interface GovernanceValidationFeeEffectivePolicyView {
+  schema_version: 1;
+  network_id: "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94";
+  policy_version: string;
+  previous_policy_hash: string | null;
+  ds_asset_id: "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
+  ds_scale: 2;
+  fee: "0" | "0.1";
+  treasury_account_id: string;
+  charging_mode:
+    | { charging_mode: "DISABLED"; value: null }
+    | {
+        charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION";
+        value: null;
+      };
+  effective_from_height: string;
+  expires_after_height: string | null;
+  exemption_classes: [] | ["TREASURY_PAYOUT"];
+  treasury_payout_binding: GovernanceValidationFeePayoutBindingView | null;
 }
 
 export interface GovernanceValidationFeePolicyView {
   observedHeight: string;
-  effective: Record<string, unknown>;
-  latestEnacted: Record<string, unknown>;
+  effective: GovernanceValidationFeeEffectivePolicyView;
+  latestEnacted: GovernanceValidationFeeEffectivePolicyView;
   scheduled: [];
   registryHead: {
     policyVersion: string;
@@ -1563,140 +934,22 @@ export interface GovernanceValidationFeePolicyView {
   };
 }
 
-export type GovernanceVotingMode = "Plain" | "Zk";
-
-export interface GovernanceWindowInput {
-  lower: number;
-  upper: number;
-}
-
-export interface GovernanceDeployContractProposalInput {
-  toriiUrl: string;
-  contractAddress?: string | null;
-  contractAlias?: string | null;
-  codeHash: string;
-  abiHash: string;
-  abiVersion?: string | null;
-  mode?: GovernanceVotingMode | null;
-  window?: GovernanceWindowInput | null;
-  limits?: Record<string, unknown> | null;
-}
-
-export type GovernanceLifecycleStageId =
-  | "submitted"
-  | "briefs"
-  | "comment"
-  | "sortition"
-  | "vote"
-  | "tally"
-  | "challenge"
-  | "canary"
-  | "enact"
-  | "review";
-
-export type GovernanceStageStatus =
-  | "complete"
-  | "active"
-  | "pending"
-  | "unavailable"
-  | "blocked";
-
-export type GovernanceRole =
-  | "none"
-  | "citizen"
-  | "seated_member"
-  | "alternate"
-  | "operator";
-
-export type GovernanceActionGateCode =
-  | "ready"
-  | "busy"
-  | "endpoint-unavailable"
-  | "wallet-required"
-  | "insufficient-bond"
-  | "already-citizen"
-  | "missing-permission"
-  | "missing-referendum"
-  | "invalid-proposal"
-  | "invalid-amount"
-  | "invalid-duration"
-  | "missing-backend-capability"
-  | "not-seated"
-  | "closed-window";
-
-export interface GovernanceActionGate {
-  enabled: boolean;
-  code: GovernanceActionGateCode;
-  reason: string;
-}
-
-export interface GovernanceBriefStatus {
-  required: boolean;
-  submitted: number;
-  redTeamRequired: boolean;
-  redTeamSubmitted: number;
-  endpointAvailable: boolean;
-}
-
-export interface GovernanceChallengeStatus {
-  open: boolean;
-  bondRequired: string | null;
-  activeChallenges: number;
-  endpointAvailable: boolean;
-}
-
-export interface GovernanceRolloutStatus {
-  phase: "not-started" | "canary" | "active" | "rolled-back" | "unavailable";
-  endpointAvailable: boolean;
-  detail?: string | null;
-}
-
-export interface GovernanceLifecycleStage {
-  id: GovernanceLifecycleStageId;
-  labelKey: string;
-  status: GovernanceStageStatus;
-  detailKey: string;
-}
-
-export interface GovernanceLifecycleSnapshot {
-  source: "torii" | "client-fallback";
-  endpointAvailable: boolean;
-  referendumId: string | null;
-  proposalId: string | null;
-  currentStageId: GovernanceLifecycleStageId;
-  role: GovernanceRole;
-  stages: GovernanceLifecycleStage[];
-  briefStatus: GovernanceBriefStatus;
-  challengeStatus: GovernanceChallengeStatus;
-  rolloutStatus: GovernanceRolloutStatus;
-  futureStagesUnavailable: boolean;
-}
-
 export interface SigningAlgorithmOption {
   id: string;
   label: string;
   isDefault: boolean;
 }
 
-export interface RuntimeConfigResponse {
-  walletConnectProjectId: string;
-  sccpBscE2eWallet: string;
-  sccpSolanaE2eWallet: string;
-  sccpTonE2eWallet: string;
-  sccpTonConnectManifestUrl: string;
-}
-
 export interface IrohaBridge {
-  getRuntimeConfig(): RuntimeConfigResponse;
   ping(config: { toriiUrl: string }): Promise<ToriiHealth>;
   getChainMetadata(config: {
     toriiUrl: string;
   }): Promise<ChainMetadataResponse>;
   inspectEndpoint(config: EndpointNetworkContext): Promise<EndpointInspection>;
-  getSigningAlgorithms(config?: {
+  getSigningAlgorithms(config: {
     toriiUrl: string;
   }): Promise<SigningAlgorithmOption[]>;
-  generateKeyPair(input?: { signingAlgorithm?: string; seedHex?: string }): {
+  generateKeyPair(input: { signingAlgorithm: string; seedHex?: string }): {
     publicKeyHex: string;
     privateKeyHex: string;
     signingAlgorithm: string;
@@ -1705,43 +958,33 @@ export interface IrohaBridge {
   isSecureVaultAvailable(): Promise<boolean>;
   storeAccountSecret(input: {
     accountId: string;
+    networkPrefix: number;
     privateKeyHex: string;
-    signingAlgorithm?: string;
+    signingAlgorithm: string;
   }): Promise<void>;
   listAccountSecretFlags(input: {
     accountIds: string[];
+    networkPrefix: number;
   }): Promise<Record<string, boolean>>;
   copyTextToClipboard(input: { text: string }): Promise<void>;
   deriveAccountAddress(input: {
     domain: string;
     publicKeyHex: string;
-    networkPrefix?: number;
-    signingAlgorithm?: string;
+    networkPrefix: number;
+    signingAlgorithm: string;
   }): AccountAddressView;
-  derivePublicKey(
-    input:
-      | string
-      | {
-          privateKeyHex: string;
-          signingAlgorithm?: string;
-        },
-  ): { publicKeyHex: string; signingAlgorithm: string };
-  deriveConfidentialOwnerTag(input: {
-    privateKeyHex: string;
-    diversifierHex: string;
-  }): { ownerTagHex: string };
-  deriveConfidentialReceiveAddress(privateKeyHex: string): {
-    ownerTagHex: string;
-    diversifierHex: string;
+  derivePublicKey(input: { privateKeyHex: string; signingAlgorithm: string }): {
+    publicKeyHex: string;
+    signingAlgorithm: string;
   };
   resolveAccountAlias(input: {
     toriiUrl: string;
     alias: string;
-    networkPrefix?: number;
+    networkPrefix: number;
   }): Promise<AccountAliasResolutionResponse>;
   createConfidentialPaymentAddress(input: {
     accountId: string;
-    privateKeyHex?: string;
+    networkPrefix: number;
   }): Promise<ConfidentialPaymentAddress>;
   exportConfidentialWalletBackup(input: {
     toriiUrl: string;
@@ -1763,35 +1006,18 @@ export interface IrohaBridge {
     chainId: string;
     networkPrefix: number;
     accountId: string;
-    domainId: string;
     metadata?: Record<string, unknown>;
     authorityAccountId: string;
-    authorityPrivateKeyHex?: string;
-    authoritySigningAlgorithm?: string;
   }): Promise<TransactionSubmissionResult>;
   transferAsset(input: {
     toriiUrl: string;
     chainId: string;
     assetDefinitionId: string;
     accountId: string;
-    destinationAccountId?: string;
+    destinationAccountId: string;
     networkPrefix: number;
     quantity: string;
-    privateKeyHex?: string;
-    signingAlgorithm?: string;
-    metadata?: Record<string, unknown>;
-    shielded?: boolean;
-    unshield?: boolean;
-    shieldedRecipient?: {
-      receiveKeyId?: string;
-      receivePublicKeyBase64Url?: string;
-      ownerTagHex?: string;
-      diversifierHex?: string;
-    };
-    shieldedReceiveKeyId?: string;
-    shieldedReceivePublicKeyBase64Url?: string;
-    shieldedOwnerTagHex?: string;
-    shieldedDiversifierHex?: string;
+    memo?: string;
   }): Promise<TransactionSubmissionResult>;
   setIrohaConnectContext(input: IrohaConnectWalletContext): void;
   resetIrohaConnectBoundary(): void;
@@ -1799,8 +1025,9 @@ export interface IrohaBridge {
     context: IrohaConnectWalletContext;
     sid: string;
     appPublicKeyHex: string;
+    nonceBase64Url: string;
     relayToken: string;
-    requestedChainId: string;
+    requestedNetworkId: string;
     permissions: IrohaConnectPermissions | null;
   }): Promise<{ approvalToken: string }>;
   approveIrohaConnectSession(input: {
@@ -1824,25 +1051,11 @@ export interface IrohaBridge {
     accountId: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetPolicyView>;
-  getConfidentialTransferExecutionContext(input: {
-    toriiUrl: string;
-    chainId: string;
-    networkPrefix: number;
-    accountId: string;
-    privateKeyHex?: string;
-    assetDefinitionId: string;
-  }): Promise<{
-    resolvedAssetId: string;
-    effectiveMode: string;
-    backend: string;
-    circuitId: string;
-  }>;
   getConfidentialAssetBalance(input: {
     toriiUrl: string;
     chainId: string;
     networkPrefix: number;
     accountId: string;
-    privateKeyHex?: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetBalanceView>;
   scanConfidentialWallet(input: {
@@ -1850,38 +1063,12 @@ export interface IrohaBridge {
     chainId: string;
     networkPrefix: number;
     accountId: string;
-    privateKeyHex?: string;
-    assetDefinitionId: string;
-    force?: boolean;
-  }): Promise<ConfidentialAssetBalanceView>;
-  getConfidentialWalletState(input: {
-    toriiUrl: string;
-    chainId: string;
-    networkPrefix: number;
-    accountId: string;
-    privateKeyHex?: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetBalanceView>;
-  getPrivateKaigiConfidentialXorState(input: {
-    toriiUrl: string;
-    chainId: string;
-    networkPrefix: number;
-    accountId: string;
-    assetDefinitionId: string;
-  }): Promise<PrivateKaigiConfidentialXorState>;
-  selfShieldPrivateKaigiXor(input: {
-    toriiUrl: string;
-    chainId: string;
-    networkPrefix: number;
-    accountId: string;
-    assetDefinitionId: string;
-    privateKeyHex?: string;
-    amount: string;
-  }): Promise<TransactionSubmissionResult>;
   fetchAccountAssets(input: {
     toriiUrl: string;
     accountId: string;
-    networkPrefix?: number;
+    networkPrefix: number;
     assetDefinitionId?: string;
     limit?: number;
     offset?: number;
@@ -1889,13 +1076,13 @@ export interface IrohaBridge {
   fetchAccountTransactions(input: {
     toriiUrl: string;
     accountId: string;
-    networkPrefix?: number;
-    privateKeyHex?: string;
+    networkPrefix: number;
     limit?: number;
     offset?: number;
   }): Promise<AccountTransactionsResponse>;
   listAccountPermissions(input: {
     toriiUrl: string;
+    networkPrefix: number;
     accountId: string;
     limit?: number;
     offset?: number;
@@ -1911,24 +1098,11 @@ export interface IrohaBridge {
   getGovernanceCitizenCount(input: {
     toriiUrl: string;
   }): Promise<GovernanceCitizenCountResponse>;
-  getGovernanceProposal(input: {
-    toriiUrl: string;
-    proposalId: string;
-  }): Promise<GovernanceProposalResult>;
-  getGovernanceReferendum(input: {
-    toriiUrl: string;
-    referendumId: string;
-  }): Promise<GovernanceReferendumResult>;
-  getGovernanceTally(input: {
-    toriiUrl: string;
-    referendumId: string;
-  }): Promise<GovernanceTallyResult>;
-  getGovernanceLocks(input: {
-    toriiUrl: string;
-    referendumId: string;
-  }): Promise<GovernanceLocksResult>;
   getGovernanceUnlockStats(input: {
     toriiUrl: string;
+    chainId: string;
+    networkPrefix: number;
+    accountId: string;
   }): Promise<GovernanceUnlockStatsResponse>;
   getGovernanceCouncilCurrent(input: {
     toriiUrl: string;
@@ -1944,54 +1118,36 @@ export interface IrohaBridge {
     chainId: string;
     networkPrefix: number;
   }): Promise<GovernanceValidationFeePolicyView>;
-  getGovernancePlainReferendumContract(input: {
-    chainId: string;
-    networkPrefix: number;
-    genesisHash: string;
-  }): Promise<GovernancePlainReferendumContractResult>;
   prepareGovernanceCitizenRegistration(
     input: GovernanceCitizenRegistrationPrepareInput,
   ): Promise<GovernancePreparedAction>;
   prepareGovernanceProposal(
     input: GovernanceProposalPrepareInput,
   ): Promise<GovernancePreparedAction>;
-  prepareGovernancePlainBallot(
-    input: GovernancePlainBallotPrepareInput,
-  ): Promise<GovernancePreparedAction>;
-  prepareGovernanceParliamentBallot(
-    input: GovernanceParliamentBallotPrepareInput,
-  ): Promise<GovernancePreparedAction>;
-  prepareGovernanceEnact(
-    input: GovernanceEnactPrepareInput,
-  ): Promise<GovernancePreparedAction>;
   confirmGovernanceAction(
     input: GovernanceConfirmActionInput,
   ): Promise<GovernanceFinalizedAction>;
-  getGovernanceLifecycle?(input: {
-    toriiUrl: string;
-    proposalId?: string | null;
-    referendumId?: string | null;
-  }): Promise<GovernanceLifecycleSnapshot>;
   getExplorerMetrics(config: {
     toriiUrl: string;
   }): Promise<ExplorerMetricsResponse | null>;
   getNetworkStats(input: {
     toriiUrl: string;
-    assetDefinitionId?: string;
+    assetDefinitionId: string;
+    networkPrefix: number;
   }): Promise<NetworkStatsResponse>;
   getExplorerAccountQr(input: {
     toriiUrl: string;
     accountId: string;
+    networkPrefix: number;
   }): Promise<ExplorerAccountQrResponse>;
   getVpnAvailability(input: { toriiUrl: string }): Promise<VpnAvailability>;
   getVpnProfile(input: { toriiUrl: string }): Promise<VpnProfile | null>;
-  getVpnStatus(input?: Partial<VpnAuthContext>): Promise<VpnStatus>;
+  getVpnStatus(input?: VpnConnectionContext): Promise<VpnStatus>;
   connectVpn(input: {
     toriiUrl: string;
     chainId: string;
     accountId: string;
     networkPrefix: number;
-    privateKeyHex?: string;
     exitClass: VpnExitClass;
   }): Promise<VpnStatus>;
   disconnectVpn(input?: {
@@ -1999,14 +1155,9 @@ export interface IrohaBridge {
     chainId: string;
     accountId: string;
     networkPrefix: number;
-    privateKeyHex?: string;
   }): Promise<VpnStatus>;
   repairVpn(): Promise<VpnStatus>;
-  listVpnReceipts(input?: Partial<VpnAuthContext>): Promise<VpnReceipt[]>;
-  getOfflineReadiness(input: {
-    toriiUrl: string;
-    assetDefinitionId: string;
-  }): Promise<OfflineReadinessView>;
+  listVpnReceipts(input?: VpnConnectionContext): Promise<VpnReceipt[]>;
   onboardAccount(input: {
     toriiUrl: string;
     chainId: string;
@@ -2021,7 +1172,7 @@ export interface IrohaBridge {
       chainId: string;
       accountId: string;
       networkPrefix: number;
-      requestId?: string;
+      requestId: string;
     },
     onProgress?: (progress: FaucetRequestProgress) => void | Promise<void>,
   ): Promise<AccountFaucetResponse>;
@@ -2032,9 +1183,7 @@ export interface IrohaBridge {
     toriiUrl: string;
     chainId: string;
     networkPrefix: number;
-    assetDefinitionId: string;
     hostAccountId: string;
-    privateKeyHex?: string;
     callId: string;
     title?: string;
     scheduledStartMs: number;
@@ -2044,11 +1193,11 @@ export interface IrohaBridge {
     hostParticipantId: string;
     hostKaigiPublicKeyBase64Url: string;
     offerDescription: KaigiOfferDescription;
-    privacyMode?: KaigiMeetingPrivacy;
-    peerIdentityReveal?: KaigiPeerIdentityReveal;
+    privacyMode: "transparent";
   }): Promise<TransactionSubmissionResult>;
   getKaigiCall(input: {
     toriiUrl: string;
+    networkPrefix: number;
     callId: string;
     inviteSecretBase64Url: string;
   }): Promise<KaigiMeetingView>;
@@ -2056,9 +1205,7 @@ export interface IrohaBridge {
     toriiUrl: string;
     chainId: string;
     networkPrefix: number;
-    assetDefinitionId: string;
     participantAccountId: string;
-    privateKeyHex?: string;
     callId: string;
     inviteSecretBase64Url: string;
     participantId: string;
@@ -2072,23 +1219,22 @@ export interface IrohaBridge {
     },
     onEvent: (event: KaigiCallEvent) => void | Promise<void>,
   ): Promise<string>;
-  stopWatchingKaigiCallEvents(subscriptionId: string): void;
+  stopWatchingKaigiCallEvents(input: { subscriptionId: string }): void;
   pollKaigiMeetingSignals(input: {
     toriiUrl: string;
+    chainId: string;
+    networkPrefix: number;
     accountId: string;
     callId: string;
     hostKaigiKeys: KaigiSignalKeyPair;
     afterTimestampMs?: number;
     limit?: number;
-    offset?: number;
   }): Promise<KaigiMeetingSignalRecord[]>;
   endKaigiMeeting(input: {
     toriiUrl: string;
     chainId: string;
     networkPrefix: number;
-    assetDefinitionId: string;
     hostAccountId: string;
-    privateKeyHex?: string;
     callId: string;
     endedAtMs?: number;
   }): Promise<TransactionSubmissionResult>;
@@ -2100,11 +1246,13 @@ export interface IrohaBridge {
   }): Promise<PublicLaneValidatorsResponseView>;
   getNexusPublicLaneStake(input: {
     toriiUrl: string;
+    networkPrefix: number;
     laneId: number;
     validator?: string;
   }): Promise<PublicLaneStakeResponseView>;
   getNexusPublicLaneRewards(input: {
     toriiUrl: string;
+    networkPrefix: number;
     laneId: number;
     account: string;
     assetId?: string;
@@ -2190,165 +1338,15 @@ export interface IrohaBridge {
   getSoraCloudStatus(input: {
     toriiUrl: string;
   }): Promise<SoraCloudStatusResponseView>;
-  deploySoraCloudHf(input: {
-    toriiUrl: string;
-    chainId: string;
-    networkPrefix: number;
-    accountId: string;
-    repoId: string;
-    revision?: string;
-    modelName: string;
-    serviceName: string;
-    apartmentName?: string;
-    storageClass: SoraCloudStorageClassView;
-    leaseTermMs: number;
-    leaseAssetDefinitionId: string;
-    baseFeeNanos: string;
-  }): Promise<SoraCloudHfDeployResponseView>;
-  reconcileSoraCloudHfLaunch(input: {
-    toriiUrl: string;
-    chainId: string;
-    networkPrefix: number;
-    accountId: string;
-    transactionHash: string;
-  }): Promise<SoraCloudHfDeployResponseView>;
-  getSoraCloudHfStatus(input: {
+  getSoraCloudHfSharedLeaseStatus(input: {
     toriiUrl: string;
     repoId: string;
-    revision?: string;
+    revision: string;
     storageClass: SoraCloudStorageClassView;
     leaseTermMs: number;
     accountId?: string;
-  }): Promise<SoraCloudHfStatusResponseView>;
+  }): Promise<SoraCloudHfSharedLeaseStatusResponseView>;
   getParameters(input: { toriiUrl: string }): Promise<Record<string, unknown>>;
-  getSccpCapabilities(input: {
-    toriiUrl: string;
-  }): Promise<SccpCapabilitiesResponse>;
-  getSccpProofManifests(input: {
-    toriiUrl: string;
-  }): Promise<SccpProofManifestSetResponse>;
-  getSccpSoraOutboundMaterial(input: {
-    toriiUrl: string;
-    sourceProfile: string;
-    routeId: string;
-    assetKey: string;
-    revision: number;
-  }): Promise<SccpSoraOutboundMaterialResponse>;
-  listSccpRecentMessages(
-    input: SccpRecentMessagesInput,
-  ): Promise<SccpRecentMessagesResponse>;
-  getSccpMessageProofBundle(
-    input: SccpMessageProofBundleInput,
-  ): Promise<Record<string, unknown>>;
-  getSccpMessageProofArtifact(
-    input: SccpMessageProofInput,
-  ): Promise<Record<string, unknown>>;
-  getSccpMessageProofJob(
-    input: SccpMessageProofInput,
-  ): Promise<Record<string, unknown>>;
-  proveBscSccpProof(
-    input: SccpBscProofGenerateInput,
-  ): Promise<Record<string, unknown>>;
-  proveBscSccpSourceProof(
-    input: SccpBscSourceProofGenerateInput,
-  ): Promise<Record<string, unknown>>;
-  rebuildSccpMessageBundleSourceProofWithDeployment(
-    input: SccpSourceProofDeploymentRebuildInput,
-  ): Promise<Record<string, unknown>>;
-  buildTonSccpMessageBundleSourceProofWithDeployment(
-    input: SccpSourceProofDeploymentRebuildInput,
-  ): Promise<Record<string, unknown>>;
-  submitSccpBridgeProof(
-    input: SccpBridgeProofSubmitInput,
-  ): Promise<Record<string, unknown>>;
-  submitSccpBridgeMessage(
-    input: SccpBridgeMessageSubmitInput,
-  ): Promise<Record<string, unknown>>;
-  waitForSccpTransactionCommit(input: {
-    toriiUrl: string;
-    hashHex: string;
-  }): Promise<Record<string, unknown>>;
-  deploySccpTairaInboundSettlementContract(input: {
-    toriiUrl: string;
-    accountId: string;
-    contractAlias?: string | null;
-    compiledCodeB64?: string | null;
-    leaseExpiryMs?: number | string | null;
-  }): Promise<Record<string, unknown> | null>;
-  deriveZkIvmPayload(
-    input: ZkIvmRequestInput,
-  ): Promise<Record<string, unknown>>;
-  startZkIvmProveJob(
-    input: ZkIvmRequestInput,
-  ): Promise<Record<string, unknown>>;
-  getZkIvmProveJob(input: ZkIvmProveJobInput): Promise<Record<string, unknown>>;
-  cancelZkIvmProveJob(
-    input: ZkIvmProveJobInput,
-  ): Promise<Record<string, unknown>>;
-  submitZkIvmProvedTransaction(
-    input: ZkIvmProvedTransactionSubmitInput,
-  ): Promise<Record<string, unknown>>;
-  getTronTransaction(
-    input: TronTransactionInput,
-  ): Promise<Record<string, unknown>>;
-  getTronAccount(input: TronAccountInput): Promise<Record<string, unknown>>;
-  getTronTransactionReceipt(
-    input: TronTransactionInput,
-  ): Promise<Record<string, unknown>>;
-  getTronTransactionEvents(
-    input: TronEventsInput,
-  ): Promise<Record<string, unknown>>;
-  getTronSolidBlock(input?: TronBlockInput): Promise<Record<string, unknown>>;
-  getTronWitnesses(input?: TronGatewayInput): Promise<Record<string, unknown>>;
-  getTronFinalityData(
-    input?: TronGatewayInput,
-  ): Promise<Record<string, unknown>>;
-  getSccpNileTestTronSigner(): Promise<SccpNileTestTronSignerStatus>;
-  signSccpNileTestTronTransaction(
-    input: SccpNileTestTronTransactionSignInput,
-  ): Promise<Record<string, unknown>>;
-  broadcastTronTransaction(
-    input: TronBroadcastInput,
-  ): Promise<Record<string, unknown>>;
-  triggerTronSmartContract(
-    input: TronTriggerSmartContractInput,
-  ): Promise<Record<string, unknown>>;
-  triggerTronConstantContract(
-    input: TronConstantContractInput,
-  ): Promise<Record<string, unknown>>;
-  callEvmRpc(input: EvmRpcCallInput): Promise<unknown>;
-  getEvmChainId(input?: EvmRpcInput): Promise<string>;
-  getEvmBalance(input: EvmAddressInput): Promise<string>;
-  getEvmCode(input: EvmAddressInput): Promise<string>;
-  callEvmContract(input: EvmCallInput): Promise<string>;
-  getEvmTransactionReceipt(
-    input: EvmTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  getEvmTransaction(
-    input: EvmTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  getEvmBlockByHash(input: {
-    endpoint?: string;
-    blockHash: string;
-    fullTransactions?: boolean;
-  }): Promise<Record<string, unknown> | null>;
-  getEvmLogs(input: EvmLogsInput): Promise<Record<string, unknown>[]>;
-  callSolanaRpc(input: SolanaRpcCallInput): Promise<unknown>;
-  getSolanaBalance(input: SolanaAddressInput): Promise<string>;
-  getSolanaTokenBalance(
-    input: SolanaTokenBalanceInput,
-  ): Promise<Record<string, unknown>>;
-  prepareSolanaAssociatedTokenAccount(
-    input: SolanaAssociatedTokenAccountInput,
-  ): Promise<SolanaPreparedAssociatedTokenAccount>;
-  getSolanaSignatureStatus(
-    input: SolanaTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  getSolanaTransaction(
-    input: SolanaTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  buildSolanaTransaction(input: SolanaBuildTransactionInput): Promise<string>;
-  broadcastSolanaTransaction(input: SolanaBroadcastInput): Promise<string>;
   bondPublicLaneStake(input: {
     toriiUrl: string;
     chainId: string;
@@ -2356,7 +1354,6 @@ export interface IrohaBridge {
     stakeAccountId: string;
     validator: string;
     amount: string;
-    privateKeyHex?: string;
   }): Promise<TransactionSubmissionResult>;
   registerPublicLaneValidator(input: {
     toriiUrl: string;
@@ -2368,7 +1365,6 @@ export interface IrohaBridge {
     peerId: string;
     selfStake: string;
     metadata?: Record<string, unknown>;
-    privateKeyHex?: string;
   }): Promise<TransactionSubmissionResult>;
   schedulePublicLaneUnbond(input: {
     toriiUrl: string;
@@ -2379,7 +1375,6 @@ export interface IrohaBridge {
     amount: string;
     requestId: string;
     releaseAtMs: number;
-    privateKeyHex?: string;
   }): Promise<TransactionSubmissionResult>;
   finalizePublicLaneUnbond(input: {
     toriiUrl: string;
@@ -2388,7 +1383,6 @@ export interface IrohaBridge {
     stakeAccountId: string;
     validator: string;
     requestId: string;
-    privateKeyHex?: string;
   }): Promise<TransactionSubmissionResult>;
   claimPublicLaneRewards(input: {
     toriiUrl: string;
@@ -2396,7 +1390,6 @@ export interface IrohaBridge {
     networkPrefix: number;
     stakeAccountId: string;
     validator: string;
-    privateKeyHex?: string;
   }): Promise<TransactionSubmissionResult>;
 }
 

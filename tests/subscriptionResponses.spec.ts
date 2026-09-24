@@ -185,6 +185,26 @@ describe("subscription response boundary", () => {
     ).toThrow("pagination metadata");
   });
 
+  it("bounds page items and accumulated usage before decoding them", () => {
+    expect(() =>
+      decodeSubscriptionPlanListResponse({
+        items: Array.from({ length: 501 }, () => null),
+        total: 501,
+        has_more: false,
+        count_mode: "exact",
+      }),
+    ).toThrow("first-release page limit of 500");
+
+    const item = subscriptionItem();
+    (item.subscription as Record<string, unknown>).usage_accumulated =
+      Object.fromEntries(
+        Array.from({ length: 257 }, (_, index) => [`meter_${index}`, "1"]),
+      );
+    expect(() => decodeSubscriptionListItemResponse(item)).toThrow(
+      "first-release limit of 256 keys",
+    );
+  });
+
   it("accepts exact totals on a paginated final page", () => {
     const plan = fixedPlan();
     expect(

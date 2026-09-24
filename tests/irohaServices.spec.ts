@@ -7,9 +7,6 @@ import {
   getGovernanceProposalDetail,
   listGovernanceProposals,
   prepareGovernanceCitizenRegistration,
-  prepareGovernanceEnact,
-  prepareGovernanceParliamentBallot,
-  prepareGovernancePlainBallot,
   prepareGovernanceProposal,
   transferAsset,
 } from "@/services/iroha";
@@ -50,6 +47,7 @@ describe("Iroha service bridge", () => {
     const assetsInput = {
       toriiUrl: "http://localhost:8080",
       accountId: ACCOUNT,
+      networkPrefix: 369,
       limit: 25,
     };
     const transferInput = {
@@ -73,61 +71,57 @@ describe("Iroha service bridge", () => {
     expect(transferAssetMock).toHaveBeenCalledWith(transferInput);
   });
 
-  it("forwards the live governance catalog and selected proposal reads", async () => {
-    const listGovernanceProposalsMock = vi.fn().mockResolvedValue({
-      items: [],
-      nextCursor: null,
-    });
-    const getGovernanceProposalDetailMock = vi.fn().mockResolvedValue({
-      summary: { proposalId: HASH },
-    });
-    const getGovernanceCurrentValidationFeePolicyMock = vi
-      .fn()
-      .mockRejectedValue(new Error("local proof verifier unavailable"));
-    (window as any).iroha = {
-      listGovernanceProposals: listGovernanceProposalsMock,
-      getGovernanceProposalDetail: getGovernanceProposalDetailMock,
-      getGovernanceCurrentValidationFeePolicy:
-        getGovernanceCurrentValidationFeePolicyMock,
+  it("forwards the exact typed proposal reads", async () => {
+    const mocks = {
+      listGovernanceProposals: vi.fn().mockResolvedValue({
+        items: [],
+        nextCursor: null,
+        limit: 50,
+      }),
+      getGovernanceProposalDetail: vi.fn().mockResolvedValue({
+        summary: { proposalId: HASH },
+      }),
+      getGovernanceCurrentValidationFeePolicy: vi
+        .fn()
+        .mockRejectedValue(new Error("local proof verifier unavailable")),
     };
+    (window as any).iroha = mocks;
 
     const listInput = {
       toriiUrl: "http://localhost:8080",
-      status: "open",
-      proposer: ACCOUNT,
       limit: 50,
+      cursor: null,
     };
     const detailInput = {
       toriiUrl: "http://localhost:8080",
+      networkPrefix: 369,
       proposalId: HASH,
-      accountId: ACCOUNT,
     };
-
-    await listGovernanceProposals(listInput);
-    await getGovernanceProposalDetail(detailInput);
-    const validationFeePolicyInput = {
+    const policyInput = {
       toriiUrl: "http://localhost:8080",
       chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
       networkPrefix: 369,
     };
+
+    await listGovernanceProposals(listInput);
+    await getGovernanceProposalDetail(detailInput);
     await expect(
-      getGovernanceCurrentValidationFeePolicy(validationFeePolicyInput),
+      getGovernanceCurrentValidationFeePolicy(policyInput),
     ).rejects.toThrow("local proof verifier unavailable");
 
-    expect(listGovernanceProposalsMock).toHaveBeenCalledWith(listInput);
-    expect(getGovernanceProposalDetailMock).toHaveBeenCalledWith(detailInput);
-    expect(getGovernanceCurrentValidationFeePolicyMock).toHaveBeenCalledWith(
-      validationFeePolicyInput,
+    expect(mocks.listGovernanceProposals).toHaveBeenCalledWith(listInput);
+    expect(mocks.getGovernanceProposalDetail).toHaveBeenCalledWith(detailInput);
+    expect(mocks.getGovernanceCurrentValidationFeePolicy).toHaveBeenCalledWith(
+      policyInput,
     );
   });
 
-  it("forwards every two-phase governance preparation call exactly", async () => {
+  it("forwards only current proposal and citizenship preparation", async () => {
     const prepared = {
       reviewId: "review",
       operation: "propose",
       title: "Review",
       proposalId: HASH,
-      referendumId: null,
       decodedInstruction: {},
       fee: {
         payer: "authority",
@@ -139,9 +133,6 @@ describe("Iroha service bridge", () => {
     const mocks = {
       prepareGovernanceCitizenRegistration: vi.fn().mockResolvedValue(prepared),
       prepareGovernanceProposal: vi.fn().mockResolvedValue(prepared),
-      prepareGovernancePlainBallot: vi.fn().mockResolvedValue(prepared),
-      prepareGovernanceParliamentBallot: vi.fn().mockResolvedValue(prepared),
-      prepareGovernanceEnact: vi.fn().mockResolvedValue(prepared),
     };
     (window as any).iroha = mocks;
 
@@ -151,57 +142,27 @@ describe("Iroha service bridge", () => {
       networkPrefix: 369,
       accountId: ACCOUNT,
     };
+    const citizen = { ...context, amount: "10000" };
     const proposal = {
       ...context,
       kind: "ValidationFeePayoutLifecycle" as const,
-      payload: {
-        payout_binding: { contract_address: "contract:payout" },
-        referendum_window: { lower: 100, upper: 3_699 },
-      },
+      payload: { payout_binding: { contract_address: "contract:payout" } },
     };
-    const citizen = {
-      ...context,
-      proposalId: HASH,
-      referendumId: "referendum-1",
-      amount: "10",
-      durationBlocks: "20",
-      direction: "Aye" as const,
-    };
-    const parliament = {
-      ...context,
-      proposalId: HASH,
-      body: "Review",
-      decision: "approve" as const,
-    };
-    const enact = { ...context, proposalId: HASH };
 
-    await prepareGovernanceCitizenRegistration({
-      ...context,
-      amount: "100",
-    });
+    await prepareGovernanceCitizenRegistration(citizen);
     await prepareGovernanceProposal(proposal);
-    await prepareGovernancePlainBallot(citizen);
-    await prepareGovernanceParliamentBallot(parliament);
-    await prepareGovernanceEnact(enact);
 
-    expect(mocks.prepareGovernanceCitizenRegistration).toHaveBeenCalledWith({
-      ...context,
-      amount: "100",
-    });
-    expect(mocks.prepareGovernanceProposal).toHaveBeenCalledWith(proposal);
-    expect(mocks.prepareGovernancePlainBallot).toHaveBeenCalledWith(citizen);
-    expect(mocks.prepareGovernanceParliamentBallot).toHaveBeenCalledWith(
-      parliament,
+    expect(mocks.prepareGovernanceCitizenRegistration).toHaveBeenCalledWith(
+      citizen,
     );
-    expect(mocks.prepareGovernanceEnact).toHaveBeenCalledWith(enact);
+    expect(mocks.prepareGovernanceProposal).toHaveBeenCalledWith(proposal);
   });
 
   it("confirms only the opaque review identifier and current account", async () => {
     const confirmGovernanceActionMock = vi.fn().mockResolvedValue({
       hash: HASH.slice(2),
-      operation: "enact",
+      operation: "propose",
       proposalId: HASH,
-      referendumId: null,
       status: "finalized",
     });
     (window as any).iroha = {

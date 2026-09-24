@@ -97,31 +97,14 @@ export const readSumeragiCommittedHeight = (
     return null;
   }
   const record = payload as Record<string, unknown>;
-  const commitQc =
-    record.commit_qc &&
-    typeof record.commit_qc === "object" &&
-    !Array.isArray(record.commit_qc)
-      ? (record.commit_qc as Record<string, unknown>)
-      : {};
-  const candidates = [
-    record.last_committed_height,
-    record.lastCommittedHeight,
-    record.commit_qc_height,
-    record.commitQcHeight,
-    commitQc.height,
-  ];
-  for (const candidate of candidates) {
-    if (
-      candidate === null ||
-      candidate === undefined ||
-      (typeof candidate === "string" && !candidate.trim())
-    ) {
-      continue;
-    }
-    const height = Number(candidate);
-    if (Number.isInteger(height) && height >= 0) {
-      return height;
-    }
+  const height = record.last_committed_height;
+  if (
+    record.protocol_version !== 4 ||
+    typeof height !== "number" ||
+    !Number.isSafeInteger(height) ||
+    height < 0
+  ) {
+    return null;
   }
-  return null;
+  return height;
 };

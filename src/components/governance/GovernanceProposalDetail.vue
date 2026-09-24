@@ -5,45 +5,30 @@
         <div>
           <div class="detail-badges">
             <span class="status-badge">{{ t(proposal.summary.status) }}</span>
-            <span
-              class="mode-badge"
-              :class="{ unavailable: proposal.summary.votingMode === 'Zk' }"
-            >
-              {{ t("{mode} vote", { mode: proposal.summary.votingMode }) }}
-            </span>
+            <span class="mode-badge">{{
+              t("Mandatory private Parliament")
+            }}</span>
           </div>
           <h2>{{ t(adapter.labelKey) }}</h2>
           <p>{{ t(adapter.descriptionKey) }}</p>
         </div>
         <span class="height-chip">
-          {{ t("Height {height}", { height: proposal.currentHeight ?? "—" }) }}
+          {{ t("Height {height}", { height: proposal.currentHeight }) }}
         </span>
       </header>
 
       <dl class="identity-grid">
-        <div>
+        <div class="span-2">
           <dt>{{ t("Proposal ID") }}</dt>
           <dd class="mono">{{ proposal.summary.proposalId }}</dd>
         </div>
         <div>
           <dt>{{ t("Proposer") }}</dt>
-          <dd class="mono">{{ proposal.summary.proposer || t("Unknown") }}</dd>
+          <dd class="mono">{{ proposal.summary.proposer }}</dd>
         </div>
         <div>
-          <dt>{{ t("Referendum") }}</dt>
-          <dd class="mono">
-            {{ proposal.referendum?.id || proposal.summary.referendumId }}
-          </dd>
-        </div>
-        <div>
-          <dt>{{ t("Inclusive PLAIN window") }}</dt>
-          <dd data-testid="governance-public-window">
-            {{
-              proposal.referendum
-                ? `${proposal.referendum.hStart}–${proposal.referendum.hEnd}`
-                : t("Unavailable")
-            }}
-          </dd>
+          <dt>{{ t("Proposal operator") }}</dt>
+          <dd class="mono">{{ proposal.kind.proposalOperator }}</dd>
         </div>
         <div>
           <dt>{{ t("Created") }}</dt>
@@ -53,18 +38,11 @@
             }}
           </dd>
         </div>
-      </dl>
-
-      <div class="timeline-panel">
-        <div class="section-heading">
-          <h3>{{ t("Lifecycle") }}</h3>
-          <span>{{ t(proposal.summary.currentStage) }}</span>
+        <div>
+          <dt>{{ t("Operation") }}</dt>
+          <dd>{{ t(proposal.summary.status) }}</dd>
         </div>
-        <GovernanceTimeline
-          :pipeline="proposal.pipeline"
-          :current-stage="proposal.summary.currentStage"
-        />
-      </div>
+      </dl>
 
       <section class="payload-panel">
         <div class="section-heading">
@@ -72,152 +50,35 @@
           <span>{{ t("Decoded from ledger state") }}</span>
         </div>
 
-        <dl v-if="proposal.kind.type === 'DeployContract'" class="payload-grid">
-          <div>
-            <dt>{{ t("Contract address") }}</dt>
-            <dd class="mono">{{ proposal.kind.contractAddress || t("—") }}</dd>
-          </div>
-          <div>
-            <dt>{{ t("ABI version") }}</dt>
-            <dd>{{ proposal.kind.abiVersion }}</dd>
-          </div>
-          <div class="span-2">
-            <dt>{{ t("Code hash") }}</dt>
-            <dd class="mono">{{ proposal.kind.codeHash || t("—") }}</dd>
-          </div>
-          <div class="span-2">
-            <dt>{{ t("ABI hash") }}</dt>
-            <dd class="mono">{{ proposal.kind.abiHash || t("—") }}</dd>
-          </div>
-        </dl>
-
         <div
-          v-else-if="proposal.kind.type === 'ValidationFeePayoutLifecycle'"
+          v-if="proposal.kind.type === 'ValidationFeePayoutLifecycle'"
           class="verified-payload"
         >
           <p>
             {{
               t(
-                "Public typed Taira projection. This exact payout lifecycle requires genuine finalized PLAIN evidence and native governance enactment before a policy can bind it.",
+                "The exact operator-bound payout lifecycle is inspectable here; binding approval remains private Parliament work.",
               )
             }}
           </p>
-          <pre><code>{{ pretty(proposal.kind.payoutBinding) }}</code></pre>
+          <pre
+            tabindex="0"
+          ><code>{{ pretty(proposal.kind.payoutBinding) }}</code></pre>
         </div>
 
         <div
-          v-else-if="proposal.kind.type === 'ValidationFeePolicy'"
+          v-else
           class="verified-payload"
           data-testid="governance-public-policy"
         >
-          <p>
-            {{
-              t(
-                "Public typed Taira proposal projection. Finalized Parliament evidence is shown separately and is required before enactment.",
-              )
-            }}
-          </p>
-          <aside
-            class="electorate-contract"
-            data-testid="governance-plain-electorate"
-          >
-            <strong>{{ t("Immutable PLAIN electorate") }}</strong>
-            <p v-if="plainReferendumLoading">
-              {{ t("Checking the immutable eligible-citizen snapshot…") }}
-            </p>
-            <p v-else-if="plainReferendumBindingError" class="error">
-              {{ plainReferendumBindingError }}
-            </p>
-            <dl v-else-if="plainReferendumContract" class="payload-grid">
-              <div>
-                <dt>{{ t("Eligible citizens") }}</dt>
-                <dd>
-                  {{ plainReferendumContract.contract.eligibleCitizenCount }}
-                </dd>
-              </div>
-              <div>
-                <dt>{{ t("Active account") }}</dt>
-                <dd :class="{ positive: plainReferendumAccountEligible }">
-                  {{
-                    plainReferendumAccountEligible
-                      ? t("Eligible in frozen snapshot")
-                      : t("Not eligible in frozen snapshot")
-                  }}
-                </dd>
-              </div>
-              <div class="span-2">
-                <dt>{{ t("Eligible roster SHA-256") }}</dt>
-                <dd class="mono">
-                  {{
-                    plainReferendumContract.contract.eligibleCitizenRosterSha256
-                  }}
-                </dd>
-              </div>
-              <div class="span-2">
-                <dt>{{ t("Published artifact SHA-256") }}</dt>
-                <dd class="mono">
-                  {{ plainReferendumContract.artifactSha256 }}
-                </dd>
-              </div>
-              <div class="span-2">
-                <dt>{{ t("Electorate seal SHA-256") }}</dt>
-                <dd class="mono">
-                  {{
-                    plainReferendumContract.contract.plainElectorate
-                      .electorateSealHash
-                  }}
-                </dd>
-              </div>
-              <div>
-                <dt>{{ t("Snapshot finalized height") }}</dt>
-                <dd>
-                  {{ plainReferendumContract.contract.snapshotFinalizedHeight }}
-                </dd>
-              </div>
-              <div>
-                <dt>{{ t("Non-operator registration gate") }}</dt>
-                <dd>
-                  {{
-                    t("After finalized height {height}", {
-                      height:
-                        plainReferendumContract.contract
-                          .postParliamentRegistrationGate.gateHeight,
-                    })
-                  }}
-                </dd>
-              </div>
-              <div>
-                <dt>{{ t("Ballot contract") }}</dt>
-                <dd>{{ t("150 XOR · 3,600 blocks · one ballot") }}</dd>
-              </div>
-              <div class="span-2">
-                <dt>{{ t("Proposal-bound ballot route") }}</dt>
-                <dd class="mono">
-                  {{ plainReferendumContract.contract.ballot.draftRoute }}
-                </dd>
-              </div>
-              <div class="span-2">
-                <dt>{{ t("Verified handoff source") }}</dt>
-                <dd class="mono">
-                  {{ plainReferendumContract.source.descriptorUrl }}
-                </dd>
-              </div>
-            </dl>
-          </aside>
           <dl class="payload-grid policy-facts">
             <div>
               <dt>{{ t("Fee") }}</dt>
-              <dd>
-                {{
-                  proposal.kind.policy.fee === "0.1"
-                    ? "0.10 SBD"
-                    : `${proposal.kind.policy.fee} SBD`
-                }}
-              </dd>
+              <dd>{{ proposal.kind.policy.fee }} SBD</dd>
             </div>
             <div>
-              <dt>{{ t("Activation delay") }}</dt>
-              <dd>{{ t("120,960 blocks") }}</dd>
+              <dt>{{ t("Policy version") }}</dt>
+              <dd>{{ proposal.kind.policy.policy_version }}</dd>
             </div>
             <div>
               <dt>{{ t("Effective height") }}</dt>
@@ -232,158 +93,73 @@
               </dd>
             </div>
             <div class="span-2">
+              <dt>{{ t("Network ID") }}</dt>
+              <dd class="mono">{{ proposal.kind.policy.network_id }}</dd>
+            </div>
+            <div class="span-2">
               <dt>{{ t("SBD asset ID") }}</dt>
               <dd class="mono">{{ proposal.kind.policy.ds_asset_id }}</dd>
             </div>
           </dl>
           <details class="technical-projection">
             <summary>{{ t("Exact public proposal payload") }}</summary>
-            <pre><code>{{ pretty(proposal.kind.raw) }}</code></pre>
+            <pre tabindex="0"><code>{{ pretty(proposal.kind.raw) }}</code></pre>
           </details>
         </div>
-
-        <pre
-          v-else-if="proposal.kind.type === 'RuntimeUpgrade'"
-        ><code>{{ pretty(proposal.kind.manifest) }}</code></pre>
-        <pre
-          v-else-if="proposal.kind.type === 'SccpRouteGovernance'"
-        ><code>{{ pretty(proposal.kind.action) }}</code></pre>
-        <div v-else class="unknown-payload">
-          <p>
-            {{
-              t(
-                "This proposal kind is not supported by this wallet. It remains inspect-only.",
-              )
-            }}
-          </p>
-          <pre><code>{{ pretty(proposal.kind.raw) }}</code></pre>
-        </div>
       </section>
 
-      <section class="decision-panel">
+      <section class="certificate-panel">
         <div class="section-heading">
-          <h3>{{ t("Citizen decision") }}</h3>
-          <span>{{ t(proposal.summary.referendumStatus) }}</span>
-        </div>
-        <div class="tally-grid">
-          <div>
-            <span>{{ t("Approve") }}</span>
-            <strong>{{ proposal.tally?.approve ?? "0" }}</strong>
-          </div>
-          <div>
-            <span>{{ t("Reject") }}</span>
-            <strong>{{ proposal.tally?.reject ?? "0" }}</strong>
-          </div>
-          <div>
-            <span>{{ t("Abstain") }}</span>
-            <strong>{{ proposal.tally?.abstain ?? "0" }}</strong>
-          </div>
-          <div>
-            <span>{{ t("Locks") }}</span>
-            <strong>{{ proposal.locks.length }}</strong>
-          </div>
-        </div>
-      </section>
-
-      <section class="parliament-panel">
-        <div class="section-heading">
-          <h3>{{ t("Seven-body Parliament") }}</h3>
-          <span data-testid="governance-body-count">{{
-            t("{count} exact bodies", { count: bodies.length })
-          }}</span>
-        </div>
-        <div class="body-grid">
-          <article v-for="body in bodies" :key="body" class="body-card">
-            <header>
-              <strong>{{ t(body) }}</strong>
-              <span>
-                {{
-                  t("{approve}/{required} approvals", {
-                    approve: bodyOutcome(body)?.approvals ?? "0",
-                    required: bodyOutcome(body)?.required ?? "—",
-                  })
-                }}
-              </span>
-            </header>
-            <dl>
-              <div>
-                <dt>{{ t("Members") }}</dt>
-                <dd>
-                  <span
-                    v-for="member in bodyRoster(body)?.members ?? []"
-                    :key="member"
-                    class="seat mono"
-                  >
-                    {{ member }}
-                  </span>
-                  <span
-                    v-if="!bodyRoster(body)?.members.length"
-                    class="empty-seat"
-                  >
-                    {{ t("No verified roster") }}
-                  </span>
-                </dd>
-              </div>
-              <div class="alternates">
-                <dt>{{ t("Alternates (not eligible)") }}</dt>
-                <dd>
-                  <span
-                    v-for="alternate in bodyRoster(body)?.alternates ?? []"
-                    :key="alternate"
-                    class="seat mono"
-                  >
-                    {{ alternate }}
-                  </span>
-                  <span
-                    v-if="!bodyRoster(body)?.alternates.length"
-                    class="empty-seat"
-                  >
-                    {{ t("None") }}
-                  </span>
-                </dd>
-              </div>
-            </dl>
-            <footer>
-              <span
-                >{{ t("Reject") }}
-                {{ bodyOutcome(body)?.rejections ?? "0" }}</span
-              >
-              <span
-                >{{ t("Abstain") }}
-                {{ bodyOutcome(body)?.abstentions ?? "0" }}</span
-              >
-            </footer>
-          </article>
-        </div>
-      </section>
-
-      <section class="finalization-panel">
-        <div class="section-heading">
-          <h3>{{ t("Finalization and enactment") }}</h3>
+          <h3>{{ t("Timed-OVN certificate") }}</h3>
           <span>
             {{
-              proposal.finalizationEvidence
-                ? t("Genuine finalized PLAIN evidence")
-                : t("No finalized evidence yet")
+              proposal.governanceCertificate
+                ? t("Finalized ledger evidence")
+                : t("No Parliament certificate yet")
             }}
           </span>
         </div>
-        <p>
+        <template v-if="proposal.governanceCertificate">
+          <dl class="payload-grid">
+            <div class="span-2">
+              <dt>{{ t("Attempt ID") }}</dt>
+              <dd class="mono">
+                {{ proposal.governanceCertificate.governanceAttemptId }}
+              </dd>
+            </div>
+            <div>
+              <dt>{{ t("Attempt sequence") }}</dt>
+              <dd>
+                {{ proposal.governanceCertificate.governanceAttemptSequence }}
+              </dd>
+            </div>
+            <div>
+              <dt>{{ t("Required body bindings") }}</dt>
+              <dd>{{ proposal.governanceCertificate.bodyBindingCount }}</dd>
+            </div>
+            <div>
+              <dt>{{ t("Certified at height") }}</dt>
+              <dd>{{ proposal.governanceCertificate.certifiedAtHeight }}</dd>
+            </div>
+            <div>
+              <dt>{{ t("Enacted at height") }}</dt>
+              <dd>{{ proposal.governanceCertificate.enactAtHeight }}</dd>
+            </div>
+          </dl>
+          <details class="technical-projection">
+            <summary>{{ t("Exact certificate payload") }}</summary>
+            <pre
+              tabindex="0"
+            ><code>{{ pretty(proposal.governanceCertificate.raw) }}</code></pre>
+          </details>
+        </template>
+        <p v-else class="certificate-empty">
           {{
             t(
-              "This wallet displays only retained finalized PLAIN evidence. An approved payout lifecycle may be enacted through the native governance endpoint; the wallet never fabricates or manually finalizes evidence.",
+              "The proposal remains inspect-only until Torii returns its successful private Parliament certificate.",
             )
           }}
         </p>
-        <dl v-if="proposal.enactedAtHeight" class="payload-grid">
-          <div>
-            <dt>{{ t("Enacted at height") }}</dt>
-            <dd>{{ proposal.enactedAtHeight }}</dd>
-          </div>
-        </dl>
-        <pre v-if="proposal.finalizationEvidence"><code>{{
-          pretty(proposal.finalizationEvidence)
-        }}</code></pre>
       </section>
     </template>
 
@@ -409,32 +185,22 @@ import { computed } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import {
   GOVERNANCE_KIND_ADAPTERS,
-  GOVERNANCE_PARLIAMENT_BODIES,
-  type GovernanceParliamentBody,
   type GovernanceProposalDetail,
 } from "@/governance/model";
-import type { GovernancePlainReferendumContractResult } from "@/types/iroha";
-import GovernanceTimeline from "./GovernanceTimeline.vue";
 
 const props = defineProps<{
   proposal: GovernanceProposalDetail | null;
   loading: boolean;
   error: string;
-  plainReferendumContract?: GovernancePlainReferendumContractResult | null;
-  plainReferendumLoading?: boolean;
-  plainReferendumBindingError?: string;
-  plainReferendumAccountEligible?: boolean;
 }>();
 
 const { t } = useAppI18n();
 const adapter = computed(
-  () => GOVERNANCE_KIND_ADAPTERS[props.proposal?.kind.type ?? "Unknown"],
+  () =>
+    GOVERNANCE_KIND_ADAPTERS[
+      props.proposal?.kind.type ?? "ValidationFeePayoutLifecycle"
+    ],
 );
-const bodies = GOVERNANCE_PARLIAMENT_BODIES;
-const bodyRoster = (body: GovernanceParliamentBody) =>
-  props.proposal?.parliamentRosters.find((roster) => roster.body === body);
-const bodyOutcome = (body: GovernanceParliamentBody) =>
-  props.proposal?.parliamentOutcomes.find((outcome) => outcome.body === body);
 const pretty = (value: unknown) => JSON.stringify(value, null, 2);
 </script>
 
@@ -462,6 +228,7 @@ const pretty = (value: unknown) => JSON.stringify(value, null, 2);
 .detail-badges {
   margin-bottom: 9px;
   display: flex;
+  flex-wrap: wrap;
   gap: 7px;
 }
 
@@ -486,10 +253,6 @@ const pretty = (value: unknown) => JSON.stringify(value, null, 2);
   background: var(--color-accent-soft);
 }
 
-.mode-badge.unavailable {
-  color: var(--color-warning);
-}
-
 .height-chip {
   flex: none;
 }
@@ -497,65 +260,60 @@ const pretty = (value: unknown) => JSON.stringify(value, null, 2);
 .detail-header h2 {
   margin: 0;
   font-size: clamp(1.25rem, 2vw, 1.7rem);
-  letter-spacing: -0.02em;
 }
 
-.detail-header p {
-  max-width: 620px;
+.detail-header p,
+.verified-payload > p,
+.certificate-empty {
   margin: 7px 0 0;
   color: var(--color-text-muted);
-  font-size: 0.8rem;
+  font-size: 0.74rem;
   line-height: 1.55;
 }
 
 .identity-grid,
 .payload-grid {
   margin: 0;
-  padding: 18px 26px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px 24px;
 }
 
 .identity-grid {
+  padding: 18px 26px;
   border-bottom: 1px solid var(--color-border);
 }
 
+.payload-grid {
+  padding: 16px 0 0;
+}
+
+.span-2 {
+  grid-column: span 2;
+}
+
 dt {
-  margin-bottom: 5px;
   color: var(--color-text-muted);
-  font-size: 0.64rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 0.66rem;
 }
 
 dd {
-  margin: 0;
-  min-width: 0;
+  margin: 4px 0 0;
   overflow-wrap: anywhere;
-  font-size: 0.76rem;
+  font-size: 0.74rem;
 }
 
-.mono {
-  font-family: var(--mono-font);
-}
-
-.timeline-panel,
 .payload-panel,
-.decision-panel,
-.parliament-panel,
-.finalization-panel {
+.certificate-panel {
   padding: 20px 26px;
   border-bottom: 1px solid var(--color-border);
 }
 
-.finalization-panel {
+.certificate-panel {
   border-bottom: 0;
 }
 
 .section-heading {
-  margin-bottom: 16px;
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -564,192 +322,45 @@ dd {
 
 .section-heading h3 {
   margin: 0;
-  font-size: 0.88rem;
+  font-size: 0.86rem;
 }
 
 .section-heading span {
   color: var(--color-text-muted);
-  font-size: 0.66rem;
-}
-
-.payload-grid {
-  padding: 0;
-}
-
-.span-2 {
-  grid-column: span 2;
+  font-size: 0.63rem;
 }
 
 pre {
-  max-height: 300px;
-  margin: 0;
+  max-height: 340px;
+  margin: 14px 0 0;
   padding: 14px;
   overflow: auto;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
   background: var(--color-surface-inset);
   color: var(--color-text-muted);
-  font-size: 0.68rem;
-  line-height: 1.55;
+  font-size: 0.65rem;
+  line-height: 1.5;
   white-space: pre-wrap;
 }
 
-.unknown-payload p {
-  margin: 0 0 12px;
-  color: var(--color-warning);
-  font-size: 0.78rem;
-}
-
-.verified-payload > p,
-.finalization-panel > p {
-  margin: 0 0 12px;
-  color: var(--color-text-muted);
-  font-size: 0.74rem;
-  line-height: 1.55;
-}
-
-.electorate-contract {
-  margin: 0 0 16px;
-  padding: 14px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-surface-soft);
-}
-
-.electorate-contract > strong {
-  font-size: 0.78rem;
-}
-
-.electorate-contract > p {
-  margin: 8px 0 0;
-  color: var(--color-text-muted);
-  font-size: 0.72rem;
-}
-
-.electorate-contract > p.error {
-  color: var(--color-danger);
-}
-
-.electorate-contract .payload-grid {
-  margin-top: 12px;
-}
-
-.electorate-contract .positive {
-  color: var(--color-success);
-}
-
-.policy-facts {
-  margin-bottom: 14px;
-}
-
-.execution-evidence {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--color-border);
-}
-
 .technical-projection {
-  border-top: 1px solid var(--color-border);
+  margin-top: 14px;
 }
 
 .technical-projection summary {
-  min-height: 44px;
-  padding: 12px 0;
   cursor: pointer;
-  color: var(--color-text-muted);
-  font-size: 0.72rem;
+  color: var(--color-accent);
+  font-size: 0.68rem;
 }
 
-.tally-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 1px;
-  overflow: hidden;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-border);
-}
-
-.tally-grid > div {
-  padding: 13px;
-  display: grid;
-  gap: 5px;
-  background: var(--color-surface-soft);
-}
-
-.tally-grid span {
-  color: var(--color-text-muted);
-  font-size: 0.65rem;
-}
-
-.tally-grid strong {
-  font-size: 0.95rem;
-}
-
-.body-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.body-card {
-  min-width: 0;
-  padding: 12px;
-  display: grid;
-  gap: 11px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-surface-soft);
-}
-
-.body-card header,
-.body-card footer {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.body-card header strong {
-  font-size: 0.72rem;
-}
-
-.body-card header span,
-.body-card footer {
-  color: var(--color-text-muted);
-  font-size: 0.61rem;
-}
-
-.body-card dl {
-  margin: 0;
-  display: grid;
-  gap: 9px;
-}
-
-.body-card dd {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.seat,
-.empty-seat {
-  padding: 3px 5px;
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  font-size: 0.58rem;
-}
-
-.alternates {
-  opacity: 0.55;
-}
-
-.empty-seat {
-  color: var(--color-text-muted);
+.mono {
+  font-family: var(--mono-font);
 }
 
 .detail-empty {
   min-height: 570px;
-  padding: 40px;
+  padding: 48px 28px;
   display: grid;
   place-content: center;
   justify-items: center;
@@ -757,39 +368,24 @@ pre {
 }
 
 .detail-empty > span {
-  margin-bottom: 14px;
   color: var(--color-accent);
-  font-size: 1.5rem;
-  opacity: 0.55;
+  font-size: 2.4rem;
 }
 
 .detail-empty h2 {
-  margin: 0;
-  font-size: 1.1rem;
+  margin: 10px 0 0;
 }
 
 .detail-empty p {
-  max-width: 390px;
-  margin: 8px 0 0;
+  max-width: 360px;
   color: var(--color-text-muted);
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   line-height: 1.55;
 }
 
-.detail-empty .error {
-  color: var(--color-danger);
-}
-
-@media (max-width: 720px) {
-  .detail-header,
-  .identity-grid,
-  .timeline-panel,
-  .payload-panel,
-  .decision-panel,
-  .parliament-panel,
-  .finalization-panel {
-    padding-right: 18px;
-    padding-left: 18px;
+@media (max-width: 620px) {
+  .detail-header {
+    display: grid;
   }
 
   .identity-grid,
@@ -799,14 +395,6 @@ pre {
 
   .span-2 {
     grid-column: auto;
-  }
-
-  .tally-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .body-grid {
-    grid-template-columns: 1fr;
   }
 }
 </style>

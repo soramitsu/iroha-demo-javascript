@@ -1,9 +1,9 @@
 export const KAIGI_MEETING_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const KAIGI_INVITE_SECRET_BYTES = 24;
 export const KAIGI_INVITE_SECRET_BASE64URL_LENGTH = 32;
-
-export type KaigiMeetingPrivacy = "private" | "transparent";
-export type KaigiPeerIdentityReveal = "Hidden" | "RevealAfterJoin";
+const KAIGI_DOMAIN_LABEL_MAX_LENGTH = 63;
+const KAIGI_CALL_NAME_MAX_UTF8_BYTES = 255;
+const KAIGI_INVITE_MAX_LENGTH = 1_024;
 
 export type KaigiInvite = {
   callId: string;
@@ -11,6 +11,25 @@ export type KaigiInvite = {
 };
 
 const canonicalDomainLabelPattern = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)$/;
+const forbiddenKaigiNamePattern =
+  /[\p{Cc}\p{White_Space}@#$\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
+const utf8Encoder = new TextEncoder();
+
+const hasUnpairedSurrogate = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next < 0xdc00 || next > 0xdfff) {
+        return true;
+      }
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+};
 
 const requireExactString = (value: unknown, label: string): string => {
   if (typeof value !== "string" || !value) {
@@ -39,9 +58,16 @@ export const requireKaigiCallId = (
   const domainLabels = domainId.split(".");
   if (
     domainLabels.length !== 2 ||
-    domainLabels.some((part) => !canonicalDomainLabelPattern.test(part)) ||
+    domainLabels.some(
+      (part) =>
+        part.length > KAIGI_DOMAIN_LABEL_MAX_LENGTH ||
+        !canonicalDomainLabelPattern.test(part),
+    ) ||
     !callName ||
-    /[\s@#$:]/u.test(callName)
+    hasUnpairedSurrogate(callName) ||
+    callName.normalize("NFC") !== callName ||
+    utf8Encoder.encode(callName).byteLength > KAIGI_CALL_NAME_MAX_UTF8_BYTES ||
+    forbiddenKaigiNamePattern.test(callName)
   ) {
     throw new Error(
       `${label} must be in exact domain.dataspace:meeting format.`,
@@ -85,22 +111,16 @@ const fillCryptographicallyRandom = (bytes: Uint8Array): Uint8Array => {
   return crypto.getRandomValues(bytes);
 };
 
-const sanitizeCallNamePart = (value: string): string => {
-  const sanitized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-  return sanitized || "meeting";
-};
-
 const requireKaigiDomainId = (value: unknown): string => {
   const domainId = requireExactString(value, "domain");
   const labels = domainId.split(".");
   if (
     labels.length !== 2 ||
-    labels.some((part) => !canonicalDomainLabelPattern.test(part))
+    labels.some(
+      (part) =>
+        part.length > KAIGI_DOMAIN_LABEL_MAX_LENGTH ||
+        !canonicalDomainLabelPattern.test(part),
+    )
   ) {
     throw new Error("domain must be in exact domain.dataspace format.");
   }
@@ -121,23 +141,31 @@ export const createKaigiInviteSecretBase64Url = (): string =>
 
 export const buildKaigiCallId = (domain: string, meetingCode: string): string =>
   requireKaigiCallId(
-    `${requireKaigiDomainId(domain)}:${sanitizeCallNamePart(
-      `kaigi-${requireExactString(meetingCode, "meetingCode")}`,
+    `${requireKaigiDomainId(domain)}:kaigi-${requireExactString(
+      meetingCode,
+      "meetingCode",
     )}`,
   );
 
 export const deriveKaigiMeetingCode = (callId: string): string => {
   const normalized = requireKaigiCallId(callId);
   const callName = normalized.split(":")[1] ?? "";
-  return callName.replace(/^kaigi-/, "") || callName;
+  if (!callName.startsWith("kaigi-") || callName.length === "kaigi-".length) {
+    throw new Error("callId is not an app-generated Kaigi meeting ID.");
+  }
+  return callName.slice("kaigi-".length);
 };
 
 const requirePositiveInteger = (value: unknown, label: string): number => {
-  const normalized = Number(value);
-  if (!Number.isInteger(normalized) || normalized <= 0) {
-    throw new Error(`${label} must be a positive integer.`);
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value <= 0 ||
+    value > Number.MAX_SAFE_INTEGER - KAIGI_MEETING_WINDOW_MS
+  ) {
+    throw new Error(`${label} must be a bounded positive safe integer.`);
   }
-  return normalized;
+  return value;
 };
 
 export const computeKaigiMeetingExpiryMs = (scheduledStartMs: number): number =>
@@ -171,7 +199,11 @@ export const buildKaigiInviteDeepLink = (invite: KaigiInvite): string =>
 export const buildKaigiInviteHashRoute = (invite: KaigiInvite): string =>
   `/kaigi?${buildKaigiInviteQuery(invite)}`;
 
-const parseExactInviteQuery = (params: URLSearchParams): KaigiInvite | null => {
+const parseExactInviteQuery = (query: string): KaigiInvite | null => {
+  if (!query || query.length > KAIGI_INVITE_MAX_LENGTH) {
+    return null;
+  }
+  const params = new URLSearchParams(query);
   const entries = Array.from(params.entries());
   if (
     entries.length !== 2 ||
@@ -182,17 +214,22 @@ const parseExactInviteQuery = (params: URLSearchParams): KaigiInvite | null => {
     return null;
   }
   try {
-    return buildKaigiInvite(
+    const invite = buildKaigiInvite(
       params.get("call") ?? "",
       params.get("secret") ?? "",
     );
+    return buildKaigiInviteQuery(invite) === query ? invite : null;
   } catch {
     return null;
   }
 };
 
 export const parseKaigiInviteDeepLink = (input: string): KaigiInvite | null => {
-  if (!input.startsWith("iroha://kaigi/join?")) {
+  if (
+    typeof input !== "string" ||
+    input.length > KAIGI_INVITE_MAX_LENGTH ||
+    !input.startsWith("iroha://kaigi/join?")
+  ) {
     return null;
   }
   try {
@@ -208,37 +245,26 @@ export const parseKaigiInviteDeepLink = (input: string): KaigiInvite | null => {
     ) {
       return null;
     }
-    return parseExactInviteQuery(url.searchParams);
+    const invite = parseExactInviteQuery(url.search.slice(1));
+    return invite && buildKaigiInviteDeepLink(invite) === input ? invite : null;
   } catch {
     return null;
   }
 };
 
 const parseKaigiInviteHashRoute = (input: string): KaigiInvite | null => {
-  const hashRoute = input.startsWith("#") ? input.slice(1) : input;
+  if (!input.startsWith("#") || input.length > KAIGI_INVITE_MAX_LENGTH) {
+    return null;
+  }
+  const hashRoute = input.slice(1);
   if (!hashRoute.startsWith("/kaigi?") || hashRoute.includes("#")) {
     return null;
   }
   const query = hashRoute.slice("/kaigi?".length);
-  return parseExactInviteQuery(new URLSearchParams(query));
-};
-
-const parseFullAppUrl = (input: string): KaigiInvite | null => {
-  try {
-    const url = new URL(input);
-    if (
-      !["http:", "https:", "iroha-app:", "file:"].includes(url.protocol) ||
-      url.username ||
-      url.password ||
-      url.search ||
-      !url.hash.startsWith("#/kaigi?")
-    ) {
-      return null;
-    }
-    return parseKaigiInviteHashRoute(url.hash);
-  } catch {
-    return null;
-  }
+  const invite = parseExactInviteQuery(query);
+  return invite && `#${buildKaigiInviteHashRoute(invite)}` === input
+    ? invite
+    : null;
 };
 
 export const parseKaigiInviteInput = (input: string): KaigiInvite => {
@@ -249,9 +275,7 @@ export const parseKaigiInviteInput = (input: string): KaigiInvite => {
     );
   }
   const invite =
-    parseKaigiInviteDeepLink(raw) ??
-    parseKaigiInviteHashRoute(raw) ??
-    parseFullAppUrl(raw);
+    parseKaigiInviteDeepLink(raw) ?? parseKaigiInviteHashRoute(raw);
   if (!invite) {
     throw new Error(
       "Kaigi invite must be an exact call-and-secret meeting link.",
@@ -263,4 +287,4 @@ export const parseKaigiInviteInput = (input: string): KaigiInvite => {
 export const isKaigiMeetingExpired = (
   meeting: { expiresAtMs: number },
   nowMs = Date.now(),
-): boolean => nowMs > meeting.expiresAtMs;
+): boolean => nowMs >= meeting.expiresAtMs;

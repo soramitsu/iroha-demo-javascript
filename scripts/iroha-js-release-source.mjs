@@ -58,37 +58,87 @@ function fail(message) {
   throw new Error(`Iroha JS release source refused: ${message}`);
 }
 
+let canonicalGitProgram;
 let canonicalGpgProgram;
 
-function resolveCanonicalGpgProgram() {
-  if (canonicalGpgProgram !== undefined) {
-    return canonicalGpgProgram;
+const requireCanonicalExecutable = (candidate, label) => {
+  const canonical = realpathSync.native(candidate);
+  const stat = lstatSync(canonical);
+  accessSync(canonical, constants.X_OK);
+  if (
+    !path.isAbsolute(canonical) ||
+    path.normalize(canonical) !== canonical ||
+    !stat.isFile() ||
+    stat.isSymbolicLink()
+  ) {
+    fail(`${label} must be a canonical absolute regular executable`);
   }
+  return canonical;
+};
+
+const resolveCanonicalPathExecutable = (filename, label) => {
   const searchPath = process.env.PATH;
   if (typeof searchPath !== "string" || searchPath.length === 0) {
-    fail("PATH must identify a canonical GPG executable");
+    fail(`PATH must identify a canonical ${label} executable`);
   }
   for (const directory of searchPath.split(path.delimiter)) {
     if (!path.isAbsolute(directory)) continue;
-    const candidate = path.join(directory, "gpg");
     try {
-      const canonical = realpathSync.native(candidate);
-      const stat = lstatSync(canonical);
-      accessSync(canonical, constants.X_OK);
-      if (
-        path.isAbsolute(canonical) &&
-        path.normalize(canonical) === canonical &&
-        stat.isFile() &&
-        !stat.isSymbolicLink()
-      ) {
-        canonicalGpgProgram = canonical;
-        return canonicalGpgProgram;
-      }
+      return requireCanonicalExecutable(path.join(directory, filename), label);
     } catch {
-      // Continue until a canonical executable GPG program is found.
+      // Continue until a canonical executable program is found.
     }
   }
-  fail("PATH does not contain a canonical absolute regular GPG executable");
+  fail(
+    `PATH does not contain a canonical absolute regular ${label} executable`,
+  );
+};
+
+export function resolveCanonicalGpgProgram() {
+  if (canonicalGpgProgram !== undefined) {
+    return canonicalGpgProgram;
+  }
+  try {
+    canonicalGpgProgram = resolveCanonicalPathExecutable(
+      process.platform === "win32" ? "gpg.exe" : "gpg",
+      "GPG",
+    );
+  } catch (error) {
+    if (process.platform !== "win32") throw error;
+    const gitInstallRoot = path.resolve(
+      path.dirname(resolveCanonicalGitProgram()),
+      "..",
+    );
+    try {
+      canonicalGpgProgram = requireCanonicalExecutable(
+        path.join(gitInstallRoot, "usr", "bin", "gpg.exe"),
+        "GPG",
+      );
+    } catch {
+      throw error;
+    }
+  }
+  return canonicalGpgProgram;
+}
+
+export function resolveCanonicalGitProgram() {
+  if (canonicalGitProgram !== undefined) {
+    return canonicalGitProgram;
+  }
+  if (process.platform !== "win32") {
+    try {
+      canonicalGitProgram = requireCanonicalExecutable("/usr/bin/git", "Git");
+      return canonicalGitProgram;
+    } catch (error) {
+      fail(
+        `the canonical system Git executable is unavailable: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+  canonicalGitProgram = resolveCanonicalPathExecutable("git.exe", "Git");
+  return canonicalGitProgram;
 }
 
 function run(command, args, options = {}) {
@@ -166,14 +216,14 @@ const gitArguments = (root, args) => [
 ];
 
 function git(root, ...args) {
-  return run("/usr/bin/git", gitArguments(root, args), {
+  return run(resolveCanonicalGitProgram(), gitArguments(root, args), {
     env: gitEnvironment(),
   });
 }
 
 function verifyExpectedCommitSignature(root, commit, label) {
   const args = gitArguments(root, ["verify-commit", "--raw", commit]);
-  const result = spawnSync("/usr/bin/git", args, {
+  const result = spawnSync(resolveCanonicalGitProgram(), args, {
     encoding: "utf8",
     maxBuffer: 1024 * 1024,
     env: gitEnvironment(),

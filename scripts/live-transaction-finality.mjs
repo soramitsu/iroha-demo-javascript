@@ -3,7 +3,7 @@ import {
   waitForFinalizedTransaction,
 } from "../electron/transactionFinality.ts";
 
-const CANONICAL_HASH_HEX = /^[0-9a-f]{64}$/u;
+const CANONICAL_IROHA_HASH_HEX = /^[0-9a-f]{63}[13579bdf]$/u;
 
 const sleep = (delayMs) =>
   new Promise((resolve) => {
@@ -11,11 +11,12 @@ const sleep = (delayMs) =>
   });
 
 const requireCanonicalHash = (value, label) => {
-  const normalized = String(value ?? "").trim();
-  if (!CANONICAL_HASH_HEX.test(normalized)) {
-    throw new Error(`${label} must be a canonical lowercase 32-byte hash.`);
+  if (typeof value !== "string" || !CANONICAL_IROHA_HASH_HEX.test(value)) {
+    throw new Error(
+      `${label} must be a canonical lowercase 32-byte Iroha hash with its marker set.`,
+    );
   }
-  return normalized;
+  return value;
 };
 
 const defaultReadJson = async (url, fetchImpl) => {
@@ -35,7 +36,7 @@ const defaultReadJson = async (url, fetchImpl) => {
 
 export const assertFinalizedMutationReceipt = (
   receipt,
-  { label = "Mutation receipt", hashFields = ["tx_hash_hex", "hash"] } = {},
+  { label = "Mutation receipt", hashFields = ["tx_hash_hex"] } = {},
 ) => {
   if (
     receipt === null ||
@@ -44,10 +45,16 @@ export const assertFinalizedMutationReceipt = (
   ) {
     throw new Error(`${label} must be an object.`);
   }
-  const hashField = hashFields.find(
-    (field) => String(receipt[field] ?? "").trim() !== "",
-  );
-  if (!hashField) {
+  if (
+    !Array.isArray(hashFields) ||
+    hashFields.length !== 1 ||
+    typeof hashFields[0] !== "string" ||
+    !/^[a-z][a-z0-9_]*$/u.test(hashFields[0])
+  ) {
+    throw new Error(`${label} must select exactly one canonical hash field.`);
+  }
+  const [hashField] = hashFields;
+  if (!Object.prototype.hasOwnProperty.call(receipt, hashField)) {
     throw new Error(`${label} did not include a transaction hash.`);
   }
   const hashHex = requireCanonicalHash(

@@ -3,30 +3,28 @@ import {
   getAccountDisplayLabel,
   getPublicAccountId,
   normalizeAccountIdLiteralForNetwork,
-  normalizeMainnetAccountIdLiteral,
-  normalizeTairaAccountIdLiteral,
 } from "@/utils/accountId";
 
 describe("accountId utils", () => {
-  it("rewrites stale SORA-native literals onto the TAIRA prefix", () => {
+  it("accepts only literals already targeting the requested network", () => {
     expect(
-      normalizeTairaAccountIdLiteral("sorauCanonicalAccountId1234567890"),
-    ).toBe("testuCanonicalAccountId1234567890");
-    expect(normalizeTairaAccountIdLiteral("testuVisibleAccountId")).toBe(
-      "testuVisibleAccountId",
-    );
-  });
-
-  it("rewrites stale TAIRA-native literals onto the SORA mainnet prefix", () => {
-    expect(
-      normalizeMainnetAccountIdLiteral("testuCanonicalAccountId1234567890"),
-    ).toBe("sorauCanonicalAccountId1234567890");
+      normalizeAccountIdLiteralForNetwork("testuVisibleAccountId", 369),
+    ).toBe("testuVisibleAccountId");
     expect(
       normalizeAccountIdLiteralForNetwork(
         "testuCanonicalAccountId1234567890",
         753,
       ),
+    ).toBe("");
+    expect(
+      normalizeAccountIdLiteralForNetwork(
+        "sorauCanonicalAccountId1234567890",
+        753,
+      ),
     ).toBe("sorauCanonicalAccountId1234567890");
+  });
+
+  it("does not forge a network address by replacing an I105 prefix", () => {
     expect(
       getPublicAccountId(
         {
@@ -37,48 +35,47 @@ describe("accountId utils", () => {
         },
         753,
       ),
-    ).toBe("sorauVisibleAccountId");
+    ).toBe("sorauCanonicalAccountId");
   });
 
-  it("defaults to the SORA mainnet-visible account id when present", () => {
+  it("rejects invalid, implicit, or noncanonical network inputs", () => {
+    expect(() =>
+      normalizeAccountIdLiteralForNetwork("testuVisibleAccountId", -1),
+    ).toThrow("networkPrefix must be an integer between 0 and 16383.");
     expect(
-      getPublicAccountId({
-        displayName: "",
-        accountId: "testuCompatAccountId",
-        i105AccountId: "testuVisibleAccountId",
-        i105DefaultAccountId: "sorauCanonicalAccountId",
-      }),
-    ).toBe("sorauVisibleAccountId");
+      normalizeAccountIdLiteralForNetwork(" testuVisibleAccountId", 369),
+    ).toBe("");
+    expect(
+      normalizeAccountIdLiteralForNetwork("unqualified-account", 369),
+    ).toBe("");
   });
 
-  it("falls back through normalized default and stored account ids", () => {
+  it("falls through only exact literals for the selected network", () => {
     expect(
-      getPublicAccountId({
-        displayName: "",
-        accountId: "6cmzCompatAccountId",
-        i105AccountId: "",
-        i105DefaultAccountId: "sorauCanonicalAccountId",
-      }),
+      getPublicAccountId(
+        {
+          displayName: "",
+          accountId: "other-format",
+          i105AccountId: "",
+          i105DefaultAccountId: "sorauCanonicalAccountId",
+        },
+        753,
+      ),
     ).toBe("sorauCanonicalAccountId");
     expect(
-      getPublicAccountId({
-        displayName: "",
-        accountId: "testuCompatAccountId",
-        i105AccountId: "testuVisibleAccountId",
-        i105DefaultAccountId: "",
-      }),
-    ).toBe("sorauVisibleAccountId");
-    expect(
-      getPublicAccountId({
-        displayName: "",
-        accountId: "testuCompatAccountId",
-        i105AccountId: "",
-        i105DefaultAccountId: "",
-      }),
-    ).toBe("sorauCompatAccountId");
+      getPublicAccountId(
+        {
+          displayName: "",
+          accountId: "testuCompatAccountId",
+          i105AccountId: "testuVisibleAccountId",
+          i105DefaultAccountId: "",
+        },
+        753,
+      ),
+    ).toBe("");
   });
 
-  it("prefers display name over account ids for labels", () => {
+  it("prefers a display name over account IDs for labels", () => {
     expect(
       getAccountDisplayLabel(
         {
@@ -88,11 +85,12 @@ describe("accountId utils", () => {
           i105DefaultAccountId: "sorauCanonicalAccountId",
         },
         "fallback",
+        753,
       ),
     ).toBe("Alice");
   });
 
-  it("falls back to the canonical public account id for labels", () => {
+  it("falls back to the exact public account ID for labels", () => {
     expect(
       getAccountDisplayLabel(
         {
@@ -102,7 +100,8 @@ describe("accountId utils", () => {
           i105DefaultAccountId: "sorauCanonicalAccountId",
         },
         "fallback",
+        753,
       ),
-    ).toBe("sorauVisibleAccountId");
+    ).toBe("sorauCanonicalAccountId");
   });
 });

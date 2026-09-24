@@ -1,13 +1,29 @@
 import { describe, expect, it } from "vitest";
 import {
-  CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V1,
   CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2,
+  MAX_WALLET_BACKUP_JSON_BYTES,
+  WALLET_BACKUP_SCHEMA,
   buildWalletBackupPayload,
   parseWalletBackupPayload,
 } from "@/utils/walletBackup";
 
 const VALID_MNEMONIC =
   "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+const STATE_BOX = {
+  kdf: "HKDF-SHA256" as const,
+  cipher: "AES-256-GCM" as const,
+  saltBase64Url: "A".repeat(43),
+  ivBase64Url: "B".repeat(16),
+  ciphertextBase64Url: "C".repeat(32),
+  authTagBase64Url: "Q".repeat(22),
+};
+const CONFIDENTIAL_WALLET = {
+  schema: CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2,
+  chainId: "chain",
+  accountId: "testuAlice",
+  scanWatermarkBlock: null,
+  stateBox: STATE_BOX,
+} as const;
 
 describe("wallet backup helpers", () => {
   it("builds a backup payload with local metadata", () => {
@@ -19,8 +35,10 @@ describe("wallet backup helpers", () => {
         target: "manual",
         displayName: "  Alice  ",
         domain: "  default  ",
+        confidentialWallet: CONFIDENTIAL_WALLET,
       }),
     ).toEqual({
+      schema: WALLET_BACKUP_SCHEMA,
       mnemonic: VALID_MNEMONIC,
       wordCount: 12,
       signingAlgorithm: "ed25519",
@@ -28,6 +46,7 @@ describe("wallet backup helpers", () => {
       target: "manual",
       displayName: "Alice",
       domain: "default",
+      confidentialWallet: CONFIDENTIAL_WALLET,
     });
   });
 
@@ -37,43 +56,13 @@ describe("wallet backup helpers", () => {
       wordCount: 12,
       createdAt: "2026-03-29T00:00:00.000Z",
       target: "manual",
-      signingAlgorithm: "  Secp256K1  ",
+      signingAlgorithm: "secp256k1",
+      confidentialWallet: CONFIDENTIAL_WALLET,
     });
 
     expect(payload.signingAlgorithm).toBe("secp256k1");
     expect(parseWalletBackupPayload(JSON.stringify(payload))).toMatchObject({
       signingAlgorithm: "secp256k1",
-    });
-  });
-
-  it("round-trips confidential wallet recovery metadata", () => {
-    const payload = buildWalletBackupPayload({
-      mnemonic: VALID_MNEMONIC,
-      wordCount: 12,
-      createdAt: "2026-03-29T00:00:00.000Z",
-      target: "manual",
-      confidentialWallet: {
-        chainId: "chain",
-        accountId: "testuAlice",
-        addressCursor: 2,
-        scanWatermarkBlock: 42,
-        encryptedNotes: [{ commitment_hex: "aa".repeat(32) }],
-        spentNullifiers: ["bb".repeat(32), "not-hex"],
-      },
-    });
-
-    expect(parseWalletBackupPayload(JSON.stringify(payload))).toMatchObject({
-      mnemonic: VALID_MNEMONIC,
-      wordCount: 12,
-      confidentialWallet: {
-        schema: CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V1,
-        chainId: "chain",
-        accountId: "testuAlice",
-        addressCursor: 2,
-        scanWatermarkBlock: 42,
-        encryptedNotes: [{ commitment_hex: "aa".repeat(32) }],
-        spentNullifiers: ["bb".repeat(32)],
-      },
     });
   });
 
@@ -88,14 +77,7 @@ describe("wallet backup helpers", () => {
         chainId: "chain",
         accountId: "testuAlice",
         scanWatermarkBlock: 42,
-        stateBox: {
-          kdf: "HKDF-SHA256",
-          cipher: "AES-256-GCM",
-          saltBase64Url: "salt_value",
-          ivBase64Url: "iv_value",
-          ciphertextBase64Url: "ciphertext_value",
-          authTagBase64Url: "tag_value",
-        },
+        stateBox: STATE_BOX,
       },
     });
 
@@ -107,20 +89,92 @@ describe("wallet backup helpers", () => {
         chainId: "chain",
         accountId: "testuAlice",
         scanWatermarkBlock: 42,
-        stateBox: {
-          kdf: "HKDF-SHA256",
-          cipher: "AES-256-GCM",
-          saltBase64Url: "salt_value",
-          ivBase64Url: "iv_value",
-          ciphertextBase64Url: "ciphertext_value",
-          authTagBase64Url: "tag_value",
-        },
+        stateBox: STATE_BOX,
       },
     });
   });
 
-  it("parses legacy backup files without local metadata", () => {
-    expect(
+  it("parses the exact current backup without optional metadata", () => {
+    const payload = buildWalletBackupPayload({
+      mnemonic: VALID_MNEMONIC,
+      wordCount: 12,
+      createdAt: "2026-03-29T00:00:00.000Z",
+      target: "manual",
+      confidentialWallet: CONFIDENTIAL_WALLET,
+    });
+    expect(parseWalletBackupPayload(JSON.stringify(payload))).toEqual({
+      schema: WALLET_BACKUP_SCHEMA,
+      mnemonic: VALID_MNEMONIC,
+      wordCount: 12,
+      signingAlgorithm: "ed25519",
+      createdAt: "2026-03-29T00:00:00.000Z",
+      target: "manual",
+      confidentialWallet: CONFIDENTIAL_WALLET,
+    });
+  });
+
+  it("rejects noncanonical field types and encodings", () => {
+    const exact = buildWalletBackupPayload({
+      mnemonic: VALID_MNEMONIC,
+      wordCount: 12,
+      createdAt: "2026-03-29T00:00:00.000Z",
+      target: "manual",
+      confidentialWallet: CONFIDENTIAL_WALLET,
+    });
+
+    expect(() =>
+      parseWalletBackupPayload(
+        JSON.stringify({
+          ...exact,
+          wordCount: "12",
+        }),
+      ),
+    ).toThrow("Backup word count does not match");
+    expect(() =>
+      parseWalletBackupPayload(
+        JSON.stringify({
+          ...exact,
+          mnemonic: ` ${VALID_MNEMONIC}`,
+        }),
+      ),
+    ).toThrow("Backup recovery phrase is not canonical");
+    expect(() =>
+      parseWalletBackupPayload(
+        JSON.stringify({
+          ...exact,
+          displayName: "Alice\u0000",
+        }),
+      ),
+    ).toThrow("Backup display name is invalid");
+    expect(() =>
+      parseWalletBackupPayload(
+        JSON.stringify({
+          ...exact,
+          confidentialWallet: {
+            schema: CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2,
+            chainId: "chain",
+            accountId: "testuAlice",
+            scanWatermarkBlock: 42,
+            stateBox: {
+              ...STATE_BOX,
+              authTagBase64Url: "D".repeat(22),
+            },
+          },
+        }),
+      ),
+    ).toThrow("Confidential wallet backup state box is invalid");
+  });
+
+  it("rejects legacy and malformed backup metadata", () => {
+    const exact = buildWalletBackupPayload({
+      mnemonic: VALID_MNEMONIC,
+      wordCount: 12,
+      createdAt: "2026-03-29T00:00:00.000Z",
+      target: "manual",
+      confidentialWallet: CONFIDENTIAL_WALLET,
+    });
+
+    expect(() =>
       parseWalletBackupPayload(
         JSON.stringify({
           mnemonic: VALID_MNEMONIC,
@@ -129,33 +183,35 @@ describe("wallet backup helpers", () => {
           target: "manual",
         }),
       ),
-    ).toEqual({
-      mnemonic: VALID_MNEMONIC,
-      wordCount: 12,
-      signingAlgorithm: "ed25519",
-      displayName: "",
-      domain: "",
-    });
-  });
+    ).toThrow("Invalid backup file schema");
 
-  it("defaults adversarial signing algorithm metadata when parsing backups", () => {
     for (const signingAlgorithm of [
       { nested: "secp256k1" },
       "ed25519\nsecp256k1",
       "x".repeat(129),
     ]) {
-      expect(
+      expect(() =>
         parseWalletBackupPayload(
           JSON.stringify({
-            mnemonic: VALID_MNEMONIC,
-            wordCount: 12,
-            createdAt: "2026-03-29T00:00:00.000Z",
-            target: "manual",
+            ...exact,
             signingAlgorithm,
           }),
-        ).signingAlgorithm,
-      ).toBe("ed25519");
+        ),
+      ).toThrow("Backup signing algorithm is invalid");
     }
+
+    expect(() =>
+      parseWalletBackupPayload(
+        JSON.stringify({
+          ...exact,
+          confidentialWallet: {
+            schema: "iroha-demo-confidential-wallet-backup/v1",
+            chainId: "chain",
+            accountId: "testuAlice",
+          },
+        }),
+      ),
+    ).toThrow("Confidential wallet backup metadata is invalid");
   });
 
   it("rejects invalid backup payloads", () => {
@@ -164,6 +220,60 @@ describe("wallet backup helpers", () => {
     );
     expect(() =>
       parseWalletBackupPayload(JSON.stringify({ target: "manual" })),
-    ).toThrow("Backup file is missing a recovery phrase.");
+    ).toThrow("Invalid backup file schema.");
+  });
+
+  it("requires the current confidential wallet bundle", () => {
+    const incomplete = {
+      schema: WALLET_BACKUP_SCHEMA,
+      mnemonic: VALID_MNEMONIC,
+      wordCount: 12,
+      signingAlgorithm: "ed25519",
+      createdAt: "2026-03-29T00:00:00.000Z",
+      target: "manual",
+    };
+
+    expect(() => parseWalletBackupPayload(JSON.stringify(incomplete))).toThrow(
+      "Invalid backup file schema.",
+    );
+  });
+
+  it("rejects duplicate keys, unknown fields, and oversized JSON", () => {
+    const exact = buildWalletBackupPayload({
+      mnemonic: VALID_MNEMONIC,
+      wordCount: 12,
+      createdAt: "2026-03-29T00:00:00.000Z",
+      target: "manual",
+      confidentialWallet: CONFIDENTIAL_WALLET,
+    });
+    const raw = JSON.stringify(exact);
+
+    expect(() =>
+      parseWalletBackupPayload(
+        raw.replace(
+          `"schema":"${WALLET_BACKUP_SCHEMA}"`,
+          `"schema":"${WALLET_BACKUP_SCHEMA}","schema":"${WALLET_BACKUP_SCHEMA}"`,
+        ),
+      ),
+    ).toThrow("Invalid backup file.");
+    expect(() =>
+      parseWalletBackupPayload(
+        raw.replace(
+          '"kdf":"HKDF-SHA256"',
+          '"kdf":"HKDF-SHA256","kdf":"HKDF-SHA256"',
+        ),
+      ),
+    ).toThrow("Invalid backup file.");
+    expect(() =>
+      parseWalletBackupPayload(
+        JSON.stringify({
+          ...exact,
+          legacyNotes: [],
+        }),
+      ),
+    ).toThrow("Invalid backup file schema.");
+    expect(() =>
+      parseWalletBackupPayload(" ".repeat(MAX_WALLET_BACKUP_JSON_BYTES + 1)),
+    ).toThrow("Invalid backup file.");
   });
 });

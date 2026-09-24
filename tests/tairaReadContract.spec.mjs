@@ -42,6 +42,264 @@ const closedSchema = (required, propertyNames, overrides = {}) => ({
   ...overrides,
 });
 
+const unitVariantSchema = (tag, variants) => ({
+  oneOf: variants.map((variant) =>
+    closedSchema([tag, "value"], [tag, "value"], {
+      properties: {
+        [tag]: { type: "string", const: variant },
+        value: { type: "null" },
+      },
+    }),
+  ),
+});
+
+const nullableRef = (schemaName) => ({
+  anyOf: [{ $ref: `#/components/schemas/${schemaName}` }, { type: "null" }],
+});
+
+const soraCloudSharedLeaseSchemasFixture = () => {
+  const schemas = {
+    SignedHfSharedLeaseJoinRequest: closedSchema(
+      ["payload", "provenance"],
+      ["payload", "provenance"],
+    ),
+    HfSharedLeaseJoinPayload: closedSchema(
+      [
+        "repo_id",
+        "revision",
+        "service_name",
+        "apartment_name",
+        "storage_class",
+        "lease_term_ms",
+        "lease_asset_definition_id",
+        "base_fee",
+      ],
+      [
+        "repo_id",
+        "revision",
+        "service_name",
+        "apartment_name",
+        "storage_class",
+        "lease_term_ms",
+        "lease_asset_definition_id",
+        "base_fee",
+      ],
+    ),
+    ManifestProvenance: closedSchema(
+      ["signer", "signature"],
+      ["signer", "signature"],
+    ),
+    SoracloudMutationDraftResponse: closedSchema(
+      ["ok", "authority", "signed_by", "tx_instructions"],
+      ["ok", "authority", "signed_by", "tx_instructions"],
+    ),
+    SoracloudTxInstruction: closedSchema(
+      ["wire_id", "payload_hex"],
+      ["wire_id", "payload_hex"],
+    ),
+    HfSharedLeaseStatusResponse: closedSchema(
+      [
+        "schema_version",
+        "source",
+        "pool",
+        "member",
+        "latest_audit_event",
+        "audit_event_count",
+        "storage_base_fee",
+      ],
+      [
+        "schema_version",
+        "source",
+        "pool",
+        "member",
+        "latest_audit_event",
+        "audit_event_count",
+        "storage_base_fee",
+      ],
+    ),
+    SoraHfSourceRecordV1: closedSchema(
+      [
+        "schema_version",
+        "source_id",
+        "repo_id",
+        "resolved_revision",
+        "created_at_ms",
+        "updated_at_ms",
+      ],
+      [
+        "schema_version",
+        "source_id",
+        "repo_id",
+        "resolved_revision",
+        "created_at_ms",
+        "updated_at_ms",
+      ],
+    ),
+    SoraHfSharedLeasePoolV1: closedSchema(
+      [
+        "schema_version",
+        "pool_id",
+        "source_id",
+        "storage_class",
+        "lease_asset_definition_id",
+        "base_fee",
+        "lease_term_ms",
+        "window_started_at_ms",
+        "window_expires_at_ms",
+        "active_member_count",
+        "status",
+        "queued_next_window",
+      ],
+      [
+        "schema_version",
+        "pool_id",
+        "source_id",
+        "storage_class",
+        "lease_asset_definition_id",
+        "base_fee",
+        "lease_term_ms",
+        "window_started_at_ms",
+        "window_expires_at_ms",
+        "active_member_count",
+        "status",
+        "queued_next_window",
+      ],
+    ),
+    SoraHfSharedLeaseQueuedWindowV1: closedSchema(
+      [
+        "sponsor_account_id",
+        "lease_asset_definition_id",
+        "base_fee",
+        "sponsored_at_ms",
+        "window_started_at_ms",
+        "window_expires_at_ms",
+        "service_name",
+        "apartment_name",
+      ],
+      [
+        "sponsor_account_id",
+        "lease_asset_definition_id",
+        "base_fee",
+        "sponsored_at_ms",
+        "window_started_at_ms",
+        "window_expires_at_ms",
+        "service_name",
+        "apartment_name",
+      ],
+    ),
+    SoraHfSharedLeaseMemberV1: closedSchema(
+      [
+        "schema_version",
+        "pool_id",
+        "source_id",
+        "account_id",
+        "status",
+        "joined_at_ms",
+        "updated_at_ms",
+        "total_paid",
+        "total_refunded",
+        "last_charge",
+        "service_bindings",
+        "apartment_bindings",
+      ],
+      [
+        "schema_version",
+        "pool_id",
+        "source_id",
+        "account_id",
+        "status",
+        "joined_at_ms",
+        "updated_at_ms",
+        "total_paid",
+        "total_refunded",
+        "last_charge",
+        "service_bindings",
+        "apartment_bindings",
+      ],
+    ),
+    SoraHfSharedLeaseAuditEventV1: closedSchema(
+      [
+        "schema_version",
+        "sequence",
+        "action",
+        "pool_id",
+        "source_id",
+        "account_id",
+        "occurred_at_ms",
+        "active_member_count",
+        "charged",
+        "refunded",
+        "lease_expires_at_ms",
+        "service_name",
+        "apartment_name",
+      ],
+      [
+        "schema_version",
+        "sequence",
+        "action",
+        "pool_id",
+        "source_id",
+        "account_id",
+        "occurred_at_ms",
+        "active_member_count",
+        "charged",
+        "refunded",
+        "lease_expires_at_ms",
+        "service_name",
+        "apartment_name",
+      ],
+    ),
+    SoraHfSharedLeaseStatusV1: unitVariantSchema("status", [
+      "Active",
+      "Draining",
+      "Expired",
+      "Retired",
+    ]),
+    SoraHfSharedLeaseMemberStatusV1: unitVariantSchema("status", [
+      "Active",
+      "Left",
+    ]),
+    SoraHfSharedLeaseActionV1: unitVariantSchema("action", [
+      "CreateWindow",
+      "Join",
+      "Leave",
+      "Renew",
+      "Retire",
+    ]),
+  };
+  schemas.SignedHfSharedLeaseJoinRequest.properties.payload = {
+    $ref: "#/components/schemas/HfSharedLeaseJoinPayload",
+  };
+  schemas.SignedHfSharedLeaseJoinRequest.properties.provenance = {
+    $ref: "#/components/schemas/ManifestProvenance",
+  };
+  schemas.HfSharedLeaseJoinPayload.properties.storage_class = {
+    type: "string",
+    enum: ["hot", "warm", "cold"],
+  };
+  schemas.SoracloudMutationDraftResponse.properties.tx_instructions = {
+    type: "array",
+    minItems: 1,
+    items: { $ref: "#/components/schemas/SoracloudTxInstruction" },
+  };
+  schemas.SoracloudTxInstruction.properties.payload_hex = {
+    type: "string",
+    pattern: "^(?:[0-9a-f]{2})+$",
+  };
+  schemas.HfSharedLeaseStatusResponse.properties.source = {
+    $ref: "#/components/schemas/SoraHfSourceRecordV1",
+  };
+  schemas.HfSharedLeaseStatusResponse.properties.pool = nullableRef(
+    "SoraHfSharedLeasePoolV1",
+  );
+  schemas.HfSharedLeaseStatusResponse.properties.member = nullableRef(
+    "SoraHfSharedLeaseMemberV1",
+  );
+  schemas.HfSharedLeaseStatusResponse.properties.latest_audit_event =
+    nullableRef("SoraHfSharedLeaseAuditEventV1");
+  return schemas;
+};
+
 const subscriptionDraftSchemasFixture = () => {
   const stateFields = [
     "plan_id",
@@ -243,14 +501,58 @@ const openApiWriteFixture = () => {
       ? subscriptionDraftPost(...subscriptionContract)
       : {};
   }
-  paths["/v1/soracloud/hf/deploy"].post = {
-    "x-iroha-soracloud-hf-deploy-contract": "cap-bound-local-signing-v1",
+  paths["/v1/soracloud/hf/lease/join"].post = {
+    requestBody: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: {
+            $ref: "#/components/schemas/SignedHfSharedLeaseJoinRequest",
+          },
+        },
+      },
+    },
     responses: {
       200: {
         content: {
           "application/json": {
             schema: {
-              $ref: "#/components/schemas/SoracloudHfDeployDraftV1",
+              $ref: "#/components/schemas/SoracloudMutationDraftResponse",
+            },
+          },
+        },
+      },
+    },
+  };
+  paths["/v1/soracloud/hf/lease/status"].get = {
+    parameters: [
+      { in: "query", name: "repo_id", required: true, schema: {} },
+      {
+        in: "query",
+        name: "revision",
+        required: true,
+        schema: { type: "string", pattern: "^[0-9a-f]{40}$" },
+      },
+      {
+        in: "query",
+        name: "storage_class",
+        required: true,
+        schema: { type: "string", enum: ["hot", "warm", "cold"] },
+      },
+      {
+        in: "query",
+        name: "lease_term_ms",
+        required: true,
+        schema: { type: "integer", format: "uint64", minimum: 0 },
+      },
+      { in: "query", name: "account_id", required: false, schema: {} },
+    ],
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: {
+              $ref: "#/components/schemas/HfSharedLeaseStatusResponse",
             },
           },
         },
@@ -258,27 +560,7 @@ const openApiWriteFixture = () => {
     },
   };
   const schemas = subscriptionDraftSchemasFixture();
-  schemas.SoracloudHfDeployDraftV1 = closedSchema(
-    ["ok", "authority", "signed_by", "tx_instructions"],
-    ["ok", "authority", "signed_by", "tx_instructions"],
-    {
-      "x-iroha-soracloud-hf-deploy-contract": "cap-bound-local-signing-v1",
-    },
-  );
-  schemas.SoracloudHfDeployDraftV1.properties.tx_instructions = {
-    type: "array",
-    minItems: 1,
-    maxItems: 3,
-    items: { $ref: "#/components/schemas/SoracloudTxInstruction" },
-  };
-  schemas.SoracloudTxInstruction = closedSchema(
-    ["wire_id", "payload_hex"],
-    ["wire_id", "payload_hex"],
-  );
-  schemas.SoracloudTxInstruction.properties.payload_hex = {
-    type: "string",
-    pattern: "^(?:[0-9a-f]{2})+$",
-  };
+  Object.assign(schemas, soraCloudSharedLeaseSchemasFixture());
   return {
     paths,
     components: { schemas },
@@ -392,7 +674,40 @@ const stakeFixture = () => ({
   ],
 });
 
+const accountAssetsFixture = (
+  accountId = "testu-account",
+  itemOverrides = {},
+  responseOverrides = {},
+) => ({
+  items: [
+    {
+      account_id: accountId,
+      asset: TAIRA_XOR_ASSET_DEFINITION_ID,
+      asset_alias: "xor#universal",
+      asset_name: "XOR",
+      scope: "global",
+      quantity: "14999.9926",
+      primary_alias: null,
+      primary_alias_name: null,
+      primary_alias_dataspace: null,
+      primary_alias_domain: null,
+      has_primary_alias: false,
+      ...itemOverrides,
+    },
+  ],
+  total: 1,
+  has_more: false,
+  count_mode: "exact",
+  ...responseOverrides,
+});
+
 describe("Taira read contract utilities", () => {
+  it("does not require the retired confidential relay write surface", () => {
+    expect(OFFICIAL_V2_WRITE_OPERATIONS).not.toContain(
+      "POST /v1/confidential/relay/submit",
+    );
+  });
+
   it("normalizes Torii URLs and probes accepted JSON responses", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response('{"ok":true}', {
@@ -555,7 +870,6 @@ describe("Taira read contract utilities", () => {
       soraCloud: { control_plane: { service_count: 0, services: [] } },
       subscriptionPlans: { items: [], total: 0 },
       explorerMetrics: explorerMetricsFixture(),
-      offlineReadiness: offlineReadinessFixture(),
       kaigiRelayHealth: {
         healthy_total: 0,
         degraded_total: 0,
@@ -565,7 +879,6 @@ describe("Taira read contract utilities", () => {
         failovers_total: 0,
         domains: [],
       },
-      requestedAssetDefinitionId: TAIRA_XOR_ASSET_DEFINITION_ID,
       requestedLaneId: 0,
       requestedValidator: "testu-validator",
     };
@@ -757,53 +1070,62 @@ describe("Taira read contract utilities", () => {
   it("validates account-scoped asset and owned-subscription reads", () => {
     const accountId = "testu-account";
     expect(() =>
-      validateAccountAssets(
-        {
-          items: [
-            {
-              account_id: accountId,
-              asset: TAIRA_XOR_ASSET_DEFINITION_ID,
-              quantity: "14999.9926",
-              scope: "global",
-            },
-          ],
-          total: 1,
-        },
-        accountId,
-      ),
+      validateAccountAssets(accountAssetsFixture(accountId), accountId),
     ).not.toThrow();
     expect(() =>
       validateAccountAssets(
-        {
-          items: [
-            {
-              account_id: "testu-another-account",
-              asset: TAIRA_XOR_ASSET_DEFINITION_ID,
-              quantity: "1",
-              scope: "global",
-            },
-          ],
-          total: 1,
-        },
+        accountAssetsFixture(accountId, {
+          account_id: "testu-another-account",
+        }),
         accountId,
       ),
     ).toThrow("requested account");
     expect(() =>
       validateAccountAssets(
         {
-          items: [
-            {
-              account_id: accountId,
-              asset_id: TAIRA_XOR_ASSET_DEFINITION_ID,
-              quantity: "1",
-              scope: "global",
-            },
-          ],
+          ...accountAssetsFixture(accountId),
+          items: [{ asset_id: TAIRA_XOR_ASSET_DEFINITION_ID, quantity: "1" }],
           total: 1,
         },
         accountId,
       ),
-    ).toThrow("canonical");
+    ).toThrow("unexpected fields: asset_id");
+
+    expect(() =>
+      validateAccountAssets(
+        accountAssetsFixture(accountId, {
+          asset: { id: TAIRA_XOR_ASSET_DEFINITION_ID },
+        }),
+        accountId,
+      ),
+    ).toThrow("canonical 28-character Base58");
+    expect(() =>
+      validateAccountAssets(
+        accountAssetsFixture(accountId, { quantity: "1.0" }),
+        accountId,
+      ),
+    ).toThrow("canonical quantity");
+    expect(() =>
+      validateAccountAssets(
+        accountAssetsFixture(accountId, {
+          primary_alias: "alice@wonderland",
+          has_primary_alias: true,
+        }),
+        accountId,
+      ),
+    ).toThrow("unsupported primary alias data");
+    expect(() =>
+      validateAccountAssets(
+        accountAssetsFixture(accountId, {}, { count_mode: "bounded" }),
+        accountId,
+      ),
+    ).toThrow('count_mode must be "exact"');
+    expect(() =>
+      validateAccountAssets(
+        accountAssetsFixture(accountId, {}, { unexpected: true }),
+        accountId,
+      ),
+    ).toThrow("unexpected fields");
 
     expect(() =>
       validateOwnedSubscriptions({

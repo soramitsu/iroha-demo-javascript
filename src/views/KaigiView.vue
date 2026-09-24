@@ -179,24 +179,6 @@
               {{ t("Wallet identity") }}
               <input :value="walletIdentity || t('Not connected')" readonly />
             </label>
-            <label>
-              {{ t("Meeting privacy") }}
-              <select v-model="meetingPrivacyMode">
-                <option value="private">{{ t("Private invite") }}</option>
-                <option value="transparent">
-                  {{ t("Transparent invite") }}
-                </option>
-              </select>
-            </label>
-            <label>
-              {{ t("Peer identity reveal") }}
-              <select v-model="peerIdentityReveal">
-                <option value="Hidden">{{ t("Hidden") }}</option>
-                <option value="RevealAfterJoin">
-                  {{ t("Reveal after join") }}
-                </option>
-              </select>
-            </label>
           </div>
 
           <div v-else class="form-grid kaigi-config-form">
@@ -322,7 +304,9 @@
                 {{
                   inviteCanUseAutomaticJoin
                     ? t("Automatic join")
-                    : t("Manual fallback")
+                    : isLocalOnlyWallet
+                      ? t("Manual fallback")
+                      : t("Unavailable")
                 }}
               </span>
             </div>
@@ -339,32 +323,10 @@
                   parsedInvite.hostDisplayName || t("Hidden")
                 }}</span>
               </div>
-              <div
-                v-if="
-                  parsedInvite.privacyMode === 'transparent' &&
-                  parsedInvite.hostAccountId
-                "
-                class="kv"
-              >
+              <div v-if="parsedInvite.hostAccountId" class="kv">
                 <span class="kv-label">{{ t("Host wallet") }}</span>
                 <span class="kv-value mono">{{
                   parsedInvite.hostAccountId
-                }}</span>
-              </div>
-              <div class="kv">
-                <span class="kv-label">{{ t("Meeting privacy") }}</span>
-                <span class="kv-value">{{
-                  parsedInvite.privacyMode === "private"
-                    ? t("Private invite")
-                    : t("Transparent invite")
-                }}</span>
-              </div>
-              <div class="kv">
-                <span class="kv-label">{{ t("Peer identity reveal") }}</span>
-                <span class="kv-value">{{
-                  parsedInvite.peerIdentityReveal === "RevealAfterJoin"
-                    ? t("Reveal after join")
-                    : t("Hidden")
                 }}</span>
               </div>
               <div class="kv">
@@ -558,68 +520,16 @@
 
           <p v-if="canUseAutomaticKaigi" class="transaction-fee-note">
             <span>{{ t("Fee") }}</span>
-            <strong>{{
-              formatTransactionFee(
-                transactionFeeHintForEndpoint(session.connection.toriiUrl),
-                t,
-              )
-            }}</strong>
+            <strong>{{ formatTransactionFee(null, t) }}</strong>
           </p>
-          <div
-            v-if="privateKaigiFundingPromptVisible"
-            class="kaigi-private-funding-box"
-          >
-            <p class="helper">
-              {{
-                t(
-                  "Private Kaigi needs shielded XOR before it can submit this action.",
-                )
-              }}
-            </p>
-            <p class="helper">
-              {{ t("Shielded balance") }}:
-              {{ privateKaigiFundingState?.shieldedBalance ?? t("—") }}
-              ·
-              {{ t("Transparent XOR balance") }}:
-              {{ privateKaigiFundingState?.transparentBalance ?? t("0") }}
-            </p>
-            <p
-              v-if="privateKaigiFundingState?.message"
-              class="helper kaigi-error"
-            >
-              {{ privateKaigiFundingState.message }}
-            </p>
-            <p class="transaction-fee-note">
-              <span>{{ t("Fee") }}</span>
-              <strong>{{
-                formatTransactionFee(
-                  transactionFeeHintForEndpoint(session.connection.toriiUrl),
-                  t,
-                )
-              }}</strong>
-            </p>
-            <div class="actions-row kaigi-inline-actions">
-              <button
-                v-if="privateKaigiFundingState?.canSelfShield"
-                type="button"
-                :disabled="busy"
-                @click="selfShieldPrivateKaigiAndRetry"
-              >
-                {{
-                  privateKaigiShieldBusy
-                    ? t("Self-shielding XOR for private Kaigi…")
-                    : t("Self-shield {amount} XOR and retry", {
-                        amount: privateKaigiRetryShieldAmount,
-                      })
-                }}
-              </button>
-            </div>
-          </div>
         </div>
       </div>
     </section>
 
-    <section v-if="!showCallStage" class="card kaigi-signal-card">
+    <section
+      v-if="!showCallStage && isLocalOnlyWallet"
+      class="card kaigi-signal-card"
+    >
       <details
         class="kaigi-advanced"
         :open="advancedSignalsOpen"
@@ -634,7 +544,7 @@
             <span class="helper">
               {{
                 t(
-                  "Use this only when a wallet is local-only or automatic Kaigi signaling is unavailable.",
+                  "This wallet is local only. On-chain meeting links require a live wallet; use Advanced signaling for manual raw packets.",
                 )
               }}
             </span>
@@ -763,16 +673,13 @@
           {{ t("I will keep this window open") }}
         </button>
         <button
+          v-if="isLocalOnlyWallet"
           type="button"
           class="secondary"
           :disabled="busy"
           @click="openAdvancedSignaling"
         >
-          {{
-            hostPromptKind === "answerReady"
-              ? t("Later")
-              : t("Show Advanced signaling")
-          }}
+          {{ t("Later") }}
         </button>
       </template>
     </AppDialog>
@@ -795,11 +702,9 @@ import {
   createKaigiMeeting,
   endKaigiMeeting,
   generateKaigiSignalKeyPair,
-  getPrivateKaigiConfidentialXorState,
   getKaigiCall,
   joinKaigiMeeting,
   pollKaigiMeetingSignals,
-  selfShieldPrivateKaigiXor,
   stopWatchingKaigiCallEvents,
   watchKaigiCallEvents,
 } from "@/services/iroha";
@@ -814,12 +719,9 @@ import {
 } from "@/utils/endpointScope";
 import type {
   KaigiCallEvent,
-  KaigiMeetingPrivacy,
   KaigiMeetingView,
-  KaigiPeerIdentityReveal,
   KaigiMeetingSignalRecord,
   KaigiSignalKeyPair,
-  PrivateKaigiConfidentialXorState,
 } from "@/types/iroha";
 import {
   buildKaigiSignalEnvelope,
@@ -848,7 +750,6 @@ import {
 import {
   appendTransactionFee,
   formatTransactionFee,
-  transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
 import { assertFinalizedSubmissionResult } from "@/utils/transactionFinality";
 
@@ -875,9 +776,6 @@ type LoadedKaigiInvite = {
   live: boolean;
   ended?: boolean;
   endedAtMs?: number;
-  privacyMode: KaigiMeetingPrivacy;
-  peerIdentityReveal: KaigiPeerIdentityReveal;
-  rosterRootHex?: string;
   offerDescription: {
     type: "offer";
     sdp: string;
@@ -940,16 +838,20 @@ const activeEndpointIdentity = computed<EndpointIdentityScopeInput | null>(
         toriiUrl: session.connection.toriiUrl,
         observedChainId: session.connection.chainId,
         observedNetworkPrefix: session.connection.networkPrefix,
+        observedGenesisHash: inspection.expected.genesisHash ?? "",
       });
       const inspectedExpectedScope = buildEndpointIdentityScope({
         toriiUrl: inspection.toriiUrl,
         observedChainId: inspection.expected.chainId,
         observedNetworkPrefix: inspection.expected.networkPrefix,
+        observedGenesisHash: inspection.expected.genesisHash ?? "",
       });
       if (
         configuredScope.origin !== inspectedExpectedScope.origin ||
         configuredScope.chainId !== inspectedExpectedScope.chainId ||
-        configuredScope.networkPrefix !== inspectedExpectedScope.networkPrefix
+        configuredScope.networkPrefix !==
+          inspectedExpectedScope.networkPrefix ||
+        configuredScope.genesisHash !== inspectedExpectedScope.genesisHash
       ) {
         return null;
       }
@@ -975,8 +877,6 @@ const kaigiRuntimeContextKey = computed(() =>
 
 const callMode = ref<"start" | "join">("start");
 const meetingTitle = ref("");
-const meetingPrivacyMode = ref<KaigiMeetingPrivacy>("private");
-const peerIdentityReveal = ref<KaigiPeerIdentityReveal>("Hidden");
 const inviteInput = ref("");
 const participantNameDraft = ref("");
 const scheduledStartInput = ref(formatDateTimeLocalInput(Date.now()));
@@ -1014,7 +914,6 @@ const videoEnabled = ref(true);
 const mediaBusy = ref(false);
 const mediaDeviceRefreshBusy = ref(false);
 const signalBusy = ref(false);
-const privateKaigiShieldBusy = ref(false);
 const videoInputDevices = ref<MediaDeviceChoice[]>([]);
 const audioInputDevices = ref<MediaDeviceChoice[]>([]);
 const selectedVideoDeviceId = ref(AUTO_VIDEO_DEVICE_ID);
@@ -1022,10 +921,6 @@ const selectedAudioDeviceId = ref("");
 const lastMediaErrorKind = ref<MediaErrorKind | null>(null);
 const activeMediaVideoLabel = ref("");
 const activeMediaAudioLabel = ref("");
-const privateKaigiFundingState =
-  shallowRef<PrivateKaigiConfidentialXorState | null>(null);
-const privateKaigiPendingAction = ref<"create" | "join" | null>(null);
-const privateKaigiRetryShieldAmount = ref("");
 const signalingState = ref<RTCSignalingState | "idle" | "closed">("idle");
 const iceGatheringState = ref<RTCIceGatheringState | "idle">("idle");
 const iceConnectionState = ref<RTCIceConnectionState | "idle">("idle");
@@ -1058,11 +953,7 @@ const participantId = computed(() =>
 );
 const walletIdentity = computed(() => activeAccountDisplayId.value);
 const busy = computed(
-  () =>
-    mediaBusy.value ||
-    mediaDeviceRefreshBusy.value ||
-    signalBusy.value ||
-    privateKaigiShieldBusy.value,
+  () => mediaBusy.value || mediaDeviceRefreshBusy.value || signalBusy.value,
 );
 const localStreamReady = computed(() => Boolean(localStream.value));
 const callStageActive = ref(false);
@@ -1074,6 +965,9 @@ const mediaPreviewWarning = computed(
 );
 const isLiveWallet = computed(() =>
   Boolean(activeAccount.value && !activeAccount.value.localOnly),
+);
+const isLocalOnlyWallet = computed(
+  () => activeAccount.value?.localOnly === true,
 );
 const canUseAutomaticKaigi = computed(
   () =>
@@ -1088,30 +982,23 @@ const kaigiSignalingPrerequisite = computed(() => {
     );
   }
   if (endpointStore.state === "checking") {
-    return t(
-      "Wait for endpoint capability inspection to finish. Advanced manual signaling remains available.",
-    );
+    return t("Wait for endpoint capability inspection to finish.");
   }
   if (!endpointStore.writeAllowed) {
     return (
       endpointStore.diagnostic ||
-      t(
-        "On-chain Kaigi signaling is blocked until the endpoint identity is verified. Advanced manual signaling remains available.",
-      )
+      t("Writes are blocked until the endpoint identity is verified.")
     );
   }
   if (endpointStore.inspection?.features.kaigiMeetings.supported !== true) {
     return t(
-      "This endpoint does not advertise the Kaigi meeting write operations. Use Advanced signaling for manual raw packets.",
+      "This endpoint does not advertise the Kaigi meeting write operations.",
     );
   }
   return t(
     "Live wallets create and join Kaigi meetings through on-chain signaling metadata.",
   );
 });
-const privateKaigiFundingPromptVisible = computed(() =>
-  Boolean(privateKaigiPendingAction.value && privateKaigiFundingState.value),
-);
 const inviteExpired = computed(() =>
   parsedInvite.value ? isKaigiMeetingExpired(parsedInvite.value) : false,
 );
@@ -1133,9 +1020,10 @@ const signalModeLabel = computed(() => {
     return t("Automatic join");
   }
   if (parsedInvite.value) {
-    return inviteCanUseAutomaticJoin.value
-      ? t("Automatic join")
-      : t("Manual fallback");
+    if (inviteCanUseAutomaticJoin.value) {
+      return t("Automatic join");
+    }
+    return isLocalOnlyWallet.value ? t("Manual fallback") : t("Unavailable");
   }
   return t("Idle");
 });
@@ -1224,13 +1112,7 @@ const hostPromptDetail = computed(() => {
       "The guest answer packet is ready. Apply it now so audio and video can start.",
     );
   }
-  return hostMeetingLive.value
-    ? t(
-        "Keep this host window open after sharing the invite. If the guest joins but remote media does not appear, open Advanced signaling and apply the answer packet.",
-      )
-    : t(
-        "Keep this host window open after sharing the invite. When the guest joins, open Advanced signaling and apply the answer packet they send you.",
-      );
+  return t("Keep this host window open after sharing the invite.");
 });
 
 watch([localVideoRef, localStream], ([videoElement, stream]) => {
@@ -1253,55 +1135,6 @@ watch([remoteVideoRef, remoteStream], ([videoElement, stream]) => {
   }
 });
 
-const clearPrivateKaigiFundingPrompt = () => {
-  privateKaigiFundingState.value = null;
-  privateKaigiPendingAction.value = null;
-  privateKaigiRetryShieldAmount.value = "";
-};
-
-const isPrivateKaigiFundingError = (message: string) =>
-  /shielded xor/i.test(message);
-
-const parsePrivateKaigiRequiredShieldAmount = (message: string) => {
-  const match = /needs\s+([0-9]+(?:\.[0-9]+)?)\s+shielded xor/i.exec(message);
-  if (!match) {
-    return "1";
-  }
-  const [, rawAmount] = match;
-  const [whole, fractional = ""] = rawAmount.split(".");
-  if (!fractional || /^0+$/.test(fractional)) {
-    return whole;
-  }
-  return String(BigInt(whole || "0") + 1n);
-};
-
-const preparePrivateKaigiFundingPrompt = async (
-  action: "create" | "join",
-  message: string,
-) => {
-  if (!activeAccount.value || !canUseAutomaticKaigi.value) {
-    return false;
-  }
-  if (!isPrivateKaigiFundingError(message)) {
-    return false;
-  }
-  privateKaigiPendingAction.value = action;
-  privateKaigiRetryShieldAmount.value =
-    parsePrivateKaigiRequiredShieldAmount(message);
-  try {
-    privateKaigiFundingState.value = await getPrivateKaigiConfidentialXorState({
-      toriiUrl: session.connection.toriiUrl,
-      chainId: session.connection.chainId,
-      networkPrefix: session.connection.networkPrefix,
-      accountId: activeAccount.value.accountId,
-      assetDefinitionId: session.connection.assetDefinitionId,
-    });
-  } catch {
-    privateKaigiFundingState.value = null;
-  }
-  return true;
-};
-
 const setStatus = (message: string) => {
   statusMessage.value = message;
   errorMessage.value = "";
@@ -1317,16 +1150,21 @@ const dismissHostPrompt = () => {
 };
 
 const openAdvancedSignaling = () => {
+  if (!isLocalOnlyWallet.value) {
+    setError(kaigiSignalingPrerequisite.value);
+    return;
+  }
   advancedSignalsOpen.value = true;
   dismissHostPrompt();
 };
 
 const handleAdvancedSignalsToggle = (event: Event) => {
-  advancedSignalsOpen.value = (event.currentTarget as HTMLDetailsElement).open;
+  advancedSignalsOpen.value =
+    isLocalOnlyWallet.value && (event.currentTarget as HTMLDetailsElement).open;
 };
 
 const maybePromptHostForAnswerPacket = () => {
-  if (callMode.value !== "start") {
+  if (!isLocalOnlyWallet.value || callMode.value !== "start") {
     return;
   }
   if (
@@ -1682,7 +1520,7 @@ const clearHostSignalPolling = () => {
     hostSignalReconnectTimerId = null;
   }
   if (hostSignalWatchId) {
-    stopWatchingKaigiCallEvents(hostSignalWatchId);
+    stopWatchingKaigiCallEvents({ subscriptionId: hostSignalWatchId });
     hostSignalWatchId = null;
   }
   hostSignalReconnectAttempts = 0;
@@ -1705,7 +1543,7 @@ const clearHostMeetingState = () => {
   dismissHostPrompt();
 };
 
-const removePersistedHostSession = (callId = hostMeetingCallId.value) => {
+const removeCurrentHostSession = (callId = hostMeetingCallId.value) => {
   if (!activeAccount.value || !activeEndpointIdentity.value || !callId) {
     return;
   }
@@ -1716,7 +1554,7 @@ const removePersistedHostSession = (callId = hostMeetingCallId.value) => {
   );
 };
 
-const savePersistedHostSession = (input: {
+const saveCurrentHostSession = (input: {
   callId: string;
   meetingCode: string;
   inviteSecretBase64Url: string;
@@ -1726,8 +1564,7 @@ const savePersistedHostSession = (input: {
   expiresAtMs: number;
   title?: string;
   live: boolean;
-  privacyMode: KaigiMeetingPrivacy;
-  peerIdentityReveal: KaigiPeerIdentityReveal;
+  privacyMode: "transparent";
 }) => {
   if (!activeAccount.value || !activeEndpointScope.value) {
     return;
@@ -1745,7 +1582,6 @@ const savePersistedHostSession = (input: {
     ...(input.title ? { title: input.title } : {}),
     live: input.live,
     privacyMode: input.privacyMode,
-    peerIdentityReveal: input.peerIdentityReveal,
   });
 };
 
@@ -1769,9 +1605,6 @@ const toLoadedInviteFromMeetingView = (
   live: invite.live,
   ...(invite.ended ? { ended: invite.ended } : {}),
   ...(invite.endedAtMs ? { endedAtMs: invite.endedAtMs } : {}),
-  privacyMode: invite.privacyMode,
-  peerIdentityReveal: invite.peerIdentityReveal,
-  rosterRootHex: invite.rosterRootHex,
   offerDescription: invite.offerDescription,
 });
 
@@ -1969,14 +1802,23 @@ const handleMediaDeviceSelectionChange = async () => {
   await retryLocalMedia();
 };
 
+const requireLocalOnlyManualSignaling = () => {
+  if (!isLocalOnlyWallet.value) {
+    throw new Error(
+      t("Manual Kaigi signaling is available only for local-only wallets."),
+    );
+  }
+};
+
 const buildOutgoingPacket = (input: {
   kind: "offer" | "answer";
   roomId: string;
   description: RTCSessionDescriptionInit;
   createdAtMs?: number;
   walletIdentity?: string;
-}) =>
-  stringifyKaigiSignalEnvelope(
+}) => {
+  requireLocalOnlyManualSignaling();
+  return stringifyKaigiSignalEnvelope(
     buildKaigiSignalEnvelope({
       kind: input.kind,
       roomId: input.roomId,
@@ -1987,8 +1829,10 @@ const buildOutgoingPacket = (input: {
       createdAtMs: input.createdAtMs,
     }),
   );
+};
 
 const readIncomingPacket = (expectedKind: "offer" | "answer") => {
+  requireLocalOnlyManualSignaling();
   if (!incomingPacket.value.trim()) {
     throw new Error(t("Paste a Kaigi packet first."));
   }
@@ -2024,7 +1868,10 @@ const readIncomingPacket = (expectedKind: "offer" | "answer") => {
 
 const createOfferPacket = async (
   roomId: string,
-  options?: { localWalletIdentity?: string },
+  options?: {
+    localWalletIdentity?: string;
+    createManualEnvelope?: boolean;
+  },
 ) => {
   const peer = await createPeerConnection();
   const offer = await peer.createOffer({
@@ -2042,12 +1889,14 @@ const createOfferPacket = async (
     type: "offer" as const,
     sdp: description.sdp,
   };
-  outgoingPacket.value = buildOutgoingPacket({
-    kind: "offer",
-    roomId,
-    description: normalizedDescription,
-    walletIdentity: options?.localWalletIdentity,
-  });
+  if (options?.createManualEnvelope === true) {
+    outgoingPacket.value = buildOutgoingPacket({
+      kind: "offer",
+      roomId,
+      description: normalizedDescription,
+      walletIdentity: options.localWalletIdentity,
+    });
+  }
   return normalizedDescription;
 };
 
@@ -2062,6 +1911,7 @@ const createAnswerPacketFromOffer = async (
     };
     createdAtMs?: number;
     localWalletIdentity?: string;
+    createManualEnvelope?: boolean;
   },
 ) => {
   const peer = await createPeerConnection();
@@ -2084,12 +1934,14 @@ const createAnswerPacketFromOffer = async (
     type: "answer" as const,
     sdp: description.sdp,
   };
-  outgoingPacket.value = buildOutgoingPacket({
-    kind: "answer",
-    roomId: offerPacket.roomId || currentRoomId.value || DEFAULT_ROOM_ID,
-    description: normalizedDescription,
-    walletIdentity: offerPacket.localWalletIdentity,
-  });
+  if (offerPacket.createManualEnvelope === true) {
+    outgoingPacket.value = buildOutgoingPacket({
+      kind: "answer",
+      roomId: offerPacket.roomId || currentRoomId.value || DEFAULT_ROOM_ID,
+      description: normalizedDescription,
+      walletIdentity: offerPacket.localWalletIdentity,
+    });
+  }
   return normalizedDescription;
 };
 
@@ -2099,7 +1951,6 @@ const applyRemoteAnswerDescription = async (
     participantName?: string;
     participantId?: string;
     walletIdentity?: string;
-    packet?: string;
     statusMessage?: string;
   },
 ) => {
@@ -2121,9 +1972,6 @@ const applyRemoteAnswerDescription = async (
       options.walletIdentity ||
       remoteParticipantName.value;
   }
-  if (options?.packet) {
-    incomingPacket.value = options.packet;
-  }
   dismissHostPrompt();
   setStatus(
     options?.statusMessage || t("Answer applied. The call can connect now."),
@@ -2131,22 +1979,10 @@ const applyRemoteAnswerDescription = async (
 };
 
 const applyPolledAnswerSignal = async (signal: KaigiMeetingSignalRecord) => {
-  const packet = stringifyKaigiSignalEnvelope(
-    buildKaigiSignalEnvelope({
-      kind: "answer",
-      roomId: signal.roomId || signal.callId,
-      participantId: signal.participantId,
-      participantName: signal.participantName,
-      walletIdentity: signal.walletIdentity,
-      description: signal.answerDescription,
-      createdAtMs: signal.createdAtMs,
-    }),
-  );
   await applyRemoteAnswerDescription(signal.answerDescription, {
     participantName: signal.participantName,
     participantId: signal.participantId,
     walletIdentity: signal.walletIdentity,
-    packet,
     statusMessage: t("Participant answer detected and applied automatically."),
   });
 };
@@ -2192,6 +2028,8 @@ const startHostSignalWatch = async () => {
     try {
       const signals = await pollKaigiMeetingSignals({
         toriiUrl,
+        chainId: session.connection.chainId,
+        networkPrefix: session.connection.networkPrefix,
         accountId: hostAccountId,
         callId,
         hostKaigiKeys,
@@ -2256,7 +2094,7 @@ const startHostSignalWatch = async () => {
           }
           if (event.kind === "ended") {
             hostMeetingLive.value = false;
-            removePersistedHostSession(callId);
+            removeCurrentHostSession(callId);
             clearHostSignalPolling();
             setStatus(t("This meeting has ended."));
             return;
@@ -2264,7 +2102,9 @@ const startHostSignalWatch = async () => {
           if (event.kind === "stream_closed") {
             streamClosed = true;
             if (hostSignalWatchId) {
-              stopWatchingKaigiCallEvents(hostSignalWatchId);
+              stopWatchingKaigiCallEvents({
+                subscriptionId: hostSignalWatchId,
+              });
               hostSignalWatchId = null;
             }
             if (
@@ -2312,7 +2152,7 @@ const startHostSignalWatch = async () => {
       return;
     }
     if (!contextIsActive() || streamClosed) {
-      stopWatchingKaigiCallEvents(watchId);
+      stopWatchingKaigiCallEvents({ subscriptionId: watchId });
       return;
     }
     hostSignalWatchId = watchId;
@@ -2349,10 +2189,22 @@ const copyFallbackLink = async () => {
 };
 
 const copyOutgoingPacket = async () => {
+  if (!isLocalOnlyWallet.value) {
+    setError(
+      t("Manual Kaigi signaling is available only for local-only wallets."),
+    );
+    return;
+  }
   await copyText(outgoingPacket.value, t("Kaigi packet copied to clipboard."));
 };
 
 const pasteIncomingPacket = async () => {
+  if (!isLocalOnlyWallet.value) {
+    setError(
+      t("Manual Kaigi signaling is available only for local-only wallets."),
+    );
+    return;
+  }
   try {
     incomingPacket.value = await navigator.clipboard.readText();
     setStatus(t("Kaigi packet pasted from clipboard."));
@@ -2366,11 +2218,17 @@ const pasteInviteFromClipboard = async () => {
     inviteInput.value = await navigator.clipboard.readText();
     setStatus(t("Meeting invite pasted from clipboard."));
   } catch (_error) {
-    setError(t("Clipboard access failed. Paste the packet manually."));
+    setError(t("Clipboard access failed. Paste the meeting invite manually."));
   }
 };
 
 const clearPackets = () => {
+  if (!isLocalOnlyWallet.value) {
+    setError(
+      t("Manual Kaigi signaling is available only for local-only wallets."),
+    );
+    return;
+  }
   outgoingPacket.value = "";
   incomingPacket.value = "";
   lastHostPromptedAnswerPacket.value = "";
@@ -2408,18 +2266,19 @@ const hydrateInvite = (invite: LoadedKaigiInvite, rawInput: string) => {
   parsedInvite.value = invite;
   inviteInput.value = rawInput.trim();
   manualRoomId.value = invite.callId;
-  incomingPacket.value = stringifyKaigiSignalEnvelope(
-    buildKaigiSignalEnvelope({
-      kind: "offer",
-      roomId: invite.callId,
-      participantId: invite.hostParticipantId || "host",
-      participantName: invite.hostDisplayName || t("Host"),
-      walletIdentity:
-        invite.privacyMode === "transparent" ? invite.hostAccountId : undefined,
-      description: invite.offerDescription,
-      createdAtMs: invite.createdAtMs,
-    }),
-  );
+  if (isLocalOnlyWallet.value) {
+    incomingPacket.value = stringifyKaigiSignalEnvelope(
+      buildKaigiSignalEnvelope({
+        kind: "offer",
+        roomId: invite.callId,
+        participantId: invite.hostParticipantId || "host",
+        participantName: invite.hostDisplayName || t("Host"),
+        walletIdentity: invite.hostAccountId,
+        description: invite.offerDescription,
+        createdAtMs: invite.createdAtMs,
+      }),
+    );
+  }
   remoteParticipantName.value = invite.hostDisplayName || t("Host");
   setStatus(t("Meeting invite loaded. Join when your media is ready."));
 };
@@ -2429,6 +2288,7 @@ const resolveParsedInviteInput = async (
 ): Promise<LoadedKaigiInvite> => {
   const meeting = await getKaigiCall({
     toriiUrl: session.connection.toriiUrl,
+    networkPrefix: session.connection.networkPrefix,
     callId: invite.callId,
     inviteSecretBase64Url: invite.inviteSecretBase64Url,
   });
@@ -2463,7 +2323,7 @@ const loadInviteFromLocationHash = () => {
   signalBusy.value = true;
   void (async () => {
     try {
-      const parsed = parseKaigiInviteInput(window.location.href);
+      const parsed = parseKaigiInviteInput(window.location.hash);
       const invite = await resolveParsedInviteInput(parsed);
       if (
         parsedInvite.value?.callId === invite.callId &&
@@ -2485,7 +2345,6 @@ const loadInviteFromLocationHash = () => {
 const switchMode = (mode: "start" | "join") => {
   callMode.value = mode;
   advancedSignalsOpen.value = false;
-  clearPrivateKaigiFundingPrompt();
   dismissHostPrompt();
   if (mode === "start") {
     parsedInvite.value = null;
@@ -2502,21 +2361,12 @@ const restoreHostOfferFromMeeting = async (invite: KaigiMeetingView) => {
   const peer = await createPeerConnection();
   await peer.setLocalDescription(invite.offerDescription);
   syncPeerStateRefs(peer);
-  outgoingPacket.value = buildOutgoingPacket({
-    kind: "offer",
-    roomId: invite.callId,
-    description: invite.offerDescription,
-    createdAtMs: invite.createdAtMs,
-    walletIdentity:
-      invite.privacyMode === "transparent"
-        ? walletIdentity.value || undefined
-        : undefined,
-  });
 };
 
 const restoreLatestHostMeetingSession = async () => {
   if (
     !activeAccount.value ||
+    !isLiveWallet.value ||
     parsedInvite.value ||
     hostMeetingCallId.value ||
     callMode.value === "join"
@@ -2539,14 +2389,14 @@ const restoreLatestHostMeetingSession = async () => {
   try {
     const meeting = await getKaigiCall({
       toriiUrl: session.connection.toriiUrl,
+      networkPrefix: session.connection.networkPrefix,
       callId: sessionRecord.callId,
       inviteSecretBase64Url: sessionRecord.inviteSecretBase64Url,
     });
     if (meeting.ended || isKaigiMeetingExpired(meeting)) {
-      removePersistedHostSession(sessionRecord.callId);
+      removeCurrentHostSession(sessionRecord.callId);
       return;
     }
-
     clearHostMeetingState();
     resetSignalState();
     callMode.value = "start";
@@ -2574,16 +2424,18 @@ const restoreLatestHostMeetingSession = async () => {
     scheduledStartInput.value = formatDateTimeLocalInput(
       meeting.scheduledStartMs,
     );
-    meetingPrivacyMode.value = sessionRecord.privacyMode;
-    peerIdentityReveal.value = sessionRecord.peerIdentityReveal;
     manualRoomId.value = sessionRecord.callId;
     await restoreHostOfferFromMeeting(meeting);
     seenHostSignalHashes.clear();
     void startHostSignalWatch();
     setStatus(t("Resumed active meeting link."));
-  } catch (_error) {
-    // If the call can no longer be resolved, drop the stale local session quietly.
-    removePersistedHostSession(sessionRecord.callId);
+  } catch (error) {
+    setError(
+      toUserFacingErrorMessage(
+        error,
+        t("Unable to resume the active Kaigi meeting."),
+      ),
+    );
   } finally {
     signalBusy.value = false;
   }
@@ -2595,18 +2447,20 @@ const createMeetingLink = async () => {
     return;
   }
   if (!canUseAutomaticKaigi.value) {
-    openAdvancedSignaling();
-    setError(
-      `${kaigiSignalingPrerequisite.value} ${t(
-        "Create a manual offer packet in Advanced signaling instead.",
-      )}`,
-    );
+    if (isLocalOnlyWallet.value) {
+      openAdvancedSignaling();
+      setError(
+        `${kaigiSignalingPrerequisite.value} ${t(
+          "Create a manual offer packet in Advanced signaling instead.",
+        )}`,
+      );
+    } else {
+      setError(kaigiSignalingPrerequisite.value);
+    }
     return;
   }
-
   signalBusy.value = true;
   try {
-    clearPrivateKaigiFundingPrompt();
     clearHostMeetingState();
     parsedInvite.value = null;
     resetSignalState();
@@ -2627,21 +2481,14 @@ const createMeetingLink = async () => {
     hostLastSignalAtMs.value = createdAtMs;
     hostMeetingKeys.value = generateKaigiSignalKeyPair();
 
-    const offerDescription = await createOfferPacket(callId, {
-      localWalletIdentity:
-        meetingPrivacyMode.value === "transparent"
-          ? walletIdentity.value || undefined
-          : undefined,
-    });
+    const offerDescription = await createOfferPacket(callId);
     let liveMeetingResult: Awaited<ReturnType<typeof createKaigiMeeting>>;
     try {
       liveMeetingResult = await createKaigiMeeting({
         toriiUrl: session.connection.toriiUrl,
         chainId: session.connection.chainId,
         networkPrefix: session.connection.networkPrefix,
-        assetDefinitionId: session.connection.assetDefinitionId,
         hostAccountId: activeAccount.value.accountId,
-        privateKeyHex: activeAccount.value.privateKeyHex,
         callId,
         title: meetingTitle.value.trim() || undefined,
         scheduledStartMs,
@@ -2651,8 +2498,7 @@ const createMeetingLink = async () => {
         hostParticipantId: participantId.value,
         hostKaigiPublicKeyBase64Url: hostMeetingKeys.value.publicKeyBase64Url,
         offerDescription,
-        privacyMode: meetingPrivacyMode.value,
-        peerIdentityReveal: peerIdentityReveal.value,
+        privacyMode: "transparent",
       });
       assertFinalizedSubmissionResult(liveMeetingResult);
     } catch (error) {
@@ -2660,30 +2506,10 @@ const createMeetingLink = async () => {
         error,
         t("Unable to create a live Kaigi meeting."),
       );
-      if (
-        meetingPrivacyMode.value === "private" &&
-        (await preparePrivateKaigiFundingPrompt("create", automaticError))
-      ) {
-        setStatus(
-          t(
-            "Private Kaigi needs shielded XOR before it can submit this action.",
-          ),
-        );
-        errorMessage.value = automaticError;
-        return;
-      }
-      hostMeetingLive.value = false;
-      hostInviteDeepLink.value = "";
-      hostInviteHashRoute.value = "";
-      removePersistedHostSession(callId);
-      clearHostSignalPolling();
-      openAdvancedSignaling();
-      setStatus(
-        t(
-          "The on-chain meeting was not created, so there is no invite link to share. The prepared raw offer is available only in Advanced signaling.",
-        ),
-      );
-      errorMessage.value = automaticError;
+      removeCurrentHostSession(callId);
+      clearHostMeetingState();
+      resetSignalState();
+      setError(automaticError);
       return;
     }
 
@@ -2691,7 +2517,7 @@ const createMeetingLink = async () => {
     const invite = buildKaigiInvite(callId, inviteSecretBase64Url);
     hostInviteDeepLink.value = buildKaigiInviteDeepLink(invite);
     hostInviteHashRoute.value = buildKaigiInviteHashRoute(invite);
-    savePersistedHostSession({
+    saveCurrentHostSession({
       callId,
       meetingCode,
       inviteSecretBase64Url,
@@ -2701,8 +2527,7 @@ const createMeetingLink = async () => {
       expiresAtMs,
       title: meetingTitle.value.trim() || undefined,
       live: true,
-      privacyMode: meetingPrivacyMode.value,
-      peerIdentityReveal: peerIdentityReveal.value,
+      privacyMode: "transparent",
     });
     seenHostSignalHashes.clear();
     void startHostSignalWatch();
@@ -2715,14 +2540,14 @@ const createMeetingLink = async () => {
             hash: liveMeetingResult.hash,
           },
         )}`,
-        liveMeetingResult,
+        liveMeetingResult.feeQuote,
         t,
-        transactionFeeHintForEndpoint(session.connection.toriiUrl),
       ),
     );
     hostPromptKind.value = "meetingReady";
   } catch (error) {
     clearHostMeetingState();
+    resetSignalState();
     setError(
       toUserFacingErrorMessage(
         error,
@@ -2749,175 +2574,81 @@ const joinLoadedMeeting = async () => {
     return;
   }
   if (!inviteCanUseAutomaticJoin.value || !activeAccount.value) {
-    openAdvancedSignaling();
-    setError(
-      `${kaigiSignalingPrerequisite.value} ${t(
-        "Create a manual answer packet in Advanced signaling instead.",
-      )}`,
-    );
+    if (isLocalOnlyWallet.value) {
+      openAdvancedSignaling();
+      setError(
+        `${kaigiSignalingPrerequisite.value} ${t(
+          "Create a manual answer packet in Advanced signaling instead.",
+        )}`,
+      );
+    } else {
+      setError(kaigiSignalingPrerequisite.value);
+    }
     return;
   }
-
+  if (!invite.live) {
+    setError(t("This meeting is not active."));
+    return;
+  }
   signalBusy.value = true;
   try {
-    clearPrivateKaigiFundingPrompt();
     manualRoomId.value = invite.callId;
     const answerDescription = await createAnswerPacketFromOffer({
       roomId: invite.callId,
       participantId: invite.hostParticipantId || "host",
       participantName: invite.hostDisplayName || t("Host"),
-      walletIdentity:
-        invite.privacyMode === "transparent" ? invite.hostAccountId : undefined,
+      walletIdentity: invite.hostAccountId,
       createdAtMs: invite.createdAtMs,
-      localWalletIdentity:
-        invite.privacyMode === "transparent" ||
-        invite.peerIdentityReveal === "RevealAfterJoin"
-          ? walletIdentity.value || undefined
-          : undefined,
       description: invite.offerDescription,
     });
 
-    if (invite.live && canUseAutomaticKaigi.value && activeAccount.value) {
-      try {
-        const result = await joinKaigiMeeting({
-          toriiUrl: session.connection.toriiUrl,
-          chainId: session.connection.chainId,
-          networkPrefix: session.connection.networkPrefix,
-          assetDefinitionId: session.connection.assetDefinitionId,
-          participantAccountId: activeAccount.value.accountId,
-          privateKeyHex: activeAccount.value.privateKeyHex,
-          callId: invite.callId,
-          inviteSecretBase64Url: invite.inviteSecretBase64Url,
-          participantId: participantId.value,
-          participantName: participantName.value,
-          answerDescription,
-        });
-        assertFinalizedSubmissionResult(result);
-        setStatus(
-          appendTransactionFee(
-            `${t(
-              "Joined the meeting. Your encrypted answer was posted on-chain for the host to apply automatically.",
-            )} ${t("Meeting join finalized in block {block}: {hash}", {
-              block: result.finality.blockHeight,
-              hash: result.hash,
-            })}`,
-            result,
-            t,
-            transactionFeeHintForEndpoint(session.connection.toriiUrl),
-          ),
-        );
-        callStageActive.value = true;
-      } catch (error) {
-        const automaticJoinError = toUserFacingErrorMessage(
-          error,
-          t("Unable to join the live Kaigi meeting."),
-        );
-        if (
-          invite.privacyMode === "private" &&
-          (await preparePrivateKaigiFundingPrompt("join", automaticJoinError))
-        ) {
-          setStatus(
-            t(
-              "Private Kaigi needs shielded XOR before it can submit this action.",
-            ),
-          );
-          errorMessage.value = automaticJoinError;
-          return;
-        }
-        setStatus(
-          invite.privacyMode === "private"
-            ? t(
-                "Answer packet ready. Private automatic join failed, so send the manual answer packet to the host. This fallback does not preserve private on-chain signaling.",
-              )
-            : t(
-                "Answer packet ready. Automatic join failed, so send the manual answer packet to the host.",
-              ),
-        );
-        errorMessage.value = t("Automatic join failed: {message}", {
-          message: automaticJoinError,
-        });
-        if (invite.privacyMode === "private") {
-          errorMessage.value = t(
-            "Automatic private join failed: {message}. Send the manual answer packet instead; this fallback does not preserve private on-chain signaling.",
-            {
-              message: automaticJoinError,
-            },
-          );
-        }
-        openAdvancedSignaling();
-      }
-      return;
-    }
-
-    openAdvancedSignaling();
-    setStatus(t("Answer packet ready. Send it to the host manually."));
+    const result = await joinKaigiMeeting({
+      toriiUrl: session.connection.toriiUrl,
+      chainId: session.connection.chainId,
+      networkPrefix: session.connection.networkPrefix,
+      participantAccountId: activeAccount.value.accountId,
+      callId: invite.callId,
+      inviteSecretBase64Url: invite.inviteSecretBase64Url,
+      participantId: participantId.value,
+      participantName: participantName.value,
+      answerDescription,
+    });
+    assertFinalizedSubmissionResult(result);
+    setStatus(
+      appendTransactionFee(
+        `${t(
+          "Joined the meeting. Your encrypted answer was posted on-chain for the host to apply automatically.",
+        )} ${t("Meeting join finalized in block {block}: {hash}", {
+          block: result.finality.blockHeight,
+          hash: result.hash,
+        })}`,
+        result.feeQuote,
+        t,
+      ),
+    );
+    callStageActive.value = true;
   } catch (error) {
-    setError(toUserFacingErrorMessage(error, t("Unable to create an answer.")));
+    resetSignalState();
+    setError(
+      toUserFacingErrorMessage(
+        error,
+        t("Unable to join the live Kaigi meeting."),
+      ),
+    );
   } finally {
     signalBusy.value = false;
   }
 };
 
-const selfShieldPrivateKaigiAndRetry = async () => {
-  if (!activeAccount.value || !privateKaigiPendingAction.value) {
-    return;
-  }
-  if (!canUseAutomaticKaigi.value) {
-    clearPrivateKaigiFundingPrompt();
-    setError(kaigiSignalingPrerequisite.value);
-    return;
-  }
-  privateKaigiShieldBusy.value = true;
-  try {
-    const retryAction = privateKaigiPendingAction.value;
-    const result = await selfShieldPrivateKaigiXor({
-      toriiUrl: session.connection.toriiUrl,
-      chainId: session.connection.chainId,
-      networkPrefix: session.connection.networkPrefix,
-      accountId: activeAccount.value.accountId,
-      assetDefinitionId: session.connection.assetDefinitionId,
-      privateKeyHex: activeAccount.value.privateKeyHex,
-      amount: privateKaigiRetryShieldAmount.value || "1",
-    });
-    assertFinalizedSubmissionResult(result);
-    const fundingMessage = appendTransactionFee(
-      t("Private Kaigi funding finalized in block {block}: {hash}", {
-        block: result.finality.blockHeight,
-        hash: result.hash,
-      }),
-      result,
-      t,
-      transactionFeeHintForEndpoint(session.connection.toriiUrl),
-    );
-    clearPrivateKaigiFundingPrompt();
-    if (retryAction === "create") {
-      await createMeetingLink();
-    } else {
-      await joinLoadedMeeting();
-    }
-    setStatus(
-      statusMessage.value
-        ? `${fundingMessage} ${statusMessage.value}`
-        : fundingMessage,
-    );
-  } catch (error) {
-    errorMessage.value = toUserFacingErrorMessage(
-      error,
-      t("Unable to self-shield XOR for private Kaigi."),
-    );
-  } finally {
-    privateKaigiShieldBusy.value = false;
-  }
-};
-
 const createManualOfferPacket = async () => {
-  if (!activeAccount.value) {
-    setError(t("Save a wallet before using Kaigi."));
+  if (!isLocalOnlyWallet.value) {
+    setError(
+      t("Manual Kaigi signaling is available only for local-only wallets."),
+    );
     return;
   }
   signalBusy.value = true;
   try {
-    clearPrivateKaigiFundingPrompt();
     clearHostMeetingState();
     parsedInvite.value = null;
     resetSignalState();
@@ -2927,12 +2658,7 @@ const createManualOfferPacket = async () => {
     manualRoomId.value = callId;
     hostMeetingCallId.value = callId;
     hostMeetingCode.value = meetingCode;
-    await createOfferPacket(callId, {
-      localWalletIdentity:
-        meetingPrivacyMode.value === "transparent"
-          ? walletIdentity.value || undefined
-          : undefined,
-    });
+    await createOfferPacket(callId, { createManualEnvelope: true });
     openAdvancedSignaling();
     setStatus(
       t(
@@ -2952,6 +2678,12 @@ const createManualOfferPacket = async () => {
 };
 
 const createManualAnswerPacket = async () => {
+  if (!isLocalOnlyWallet.value) {
+    setError(
+      t("Manual Kaigi signaling is available only for local-only wallets."),
+    );
+    return;
+  }
   signalBusy.value = true;
   try {
     const remotePacket = readIncomingPacket("offer");
@@ -2962,6 +2694,7 @@ const createManualAnswerPacket = async () => {
       walletIdentity: remotePacket.walletIdentity,
       createdAtMs: remotePacket.createdAtMs,
       description: remotePacket.description as { type: "offer"; sdp: string },
+      createManualEnvelope: true,
     });
     setStatus(t("Manual answer packet ready. Send it to the host."));
   } catch (error) {
@@ -2972,6 +2705,12 @@ const createManualAnswerPacket = async () => {
 };
 
 const applyAnswerPacket = async () => {
+  if (!isLocalOnlyWallet.value) {
+    setError(
+      t("Manual Kaigi signaling is available only for local-only wallets."),
+    );
+    return;
+  }
   signalBusy.value = true;
   try {
     const remotePacket = readIncomingPacket("answer");
@@ -3010,28 +2749,24 @@ const stopPreview = () => {
 };
 
 const hangUp = async () => {
-  const shouldEndLiveMeeting =
+  const isLiveHostMeeting =
     callMode.value === "start" &&
     hostMeetingLive.value &&
-    canUseAutomaticKaigi.value &&
     Boolean(activeAccount.value) &&
     Boolean(hostMeetingCallId.value);
 
-  clearHostSignalPolling();
-  callStageActive.value = false;
-  resetSignalState();
-  advancedSignalsOpen.value = false;
-  manualRoomId.value = parsedInvite.value?.callId || DEFAULT_ROOM_ID;
-
-  if (shouldEndLiveMeeting && activeAccount.value) {
+  if (isLiveHostMeeting && activeAccount.value) {
+    if (!canUseAutomaticKaigi.value) {
+      setError(kaigiSignalingPrerequisite.value);
+      return;
+    }
+    signalBusy.value = true;
     try {
       const result = await endKaigiMeeting({
         toriiUrl: session.connection.toriiUrl,
         chainId: session.connection.chainId,
         networkPrefix: session.connection.networkPrefix,
-        assetDefinitionId: session.connection.assetDefinitionId,
         hostAccountId: activeAccount.value.accountId,
-        privateKeyHex: activeAccount.value.privateKeyHex,
         callId: hostMeetingCallId.value,
       });
       assertFinalizedSubmissionResult(result);
@@ -3044,37 +2779,45 @@ const hangUp = async () => {
               hash: result.hash,
             },
           )}`,
-          result,
+          result.feeQuote,
           t,
-          transactionFeeHintForEndpoint(session.connection.toriiUrl),
         ),
       );
     } catch (error) {
-      setStatus(t("Meeting ended locally."));
-      errorMessage.value = t(
-        "Unable to publish the meeting end signal: {message}",
-        {
+      setError(
+        t("Unable to publish the meeting end signal: {message}", {
           message: toUserFacingErrorMessage(
             error,
             t("Unknown Kaigi end error"),
           ),
-        },
+        }),
       );
+      return;
+    } finally {
+      signalBusy.value = false;
     }
-  } else {
-    setStatus(t("Ready to prepare a Kaigi call."));
   }
 
+  clearHostSignalPolling();
+  callStageActive.value = false;
+  resetSignalState();
+  advancedSignalsOpen.value = false;
+  manualRoomId.value = parsedInvite.value?.callId || DEFAULT_ROOM_ID;
+
   if (callMode.value === "start") {
-    removePersistedHostSession();
+    if (isLiveHostMeeting) {
+      removeCurrentHostSession();
+    }
     clearHostMeetingState();
+  }
+  if (!isLiveHostMeeting) {
+    setStatus(t("Ready to prepare a Kaigi call."));
   }
 };
 
 watch(kaigiRuntimeContextKey, () => {
   clearHostMeetingState();
   resetSignalState();
-  clearPrivateKaigiFundingPrompt();
   parsedInvite.value = null;
   inviteInput.value = "";
   callMode.value = "start";
@@ -3382,8 +3125,7 @@ onBeforeUnmount(() => {
 }
 
 .kaigi-link-box,
-.kaigi-media-setup,
-.kaigi-private-funding-box {
+.kaigi-media-setup {
   min-width: 0;
   padding: var(--space-4);
   display: grid;
@@ -3464,19 +3206,6 @@ onBeforeUnmount(() => {
 .kaigi-primary-actions button {
   width: 100%;
   min-height: 44px;
-}
-
-.kaigi-private-funding-box {
-  border-color: color-mix(
-    in srgb,
-    var(--color-warning) 34%,
-    var(--color-border)
-  );
-  background: var(--color-warning-soft);
-}
-
-.kaigi-private-funding-box p {
-  margin: 0;
 }
 
 .kaigi-signal-card {

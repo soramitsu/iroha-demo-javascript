@@ -11,6 +11,7 @@ import {
 import { deriveAccountAddressView } from "../electron/accountAddress.ts";
 import { solveFaucetPowPuzzle } from "../electron/faucetPow.ts";
 import { waitForToriiTransactionFinality } from "./live-transaction-finality.mjs";
+import { validateAccountAssets } from "./e2e/taira-read-contract-utils.mjs";
 import { generatedSoraswapRegistry } from "../../soraswap_web/src/generated/soraswapRegistry.ts";
 import {
   createConnectPreview,
@@ -233,16 +234,13 @@ const fetchAssetDefinition = (toriiUrl, assetDefinitionId) =>
   );
 
 const normalizeAssetItem = (item) => {
-  const quantity = trim(item?.quantity);
-  const assetId =
-    trim(item?.asset_id) ||
-    trim(item?.asset?.id) ||
-    trim(item?.asset?.asset_id) ||
-    trim(item?.asset);
+  const assetId = `${item.asset}#${item.account_id}${
+    item.scope === "global" ? "" : `#${item.scope}`
+  }`;
   return {
     assetId,
-    assetDefinitionId: trim(assetId.split("##")[0]),
-    quantity,
+    assetDefinitionId: item.asset,
+    quantity: item.quantity,
   };
 };
 
@@ -253,7 +251,7 @@ const fetchAccountAssets = async (toriiUrl, accountId) => {
     try {
       response = await fetch(
         new URL(
-          `/v1/accounts/${encodeURIComponent(accountId)}/assets?limit=200`,
+          `/v1/accounts/${encodeURIComponent(accountId)}/assets?limit=200&offset=0&count_mode=exact`,
           `${toriiUrl}/`,
         ),
         {
@@ -285,9 +283,9 @@ const fetchAccountAssets = async (toriiUrl, accountId) => {
     );
   }
   const payload = await response.json();
-  return Array.isArray(payload?.items)
-    ? payload.items.map(normalizeAssetItem)
-    : [];
+  return validateAccountAssets(payload, accountId).items.map(
+    normalizeAssetItem,
+  );
 };
 
 const findPositiveBalance = (assets, assetDefinitionId) => {

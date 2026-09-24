@@ -29,23 +29,44 @@ describe("live-script transaction finality", () => {
       }
       if (url.pathname === `/v1/explorer/transactions/${HASH}`) {
         return {
+          authority: "testu-finality-authority",
           hash: HASH,
           block: 17,
+          created_at: "2026-07-27T01:02:03Z",
+          executable: "Instructions",
           status: "Committed",
+          rejection_reason: null,
+          executable_payload: { instruction_count: 1 },
+          metadata: {},
+          nonce: null,
+          signature: "11".repeat(64),
+          time_to_live: null,
         };
       }
       if (url.pathname === "/v1/explorer/blocks/17") {
         return {
           hash: BLOCK_HASH,
           height: 17,
+          created_at: "2026-07-27T01:02:04Z",
+          prev_block_hash: "ef".repeat(32),
           transactions_hash: "ef".repeat(32),
-          transactions_total: 1,
+          transactions_rejected: 0,
+          transactions_total: 2,
         };
       }
       if (url.pathname === "/v1/explorer/metrics") {
         return {
+          peers: 4,
+          domains: 7,
+          accounts: 360,
+          assets: 169,
+          transactions_accepted: 359,
+          transactions_rejected: 16,
           block: 19,
+          block_created_at: "2026-07-27T01:02:06Z",
           finalized_block: 18,
+          avg_commit_time: { ms: 500 },
+          avg_block_time: { ms: 1_000 },
         };
       }
       throw new Error(`unexpected read ${url}`);
@@ -76,6 +97,9 @@ describe("live-script transaction finality", () => {
       "/v1/explorer/blocks/17",
       "/v1/explorer/metrics",
       `/v1/pipeline/transactions/status?hash=${HASH}&scope=global`,
+      `/v1/explorer/transactions/${HASH}`,
+      "/v1/explorer/blocks/17",
+      "/v1/explorer/metrics",
     ]);
   });
 
@@ -131,9 +155,29 @@ describe("live-script transaction finality", () => {
         { label: "Faucet claim", hashFields: ["tx_hash_hex"] },
       ),
     ).toThrow("Transaction finality proof must be an object");
+
+    expect(() =>
+      assertFinalizedMutationReceipt(
+        {
+          tx_hash_hex: HASH,
+          hash: HASH,
+          finality: {
+            status: "finalized",
+            transactionHash: HASH,
+            blockHeight: 17,
+            blockHash: BLOCK_HASH,
+            finalizedBlockHeight: 18,
+          },
+        },
+        {
+          label: "Ambiguous mutation",
+          hashFields: ["tx_hash_hex", "hash"],
+        },
+      ),
+    ).toThrow("must select exactly one canonical hash field");
   });
 
-  it("wires both mutating live harnesses through the finalized-block boundary", () => {
+  it("wires retained live mutations through the finalized-block boundary", () => {
     const tradeScript = readFileSync(
       resolve(process.cwd(), "scripts/connect-soraswap-live-trade.mjs"),
       "utf8",
@@ -153,15 +197,9 @@ describe("live-script transaction finality", () => {
     expect(electronLiveScript).toContain(
       'String(faucetReceipt?.status ?? "").trim() !== "FINALIZED"',
     );
-    expect(electronLiveScript).toContain(
-      "assertFinalizedSubmission(selfShield",
-    );
-    expect(electronLiveScript).toContain(
-      "assertFinalizedSubmission(\n        recipientTransfer",
-    );
-    expect(electronLiveScript).toContain(
-      'assertFinalizedSubmission(unshield, "Unshield transaction")',
-    );
+    expect(electronLiveScript).not.toContain("selfShield");
+    expect(electronLiveScript).not.toContain("recipientTransfer");
+    expect(electronLiveScript).not.toContain("Unshield transaction");
     expect(electronLiveScript).toContain('name: "Sign and commit"');
     expect(electronLiveScript).not.toContain('kind: "committed"');
     expect(electronLiveScript).not.toContain("Faucet probe queued");

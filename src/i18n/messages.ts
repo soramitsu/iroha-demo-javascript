@@ -163,8 +163,6 @@ const JA_MANUAL_TRANSLATIONS: TranslationTable = {
   "Account ready": "アカウント準備完了",
   "Complete onboarding": "オンボーディングを完了",
   "Complete account setup first": "最初にアカウント設定を完了してください",
-  "Complete account onboarding to unlock Setup, Wallet, Staking, Parliament, Send, Receive, Offline, and Explorer.":
-    "アカウントのオンボーディングを完了すると、Setup、Wallet、Staking、Parliament、Send、Receive、Offline、Explorerが利用できます。",
   "Active account": "アクティブアカウント",
   "Not created yet": "未作成",
   "No accounts saved yet": "保存済みアカウントはありません",
@@ -190,11 +188,9 @@ const JA_MANUAL_TRANSLATIONS: TranslationTable = {
   "TAIRA connection, asset, and authority keys": "TAIRA接続と鍵",
   "Balances, assets, and latest transactions": "残高と履歴",
   "Nominate validators and stake XOR for NPOS": "XORをステーク",
-  "Bond citizenship and vote in governance referenda": "市民権と投票",
   "Auto-deduct and manage recurring services": "定期支払い",
   "Transfer assets with camera or QR upload": "QRで送金",
   "Share QR codes or IH58 to request funds": "QRで受取",
-  "Offline wallets, invoices, and QR exchanges": "オフライン決済",
   "Network metrics and asset explorer": "ネットワーク状況",
   "Session Setup": "セッション設定",
   "Provision your TAIRA testnet account": "TAIRAテストネットアカウントを準備",
@@ -204,7 +200,6 @@ const JA_MANUAL_TRANSLATIONS: TranslationTable = {
   "NPOS Staking": "NPOSステーキング",
   "Nominate validators and stake XOR": "XORをステーク",
   "SORA Parliament": "SORA議会",
-  "Citizenship bond and governance voting": "市民権と投票",
   "Subscription Hub": "サブスクリプションハブ",
   "Auto-deduct and manage services": "自動引き落としとサービス管理",
   "Send Points": "ポイント送信",
@@ -213,32 +208,17 @@ const JA_MANUAL_TRANSLATIONS: TranslationTable = {
   "Share QR or IH58": "QRまたはIH58を共有",
   Explorer: "エクスプローラー",
   "Network & asset insights": "ネットワーク状況",
-  "Offline wallets, invoices, and payments": "オフライン決済",
-  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
-    "{amount} XORをボンドして投票",
-  "Shield policy mode: {mode}.": "モード: {mode}。",
-  "Move funds to online wallet": "オンラインへ移動",
   "TAIRA locked": "TAIRA固定",
   "Open Taira Explorer": "TAIRA Explorerを開く",
   "Iroha logo": "Irohaロゴ",
   "IrohaConnect pairing QR": "IrohaConnectペアリングQR",
   "Explorer account QR": "エクスプローラーのアカウントQR",
   IH58: "IH58",
-  Aye: "賛成",
-  Nay: "反対",
-  Abstain: "棄権",
   "Bond {amount} XOR": "{amount} XORをボンド",
   "Bond XOR": "XORをボンド",
   "Bond amount": "ボンド額",
   "Bond amount (XOR)": "ボンド額 (XOR)",
   "Bond submitted: {hash}": "ボンド送信済み: {hash}",
-  "Ballot submitted: {hash}": "投票送信済み: {hash}",
-  "Shield mode unavailable: effective policy mode is {mode}.":
-    "シールドモードは利用できません: 有効ポリシーモードは {mode} です。",
-  "Shield policy check failed: {message}. Submission may still fail if shield mode is unsupported.":
-    "シールドポリシー確認に失敗しました: {message}。シールドモード未対応の場合、送信は失敗する可能性があります。",
-  "Shield policy check failed. Submission may still fail if shield mode is unsupported.":
-    "シールドポリシー確認に失敗しました。シールドモード未対応の場合、送信は失敗する可能性があります。",
   "TAIRA Testnet": "TAIRAテストネット",
   "Public TAIRA testnet profile.": "公開 TAIRA テストネットプロファイル。",
   "Store for iCloud Drive": "iCloud Drive に保存",
@@ -269,31 +249,18 @@ const JA_TRANSLATIONS: TranslationTable = {
 };
 
 const RU_MANUAL_TRANSLATIONS: TranslationTable = {
-  Aye: "За",
-  Nay: "Против",
-  Abstain: "Воздержаться",
   "SORA Parliament": "Парламент SORA",
-  "Citizenship bond and governance voting": "Гражданство и голосование",
-  "Bond citizenship and vote in governance referenda":
-    "Внесите депозит и голосуйте",
-  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
-    "Внесите {amount} XOR, чтобы голосовать.",
   "A minimum of {amount} XOR is required to register citizenship.":
     "Для регистрации гражданства требуется минимум {amount} XOR.",
   "Available XOR balance is below the required citizen bond amount.":
     "Доступный баланс XOR ниже требуемой суммы гражданского депозита.",
   "Citizenship Bond": "Гражданский депозит",
   "Citizenship bond submitted: {hash}": "Гражданский депозит отправлен: {hash}",
-  "Citizenship voting permission detected. Bonding is no longer required.":
-    "Обнаружено право голоса гражданина. Дополнительная блокировка больше не требуется.",
-  "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.":
-    "У этой учетной записи нет права на голосование. Отправьте гражданский депозит и обновите данные перед голосованием.",
   "Bond {amount} XOR": "Заблокировать {amount} XOR",
   "Bond XOR": "Заблокировать XOR",
   "Bond amount": "Сумма блокировки",
   "Bond amount (XOR)": "Сумма блокировки (XOR)",
   "Bond submitted: {hash}": "Блокировка отправлена: {hash}",
-  "Ballot submitted: {hash}": "Голос отправлен: {hash}",
   "Amount (XOR)": "Сумма (XOR)",
   "XOR Balance": "Баланс XOR",
   Bonded: "Застейкано",
@@ -313,13 +280,6 @@ const RU_MANUAL_TRANSLATIONS: TranslationTable = {
     "Недостаточно баланса {symbol} для блокировки.",
   "Nominate validators and stake XOR": "Стейкайте XOR",
   "Nominate validators and stake XOR for NPOS": "Стейкайте XOR",
-  "Shield policy mode: {mode}.": "Режим: {mode}.",
-  "Move funds to online wallet": "Перевести в онлайн-кошелек",
-  "referendumId and proposalId are required for finalize.":
-    "Для finalize требуются referendumId и proposalId.",
-  "referendumId is required before submitting a ballot.":
-    "Перед отправкой бюллетеня требуется referendumId.",
-  "proposalId is required for enact.": "Для enact требуется proposalId.",
   "TAIRA Testnet": "Тестнет TAIRA",
   "Public TAIRA testnet profile.": "Публичный профиль тестнета TAIRA.",
   "Store for iCloud Drive": "Сохранить в iCloud Drive",
@@ -343,15 +303,7 @@ const RU_MANUAL_TRANSLATIONS: TranslationTable = {
 };
 
 const UK_MANUAL_TRANSLATIONS: TranslationTable = {
-  Aye: "За",
-  Nay: "Проти",
-  Abstain: "Утриматися",
   "SORA Parliament": "Парламент SORA",
-  "Citizenship bond and governance voting": "Громадянство і голосування",
-  "Bond citizenship and vote in governance referenda":
-    "Внесіть депозит і голосуйте",
-  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
-    "Внесіть {amount} XOR, щоб голосувати.",
   "A minimum of {amount} XOR is required to register citizenship.":
     "Для реєстрації громадянства потрібен мінімум {amount} XOR.",
   "Available XOR balance is below the required citizen bond amount.":
@@ -359,16 +311,11 @@ const UK_MANUAL_TRANSLATIONS: TranslationTable = {
   "Citizenship Bond": "Громадянський депозит",
   "Citizenship bond submitted: {hash}":
     "Громадянський депозит надіслано: {hash}",
-  "Citizenship voting permission detected. Bonding is no longer required.":
-    "Виявлено право голосу громадянина. Додаткове блокування більше не потрібне.",
-  "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.":
-    "Для цього акаунта немає дозволу на голосування. Надішліть громадянський депозит і оновіть дані перед голосуванням.",
   "Bond {amount} XOR": "Заблокувати {amount} XOR",
   "Bond XOR": "Заблокувати XOR",
   "Bond amount": "Сума блокування",
   "Bond amount (XOR)": "Сума блокування (XOR)",
   "Bond submitted: {hash}": "Блокування надіслано: {hash}",
-  "Ballot submitted: {hash}": "Бюлетень надіслано: {hash}",
   "Amount (XOR)": "Сума (XOR)",
   "XOR Balance": "Баланс XOR",
   Bonded: "Застейкано",
@@ -388,13 +335,6 @@ const UK_MANUAL_TRANSLATIONS: TranslationTable = {
     "Недостатньо балансу {symbol} для блокування.",
   "Nominate validators and stake XOR": "Стейкайте XOR",
   "Nominate validators and stake XOR for NPOS": "Стейкайте XOR",
-  "Shield policy mode: {mode}.": "Режим: {mode}.",
-  "Move funds to online wallet": "Перевести в онлайн-гаманець",
-  "referendumId and proposalId are required for finalize.":
-    "Для finalize потрібні referendumId і proposalId.",
-  "referendumId is required before submitting a ballot.":
-    "Перед поданням бюлетеня потрібен referendumId.",
-  "proposalId is required for enact.": "Для enact потрібен proposalId.",
   "TAIRA Testnet": "Тестнет TAIRA",
   "Public TAIRA testnet profile.": "Публічний профіль тестнету TAIRA.",
   "Store for iCloud Drive": "Зберегти в iCloud Drive",
@@ -418,29 +358,18 @@ const UK_MANUAL_TRANSLATIONS: TranslationTable = {
 };
 
 const ZH_MANUAL_TRANSLATIONS: TranslationTable = {
-  Aye: "赞成",
-  Nay: "反对",
   "SORA Parliament": "SORA 议会",
-  "Citizenship bond and governance voting": "公民与投票",
-  "Bond citizenship and vote in governance referenda": "质押后投票",
-  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
-    "质押 {amount} XOR 后即可投票。",
   "A minimum of {amount} XOR is required to register citizenship.":
     "注册公民身份至少需要 {amount} XOR。",
   "Available XOR balance is below the required citizen bond amount.":
     "可用 XOR 余额低于所需公民保证金金额。",
   "Citizenship Bond": "公民保证金",
   "Citizenship bond submitted: {hash}": "公民保证金已提交：{hash}",
-  "Citizenship voting permission detected. Bonding is no longer required.":
-    "已检测到公民投票权限，无需继续质押。",
-  "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.":
-    "该账户缺少投票权限。请先提交公民保证金并刷新后再投票。",
   "Bond {amount} XOR": "质押 {amount} XOR",
   "Bond XOR": "质押 XOR",
   "Bond amount": "质押金额",
   "Bond amount (XOR)": "质押金额（XOR）",
   "Bond submitted: {hash}": "质押已提交：{hash}",
-  "Ballot submitted: {hash}": "选票已提交：{hash}",
   "Amount (XOR)": "金额（XOR）",
   "XOR Balance": "XOR 余额",
   Bonded: "已质押",
@@ -458,13 +387,6 @@ const ZH_MANUAL_TRANSLATIONS: TranslationTable = {
   "No {symbol} balance available to bond.": "没有可用于质押的 {symbol} 余额。",
   "Nominate validators and stake XOR": "质押 XOR",
   "Nominate validators and stake XOR for NPOS": "质押 XOR",
-  "Shield policy mode: {mode}.": "模式：{mode}。",
-  "Move funds to online wallet": "转到在线钱包",
-  "referendumId and proposalId are required for finalize.":
-    "执行 finalize 需要 referendumId 和 proposalId。",
-  "referendumId is required before submitting a ballot.":
-    "提交选票前需要 referendumId。",
-  "proposalId is required for enact.": "执行 enact 需要 proposalId。",
   "TAIRA connection ready": "TAIRA 连接就绪",
   "TAIRA locked": "TAIRA 已锁定",
   "TAIRA Testnet": "TAIRA 测试网",
@@ -496,37 +418,21 @@ const ZH_TW_MANUAL_TRANSLATIONS: TranslationTable = {
   "TAIRA Testnet": "TAIRA 測試網",
   "TAIRA Torii ready": "TAIRA Torii 已就緒",
   "Open Taira Explorer": "開啟 TAIRA Explorer",
-  "Citizenship bond and governance voting": "公民與投票",
-  "Bond citizenship and vote in governance referenda": "質押後投票",
-  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
-    "質押 {amount} XOR 後即可投票。",
-  "Shield policy mode: {mode}.": "模式：{mode}。",
-  "Move funds to online wallet": "移到線上錢包",
 };
 
 const KO_MANUAL_TRANSLATIONS: TranslationTable = {
-  Nay: "반대",
   "SORA Parliament": "SORA 의회",
-  "Citizenship bond and governance voting": "시민권과 투표",
-  "Bond citizenship and vote in governance referenda": "본딩 후 투표",
-  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
-    "{amount} XOR 본딩 후 투표",
   "A minimum of {amount} XOR is required to register citizenship.":
     "시민권 등록에는 최소 {amount} XOR이 필요합니다.",
   "Available XOR balance is below the required citizen bond amount.":
     "사용 가능한 XOR 잔액이 시민권 본딩 필요 수량보다 부족합니다.",
   "Citizenship Bond": "시민권 본딩",
   "Citizenship bond submitted: {hash}": "시민권 본딩 제출됨: {hash}",
-  "Citizenship voting permission detected. Bonding is no longer required.":
-    "시민권 투표 권한이 확인되었습니다. 추가 본딩은 필요하지 않습니다.",
-  "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.":
-    "이 계정에는 투표 권한이 없습니다. 시민권 본딩을 제출하고 새로 고침한 뒤 투표하세요.",
   "Bond {amount} XOR": "{amount} XOR 본딩",
   "Bond XOR": "XOR 본딩",
   "Bond amount": "본딩 수량",
   "Bond amount (XOR)": "본딩 수량 (XOR)",
   "Bond submitted: {hash}": "본딩 제출됨: {hash}",
-  "Ballot submitted: {hash}": "투표 제출됨: {hash}",
   "Amount (XOR)": "수량 (XOR)",
   "XOR Balance": "XOR 잔액",
   Bonded: "본딩됨",
@@ -545,13 +451,6 @@ const KO_MANUAL_TRANSLATIONS: TranslationTable = {
     "본딩에 사용할 {symbol} 잔액이 없습니다.",
   "Nominate validators and stake XOR": "XOR 스테이킹",
   "Nominate validators and stake XOR for NPOS": "XOR 스테이킹",
-  "Shield policy mode: {mode}.": "모드: {mode}.",
-  "Move funds to online wallet": "온라인 지갑으로 이동",
-  "referendumId and proposalId are required for finalize.":
-    "finalize에는 referendumId와 proposalId가 필요합니다.",
-  "referendumId is required before submitting a ballot.":
-    "투표를 제출하기 전에 referendumId가 필요합니다.",
-  "proposalId is required for enact.": "enact에는 proposalId가 필요합니다.",
   "Store for iCloud Drive": "iCloud Drive에 저장",
   "Store for Google Drive": "Google Drive에 저장",
   "Register another": "다른 계정 등록",
@@ -572,9 +471,6 @@ const KO_MANUAL_TRANSLATIONS: TranslationTable = {
 };
 
 const AR_MANUAL_TRANSLATIONS: TranslationTable = {
-  Aye: "نعم",
-  Nay: "لا",
-  Abstain: "امتناع",
   "Iroha Points": "نقاط إيروها",
   "Torii control deck": "لوحة تحكم Torii",
   "Modern Torii-connected wallet": "محفظة TAIRA",
@@ -603,7 +499,6 @@ const AR_MANUAL_TRANSLATIONS: TranslationTable = {
   "Auto-deduct and manage recurring services": "الدفعات المتكررة",
   "Transfer assets with camera or QR upload": "إرسال عبر QR",
   "Share QR codes or IH58 to request funds": "استلام عبر QR",
-  "Offline wallets, invoices, and QR exchanges": "مدفوعات دون اتصال",
   "Network metrics and asset explorer": "بيانات الشبكة",
   "Wallet Overview": "نظرة عامة على المحفظة",
   "Balances & activity": "الأرصدة والنشاط",
@@ -612,26 +507,17 @@ const AR_MANUAL_TRANSLATIONS: TranslationTable = {
   "Receive Points": "استلام النقاط",
   "Network & asset insights": "رؤى الشبكة والأصول",
   "SORA Parliament": "برلمان SORA",
-  "Citizenship bond and governance voting": "المواطنة والتصويت",
-  "Bond citizenship and vote in governance referenda": "أودع للمواطنة وصوّت",
-  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
-    "أودع {amount} XOR للتصويت.",
   "A minimum of {amount} XOR is required to register citizenship.":
     "يتطلب تسجيل المواطنة حدًا أدنى قدره {amount} XOR.",
   "Available XOR balance is below the required citizen bond amount.":
     "رصيد XOR المتاح أقل من قيمة سند المواطنة المطلوبة.",
   "Citizenship Bond": "سند المواطنة",
   "Citizenship bond submitted: {hash}": "تم إرسال سند المواطنة: {hash}",
-  "Citizenship voting permission detected. Bonding is no longer required.":
-    "تم اكتشاف صلاحية تصويت المواطنة. لم يعد الإيداع مطلوبًا.",
-  "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.":
-    "صلاحية الاقتراع غير متاحة لهذا الحساب. أرسل سند المواطنة ثم حدّث قبل التصويت.",
   "Bond {amount} XOR": "أودع {amount} XOR",
   "Bond XOR": "أودع XOR",
   "Bond amount": "قيمة الإيداع",
   "Bond amount (XOR)": "قيمة الإيداع (XOR)",
   "Bond submitted: {hash}": "تم إرسال الإيداع: {hash}",
-  "Ballot submitted: {hash}": "تم إرسال الاقتراع: {hash}",
   "Amount (XOR)": "الكمية (XOR)",
   "XOR Balance": "رصيد XOR",
   "Bond / Unbond": "إيداع / فك الإيداع",
@@ -647,13 +533,6 @@ const AR_MANUAL_TRANSLATIONS: TranslationTable = {
   "Nominate validators and stake XOR": "رشّح المدققين وقم بعمل Stake لـ XOR",
   "Nominate validators and stake XOR for NPOS":
     "رشّح المدققين وقم بعمل Stake لـ XOR لنظام NPOS",
-  "referendumId and proposalId are required for finalize.":
-    "يلزم referendumId و proposalId لإتمام finalize.",
-  "referendumId is required before submitting a ballot.":
-    "يلزم referendumId قبل إرسال الاقتراع.",
-  "proposalId is required for enact.": "يلزم proposalId لعملية enact.",
-  "Shield policy mode: {mode}.": "الوضع: {mode}.",
-  "Move funds to online wallet": "انقل إلى المحفظة المتصلة",
   "TAIRA Testnet": "شبكة TAIRA التجريبية",
   "Public TAIRA testnet profile.": "ملف شبكة TAIRA التجريبية العامة.",
   "Store for iCloud Drive": "حفظ في iCloud Drive",
@@ -675,9 +554,6 @@ const AR_MANUAL_TRANSLATIONS: TranslationTable = {
 };
 
 const FA_MANUAL_TRANSLATIONS: TranslationTable = {
-  Aye: "موافق",
-  Nay: "مخالف",
-  Abstain: "ممتنع",
   "Iroha Points": "امتیازهای Iroha",
   "Torii control deck": "داشبورد کنترل Torii",
   "Modern Torii-connected wallet": "کیف پول TAIRA",
@@ -706,7 +582,6 @@ const FA_MANUAL_TRANSLATIONS: TranslationTable = {
   "Auto-deduct and manage recurring services": "پرداخت های دوره ای",
   "Transfer assets with camera or QR upload": "ارسال با QR",
   "Share QR codes or IH58 to request funds": "دریافت با QR",
-  "Offline wallets, invoices, and QR exchanges": "پرداخت آفلاین",
   "Network metrics and asset explorer": "داده های شبکه",
   "Wallet Overview": "نمای کلی کیف پول",
   "Balances & activity": "موجودی و فعالیت",
@@ -715,26 +590,17 @@ const FA_MANUAL_TRANSLATIONS: TranslationTable = {
   "Receive Points": "دریافت امتیاز",
   "Network & asset insights": "بینش شبکه و دارایی",
   "SORA Parliament": "پارلمان SORA",
-  "Citizenship bond and governance voting": "شهروندی و رای",
-  "Bond citizenship and vote in governance referenda": "باند شهروندی و رای",
-  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
-    "{amount} XOR باند کنید و رای دهید.",
   "A minimum of {amount} XOR is required to register citizenship.":
     "برای ثبت شهروندی حداقل {amount} XOR لازم است.",
   "Available XOR balance is below the required citizen bond amount.":
     "موجودی XOR کمتر از مقدار باند شهروندی موردنیاز است.",
   "Citizenship Bond": "باند شهروندی",
   "Citizenship bond submitted: {hash}": "باند شهروندی ارسال شد: {hash}",
-  "Citizenship voting permission detected. Bonding is no longer required.":
-    "مجوز رای شهروندی شناسایی شد. دیگر نیازی به باند نیست.",
-  "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.":
-    "این حساب مجوز رای ندارد. پیش از رای دادن باند شهروندی را ارسال کرده و تازه‌سازی کنید.",
   "Bond {amount} XOR": "باند {amount} XOR",
   "Bond XOR": "باند XOR",
   "Bond amount": "مقدار باند",
   "Bond amount (XOR)": "مقدار باند (XOR)",
   "Bond submitted: {hash}": "باند ارسال شد: {hash}",
-  "Ballot submitted: {hash}": "رای ارسال شد: {hash}",
   "Amount (XOR)": "مقدار (XOR)",
   "XOR Balance": "موجودی XOR",
   "Bond / Unbond": "باند / آن‌باند",
@@ -752,13 +618,6 @@ const FA_MANUAL_TRANSLATIONS: TranslationTable = {
     "اعتبارسنج‌ها را نامزد کرده و XOR استیک کنید",
   "Nominate validators and stake XOR for NPOS":
     "اعتبارسنج‌ها را نامزد کرده و XOR را برای NPOS استیک کنید",
-  "referendumId and proposalId are required for finalize.":
-    "برای finalize به referendumId و proposalId نیاز است.",
-  "referendumId is required before submitting a ballot.":
-    "پیش از ارسال رای referendumId لازم است.",
-  "proposalId is required for enact.": "برای enact به proposalId نیاز است.",
-  "Shield policy mode: {mode}.": "حالت: {mode}.",
-  "Move funds to online wallet": "انتقال به کیف پول آنلاین",
   "TAIRA Testnet": "تست‌نت TAIRA",
   "Public TAIRA testnet profile.": "پروفایل عمومی تست‌نت TAIRA.",
   "Store for iCloud Drive": "ذخیره در iCloud Drive",
@@ -780,9 +639,6 @@ const FA_MANUAL_TRANSLATIONS: TranslationTable = {
 };
 
 const HE_MANUAL_TRANSLATIONS: TranslationTable = {
-  Aye: "בעד",
-  Nay: "נגד",
-  Abstain: "נמנע",
   "Iroha Points": "נקודות Iroha",
   "Torii control deck": "לוח בקרה של Torii",
   "Modern Torii-connected wallet": "ארנק TAIRA",
@@ -810,7 +666,6 @@ const HE_MANUAL_TRANSLATIONS: TranslationTable = {
   "Auto-deduct and manage recurring services": "תשלומים חוזרים",
   "Transfer assets with camera or QR upload": "שליחה עם QR",
   "Share QR codes or IH58 to request funds": "קבלה עם QR",
-  "Offline wallets, invoices, and QR exchanges": "תשלומים אופליין",
   "Network metrics and asset explorer": "נתוני רשת",
   "Wallet Overview": "סקירת ארנק",
   "Balances & activity": "יתרות ופעילות",
@@ -819,26 +674,17 @@ const HE_MANUAL_TRANSLATIONS: TranslationTable = {
   "Receive Points": "קבלת נקודות",
   "Network & asset insights": "תובנות רשת ונכסים",
   "SORA Parliament": "פרלמנט SORA",
-  "Citizenship bond and governance voting": "אזרחות והצבעה",
-  "Bond citizenship and vote in governance referenda": "בונד אזרחות והצביעו",
-  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
-    "בצעו בונד של {amount} XOR כדי להצביע.",
   "A minimum of {amount} XOR is required to register citizenship.":
     "נדרש מינימום של {amount} XOR לרישום אזרחות.",
   "Available XOR balance is below the required citizen bond amount.":
     "יתרת XOR הזמינה נמוכה מסכום בונד האזרחות הנדרש.",
   "Citizenship Bond": "בונד אזרחות",
   "Citizenship bond submitted: {hash}": "בונד האזרחות נשלח: {hash}",
-  "Citizenship voting permission detected. Bonding is no longer required.":
-    "זוהתה הרשאת הצבעת אזרחות. אין צורך נוסף בבונד.",
-  "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.":
-    "בחשבון זה חסרה הרשאת הצבעה. שלחו בונד אזרחות ורעננו לפני ההצבעה.",
   "Bond {amount} XOR": "בצעו בונד של {amount} XOR",
   "Bond XOR": "בצעו בונד XOR",
   "Bond amount": "סכום בונד",
   "Bond amount (XOR)": "סכום בונד (XOR)",
   "Bond submitted: {hash}": "הבונד נשלח: {hash}",
-  "Ballot submitted: {hash}": "ההצבעה נשלחה: {hash}",
   "Amount (XOR)": "כמות (XOR)",
   "XOR Balance": "יתרת XOR",
   "Bond / Unbond": "בונד / שחרור בונד",
@@ -853,13 +699,6 @@ const HE_MANUAL_TRANSLATIONS: TranslationTable = {
   "Nominate validators and stake XOR": "מנו מאמתים ובצעו סטייק ל-XOR",
   "Nominate validators and stake XOR for NPOS":
     "מנו מאמתים ובצעו סטייק ל-XOR עבור NPOS",
-  "referendumId and proposalId are required for finalize.":
-    "ל-finalize נדרשים referendumId ו-proposalId.",
-  "referendumId is required before submitting a ballot.":
-    "נדרש referendumId לפני שליחת הצבעה.",
-  "proposalId is required for enact.": "נדרש proposalId עבור enact.",
-  "Shield policy mode: {mode}.": "מצב: {mode}.",
-  "Move funds to online wallet": "העברה לארנק אונליין",
   "TAIRA Testnet": "רשת בדיקות TAIRA",
   "Public TAIRA testnet profile.": "פרופיל ציבורי של רשת הבדיקות TAIRA.",
   "Store for iCloud Drive": "שמירה ב-iCloud Drive",
@@ -881,9 +720,6 @@ const HE_MANUAL_TRANSLATIONS: TranslationTable = {
 };
 
 const UR_MANUAL_TRANSLATIONS: TranslationTable = {
-  Aye: "ہاں",
-  Nay: "نہیں",
-  Abstain: "غیر حاضر",
   "Iroha Points": "Iroha پوائنٹس",
   "Torii control deck": "Torii کنٹرول ڈیک",
   "Modern Torii-connected wallet": "TAIRA والیٹ",
@@ -911,7 +747,6 @@ const UR_MANUAL_TRANSLATIONS: TranslationTable = {
   "Auto-deduct and manage recurring services": "باربار ادائیگیاں",
   "Transfer assets with camera or QR upload": "QR سے بھیجیں",
   "Share QR codes or IH58 to request funds": "QR سے وصول کریں",
-  "Offline wallets, invoices, and QR exchanges": "آف لائن ادائیگیاں",
   "Network metrics and asset explorer": "نیٹ ورک ڈیٹا",
   "Wallet Overview": "والیٹ کا جائزہ",
   "Balances & activity": "بیلنس اور سرگرمی",
@@ -920,27 +755,17 @@ const UR_MANUAL_TRANSLATIONS: TranslationTable = {
   "Receive Points": "پوائنٹس وصول کریں",
   "Network & asset insights": "نیٹ ورک اور اثاثہ بصیرت",
   "SORA Parliament": "سورا پارلیمنٹ",
-  "Citizenship bond and governance voting": "شہریت اور ووٹنگ",
-  "Bond citizenship and vote in governance referenda":
-    "شہریت بانڈ کریں اور ووٹ دیں",
-  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
-    "{amount} XOR بانڈ کریں اور ووٹ دیں۔",
   "A minimum of {amount} XOR is required to register citizenship.":
     "شہریت رجسٹر کرنے کے لیے کم از کم {amount} XOR درکار ہے۔",
   "Available XOR balance is below the required citizen bond amount.":
     "دستیاب XOR بیلنس مطلوبہ شہریت بانڈ سے کم ہے۔",
   "Citizenship Bond": "شہریت بانڈ",
   "Citizenship bond submitted: {hash}": "شہریت بانڈ جمع ہو گیا: {hash}",
-  "Citizenship voting permission detected. Bonding is no longer required.":
-    "شہری ووٹنگ کی اجازت موجود ہے۔ مزید بانڈنگ درکار نہیں۔",
-  "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.":
-    "اس اکاؤنٹ میں بیلٹ کی اجازت موجود نہیں۔ ووٹنگ سے پہلے شہریت بانڈ جمع کریں اور ریفریش کریں۔",
   "Bond {amount} XOR": "{amount} XOR بانڈ کریں",
   "Bond XOR": "XOR بانڈ کریں",
   "Bond amount": "بانڈ مقدار",
   "Bond amount (XOR)": "بانڈ مقدار (XOR)",
   "Bond submitted: {hash}": "بانڈ جمع ہو گیا: {hash}",
-  "Ballot submitted: {hash}": "بیلٹ جمع ہو گیا: {hash}",
   "Amount (XOR)": "مقدار (XOR)",
   "XOR Balance": "XOR بیلنس",
   "Bond / Unbond": "بانڈ / ان بانڈ",
@@ -957,13 +782,6 @@ const UR_MANUAL_TRANSLATIONS: TranslationTable = {
   "Nominate validators and stake XOR": "ویلیڈیٹر نامزد کریں اور XOR اسٹیک کریں",
   "Nominate validators and stake XOR for NPOS":
     "NPOS کے لیے ویلیڈیٹر نامزد کریں اور XOR اسٹیک کریں",
-  "referendumId and proposalId are required for finalize.":
-    "finalize کے لیے referendumId اور proposalId درکار ہیں۔",
-  "referendumId is required before submitting a ballot.":
-    "بیلٹ جمع کرنے سے پہلے referendumId درکار ہے۔",
-  "proposalId is required for enact.": "enact کے لیے proposalId درکار ہے۔",
-  "Shield policy mode: {mode}.": "موڈ: {mode}۔",
-  "Move funds to online wallet": "آن لائن والیٹ میں منتقل کریں",
   "TAIRA Testnet": "TAIRA ٹیسٹ نیٹ",
   "Public TAIRA testnet profile.": "عوامی TAIRA ٹیسٹ نیٹ پروفائل۔",
   "Store for iCloud Drive": "iCloud Drive میں محفوظ کریں",
@@ -1046,6 +864,18 @@ const ZH_TW_TRANSLATIONS: TranslationTable = {
 };
 const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   ...GOVERNANCE_ENGLISH_FALLBACK_TRANSLATIONS,
+  "{amount} {asset} ({kind})": "{amount} {asset} ({kind})",
+  "Fee quote unavailable": "Fee quote unavailable",
+  "Network fee quote unavailable.": "Network fee quote unavailable.",
+  Nexus: "Nexus",
+  "Pipeline gas": "Pipeline gas",
+  "Quoted maximum network fee: {components} (paid by {payer}).":
+    "Quoted maximum network fee: {components} (paid by {payer}).",
+  "Quoted maximum network fee: none.": "Quoted maximum network fee: none.",
+  "Quoted maximum: {components}": "Quoted maximum: {components}",
+  "Quoted maximum: none": "Quoted maximum: none",
+  sponsor: "sponsor",
+  wallet: "wallet",
   "Storage base fee": "Storage base fee",
   "Actual storage charge": "Actual storage charge",
   "Maximum compute reservation charge": "Maximum compute reservation charge",
@@ -1075,26 +905,28 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Creating manual offer…": "Creating manual offer…",
   "Live wallets create and join Kaigi meetings through on-chain signaling metadata.":
     "Live wallets create and join Kaigi meetings through on-chain signaling metadata.",
+  "Keep this host window open after sharing the invite.":
+    "Keep this host window open after sharing the invite.",
+  "Manual Kaigi signaling is available only for local-only wallets.":
+    "Manual Kaigi signaling is available only for local-only wallets.",
   "Manual offer packet ready in Advanced signaling. No meeting link was created.":
     "Manual offer packet ready in Advanced signaling. No meeting link was created.",
-  "On-chain Kaigi signaling is blocked until the endpoint identity is verified. Advanced manual signaling remains available.":
-    "On-chain Kaigi signaling is blocked until the endpoint identity is verified. Advanced manual signaling remains available.",
   "Open or paste a Kaigi meeting link, then join the live meeting.":
     "Open or paste a Kaigi meeting link, then join the live meeting.",
   "Share the meeting link. It contains only the on-chain call ID and invite secret.":
     "Share the meeting link. It contains only the on-chain call ID and invite secret.",
-  "The on-chain meeting was not created, so there is no invite link to share. The prepared raw offer is available only in Advanced signaling.":
-    "The on-chain meeting was not created, so there is no invite link to share. The prepared raw offer is available only in Advanced signaling.",
-  "This endpoint does not advertise the Kaigi meeting write operations. Use Advanced signaling for manual raw packets.":
-    "This endpoint does not advertise the Kaigi meeting write operations. Use Advanced signaling for manual raw packets.",
+  "This endpoint does not advertise the Kaigi meeting write operations.":
+    "This endpoint does not advertise the Kaigi meeting write operations.",
   "This meeting has ended.": "This meeting has ended.",
   "This meeting is not active.": "This meeting is not active.",
   "This wallet is local only. On-chain meeting links require a live wallet; use Advanced signaling for manual raw packets.":
     "This wallet is local only. On-chain meeting links require a live wallet; use Advanced signaling for manual raw packets.",
   "Unable to create a manual Kaigi offer.":
     "Unable to create a manual Kaigi offer.",
-  "Wait for endpoint capability inspection to finish. Advanced manual signaling remains available.":
-    "Wait for endpoint capability inspection to finish. Advanced manual signaling remains available.",
+  "Unable to resume the active Kaigi meeting.":
+    "Unable to resume the active Kaigi meeting.",
+  "Clipboard access failed. Paste the meeting invite manually.":
+    "Clipboard access failed. Paste the meeting invite manually.",
   "Approve request": "Approve request",
   "Approve signing request?": "Approve signing request?",
   "IrohaConnect request": "IrohaConnect request",
@@ -1111,30 +943,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "This endpoint does not advertise the required staking write operations.",
   "Account registration finalized in block {block}: {hash}":
     "Account registration finalized in block {block}: {hash}",
-  "Wait for endpoint capability inspection to finish. Local offline payment workflows remain available.":
-    "Wait for endpoint capability inspection to finish. Local offline payment workflows remain available.",
-  "Wait for the online move to finish before changing the offline balance.":
-    "Wait for the online move to finish before changing the offline balance.",
-  "This offline balance is locked because an online move finalized but local reconciliation failed.":
-    "This offline balance is locked because an online move finalized but local reconciliation failed.",
-  "The online move finalized, but the offline balance is locked because local reconciliation failed.":
-    "The online move finalized, but the offline balance is locked because local reconciliation failed.",
-  "This endpoint does not advertise the required confidential transfer operations. Local offline payment workflows remain available.":
-    "This endpoint does not advertise the required confidential transfer operations. Local offline payment workflows remain available.",
-  "Connect a Solana wallet to continue.":
-    "Connect a Solana wallet to continue.",
-  "Connect Solana wallet": "Connect Solana wallet",
-  "Disconnect Solana": "Disconnect Solana",
-  "Enter a Solana transaction signature before fetching proof data.":
-    "Enter a Solana transaction signature before fetching proof data.",
-  "Enter a valid Solana Base58 recipient address.":
-    "Enter a valid Solana Base58 recipient address.",
-  "Solana Base58 address": "Solana Base58 address",
-  "Solana burn transaction": "Solana burn transaction",
-  "Solana finalize transaction": "Solana finalize transaction",
-  "Solana wallet": "Solana wallet",
-  "TON -> TAIRA needs a browser-safe TON source proof module before any TON source transaction is broadcast.":
-    "TON -> TAIRA needs a browser-safe TON source proof module before any TON source transaction is broadcast.",
   "Quick actions": "Quick actions",
   Daily: "Daily",
   Grow: "Grow",
@@ -1164,7 +972,7 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "This endpoint does not advertise any signing algorithms supported by this app.",
   "Balance, funding, and activity": "Balance, funding, and activity",
   "Network health and activity": "Network health and activity",
-  "Pay with a QR or account": "Pay with a QR or account",
+  "Send to a canonical account": "Send to a canonical account",
   "Show a payment QR": "Show a payment QR",
   "Stake XOR with a validator": "Stake XOR with a validator",
   "Nominated proof of stake": "Nominated proof of stake",
@@ -1235,278 +1043,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Unbond finalized in block {block}: {hash}",
   "Reward claim finalized in block {block}: {hash}":
     "Reward claim finalized in block {block}: {hash}",
-  "Register and vote": "Register and vote",
-  "SCCP Bridge": "SCCP Bridge",
-  "TAIRA and TRON XOR bridge": "TAIRA and TRON XOR bridge",
-  "TAIRA, TRON, and BSC XOR bridge": "TAIRA, TRON, and BSC XOR bridge",
-  "TAIRA, TRON, BSC, TON, and Solana XOR bridge":
-    "TAIRA, TRON, BSC, TON, and Solana XOR bridge",
-  "Bridge XOR with TRON": "Bridge XOR with TRON",
-  "Bridge XOR between TAIRA and {network}.":
-    "Bridge XOR between TAIRA and {network}.",
-  "Bridge XOR between TAIRA and TRON mainnet.":
-    "Bridge XOR between TAIRA and TRON mainnet.",
-  "Operational status": "Operational status",
-  "SCCP route": "SCCP route",
-  TRON: "TRON",
-  TON: "TON",
-  "TON Testnet": "TON Testnet",
-  "BSC testnet": "BSC testnet",
-  "BSC Testnet": "BSC Testnet",
-  "BSC Mainnet": "BSC Mainnet",
-  "Refresh route": "Refresh route",
-  "Disconnect TRON": "Disconnect TRON",
-  "Disconnect TON": "Disconnect TON",
-  "Disconnect BSC": "Disconnect BSC",
-  Connecting: "Connecting",
-  Disconnecting: "Disconnecting",
-  "Connect TRON wallet": "Connect TRON wallet",
-  "Connect TON wallet": "Connect TON wallet",
-  "Connect BSC wallet": "Connect BSC wallet",
-  "TAIRA account": "TAIRA account",
-  "TRON wallet": "TRON wallet",
-  "TON wallet": "TON wallet",
-  "BSC wallet": "BSC wallet",
-  Route: "Route",
-  "XOR balance": "XOR balance",
-  "WalletConnect ready": "WalletConnect ready",
-  "WalletConnect not configured": "WalletConnect not configured",
-  "WalletConnect misconfigured": "WalletConnect misconfigured",
-  "TAIRA enabled": "TAIRA enabled",
-  "TAIRA only": "TAIRA only",
-  "Bridge transfer": "Bridge transfer",
-  "TAIRA source": "TAIRA source",
-  "Source-chain return": "Source-chain return",
-  "Send XOR from TAIRA, then finalize it on the selected destination chain.":
-    "Send XOR from TAIRA, then finalize it on the selected destination chain.",
-  "Burn on the source chain, then settle the bound proof on TAIRA.":
-    "Burn on the source chain, then settle the bound proof on TAIRA.",
-  "Bridge direction": "Bridge direction",
-  "TAIRA -> TRON": "TAIRA -> TRON",
-  "TRON -> TAIRA": "TRON -> TAIRA",
-  "TAIRA -> TON": "TAIRA -> TON",
-  "TON -> TAIRA": "TON -> TAIRA",
-  "TAIRA -> BSC": "TAIRA -> BSC",
-  "BSC -> TAIRA": "BSC -> TAIRA",
-  "TRON recipient": "TRON recipient",
-  "TON recipient": "TON recipient",
-  "BSC recipient": "BSC recipient",
-  "TRON Base58Check address": "TRON Base58Check address",
-  "0:... TON raw address": "0:... TON raw address",
-  "0x... BSC address": "0x... BSC address",
-  "TAIRA recipient": "TAIRA recipient",
-  "testu... account": "testu... account",
-  "Message ID": "Message ID",
-  "Optional 32-byte SCCP message id": "Optional 32-byte SCCP message id",
-  "Use this only to resume a TAIRA-origin message after it was submitted.":
-    "Use this only to resume a TAIRA-origin message after it was submitted.",
-  "Generated message ID": "Generated message ID",
-  "Generated after the source-chain proof is bound.":
-    "Generated after the source-chain proof is bound.",
-  "TRON transaction ID": "TRON transaction ID",
-  "TON transaction hash": "TON transaction hash",
-  "TON source transaction": "TON source transaction",
-  "BSC transaction hash": "BSC transaction hash",
-  "Optional TRON burn transaction id": "Optional TRON burn transaction id",
-  "Optional TON burn transaction hash": "Optional TON burn transaction hash",
-  "Optional BSC burn transaction hash": "Optional BSC burn transaction hash",
-  "Prepare TAIRA -> TRON": "Prepare TAIRA -> TRON",
-  "Prepare TRON -> TAIRA": "Prepare TRON -> TAIRA",
-  "Prepare TAIRA -> TON": "Prepare TAIRA -> TON",
-  "Prepare TON -> TAIRA": "Prepare TON -> TAIRA",
-  "Prepare TAIRA -> BSC": "Prepare TAIRA -> BSC",
-  "Prepare BSC -> TAIRA": "Prepare BSC -> TAIRA",
-  "Loading proof job": "Loading proof job",
-  "Loading proof data": "Loading proof data",
-  "Fetch proof job": "Fetch proof job",
-  "Resume with message ID": "Resume with message ID",
-  "Resume from source transaction": "Resume from source transaction",
-  "Proof progress": "Proof progress",
-  "Proof and transactions": "Proof and transactions",
-  "Frontend proof orchestration status": "Frontend proof orchestration status",
-  "Proof package ready": "Proof package ready",
-  "Route activity": "Route activity",
-  "Recent SCCP messages from Torii": "Recent SCCP messages from Torii",
-  Message: "Message",
-  "No recent SCCP messages found.": "No recent SCCP messages found.",
-  "Transaction links": "Transaction links",
-  "TON source bridge": "TON source bridge",
-  "Links appear after a bridge leg is submitted.":
-    "Links appear after a bridge leg is submitted.",
-  "No transaction links yet.": "No transaction links yet.",
-  "Unavailable on this network": "Unavailable on this network",
-  "Route ready": "Route ready",
-  "Checking route": "Checking route",
-  "Route not ready": "Route not ready",
-  "SCCP bridging is enabled only on TAIRA testnet.":
-    "SCCP bridging is enabled only on TAIRA testnet.",
-  "Switch to the TAIRA testnet profile.":
-    "Switch to the TAIRA testnet profile.",
-  "Set VITE_WALLETCONNECT_PROJECT_ID to enable TRON wallet connection.":
-    "Set VITE_WALLETCONNECT_PROJECT_ID to enable TRON wallet connection.",
-  "SCCP capabilities have not been loaded.":
-    "SCCP capabilities have not been loaded.",
-  "This Torii endpoint is missing SCCP submit endpoints.":
-    "This Torii endpoint is missing SCCP submit endpoints.",
-  "SCCP proof manifests have not been loaded.":
-    "SCCP proof manifests have not been loaded.",
-  "No TRON SCCP manifest is advertised by this endpoint.":
-    "No TRON SCCP manifest is advertised by this endpoint.",
-  "The TRON SCCP route is not production-ready.":
-    "The TRON SCCP route is not production-ready.",
-  "The TAIRA burn-record ZK contract material is missing.":
-    "The TAIRA burn-record ZK contract material is missing.",
-  "Not loaded": "Not loaded",
-  "Switch to the TAIRA testnet profile to use this bridge.":
-    "Switch to the TAIRA testnet profile to use this bridge.",
-  "WalletConnect project ID is missing, so TRON wallet connection is disabled.":
-    "WalletConnect project ID is missing, so TRON wallet connection is disabled.",
-  "WalletConnect project ID is invalid, so TRON wallet connection is disabled.":
-    "WalletConnect project ID is invalid, so TRON wallet connection is disabled.",
-  "WalletConnect project ID is missing, so wallet connection is disabled.":
-    "WalletConnect project ID is missing, so wallet connection is disabled.",
-  "WalletConnect project ID is invalid, so wallet connection is disabled.":
-    "WalletConnect project ID is invalid, so wallet connection is disabled.",
-  "TON wallet connector is not available in this build.":
-    "TON wallet connector is not available in this build.",
-  "TON wallet connector is misconfigured.":
-    "TON wallet connector is misconfigured.",
-  "Connect a TRON wallet to continue.": "Connect a TRON wallet to continue.",
-  "Connect a TON wallet to continue.": "Connect a TON wallet to continue.",
-  "Connect a BSC wallet to continue.": "Connect a BSC wallet to continue.",
-  "Route readiness must be true before bridge actions are enabled.":
-    "Route readiness must be true before bridge actions are enabled.",
-  "Bridge actions will request explicit wallet approval before signing.":
-    "Bridge actions will request explicit wallet approval before signing.",
-  "Enter a valid TRON Base58Check recipient.":
-    "Enter a valid TRON Base58Check recipient.",
-  "Enter a valid TON raw recipient address.":
-    "Enter a valid TON raw recipient address.",
-  "Enter a valid BSC recipient address.":
-    "Enter a valid BSC recipient address.",
-  "TON SCCP execution is blocked until taira_ton_xor SDK helpers, contracts, and proof modules are published.":
-    "TON SCCP execution is blocked until taira_ton_xor SDK helpers, contracts, and proof modules are published.",
-  "BSC route execution is blocked until the taira_bsc_xor route manifest and BSC prover modules are published.":
-    "BSC route execution is blocked until the taira_bsc_xor route manifest and BSC prover modules are published.",
-  "BSC -> TAIRA settlement is blocked until a browser-safe BSC source proof module is published.":
-    "BSC -> TAIRA settlement is blocked until a browser-safe BSC source proof module is published.",
-  "TON -> TAIRA is blocked until the TON source bridge and source-proof package are published.":
-    "TON -> TAIRA is blocked until the TON source bridge and source-proof package are published.",
-  "TON source transaction can be submitted, but TAIRA settlement waits for the TON source-proof package.":
-    "TON source transaction can be submitted, but TAIRA settlement waits for the TON source-proof package.",
-  "Enter a TAIRA testnet account.": "Enter a TAIRA testnet account.",
-  "Enter a SCCP message ID before fetching proof data.":
-    "Enter a SCCP message ID before fetching proof data.",
-  "Enter a TRON transaction ID before fetching proof data.":
-    "Enter a TRON transaction ID before fetching proof data.",
-  "Enter a TON transaction hash before fetching proof data.":
-    "Enter a TON transaction hash before fetching proof data.",
-  "Enter a BSC transaction hash before fetching proof data.":
-    "Enter a BSC transaction hash before fetching proof data.",
-  "Validate route": "Validate route",
-  "Waiting for route readiness": "Waiting for route readiness",
-  "Gather chain data": "Gather chain data",
-  "Waiting for source transaction data": "Waiting for source transaction data",
-  "Generate proof": "Generate proof",
-  "Worker idle": "Worker idle",
-  "Submit target leg": "Submit target leg",
-  "Waiting for wallet approval": "Waiting for wallet approval",
-  "Route and wallet are ready": "Route and wallet are ready",
-  "Deriving TAIRA burn-record payload": "Deriving TAIRA burn-record payload",
-  "Canonical TAIRA burn-record payload derived":
-    "Canonical TAIRA burn-record payload derived",
-  "Queueing TAIRA burn-record proof request":
-    "Queueing TAIRA burn-record proof request",
-  "TAIRA burn-record proof request queued":
-    "TAIRA burn-record proof request queued",
-  "Generating TAIRA burn-record proof": "Generating TAIRA burn-record proof",
-  "Creating TON source transaction": "Creating TON source transaction",
-  "TON source transaction request created":
-    "TON source transaction request created",
-  "TON-source proof data collection requires the published source prover":
-    "TON-source proof data collection requires the published source prover",
-  "TON source transaction signed; TAIRA settlement is waiting for the TON source-proof package":
-    "TON source transaction signed; TAIRA settlement is waiting for the TON source-proof package",
-  "TON source transaction accepted; TAIRA settlement is waiting for the TON source-proof package":
-    "TON source transaction accepted; TAIRA settlement is waiting for the TON source-proof package",
-  "TAIRA burn-record proof is ready": "TAIRA burn-record proof is ready",
-  "Submitting TAIRA source transaction": "Submitting TAIRA source transaction",
-  "TAIRA source transaction submitted; fetch the SCCP proof job after indexing":
-    "TAIRA source transaction submitted; fetch the SCCP proof job after indexing",
-  "Waiting for SCCP proof job indexing": "Waiting for SCCP proof job indexing",
-  "Canonical TAIRA outbound payload preview prepared":
-    "Canonical TAIRA outbound payload preview prepared",
-  "Canonical TAIRA burn-record request prepared":
-    "Canonical TAIRA burn-record request prepared",
-  "Collecting current finality data": "Collecting current finality data",
-  "Source chain data checked": "Source chain data checked",
-  "Waiting for SCCP source artifact and browser-safe prover":
-    "Waiting for SCCP source artifact and browser-safe prover",
-  "No signing request has been sent": "No signing request has been sent",
-  "No signing request has been sent yet":
-    "No signing request has been sent yet",
-  "TAIRA source transaction": "TAIRA source transaction",
-  "TRON transaction": "TRON transaction",
-  "BSC transaction": "BSC transaction",
-  "Route and message id accepted": "Route and message id accepted",
-  "Route and TRON transaction id accepted":
-    "Route and TRON transaction id accepted",
-  "Route and BSC transaction hash accepted":
-    "Route and BSC transaction hash accepted",
-  "Torii returned an SCCP proof job": "Torii returned an SCCP proof job",
-  "Collecting TRON transaction and finality data":
-    "Collecting TRON transaction and finality data",
-  "Waiting for TRON finality and event indexing":
-    "Waiting for TRON finality and event indexing",
-  "Collecting BSC transaction and receipt data":
-    "Collecting BSC transaction and receipt data",
-  "Waiting for BSC receipt and block indexing":
-    "Waiting for BSC receipt and block indexing",
-  "TRON source transaction data collected":
-    "TRON source transaction data collected",
-  "BSC source transaction data collected":
-    "BSC source transaction data collected",
-  "Generating TRON source proof package":
-    "Generating TRON source proof package",
-  "Generating BSC source proof package": "Generating BSC source proof package",
-  "TRON source proof package is ready": "TRON source proof package is ready",
-  "BSC source proof package is ready": "BSC source proof package is ready",
-  "Submitting TAIRA settlement": "Submitting TAIRA settlement",
-  "TAIRA settlement submitted": "TAIRA settlement submitted",
-  "Waiting for TAIRA settlement confirmation":
-    "Waiting for TAIRA settlement confirmation",
-  "TAIRA settlement confirmed": "TAIRA settlement confirmed",
-  "TAIRA settlement transaction": "TAIRA settlement transaction",
-  "Proof job metadata is available": "Proof job metadata is available",
-  "Target-chain signing is not requested automatically":
-    "Target-chain signing is not requested automatically",
-  "Generating TRON finalize proof": "Generating TRON finalize proof",
-  "Generating BSC finalize proof": "Generating BSC finalize proof",
-  "TRON finalize proof package is ready":
-    "TRON finalize proof package is ready",
-  "BSC finalize proof package is ready": "BSC finalize proof package is ready",
-  "TRON finalize transaction": "TRON finalize transaction",
-  "BSC finalize transaction": "BSC finalize transaction",
-  "TON verifier contract": "TON verifier contract",
-  "Requesting BSC wallet approval": "Requesting BSC wallet approval",
-  "Waiting for BSC finalize confirmation":
-    "Waiting for BSC finalize confirmation",
-  "BSC finalize transaction confirmed": "BSC finalize transaction confirmed",
-  "Creating BSC burn transaction": "Creating BSC burn transaction",
-  "Unsigned BSC burn transaction created":
-    "Unsigned BSC burn transaction created",
-  "BSC-source proof data collection can begin after broadcast":
-    "BSC-source proof data collection can begin after broadcast",
-  "BSC burn transaction broadcast": "BSC burn transaction broadcast",
-  "Signed TRON finalize transaction broadcast":
-    "Signed TRON finalize transaction broadcast",
-  "TRON finalize transaction confirmed": "TRON finalize transaction confirmed",
-  "Waiting for TRON finality before TAIRA proof submission":
-    "Waiting for TRON finality before TAIRA proof submission",
   "0.0001": "0.0001",
   Governance: "Governance",
-  "Citizenship, referenda, ballots, and council status":
-    "Citizenship, referenda, ballots, and council status",
   "Explorer QR and network status": "Explorer QR and network status",
   "Manage recurring payments": "Manage recurring payments",
   "Live subscription NFTs and plan metadata from Torii.":
@@ -1582,10 +1120,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Network fee: charged on-chain ({asset}).",
   "Network fee: charged on-chain (amount unavailable).":
     "Network fee: charged on-chain (amount unavailable).",
-  "Private Kaigi funding transaction submitted.":
-    "Private Kaigi funding transaction submitted.",
-  "Private Kaigi funding finalized in block {block}: {hash}":
-    "Private Kaigi funding finalized in block {block}: {hash}",
   "Meeting creation finalized in block {block}: {hash}":
     "Meeting creation finalized in block {block}: {hash}",
   "Meeting join finalized in block {block}: {hash}":
@@ -1610,29 +1144,18 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Code hash": "Code hash",
   "ABI hash": "ABI hash",
   "ABI version": "ABI version",
-  "Voting mode": "Voting mode",
-  Plain: "Plain",
-  ZK: "ZK",
   "Window lower": "Window lower",
   "Window upper": "Window upper",
   "Limits JSON": "Limits JSON",
   "Prepare draft": "Prepare draft",
   "Set both window bounds or leave both empty.":
     "Set both window bounds or leave both empty.",
-  "Voting window bounds must be positive whole numbers.":
-    "Voting window bounds must be positive whole numbers.",
-  "Voting window lower bound must be less than or equal to the upper bound.":
-    "Voting window lower bound must be less than or equal to the upper bound.",
   "Limits JSON must be a JSON object.": "Limits JSON must be a JSON object.",
   "Invalid limits JSON.": "Invalid limits JSON.",
   "Enter a contract target, code hash, and ABI hash first.":
     "Enter a contract target, code hash, and ABI hash first.",
-  "Proposal draft prepared with {count} instruction(s).":
-    "Proposal draft prepared with {count} instruction(s).",
-  "Proposal draft: {summary}": "Proposal draft: {summary}",
   "Current Height": "Current Height",
   "Expired Locks": "Expired Locks",
-  "Referenda With Expired Locks": "Referenda With Expired Locks",
   "Last Sweep": "Last Sweep",
   "Council members": "Council members",
   "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not an on-chain dataspace alias.":
@@ -1661,8 +1184,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Your faucet request is in flight. This can take a few seconds.":
     "Your faucet request is in flight. This can take a few seconds.",
   "XOR requested: {hash}": "XOR finalized on-chain: {hash}",
-  "Launch live SoraCloud services": "Launch live SoraCloud services",
-  "Launch and monitor live services": "Launch and monitor live services",
   "Live services": "Live services",
   "Last refresh": "Last refresh",
   "SoraCloud is not available on this endpoint yet.":
@@ -1673,13 +1194,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Checking SoraCloud...": "Checking SoraCloud...",
   Refreshing: "Refreshing",
   "Open Settings": "Open Settings",
-  "Launch instance": "Launch instance",
-  "Deploy a Hugging Face model through the live SoraCloud API.":
-    "Deploy a Hugging Face model through the live SoraCloud API.",
-  "Hugging Face": "Hugging Face",
   "Choose model": "Choose model",
   "Lease and payment": "Lease and payment",
-  "Review and launch": "Review and launch",
   "Hugging Face repo": "Hugging Face repo",
   "owner/model-name": "owner/model-name",
   Revision: "Revision",
@@ -1712,11 +1228,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   Lease: "Lease",
   "{count} hours": "{count} hours",
   "Base fee": "Base fee",
-  "Launch submitted": "Launch submitted",
   Back: "Back",
   Next: "Next",
-  Launching: "Launching",
-  "Launch live instance": "Launch live instance",
   "Only records returned by the active Torii endpoint are shown.":
     "Only records returned by the active Torii endpoint are shown.",
   "{count} revisions": "{count} revisions",
@@ -1724,10 +1237,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "No SoraCloud services found on this endpoint.",
   "Live services will appear after SoraCloud is available.":
     "Live services will appear after SoraCloud is available.",
-  "Use Launch instance to submit a real Hugging Face deployment.":
-    "Use Launch instance to submit a real Hugging Face deployment.",
-  "Refresh after switching to a SoraCloud-enabled Torii endpoint.":
-    "Refresh after switching to a SoraCloud-enabled Torii endpoint.",
   Diagnostics: "Diagnostics",
   API: "API",
   "Status code": "Status code",
@@ -1740,20 +1249,14 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "API unavailable": "API unavailable",
   "Connection error": "Connection error",
   "Not refreshed": "Not refreshed",
-  "Select a SoraCloud-enabled endpoint before launching.":
-    "Select a SoraCloud-enabled endpoint before launching.",
   "Create or restore a wallet first.": "Create or restore a wallet first.",
-  "Save this wallet in the secure vault before launching.":
-    "Save this wallet in the secure vault before launching.",
   Payments: "Payments",
-  "Earn & Vote": "Earn & Vote",
   Tools: "Tools",
   "Create wallet": "Create wallet",
   "Advanced settings": "Advanced settings",
   "Supply, activity, and explorer signals":
     "Supply, activity, and explorer signals",
   "Stake XOR": "Stake XOR",
-  Vote: "Vote",
   "Choose a validator and manage stake": "Choose a validator and manage stake",
   "Choose a validator, enter an amount, and manage your stake.":
     "Choose a validator, enter an amount, and manage your stake.",
@@ -1821,7 +1324,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Starter funds": "Starter funds",
   "Private balance": "Private balance",
   "Standard balance": "Standard balance",
-  "Move to private balance": "Move to private balance",
   "Private balance details": "Private balance details",
   "Rescan private balance": "Rescan private balance",
   "Asset and account details": "Asset and account details",
@@ -1835,17 +1337,12 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Send mode": "Send mode",
   Private: "Private",
   Recipient: "Recipient",
-  "Paste private address, scan a Receive QR, or enter your own wallet to make funds private.":
-    "Paste private address, scan a Receive QR, or enter your own wallet to make funds private.",
   "Resolving recipient…": "Resolving recipient…",
   "Alias {alias} resolves to {accountId}.":
     "Alias {alias} resolves to {accountId}.",
   "Recipient normalized to {accountId}.":
     "Recipient normalized to {accountId}.",
   "Unable to resolve recipient.": "Unable to resolve recipient.",
-  "Private transfers use a recipient private address or Receive QR and do not include memos.":
-    "Private transfers use a recipient private address or Receive QR and do not include memos.",
-  "Private transfer": "Private transfer",
   "Private address": "Private address",
   "Show a fresh QR for this wallet.": "Show a fresh QR for this wallet.",
   "Hide QR": "Hide QR",
@@ -1863,7 +1360,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Staking group": "Staking group",
   "Staking details": "Staking details",
   "Stake / Unstake": "Stake / Unstake",
-  "Voting eligibility": "Voting eligibility",
   Citizenship: "Citizenship",
   Citizens: "Citizens",
   "Checking citizenship…": "Checking citizenship…",
@@ -1874,20 +1370,13 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Citizenship: {state}": "Citizenship: {state}",
   "Citizenship registered.": "Citizenship registered.",
   registered: "registered",
-  "Bond {amount} XOR once to enable voting for this wallet.":
-    "Bond {amount} XOR once to enable voting for this wallet.",
-  "Voting details": "Voting details",
   "Load proposal": "Load proposal",
   "Raw proposal data": "Raw proposal data",
-  "Advanced governance tools": "Advanced governance tools",
   "VPN details": "VPN details",
   "Session details": "Session details",
   "Network profile": "Network profile",
   "1. Set up device wallet": "1. Set up device wallet",
-  "2. Sync offline funds": "2. Sync offline funds",
-  "Offline limits": "Offline limits",
   "3. Request payment": "3. Request payment",
-  "Invoice details": "Invoice details",
   "4. Pay an invoice": "4. Pay an invoice",
   "Payment details": "Payment details",
   "5. Accept payment": "5. Accept payment",
@@ -1955,28 +1444,9 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Network load": "Network load",
   "Live network status": "Live network status",
   "Holder concentration": "Holder concentration",
-  "Invoice asset does not match the active offline asset.":
-    "Invoice asset does not match the active offline asset.",
-  "Payment asset does not match the active offline asset.":
-    "Payment asset does not match the active offline asset.",
   "Private exit": "Private exit",
-  "Unshield to wallet": "Unshield to wallet",
-  "Private exit is optional. Leave it off to avoid unshielding, but the transfer will stay transparent.":
-    "Private exit is optional. Leave it off to avoid unshielding, but the transfer will stay transparent.",
-  "Private exits do not publish memos. Leave memo blank when unshielding.":
-    "Private exits do not publish memos. Leave memo blank when unshielding.",
   "Private exit is unavailable for the current asset definition.":
     "Private exit is unavailable for the current asset definition.",
-  "Private exit is unavailable.": "Private exit is unavailable.",
-  "Private exit requires destination to be your active account.":
-    "Private exit requires destination to be your active account.",
-  "Unshield amount must be a whole number greater than zero.":
-    "Unshield amount must be a whole number greater than zero.",
-  "Unshield policy mode: {mode}.": "Unshield policy mode: {mode}.",
-  "Unshield finalized in block {height} and offline balance updated.":
-    "Unshield finalized in block {height} and offline balance updated.",
-  "Offline moves are self-only unshield operations and never publish a memo.":
-    "Offline moves are self-only unshield operations and never publish a memo.",
   "{operation} is unavailable for the current asset definition.":
     "{operation} is unavailable for the current asset definition.",
   "{operation} is unavailable: effective policy mode is {mode}.":
@@ -1985,8 +1455,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "{operation} is disabled by the asset policy.",
   "{operation} is unavailable because the asset policy is missing vk_transfer.":
     "{operation} is unavailable because the asset policy is missing vk_transfer.",
-  "{operation} is unavailable because the asset policy is missing vk_unshield.":
-    "{operation} is unavailable because the asset policy is missing vk_unshield.",
   "{operation} policy check failed: {message}. Submission may still fail if the current asset policy does not allow it.":
     "{operation} policy check failed: {message}. Submission may still fail if the current asset policy does not allow it.",
   "{operation} policy check failed. Submission may still fail if the current asset policy does not allow it.":
@@ -1995,35 +1463,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "{operation} is unavailable because its policy could not be verified: {message}.",
   "{operation} is unavailable because its policy could not be verified.":
     "{operation} is unavailable because its policy could not be verified.",
-  "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.":
-    "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
-  "QR encodes account, amount, asset definition, and a fresh shielded payment address.":
-    "QR encodes account, amount, asset definition, and a fresh shielded payment address.",
-  "Scan a shielded Receive QR for this destination before sending anonymously.":
-    "Scan a shielded Receive QR for this destination before sending anonymously.",
-  "Shielded sends do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.":
-    "Shielded sends do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.",
   "QR encodes only a fresh private payment address. Account, asset, and amount stay off the QR by default.":
     "QR encodes only a fresh private payment address. Account, asset, and amount stay off the QR by default.",
-  "Optional for private recipient sends; enter your own account to self-shield.":
-    "Optional for private recipient sends; enter your own account to self-shield.",
-  "Private shielded transfers do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.":
-    "Private shielded transfers do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.",
-  "Private shielded transfer": "Private shielded transfer",
-  "Paste a private address or scan a Receive QR before sending privately.":
-    "Paste a private address or scan a Receive QR before sending privately.",
-  "Private payment address loaded.": "Private payment address loaded.",
-  "Private payment address is invalid.": "Private payment address is invalid.",
-  "Legacy private Receive QR codes are no longer supported. Ask the recipient to refresh their Receive QR.":
-    "Legacy private Receive QR codes are no longer supported. Ask the recipient to refresh their Receive QR.",
-  "Create private balance": "Create private balance",
-  "Send privately": "Send privately",
-  "Private balance created: {hash}":
-    "Private balance finalized on-chain: {hash}",
-  "Private shielded transfer committed: {hash}":
-    "Private shielded transfer finalized on-chain: {hash}",
-  "Private shielded transfer finalized on-chain: {hash}":
-    "Private shielded transfer finalized on-chain: {hash}",
   "Transaction finalized on-chain: {hash}":
     "Transaction finalized on-chain: {hash}",
   "Secure OS-backed key storage is unavailable on this device.":
@@ -2034,36 +1475,22 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Enter an authority private key first.":
     "Enter an authority private key first.",
   "Authority saved to secure storage.": "Authority saved to secure storage.",
-  "Shielded balance": "Shielded balance",
   "Transparent balance": "Transparent balance",
-  "Create shielded balance": "Create shielded balance",
-  "Anonymous shielded send": "Anonymous shielded send",
-  "Send anonymously": "Send anonymously",
-  "Shield mode is unavailable for the current asset definition.":
-    "Shield mode is unavailable for the current asset definition.",
-  "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.":
-    "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.",
-  "Rescan shielded notes": "Rescan shielded notes",
-  "Scanning shielded notes…": "Scanning shielded notes…",
-  "Shielded note scan complete.": "Shielded note scan complete.",
-  "Shielded note scan failed.": "Shielded note scan failed.",
+  "Showing private notes recognized by this wallet. Older or foreign confidential outputs may be missing, so this total is not guaranteed complete or spendable in this release.":
+    "Showing private notes recognized by this wallet. Older or foreign confidential outputs may be missing, so this total is not guaranteed complete or spendable in this release.",
+  "Scanning private notes…": "Scanning private notes…",
+  "Private note scan complete.": "Private note scan complete.",
+  "Private note scan failed.": "Private note scan failed.",
   "global note index": "global note index",
   "account history fallback": "account history fallback",
   "current available history": "current available history",
   "block {block}": "block {block}",
-  "Recovered {count} shielded note(s) from {source} through {watermark}.":
-    "Recovered {count} shielded note(s) from {source} through {watermark}.",
+  "Recovered {count} private note(s) from {source} through {watermark}.":
+    "Recovered {count} private note(s) from {source} through {watermark}.",
   "Global note index is unavailable, so recovery is limited to this account history through {watermark}.":
     "Global note index is unavailable, so recovery is limited to this account history through {watermark}.",
   "Some confidential activity could not be decrypted from on-chain note envelopes; balance may be incomplete.":
     "Some confidential activity could not be decrypted from on-chain note envelopes; balance may be incomplete.",
-  "Enter a whole-number shield amount.": "Enter a whole-number shield amount.",
-  "Shield transaction committed: {hash}":
-    "Shield transaction finalized on-chain: {hash}",
-  "Shield transaction finalized on-chain: {hash}":
-    "Shield transaction finalized on-chain: {hash}",
-  "Anonymous shielded transaction committed: {hash}":
-    "Anonymous shielded send finalized on-chain: {hash}",
   "Create on-chain account": "Authority-only registration",
   "Requires authority credentials to create the account on-chain.":
     "Advanced tool. Requires authority credentials. Regular wallets are created from Create Wallet.",
@@ -2112,36 +1539,44 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "This endpoint does not advertise the required asset transfer operations.",
   "This endpoint does not advertise the required confidential transfer operations.":
     "This endpoint does not advertise the required confidential transfer operations.",
-  "Allowance sync unavailable": "Allowance sync unavailable",
   "Automatic Kaigi signaling is blocked until the endpoint identity is verified. Manual signaling remains available.":
     "Automatic Kaigi signaling is blocked until the endpoint identity is verified. Manual signaling remains available.",
-  "Checking offline network readiness…": "Checking offline network readiness…",
   "Consensus telemetry is unavailable.": "Consensus telemetry is unavailable.",
   "Failed to load lane stake.": "Failed to load lane stake.",
-  "Failed to load offline network readiness.":
-    "Failed to load offline network readiness.",
   "Failed to load pending rewards.": "Failed to load pending rewards.",
   "Failed to load wallet stake.": "Failed to load wallet stake.",
-  "Network readiness": "Network readiness",
-  "Network transfers are blocked until the endpoint identity is verified. Local offline payment workflows remain available.":
-    "Network transfers are blocked until the endpoint identity is verified. Local offline payment workflows remain available.",
   "No live plans found": "No live plans found",
   "No public lanes found on this Torii endpoint.":
     "No public lanes found on this Torii endpoint.",
-  "Offline network operations are ready.":
-    "Offline network operations are ready.",
-  "Offline network operations are unavailable ({count} blocker(s)).":
-    "Offline network operations are unavailable ({count} blocker(s)).",
-  "Offline network readiness is unknown.":
-    "Offline network readiness is unknown.",
-  "Offline proofs are ready, but this release does not expose allowance enumeration.":
-    "Offline proofs are ready, but this release does not expose allowance enumeration.",
   "Subscription writes unavailable": "Subscription writes unavailable",
-  "This endpoint does not advertise POST /v1/soracloud/hf/deploy.":
-    "This endpoint does not advertise POST /v1/soracloud/hf/deploy.",
+  "SoraCloud HF shared lease": "SoraCloud HF shared lease",
+  "Monitor live SoraCloud services": "Monitor live SoraCloud services",
+  "HF shared lease": "HF shared lease",
+  "Hugging Face shared lease": "Hugging Face shared lease",
+  "Inspect the exact shared-lease source, pool, and wallet membership reported by Torii.":
+    "Inspect the exact shared-lease source, pool, and wallet membership reported by Torii.",
+  "Full commit revision": "Full commit revision",
+  "Check shared lease": "Check shared lease",
+  "Select a SoraCloud-enabled endpoint before checking a lease.":
+    "Select a SoraCloud-enabled endpoint before checking a lease.",
+  "This endpoint does not advertise the exact /v1/soracloud/hf/lease contract.":
+    "This endpoint does not advertise the exact /v1/soracloud/hf/lease contract.",
+  "Enter an exact repo and full 40-character commit revision.":
+    "Enter an exact repo and full 40-character commit revision.",
+  "Lease joining is read-only": "Lease joining is read-only",
+  "This release will not post a lease join until the current Iroha SDK exports the exact canonical Norito provenance encoder and signer required by Torii.":
+    "This release will not post a lease join until the current Iroha SDK exports the exact canonical Norito provenance encoder and signer required by Torii.",
+  "Join shared lease unavailable": "Join shared lease unavailable",
+  Source: "Source",
+  "Resolved revision": "Resolved revision",
+  Pool: "Pool",
+  "No lease pool": "No lease pool",
+  Membership: "Membership",
+  "Not a member": "Not a member",
+  "Service bindings": "Service bindings",
+  "HF source not found": "HF source not found",
   "This endpoint does not advertise {operation}.":
     "This endpoint does not advertise {operation}.",
-  "HF source status": "HF source status",
   Found: "Found",
   "Not found": "Not found",
   "This endpoint does not advertise the Kaigi meeting write operations. Manual signaling remains available.":
@@ -2150,8 +1585,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "This endpoint does not advertise the required subscription write operations.",
   "This Torii endpoint has no subscription plans to subscribe to.":
     "This Torii endpoint has no subscription plans to subscribe to.",
-  "This Torii release does not expose offline allowance enumeration.":
-    "This Torii release does not expose offline allowance enumeration.",
   "Unbond scheduling is unavailable because policy is not public.":
     "Unbond scheduling is unavailable because policy is not public.",
   "Wait for endpoint capability inspection to finish. Manual signaling remains available.":
@@ -2181,10 +1614,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Governance writes": "Governance writes",
   "Staking writes": "Staking writes",
   "Subscription writes": "Subscription writes",
-  "SoraCloud deployment": "SoraCloud deployment",
   "VPN sessions": "VPN sessions",
   "IrohaConnect sessions": "IrohaConnect sessions",
-  "ZK proof jobs": "ZK proof jobs",
   "Check endpoint": "Check endpoint",
   "Check & Save": "Check & Save",
   "Checking…": "Checking…",
@@ -2210,14 +1641,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Enter a valid Torii endpoint URL.": "Enter a valid Torii endpoint URL.",
   "Endpoint must start with http:// or https://.":
     "Endpoint must start with http:// or https://.",
-  "Private Kaigi needs shielded XOR before it can submit this action.":
-    "Private Kaigi needs shielded XOR before it can submit this action.",
-  "Transparent XOR balance": "Transparent XOR balance",
-  "Self-shield {amount} XOR and retry": "Self-shield {amount} XOR and retry",
-  "Self-shielding XOR for private Kaigi…":
-    "Self-shielding XOR for private Kaigi…",
-  "Unable to self-shield XOR for private Kaigi.":
-    "Unable to self-shield XOR for private Kaigi.",
   Stats: "Stats",
   "Stats HUD": "Stats HUD",
   Overview: "Overview",
@@ -2367,14 +1790,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Alias registration is unavailable here. Wallet saved locally.",
   "On-chain alias registration is unavailable on this Torii endpoint. The wallet was still saved locally.":
     "Alias registration is unavailable here. Wallet saved locally.",
-  "Meeting link ready. Private automatic signaling is unavailable, so this meeting will use a transparent manual answer fallback.":
-    "Meeting link ready. Private automatic signaling is unavailable, so this meeting will use a transparent manual answer fallback.",
-  "Automatic private meeting registration failed: {message}. Share the manual invite instead. This fallback does not preserve private on-chain signaling.":
-    "Automatic private meeting registration failed: {message}. Share the manual invite instead. This fallback does not preserve private on-chain signaling.",
-  "Answer packet ready. Private automatic join failed, so send the manual answer packet to the host. This fallback does not preserve private on-chain signaling.":
-    "Answer packet ready. Private automatic join failed, so send the manual answer packet to the host. This fallback does not preserve private on-chain signaling.",
-  "Automatic private join failed: {message}. Send the manual answer packet instead; this fallback does not preserve private on-chain signaling.":
-    "Automatic private join failed: {message}. Send the manual answer packet instead; this fallback does not preserve private on-chain signaling.",
   "Saved Wallets": "Wallets",
   "Switch between saved wallets or begin a fresh wallet setup.":
     "Switch wallets or create one.",
@@ -2453,42 +1868,10 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "UAID onboarding is unavailable on this Torii endpoint. The wallet was saved locally instead.":
     "UAID alias registration is unavailable here. Wallet saved locally.",
   Kaigi: "Kaigi",
-  "Manual audio/video calls with another wallet user":
-    "Direct calls with another wallet user.",
-  "Kaigi Calls": "Kaigi Calls",
-  "Direct audio/video room with manual signaling":
-    "Direct room with manual signaling.",
-  "Meeting links and direct audio/video room":
-    "Meeting links and direct audio/video room",
-  "Kaigi Room": "Kaigi Room",
-  "Direct browser audio and video between two wallet users.":
-    "Direct browser call between two wallet users.",
-  "Start call": "Start call",
-  "Join call": "Join call",
-  "Room ID": "Room ID",
   "Participant name": "Participant name",
-  "Participant ID": "Participant ID",
   "Wallet identity": "Wallet identity",
   "Local media": "Local media",
   "Remote media": "Remote media",
-  "Signal exchange": "Signal exchange",
-  "Create an offer, send it to the other wallet user, then apply their answer.":
-    "Create an offer, send it, then apply the answer.",
-  "Paste the caller offer packet, create an answer, and send it back.":
-    "Paste the offer, create an answer, and send it back.",
-  "This Kaigi page uses manual offer and answer packets today, aligned with the sibling Sora Kaigi transport work.":
-    "This Kaigi page uses manual offer and answer packets today.",
-  "How to join a Kaigi call": "How to join a Kaigi call",
-  "The caller invites you by sending an offer packet through chat, email, or any other channel.":
-    "The caller invites you by sending an offer packet through another channel.",
-  "Choose Join call and prepare your local media.":
-    "Choose Join call and prepare your local media.",
-  "Paste the caller's offer packet into Remote packet.":
-    "Paste the caller's offer packet into Remote packet.",
-  "Create your answer packet and send it back to the caller.":
-    "Create your answer packet and send it back to the caller.",
-  "Wait for the caller to apply your answer so the call can connect.":
-    "Wait for the caller to apply your answer so the call can connect.",
   "Peer connection": "Peer connection",
   "ICE connection": "ICE connection",
   "ICE gathering": "ICE gathering",
@@ -2560,8 +1943,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Kaigi packet pasted from clipboard.": "Kaigi packet pasted from clipboard.",
   "Clipboard access failed. Copy the packet manually.":
     "Clipboard failed. Copy the packet manually.",
-  "Clipboard access failed. Copy the payload manually.":
-    "Clipboard failed. Copy the payload manually.",
   "Clipboard access failed. Paste the packet manually.":
     "Clipboard failed. Paste the packet manually.",
   "Connected to {name}.": "Connected to {name}.",
@@ -2579,55 +1960,17 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Failed to load lane validators.": "Could not load lane validators.",
   "Transaction failed.": "Transaction failed.",
   "Action failed.": "Action failed.",
-  "Copy invoice JSON": "Copy invoice JSON",
-  "Copy payment JSON": "Copy payment JSON",
-  "Invoice JSON copied.": "Invoice JSON copied.",
-  "Payment JSON copied.": "Payment JSON copied.",
   "Local preview stopped.": "Local preview stopped.",
   SoraCloud: "SoraCloud",
-  "Manage SoraCloud deployments": "Manage SoraCloud deployments",
-  "Manage deployments and rollouts": "Manage deployments and rollouts",
-  "Live deployment management will appear here after Torii exposes SoraCloud bridge endpoints.":
-    "Live deployment management will appear here after Torii exposes SoraCloud bridge endpoints.",
-  "Bridge unavailable": "Bridge unavailable",
-  "Live deployments": "Live deployments",
   Healthy: "Healthy",
   Deploying: "Deploying",
   "Needs attention": "Needs attention",
-  "Monthly estimate": "Monthly estimate",
-  "No local deployment records are loaded. This screen stays empty until a live SoraCloud bridge is wired.":
-    "No local deployment records are loaded. This screen stays empty until a live SoraCloud bridge is wired.",
   "Wallet ready": "Wallet ready",
   "Active wallet": "Active wallet",
-  Template: "Template",
-  Region: "Region",
-  Environment: "Environment",
-  Version: "Version",
-  Plan: "Plan",
-  Deployments: "Deployments",
-  "Only live SoraCloud records from Torii are shown.":
-    "Only live SoraCloud records from Torii are shown.",
   All: "All",
-  Attention: "Attention",
   Paused: "Paused",
   Failed: "Failed",
-  "Replica count unavailable": "Replica count unavailable",
-  "No live SoraCloud deployments available.":
-    "No live SoraCloud deployments available.",
-  "Add SoraCloud bridge endpoints before enabling launch, scale, pause, or rollout controls.":
-    "Add SoraCloud bridge endpoints before enabling launch, scale, pause, or rollout controls.",
-  "Bridge status": "Bridge status",
-  "Deployment source": "Deployment source",
-  Controls: "Controls",
   Disabled: "Disabled",
-  "Disabled actions": "Disabled actions",
-  "Launch, scale, pause, resume, restart, rollback, and promote actions are hidden until they call a real service.":
-    "Launch, scale, pause, resume, restart, rollback, and promote actions are hidden until they call a real service.",
-  Updated: "Updated",
-  "{amount} XOR / month": "{amount} XOR / month",
-  "{count} replicas": "{count} replicas",
-  "{count} rpm": "{count} rpm",
-  "{count} target replicas": "{count} target replicas",
   "Sora VPN": "Sora VPN",
   "Connect through the TAIRA privacy lane":
     "Connect through the TAIRA privacy lane",
@@ -2674,7 +2017,7 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "VPN connected": "Connected",
   "VPN disconnecting": "Disconnecting",
   "VPN reconciling": "Reconciling",
-  "VPN remote cleanup pending": "Remote cleanup pending",
+  "VPN remote lease expiry pending": "Remote lease expiry pending",
   "VPN repair required": "Repair required",
   "VPN error": "Error",
   "VPN idle": "Idle",
@@ -2721,27 +2064,14 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Start meeting": "Start meeting",
   "Join meeting": "Join meeting",
   "Meeting title": "Meeting title",
-  "Meeting privacy": "Meeting privacy",
-  "Private invite": "Private invite",
-  "Transparent invite": "Transparent invite",
-  "Peer identity reveal": "Peer identity reveal",
   Hidden: "Hidden",
-  "Reveal after join": "Reveal after join",
   Optional: "Optional",
   "Scheduled start": "Scheduled start",
   "Start now": "Start now",
   "Meeting invite": "Meeting invite",
-  "Live wallets can create and join Kaigi meetings through on-chain signaling metadata. Local-only wallets fall back to manual packets.":
-    "Live wallets can create and join through on-chain signaling. Local-only wallets fall back to manual packets.",
-  "This wallet is local only, so Kaigi keeps the invite-link flow but falls back to a manual answer packet.":
-    "This wallet is local only, so Kaigi falls back to a manual answer packet.",
   "Meeting link ready": "Meeting link ready",
   "Host prompt": "Host prompt",
   "Host checklist": "Host checklist",
-  "Share the deep link. The guest can answer without pasting SDP when both wallets are live on-chain.":
-    "Share the deep link. The guest can answer without pasting SDP when both wallets are live on-chain.",
-  "Share the invite link. The guest can still open the meeting directly, but answer delivery falls back to the Advanced signaling section.":
-    "Share the invite link. If automatic delivery is unavailable, answer delivery falls back to Advanced signaling.",
   "Meeting code": "Meeting code",
   "Invite link": "Invite link",
   "Copy invite link": "Copy invite link",
@@ -2764,8 +2094,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Joining meeting…": "Joining meeting…",
   "Load invite": "Load invite",
   "Advanced signaling": "Advanced signaling",
-  "Use this only when a wallet is local-only or automatic Kaigi signaling is unavailable.":
-    "Use this only when a wallet is local-only or automatic Kaigi signaling is unavailable.",
   "Show raw packets": "Show raw packets",
   "Create manual answer packet": "Create manual answer packet",
   "Creating manual answer…": "Creating manual answer…",
@@ -2773,10 +2101,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Open local media before creating or joining a Kaigi meeting.",
   "Create a meeting link to invite another wallet user.":
     "Create a meeting link to invite another wallet user.",
-  "Create a Kaigi meeting link, share it, then wait for the participant answer to arrive automatically or through the Advanced signaling fallback.":
-    "Create a meeting link, share it, then wait for the participant answer automatically or through Advanced signaling.",
-  "Open or paste a Kaigi invite, create your answer locally, and let the app deliver it automatically when possible.":
-    "Open or paste an invite, create your answer locally, and let the app deliver it automatically when possible.",
   "Automatic join": "Automatic join",
   "Manual fallback": "Manual fallback",
   "Nothing to copy yet.": "Nothing to copy yet.",
@@ -2784,8 +2108,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Scheduled start is invalid.": "Scheduled start is invalid.",
   "Meeting invite loaded. Join when your media is ready.":
     "Meeting invite loaded. Join when your media is ready.",
-  "Meeting invite loaded. This meeting will use a manual answer fallback.":
-    "Meeting invite loaded. This meeting will use a manual answer fallback.",
   "Meeting invite link is invalid.": "Meeting invite link is invalid.",
   "Paste or open a meeting invite to join.":
     "Paste or open a meeting invite to join.",
@@ -2794,36 +2116,18 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Unable to create a live Kaigi meeting.",
   "Meeting link ready. Share it with the other participant.":
     "Meeting link ready. Share it with the other participant.",
-  "Keep this host window open after sharing the invite. If the guest joins but remote media does not appear, open Advanced signaling and apply the answer packet.":
-    "Keep this host window open after sharing the invite. If remote media does not appear, open Advanced signaling and apply the answer packet.",
-  "Keep this host window open after sharing the invite. When the guest joins, open Advanced signaling and apply the answer packet they send you.":
-    "Keep this host window open after sharing the invite. When the guest joins, open Advanced signaling and apply the answer packet they send you.",
-  "Automatic on-chain signaling is unavailable, so this meeting will use a manual answer fallback.":
-    "Automatic on-chain signaling is unavailable, so this meeting will use a manual answer fallback.",
-  "Meeting link ready. Automatic on-chain signaling is unavailable, so this meeting will use a manual answer fallback.":
-    "Meeting link ready. Automatic on-chain signaling is unavailable, so this meeting will use a manual answer fallback.",
-  "Meeting link ready. This wallet is local only, so joining will use a manual answer fallback.":
-    "Meeting link ready. This wallet is local only, so joining will use a manual answer fallback.",
-  "Automatic meeting registration failed: {message}":
-    "Automatic meeting registration failed: {message}",
   "Unable to create a Kaigi meeting link.":
     "Unable to create a Kaigi meeting link.",
   "Load a meeting invite first.": "Load a meeting invite first.",
   "Joined the meeting. Your encrypted answer was posted on-chain for the host to apply automatically.":
     "Joined the meeting. Your encrypted answer was posted on-chain for the host to apply automatically.",
-  "Answer packet ready. Automatic join failed, so send the manual answer packet to the host.":
-    "Answer packet ready. Automatic join failed, so send the manual answer packet to the host.",
-  "Automatic join failed: {message}": "Automatic join failed: {message}",
   "Unable to join the live Kaigi meeting.":
     "Unable to join the live Kaigi meeting.",
   "Participant answer ready": "Participant answer ready",
   "The guest answer packet is ready. Apply it now so audio and video can start.":
     "The guest answer packet is ready. Apply it now so audio and video can start.",
   "I will keep this window open": "I will keep this window open",
-  "Show Advanced signaling": "Show Advanced signaling",
   Later: "Later",
-  "Answer packet ready. Send it to the host manually.":
-    "Answer packet ready. Send it to the host manually.",
   "Manual answer packet ready. Send it to the host.":
     "Manual answer packet ready. Send it to the host.",
   "Participant answer detected and applied automatically.":
@@ -2832,7 +2136,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Meeting invite pasted from clipboard.",
   "Create a meeting link first.": "Create a meeting link first.",
   "Meeting ended.": "Meeting ended.",
-  "Meeting ended locally.": "Meeting ended locally.",
   "Unable to publish the meeting end signal: {message}":
     "Unable to publish the meeting end signal: {message}",
   "Unknown Kaigi end error": "Unknown Kaigi end error",
@@ -2844,31 +2147,16 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Bonding is unavailable.": "Bonding is unavailable.",
   "Challenge bond": "Challenge bond",
   "Challenge window": "Challenge window",
-  "Choose a referendum or proposal": "Choose a referendum or proposal",
   Endpoint: "Endpoint",
   "Expert briefs": "Expert briefs",
   "Fallback lifecycle": "Fallback lifecycle",
   Lifecycle: "Lifecycle",
   "Lifecycle endpoint": "Lifecycle endpoint",
-  "Load a referendum or proposal to assemble the available lifecycle data.":
-    "Load a referendum or proposal to assemble the available lifecycle data.",
-  "Load or enter a referendum before voting.":
-    "Load or enter a referendum before voting.",
   "Next action": "Next action",
   "No governance record loaded": "No governance record loaded",
-  "Parliament stage ballots are not available on this endpoint yet.":
-    "Parliament stage ballots are not available on this endpoint yet.",
-  "Plain ballots use the current referendum and wallet.":
-    "Plain ballots use the current referendum and wallet.",
   "Proposal loaded": "Proposal loaded",
-  "Proposal drafts, council state, finalize, enact":
-    "Proposal drafts, council state, finalize, enact",
   "Ready for governance actions.": "Ready for governance actions.",
-  "Referendum loaded": "Referendum loaded",
   "Red-team briefs": "Red-team briefs",
-  "Review the active stage, then vote or open advanced tools.":
-    "Review the active stage, then vote or open advanced tools.",
-  "Review voting requirements": "Review voting requirements",
   Role: "Role",
   Rollout: "Rollout",
   "Select a stage to inspect only the relevant evidence.":
@@ -2876,10 +2164,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Selected stage": "Selected stage",
   Selection: "Selection",
   Stage: "Stage",
-  "Stage ballot": "Stage ballot",
   Summary: "Summary",
   Unavailable: "Unavailable",
-  "Voting is unavailable.": "Voting is unavailable.",
   "Full adversarial lifecycle data is not available on this endpoint yet.":
     "Full adversarial lifecycle data is not available on this endpoint yet.",
   Submitted: "Submitted",
@@ -2889,7 +2175,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   Tally: "Tally",
   Challenge: "Challenge",
   Canary: "Canary",
-  Enact: "Enact",
   Review: "Review",
   complete: "complete",
   active: "active",
@@ -2898,24 +2183,16 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   blocked: "blocked",
   open: "open",
   closed: "closed",
-  "Proposal identity and referendum envelope are loaded from Torii.":
-    "Proposal identity and referendum envelope are loaded from Torii.",
   "Expert and red-team brief endpoints are not available on this Torii endpoint yet.":
     "Expert and red-team brief endpoints are not available on this Torii endpoint yet.",
   "Public comment endpoints are not available on this Torii endpoint yet.":
     "Public comment endpoints are not available on this Torii endpoint yet.",
   "Council data shows the active Parliament roster when Torii exposes it.":
     "Council data shows the active Parliament roster when Torii exposes it.",
-  "Citizens can submit a ballot when eligibility and referendum data are ready.":
-    "Citizens can submit a ballot when eligibility and referendum data are ready.",
-  "Vote totals and lock records come from the live referendum endpoints.":
-    "Vote totals and lock records come from the live referendum endpoints.",
   "Challenge-window endpoints are not available on this Torii endpoint yet.":
     "Challenge-window endpoints are not available on this Torii endpoint yet.",
   "Canary rollout endpoints are not available on this Torii endpoint yet.":
     "Canary rollout endpoints are not available on this Torii endpoint yet.",
-  "Privileged enactment tools stay in Advanced governance tools.":
-    "Privileged enactment tools stay in Advanced governance tools.",
   "Retrospective review and clawback endpoints are not available on this Torii endpoint yet.":
     "Retrospective review and clawback endpoints are not available on this Torii endpoint yet.",
   Operator: "Operator",
@@ -2965,9 +2242,6 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Share QR codes or account IDs to request funds": "Show QR to get paid",
   "Auto-deduct and manage recurring services": "Manage recurring payments",
   "Nominate validators and stake XOR for NPOS": "Stake XOR",
-  "Bond citizenship and vote in governance referenda":
-    "Bond citizenship to vote",
-  "Offline wallets, invoices, and QR exchanges": "Offline payments",
   "Network metrics and asset explorer": "Network and assets",
   "TAIRA connection, asset, and authority keys":
     "Advanced network and authority tools",
@@ -2975,7 +2249,6 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Balances & activity": "Balances and activity",
   "NPOS Staking": "Stake",
   "SORA Parliament": "Governance",
-  "Citizenship bond and governance voting": "Citizenship and voting",
   "Subscription Hub": "Subscriptions",
   "Auto-deduct and manage services": "Recurring payments",
   "Send Points": "Send",
@@ -2984,7 +2257,6 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Network & asset insights": "Network and assets",
   "Session Setup": "Advanced",
   "TAIRA connection & keys": "Network and keys",
-  "Offline wallets, invoices, and payments": "Offline payments",
   "TAIRA Testnet Account": "Create wallet",
   "Generate your account keys, store a recovery phrase, and save the wallet locally. Torii registration is optional.":
     "Create keys, back up your phrase, and save the wallet. Registration is optional.",
@@ -3153,104 +2425,35 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Failed to request faucet funds.": "Faucet request failed.",
   "Wallet data is unavailable until this account exists on-chain.":
     "No on-chain wallet data yet.",
-  "Share Payment QR": "Receive",
   "Configure account first": "Create wallet first",
-  "Configure an account first.": "Create wallet first.",
   "Configure an account before generating QR codes.":
     "Create a wallet before showing a QR.",
-  "Show QR Code": "Show QR",
-  "Hide QR Code": "Hide QR",
-  "QR encodes account + amount + asset definition for compatible wallets.":
-    "QR includes account, amount, and asset.",
-  "Use the button above to render a QR that wallets can scan.":
-    "Show the QR to request funds.",
-  "Tap the button to generate a QR.": "Tap to show a QR.",
   "Generating QR...": "Generating QR...",
   "Failed to render QR.": "Could not render QR.",
-  "Transfer Asset": "Send",
-  "Scan QR Code": "Scan QR",
-  "Upload QR Image": "Upload QR",
-  "Destination Account ID": "To",
-  "Destination Account": "To",
   "Memo (optional)": "Note",
-  "Shield transfer": "Shielded send",
-  "Anonymous shielded send": "Anonymous shielded send",
-  "Send anonymously": "Send anonymously",
-  "Shield policy mode: {mode}.": "Mode: {mode}.",
-  "Shield mode currently supports self-shielding only. Destination must be your own account, and amount must be a whole number in base units.":
-    "Shielding only supports sending to yourself in whole base units.",
   "QR decoded successfully.": "QR loaded.",
-  "QR payload is invalid.": "Invalid QR.",
   "Configure Torii + account first.": "Set up network and wallet first.",
-  "Configure Torii and account first.": "Set up network and wallet first.",
-  "Configure account and asset first.": "Set up wallet and asset first.",
-  "Shield mode is unavailable.": "Shielding is unavailable.",
-  "Shield mode requires destination to be your active account.":
-    "Shielded sends must go to your own account.",
-  "Shield amount must be a whole number greater than zero.":
-    "Enter a whole-number shield amount.",
-  "Shield transaction submitted: {hash}": "Shielded send: {hash}",
-  "Shield transaction committed: {hash}":
-    "Shield transaction finalized on-chain: {hash}",
-  "Anonymous shielded transaction committed: {hash}":
-    "Anonymous shielded send finalized on-chain: {hash}",
-  "Transaction submitted: {hash}": "Transaction finalized on-chain: {hash}",
   "Transaction finalized on-chain: {hash}":
     "Transaction finalized on-chain: {hash}",
   "Citizenship Bond": "Citizenship",
-  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
-    "Bond {amount} XOR to vote.",
-  "Ballot: {state}": "Vote: {state}",
   "Granted permissions: {permissions}": "Permissions: {permissions}",
-  "Citizenship voting permission detected. Bonding is no longer required.":
-    "Voting is already enabled. No bond needed.",
   "Available XOR balance is below the required citizen bond amount.":
     "Not enough XOR for the bond.",
-  "Referendum Lookup": "Lookup",
   "Proposal ID must be 32-byte hex (with or without 0x prefix).":
     "Proposal ID must be 32-byte hex.",
-  "Referendum found: {value}.": "Referendum found: {value}",
   "Proposal found: {value}.": "Proposal found: {value}",
-  "Cast Plain Ballot": "Vote",
-  "Submit a signed CastPlainBallot instruction directly to Torii.":
-    "Submit a CastPlainBallot directly to Torii.",
   "Lock Records": "Locks",
   "Lock duration (blocks)": "Lock (blocks)",
-  "Requires CanSubmitGovernanceBallot permission on the active account.":
-    "Needs CanSubmitGovernanceBallot on the active wallet.",
-  "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.":
-    "Voting permission is missing. Bond citizenship and refresh.",
   "Council & Draft Ops": "Council and drafts",
-  "Finalize requires CanManageParliament permission.":
-    "Finalize needs CanManageParliament.",
-  "Enact requires CanEnactGovernance permission.":
-    "Enact needs CanEnactGovernance.",
   "Loaded {count} permission token(s).": "Loaded {count} permissions.",
-  "Provide a referendum id or proposal id first.":
-    "Enter a referendum or proposal ID.",
   "Governance records refreshed. Invalid proposal ID was ignored.":
     "Governance refreshed. Invalid proposal ID ignored.",
   "Governance records refreshed.": "Governance refreshed.",
   "Set up network and wallet first.": "Set up network and wallet first.",
   "Configure Torii and complete account onboarding first.":
     "Set up network and wallet first.",
-  "This account already has governance ballot permission and does not need another citizenship bond.":
-    "This wallet already has voting permission.",
   "A minimum of {amount} XOR is required to register citizenship.":
     "You need at least {amount} XOR to register citizenship.",
-  "referendumId is required before submitting a ballot.":
-    "Enter a referendum ID before voting.",
-  "CanManageParliament permission is required for finalize.":
-    "CanManageParliament is required to finalize.",
-  "referendumId and proposalId are required for finalize.":
-    "Finalize needs a referendum ID and proposal ID.",
-  "Finalize draft prepared with {count} instruction(s).":
-    "Finalize draft ready with {count} instruction(s).",
-  "CanEnactGovernance permission is required for enact.":
-    "CanEnactGovernance is required to enact.",
-  "proposalId is required for enact.": "Enter a proposal ID to enact.",
-  "Enact draft prepared with {count} instruction(s).":
-    "Enact draft ready with {count} instruction(s).",
   "Connection, chain, and active account are required.":
     "Network, chain, and wallet are required.",
   enabled: "ready",
@@ -3309,65 +2512,14 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Canceling at period end": "Ends at period end",
   "No subscriptions yet.": "No subscriptions.",
   "Next auto-deduct": "Next charge",
-  "Offline wallet & hardware": "Offline wallet",
-  "Register a hardware-backed offline wallet (e.g., macOS Secure Enclave) to keep your offline keys safer. Registration stays on-device; no data is sent to Torii.":
-    "Register a device-backed offline wallet. It stays on this device.",
-  "Register secure offline wallet": "Register device wallet",
-  "Sync offline allowance": "Sync allowances",
-  "Allowances come from Torii offline policies. Sync to refresh remaining amounts and expiry.":
-    "Sync to refresh offline spend limits and expiry.",
-  "No allowances synced yet.": "No offline allowances yet.",
-  "Request offline payment": "Request payment",
-  "Generate invoice": "Create invoice",
-  "Send offline payment": "Send payment",
-  "Accept offline payment": "Accept payment",
-  "Invoice ready. Share the QR or copy the JSON payload.":
-    "Invoice ready. Share the QR or JSON.",
-  "Payment payload created and recorded locally.":
-    "Payment created and saved locally.",
-  "Payment recorded to offline wallet.": "Payment saved to the offline wallet.",
-  "Move funds to online wallet": "Move to online wallet",
   "Send to online wallet": "Send to wallet",
-  "Shield to online wallet": "Unshield to wallet",
-  "No offline transfers yet.": "No offline activity yet.",
-  "Offline wallet registered on this device.":
-    "Offline wallet saved on this device.",
-  "Offline balance updated: {total}": "Offline balance: {total}",
-  "Transfer submitted and offline balance updated.":
-    "Transfer sent and offline balance updated.",
-  "Shield transfer submitted and offline balance updated.":
-    "Unshield sent and offline balance updated.",
-  "Failed to move funds online.": "Move failed.",
   "Enter an amount to move online.": "Enter an amount.",
-  "Enter an amount to request.": "Enter an amount.",
-  "Provide an invoice payload.": "Paste an invoice payload.",
-  "Provide a payment payload.": "Paste a payment payload.",
-  "Unable to create payment.": "Could not create payment.",
-  "Failed to generate invoice.": "Could not create invoice.",
-  "Failed to record payment.": "Could not save payment.",
-  "Invoice asset does not match the active offline asset.":
-    "Invoice asset does not match the offline asset.",
-  "Payment asset does not match the active offline asset.":
-    "Payment asset does not match the offline asset.",
-  "Payment is addressed to a different account.":
-    "Payment targets a different account.",
-  "Invoice expired. Ask the receiver to generate a new invoice.":
-    "Invoice expired. Ask for a new one.",
   "Rendered straight from Torii so wallets can scan the exact payload.":
     "Rendered directly from Torii.",
   "No QR payload yet. Connect to Torii and choose an account.":
     "No QR yet. Connect to Torii and choose a wallet.",
   "No QR payload yet. Connect to Torii and pick an account.":
     "No QR yet. Connect to Torii and choose a wallet.",
-  "Hardware wallet registered": "Device wallet registered",
-  "Secure hardware available": "Secure hardware ready",
-  "Platform authenticator ready": "Device authenticator ready",
-  "No platform authenticator": "No device authenticator",
-  "Fallback to software keys": "Software keys only",
-  "Pending detection": "Checking device",
-  "Unable to detect secure hardware.": "Could not detect secure hardware.",
-  "WebAuthn is not supported in this environment.":
-    "WebAuthn is not available here.",
   "Camera access is not supported on this device.":
     "Camera access is unavailable on this device.",
   "Camera preview is not ready.": "Camera is not ready.",
@@ -3375,38 +2527,8 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Unable to read QR from image.": "Could not read the QR from the image.",
   "Unable to start scanner.": "Could not start the scanner.",
   Kaigi: "Kaigi",
-  "Manual audio/video calls with another wallet user":
-    "Direct calls with another wallet user.",
-  "Kaigi Calls": "Kaigi Calls",
-  "Direct audio/video room with manual signaling":
-    "Direct room with manual signaling.",
-  "Kaigi Room": "Kaigi Room",
-  "Direct browser audio and video between two wallet users.":
-    "Direct browser call between two wallet users.",
-  "Start call": "Start call",
-  "Join call": "Join call",
-  "Room ID": "Room ID",
   "Participant name": "Participant name",
-  "Participant ID": "Participant ID",
   "Wallet identity": "Wallet identity",
-  "Signal exchange": "Signal exchange",
-  "Create an offer, send it to the other wallet user, then apply their answer.":
-    "Create an offer, send it, then apply the answer.",
-  "Paste the caller offer packet, create an answer, and send it back.":
-    "Paste the offer, create an answer, and send it back.",
-  "This Kaigi page uses manual offer and answer packets today, aligned with the sibling Sora Kaigi transport work.":
-    "This Kaigi page uses manual offer and answer packets today.",
-  "How to join a Kaigi call": "How to join a Kaigi call",
-  "The caller invites you by sending an offer packet through chat, email, or any other channel.":
-    "The caller invites you by sending an offer packet through another channel.",
-  "Choose Join call and prepare your local media.":
-    "Choose Join call and prepare your local media.",
-  "Paste the caller's offer packet into Remote packet.":
-    "Paste the caller's offer packet into Remote packet.",
-  "Create your answer packet and send it back to the caller.":
-    "Create your answer packet and send it back to the caller.",
-  "Wait for the caller to apply your answer so the call can connect.":
-    "Wait for the caller to apply your answer so the call can connect.",
   "Peer connection": "Peer connection",
   "ICE connection": "ICE connection",
   "ICE gathering": "ICE gathering",
@@ -3491,28 +2613,12 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Building…": "Creating...",
   "Recording…": "Saving...",
   "Transferring…": "Sending...",
-  "Copy invoice JSON": "Copy invoice JSON",
-  "Copy payment JSON": "Copy payment JSON",
-  "Invoice JSON copied.": "Invoice JSON copied.",
-  "Payment JSON copied.": "Payment JSON copied.",
   "Edit raw asset ID": "Edit raw asset ID",
   "Raw asset ID": "Raw asset ID",
-  "TRON transaction": "TRON transaction",
-  "BSC -> TAIRA settlement is blocked until a browser-safe BSC source proof module is published.":
-    "BSC -> TAIRA settlement is blocked until a browser-safe BSC source proof module is published.",
-  "TON -> TAIRA is blocked until the TON source bridge and source-proof package are published.":
-    "TON -> TAIRA is blocked until the TON source bridge and source-proof package are published.",
-  "Enter a TON transaction hash before fetching proof data.":
-    "Enter a TON transaction hash before fetching proof data.",
-  "BSC finalize transaction": "BSC finalize transaction",
-  "TON verifier contract": "TON verifier contract",
-  "TON source bridge": "TON source bridge",
-  "TON source transaction": "TON source transaction",
   "Storage base fee": "Storage base fee",
   "Actual storage charge": "Actual storage charge",
   "Maximum compute reservation charge": "Maximum compute reservation charge",
   "Actual compute reservation charge": "Actual compute reservation charge",
-  "Launch confirmed": "Launch finalized and settlement confirmed",
   "Transaction committed — settlement indexing":
     "Transaction finalized — settlement indexing",
   "Transaction finalized — settlement indexing":

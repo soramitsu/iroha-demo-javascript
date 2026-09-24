@@ -1,5 +1,6 @@
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
+import { parseJsonWithoutDuplicateObjectKeys } from "../src/utils/json";
 import {
   CBSI_CORE_API_BASE_URL_ENV,
   GOVERNANCE_VALIDATION_FEE_CONFIG_ENV,
@@ -58,28 +59,62 @@ const exactRecord = (
 };
 
 const defaultReadFile: RuntimeConfigFileReader = (path) => {
-  let stats;
+  let descriptor: number | null = null;
   try {
-    stats = statSync(path);
+    const noFollow =
+      typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
+    descriptor = openSync(path, constants.O_RDONLY | noFollow);
+    const before = fstatSync(descriptor, { bigint: true });
+    if (!before.isFile()) {
+      throw new Error(`Governance runtime config path is not a file: ${path}`);
+    }
+    if (before.size > BigInt(MAX_RUNTIME_CONFIG_BYTES)) {
+      throw new Error(
+        `Governance runtime config exceeds ${MAX_RUNTIME_CONFIG_BYTES} bytes: ${path}`,
+      );
+    }
+
+    const bytes = Buffer.allocUnsafe(MAX_RUNTIME_CONFIG_BYTES + 1);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = readSync(
+        descriptor,
+        bytes,
+        offset,
+        bytes.length - offset,
+        null,
+      );
+      if (count === 0) break;
+      offset += count;
+    }
+    if (offset > MAX_RUNTIME_CONFIG_BYTES) {
+      throw new Error(
+        `Governance runtime config exceeds ${MAX_RUNTIME_CONFIG_BYTES} bytes: ${path}`,
+      );
+    }
+    const after = fstatSync(descriptor, { bigint: true });
+    if (
+      !after.isFile() ||
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs ||
+      after.size !== BigInt(offset)
+    ) {
+      throw new Error(
+        `Governance runtime config changed while it was being read: ${path}`,
+      );
+    }
+    return new TextDecoder("utf-8", { fatal: true }).decode(
+      bytes.subarray(0, offset),
+    );
   } catch (error) {
     throw new Error(
       `Governance runtime config could not be read at ${path}: ${errorMessage(error)}`,
     );
-  }
-  if (!stats.isFile()) {
-    throw new Error(`Governance runtime config path is not a file: ${path}`);
-  }
-  if (stats.size > MAX_RUNTIME_CONFIG_BYTES) {
-    throw new Error(
-      `Governance runtime config exceeds ${MAX_RUNTIME_CONFIG_BYTES} bytes: ${path}`,
-    );
-  }
-  try {
-    return readFileSync(path, "utf8");
-  } catch (error) {
-    throw new Error(
-      `Governance runtime config could not be read at ${path}: ${errorMessage(error)}`,
-    );
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
   }
 };
 
@@ -125,9 +160,17 @@ const loadFileRuntimeConfig = (
 ): GovernanceRuntimeConfig => {
   const path = join(userDataPath, GOVERNANCE_RUNTIME_CONFIG_FILENAME);
   const serialized = readFile(path);
+  if (Buffer.byteLength(serialized, "utf8") > MAX_RUNTIME_CONFIG_BYTES) {
+    throw new Error(
+      `Governance runtime config exceeds ${MAX_RUNTIME_CONFIG_BYTES} bytes: ${path}`,
+    );
+  }
   let decoded: unknown;
   try {
-    decoded = JSON.parse(serialized);
+    decoded = parseJsonWithoutDuplicateObjectKeys(
+      serialized,
+      "Governance runtime config",
+    );
   } catch {
     throw new Error(`Governance runtime config is not valid JSON: ${path}`);
   }

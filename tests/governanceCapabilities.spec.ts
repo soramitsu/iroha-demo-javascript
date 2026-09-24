@@ -1,67 +1,46 @@
 import { describe, expect, it } from "vitest";
 import {
+  GOVERNANCE_BODY_KEYS,
   GOVERNANCE_REQUIRED_PROPOSAL_KINDS,
   GOVERNANCE_REQUIRED_ROUTES,
   governanceCapabilitiesContractFingerprintV1,
   parseGovernanceCapabilitiesV1,
-  TAIRA_GOVERNANCE_CHAIN_ID,
   TAIRA_GOVERNANCE_ESCROW_ACCOUNT,
+  TAIRA_GOVERNANCE_NETWORK_ID,
+  TAIRA_GOVERNANCE_PRIVATE_BALLOT_BOUNDS,
   TAIRA_GOVERNANCE_TARGET_BODY_SIZES,
   TAIRA_GOVERNANCE_XOR_ASSET_ID,
 } from "../electron/governanceCapabilities";
 
-const ALTERNATE_TAIRA_BOND_ACCOUNT =
-  "testuﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K";
-const ALTERNATE_TAIRA_SLASH_ACCOUNT =
-  "testuﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX";
-
 const capabilities = () => ({
   schema: "iroha.governance.capabilities.v1",
   version: 1,
-  chain_id: TAIRA_GOVERNANCE_CHAIN_ID,
-  genesis_hash:
-    "884b61c61f56dcddceee7aa3dc1deb89fb8552576d02b01a1b7af9ae7fd5ff7a",
+  network_id: TAIRA_GOVERNANCE_NETWORK_ID,
   current_height: "42000",
   network_prefix: "369",
   abi_version: "1",
-  data_model_version: "3",
-  approval_mode: "PARLIAMENT_SORTITION_JIT",
-  plain_voting_enabled: true,
-  auto_finalize_plain: true,
-  auto_finalize_plain_scope: "GENERIC_NON_VALIDATION_FEE_ONLY",
-  validation_fee_plain_requires_explicit_finalization: true,
-  validation_fee_plain_electorate_rules: {
-    voting_asset_id: TAIRA_GOVERNANCE_XOR_ASSET_ID,
-    bond_escrow_account: TAIRA_GOVERNANCE_ESCROW_ACCOUNT,
-    slash_receiver_account: TAIRA_GOVERNANCE_ESCROW_ACCOUNT,
-    ballot_amount: "150",
-    ballot_duration_blocks: "3600",
-    citizenship_amount: "10000",
-    max_members: "256",
-    conviction_step_blocks: "100",
-    max_conviction: "6",
-    min_turnout: "1",
-    approval_threshold_numerator: "1",
-    approval_threshold_denominator: "2",
-    eligibility_rule: {
-      rule: "proposal_operator_at_or_before_gate_others_after_gate",
-      value: null,
-    },
-  },
+  data_model_version: "4",
+  approval_mode: "PARLIAMENT_ATTEMPT_TIMED_OVN_V1",
+  private_ballot_protocol: "TIMED_OVN_TLE_THRESHOLD_BLS_V1",
+  mandatory_private_ballots: true,
+  proposal_backed_referendum_ballots_supported: false,
+  standalone_plain_ballots_supported: true,
+  standalone_zk_ballots_supported: true,
   citizenship_asset_id: TAIRA_GOVERNANCE_XOR_ASSET_ID,
   citizenship_bond_amount: "10000",
   citizenship_escrow_account: TAIRA_GOVERNANCE_ESCROW_ACCOUNT,
   voting_asset_id: TAIRA_GOVERNANCE_XOR_ASSET_ID,
   min_bond_amount: "150",
   bond_escrow_account: TAIRA_GOVERNANCE_ESCROW_ACCOUNT,
-  conviction_step_blocks: "100",
-  max_conviction: "6",
   min_enactment_delay: "600",
-  window_span: "3600",
-  min_turnout: "1",
-  approval_threshold_numerator: "1",
-  approval_threshold_denominator: "2",
-  parliament_quorum_bps: "6667",
+  invitation_phase_blocks: "3600",
+  registration_phase_blocks: "3600",
+  survivor_freeze_phase_blocks: "1000",
+  commitment_phase_blocks: "3600",
+  release_delay_blocks: "600",
+  opening_phase_blocks: "600",
+  max_ballot_retries: "3",
+  max_corpus_entries: "1000",
   target_body_sizes: Object.fromEntries(
     Object.entries(TAIRA_GOVERNANCE_TARGET_BODY_SIZES).map(([body, size]) => [
       body,
@@ -72,52 +51,109 @@ const capabilities = () => ({
   supported_routes: [...GOVERNANCE_REQUIRED_ROUTES],
 });
 
-describe("Taira governance capabilities", () => {
-  it("accepts only the reviewed fc569, prefix 369, ABI 1 contract", () => {
+describe("current Taira governance capabilities", () => {
+  it("accepts the exact NetworkId, private Parliament protocol, and resource contract", () => {
     expect(parseGovernanceCapabilitiesV1(capabilities())).toMatchObject({
-      chainId: TAIRA_GOVERNANCE_CHAIN_ID,
+      networkId: TAIRA_GOVERNANCE_NETWORK_ID,
+      currentHeight: "42000",
       networkPrefix: 369,
       abiVersion: 1,
-      dataModelVersion: 3,
-      approvalMode: "PARLIAMENT_SORTITION_JIT",
-      plainVotingEnabled: true,
-      autoFinalizePlain: true,
-      windowSpan: 3_600,
-      minEnactmentDelay: 600,
+      dataModelVersion: 4,
+      approvalMode: "PARLIAMENT_ATTEMPT_TIMED_OVN_V1",
+      privateBallotProtocol: "TIMED_OVN_TLE_THRESHOLD_BLS_V1",
+      mandatoryPrivateBallots: true,
+      proposalBackedReferendumBallotsSupported: false,
+      standalonePlainBallotsSupported: true,
+      standaloneZkBallotsSupported: true,
+      ...TAIRA_GOVERNANCE_PRIVATE_BALLOT_BOUNDS,
       targetBodySizes: TAIRA_GOVERNANCE_TARGET_BODY_SIZES,
     });
+    expect(GOVERNANCE_BODY_KEYS).toHaveLength(10);
   });
 
-  it("rejects unknown fields and compatibility aliases", () => {
+  it("rejects unknown fields, aliases, accessors, and non-plain objects", () => {
     expect(() =>
       parseGovernanceCapabilitiesV1({
         ...capabilities(),
-        legacy_council_epoch: 7,
+        chain_id: "retired",
       }),
     ).toThrow(/missing or unknown fields/);
+
     const aliased = capabilities() as Record<string, unknown>;
-    aliased.chainId = aliased.chain_id;
-    delete aliased.chain_id;
+    aliased.networkId = aliased.network_id;
+    delete aliased.network_id;
     expect(() => parseGovernanceCapabilitiesV1(aliased)).toThrow(
       /missing or unknown fields/,
     );
+
+    const accessor = capabilities();
+    Object.defineProperty(accessor, "current_height", {
+      enumerable: true,
+      get: () => "42000",
+    });
+    expect(() => parseGovernanceCapabilitiesV1(accessor)).toThrow(
+      /JSON data fields/,
+    );
+
+    expect(() =>
+      parseGovernanceCapabilitiesV1(
+        Object.assign(Object.create({ inherited: true }), capabilities()),
+      ),
+    ).toThrow(/plain object/);
   });
 
-  it("fails closed on network, ABI, voting, route, kind, or body drift", () => {
+  it("rejects retired public validation-fee referendum capability fields", () => {
+    for (const field of [
+      "chain_id",
+      "genesis_hash",
+      "plain_voting_enabled",
+      "auto_finalize_plain",
+      "auto_finalize_plain_scope",
+      "validation_fee_plain_requires_explicit_finalization",
+      "validation_fee_plain_electorate_rules",
+      "window_span",
+      "conviction_step_blocks",
+      "max_conviction",
+      "min_turnout",
+      "approval_threshold_numerator",
+      "approval_threshold_denominator",
+      "parliament_quorum_bps",
+    ]) {
+      expect(() =>
+        parseGovernanceCapabilitiesV1({
+          ...capabilities(),
+          [field]: null,
+        }),
+      ).toThrow(/missing or unknown fields/);
+    }
+  });
+
+  it("fails closed on identity, protocol, flag, resource, route, kind, or body drift", () => {
     const candidates = [
-      { ...capabilities(), chain_id: "minamoto" },
-      { ...capabilities(), genesis_hash: "12".repeat(32) },
+      { ...capabilities(), network_id: "hash:" + "11".repeat(32) + "#0000" },
       { ...capabilities(), network_prefix: "753" },
       { ...capabilities(), abi_version: "2" },
-      { ...capabilities(), data_model_version: "1" },
-      { ...capabilities(), auto_finalize_plain: false },
+      { ...capabilities(), data_model_version: "3" },
+      { ...capabilities(), approval_mode: "PARLIAMENT_SORTITION_JIT" },
+      { ...capabilities(), private_ballot_protocol: "PLAIN" },
+      { ...capabilities(), mandatory_private_ballots: false },
       {
         ...capabilities(),
-        approval_mode: "LEGACY_COUNCIL_EPOCH",
+        proposal_backed_referendum_ballots_supported: true,
       },
+      { ...capabilities(), standalone_plain_ballots_supported: false },
+      { ...capabilities(), standalone_zk_ballots_supported: false },
+      { ...capabilities(), invitation_phase_blocks: "3599" },
+      { ...capabilities(), registration_phase_blocks: "3599" },
+      { ...capabilities(), survivor_freeze_phase_blocks: "999" },
+      { ...capabilities(), commitment_phase_blocks: "3599" },
+      { ...capabilities(), release_delay_blocks: "599" },
+      { ...capabilities(), opening_phase_blocks: "599" },
+      { ...capabilities(), max_ballot_retries: "4" },
+      { ...capabilities(), max_corpus_entries: "999" },
       {
         ...capabilities(),
-        supported_proposal_kinds: ["VALIDATION_FEE_POLICY"],
+        supported_proposal_kinds: GOVERNANCE_REQUIRED_PROPOSAL_KINDS.slice(1),
       },
       {
         ...capabilities(),
@@ -134,13 +170,12 @@ describe("Taira governance capabilities", () => {
         ...capabilities(),
         target_body_sizes: {
           ...capabilities().target_body_sizes,
-          fma_committee: "4",
+          confirmation_jury: "999",
         },
       },
       { ...capabilities(), current_height: "42000blocks" },
       { ...capabilities(), current_height: "042000" },
       { ...capabilities(), current_height: 42_000 },
-      { ...capabilities(), min_turnout: "2" },
     ];
 
     for (const candidate of candidates) {
@@ -148,66 +183,39 @@ describe("Taira governance capabilities", () => {
     }
   });
 
-  it("matches the exact fourteen-route Taira contract with no generic enact path", () => {
+  it("matches the exact current ten-kind and fifteen-route sets", () => {
+    expect(GOVERNANCE_REQUIRED_PROPOSAL_KINDS).toEqual([
+      "DEPLOY_CONTRACT",
+      "RUNTIME_UPGRADE",
+      "SCCP_ROUTE_GOVERNANCE",
+      "VALIDATION_FEE_POLICY",
+      "VALIDATION_FEE_PAYOUT_LIFECYCLE",
+      "MUSUBI_REGISTRY_GOVERNANCE",
+      "SORAFS_PROVIDER_GOVERNANCE",
+      "CONTRACT_LIFECYCLE_GOVERNANCE",
+      "CONTRACT_EMERGENCY_HOLD",
+      "GLOBAL_DATA_TRIGGER_PERMISSION_GOVERNANCE",
+    ]);
     expect(GOVERNANCE_REQUIRED_ROUTES).toEqual([
       "/v1/gov/capabilities",
-      "/v1/gov/citizens",
-      "/v1/gov/citizens/{account_id}",
       "/v1/gov/citizens/draft",
+      "/v1/gov/parliament/attempts/draft",
+      "/v1/gov/parliament/attempts/{governance_attempt_id}",
+      "/v1/gov/parliament/ballots/{ballot_attempt_id}/casting-context",
+      "/v1/gov/parliament/ballots/{ballot_attempt_id}/casting-proof",
+      "/v1/gov/parliament/ballots/{ballot_attempt_id}/release-context",
+      "/v1/gov/parliament/ballots/{ballot_attempt_id}/partial-release",
+      "/v1/gov/parliament/transitions/draft",
+      "/v1/gov/ballots/plain",
+      "/v1/gov/ballots/zk-v1",
+      "/v1/gov/ballots/zk-v1/ballot-proof",
       "/v1/validation-fee/proposals",
       "/v1/validation-fee/proposals/{proposal_id}",
-      "/v1/validation-fee/proposals/{proposal_id}/enactment-proof",
       "/v1/validation-fee/proposals/draft",
-      "/v1/validation-fee/proposals/{proposal_id}/plain-electorate/draft",
-      "/v1/validation-fee/proposals/{proposal_id}/plain-ballot/draft",
-      "/v1/validation-fee/proposals/{proposal_id}/finalization/draft",
-      "/v1/validation-fee/proposals/{proposal_id}/payout-lifecycle-enactment/draft",
-      "/v1/gov/parliament/ballots",
-      "/v1/gov/ballots/plain",
     ]);
   });
 
-  it("requires the exact Taira bond, lock, escrow, and electorate rules", () => {
-    for (const drift of [
-      { citizenship_bond_amount: "9999" },
-      { min_bond_amount: "149" },
-      { conviction_step_blocks: "101" },
-      {
-        bond_escrow_account: ALTERNATE_TAIRA_BOND_ACCOUNT,
-        validation_fee_plain_electorate_rules: {
-          ...capabilities().validation_fee_plain_electorate_rules,
-          bond_escrow_account: ALTERNATE_TAIRA_BOND_ACCOUNT,
-        },
-      },
-      {
-        validation_fee_plain_electorate_rules: {
-          ...capabilities().validation_fee_plain_electorate_rules,
-          ballot_duration_blocks: "3599",
-        },
-      },
-      {
-        validation_fee_plain_electorate_rules: {
-          ...capabilities().validation_fee_plain_electorate_rules,
-          bond_escrow_account: ALTERNATE_TAIRA_BOND_ACCOUNT,
-        },
-      },
-      {
-        validation_fee_plain_electorate_rules: {
-          ...capabilities().validation_fee_plain_electorate_rules,
-          slash_receiver_account: ALTERNATE_TAIRA_SLASH_ACCOUNT,
-        },
-      },
-    ]) {
-      expect(() =>
-        parseGovernanceCapabilitiesV1({
-          ...capabilities(),
-          ...drift,
-        }),
-      ).toThrow();
-    }
-  });
-
-  it("fingerprints the immutable parsed contract without binding a moving height", () => {
+  it("fingerprints all immutable fields without binding moving height or set order", () => {
     const reviewed = parseGovernanceCapabilitiesV1(capabilities());
     const nextHeight = parseGovernanceCapabilitiesV1({
       ...capabilities(),
@@ -222,17 +230,12 @@ describe("Taira governance capabilities", () => {
     });
     const driftedContract = {
       ...reviewed,
-      genesisHash:
-        "65003c37b640ad0c993c03131052b24029c933ec501c9e68b16dcb91a2ec9dc8",
-    };
-    const driftedCustody = {
+      privateBallotProtocol: "DIFFERENT_PRIVATE_PROTOCOL",
+    } as unknown as typeof reviewed;
+    const driftedBounds = {
       ...reviewed,
-      validationFeePlainElectorateRules: {
-        ...reviewed.validationFeePlainElectorateRules,
-        slashReceiverAccount:
-          "testuﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX",
-      },
-    };
+      maxCorpusEntries: 999,
+    } as unknown as typeof reviewed;
 
     const fingerprint = governanceCapabilitiesContractFingerprintV1(reviewed);
     expect(fingerprint).toMatch(/^[0-9a-f]{64}$/u);
@@ -245,8 +248,8 @@ describe("Taira governance capabilities", () => {
     expect(
       governanceCapabilitiesContractFingerprintV1(driftedContract),
     ).not.toBe(fingerprint);
-    expect(
-      governanceCapabilitiesContractFingerprintV1(driftedCustody),
-    ).not.toBe(fingerprint);
+    expect(governanceCapabilitiesContractFingerprintV1(driftedBounds)).not.toBe(
+      fingerprint,
+    );
   });
 });

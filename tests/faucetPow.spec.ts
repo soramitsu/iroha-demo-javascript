@@ -1,14 +1,22 @@
 import { describe, expect, it } from "vitest";
+import { NetworkId } from "@iroha/iroha-js";
 
 import {
   buildFaucetPowDigest,
+  decodeFaucetPowPuzzle,
   leadingZeroBits,
   solveFaucetPowPuzzle,
   type FaucetPowPuzzle,
 } from "../electron/faucetPow";
 
+const NETWORK_ID = NetworkId.parse(
+  "hash:77FB29D14745ADCCFDC14350E1A6FE6A10265798CC936A1DAFA7D2552AC3B9F7#EBDD",
+);
+
 const basePuzzle: FaucetPowPuzzle = {
-  algorithm: "scrypt-leading-zero-bits-v1",
+  algorithm: "scrypt-leading-zero-bits-v2",
+  network_id: NETWORK_ID.toString(),
+  chain_discriminant: 369,
   difficulty_bits: 4,
   anchor_height: 42,
   anchor_block_hash_hex:
@@ -22,6 +30,25 @@ const basePuzzle: FaucetPowPuzzle = {
 };
 
 describe("faucetPow", () => {
+  it("decodes only the exact bounded v2 puzzle contract", () => {
+    expect(decodeFaucetPowPuzzle(basePuzzle, NETWORK_ID, 369)).toEqual(
+      basePuzzle,
+    );
+
+    for (const invalid of [
+      { ...basePuzzle, difficulty_bits: 21 },
+      { ...basePuzzle, difficulty_bits: 4.5 },
+      { ...basePuzzle, scrypt_log_n: 16 },
+      { ...basePuzzle, scrypt_r: 9 },
+      { ...basePuzzle, scrypt_p: 3 },
+      { ...basePuzzle, max_anchor_age_blocks: 10_001 },
+      { ...basePuzzle, anchor_block_hash_hex: "AA".repeat(32) },
+      { ...basePuzzle, extra: true },
+    ]) {
+      expect(() => decodeFaucetPowPuzzle(invalid, NETWORK_ID, 369)).toThrow();
+    }
+  });
+
   it("counts leading zero bits", () => {
     expect(leadingZeroBits(Uint8Array.from([0x00, 0x00, 0x10]))).toBe(19);
     expect(leadingZeroBits(Uint8Array.from([0xff]))).toBe(0);
@@ -34,6 +61,7 @@ describe("faucetPow", () => {
       basePuzzle.anchor_block_hash_hex,
       "0000000000000001",
       {
+        networkId: NETWORK_ID,
         challengeSaltHex: basePuzzle.challenge_salt_hex,
         scryptLogN: basePuzzle.scrypt_log_n,
         scryptR: basePuzzle.scrypt_r,
@@ -42,7 +70,7 @@ describe("faucetPow", () => {
     );
     expect(digest).toHaveLength(32);
     expect(digest.toString("hex")).toBe(
-      "eb063260e99b7b31c7fdd0f6039c1df778c52bdd55d214d302f2ed8954024bc1",
+      "6481ebe9ad80954bd7629414f5a95123f52d6f14fbde40bc48a6bdac301fe9a4",
     );
   });
 
@@ -57,6 +85,7 @@ describe("faucetPow", () => {
       basePuzzle.anchor_block_hash_hex,
       solved.nonceHex,
       {
+        networkId: NETWORK_ID,
         challengeSaltHex: basePuzzle.challenge_salt_hex,
         scryptLogN: basePuzzle.scrypt_log_n,
         scryptR: basePuzzle.scrypt_r,
@@ -86,7 +115,8 @@ describe("faucetPow", () => {
     await expect(
       solveFaucetPowPuzzle("alice@test", {
         ...basePuzzle,
-        algorithm: "sha256-leading-zero-bits-v1",
+        algorithm:
+          "sha256-leading-zero-bits-v1" as FaucetPowPuzzle["algorithm"],
       }),
     ).rejects.toThrow("Unsupported faucet PoW algorithm");
   });
@@ -106,6 +136,17 @@ describe("faucetPow", () => {
     );
   });
 
+  it("rejects caller budgets above the local resource ceiling", async () => {
+    await expect(
+      solveFaucetPowPuzzle("alice@test", basePuzzle, {
+        maxAttempts: 1_048_577,
+      }),
+    ).rejects.toThrow("max attempts");
+    await expect(
+      solveFaucetPowPuzzle("alice@test", basePuzzle, { concurrency: 5 }),
+    ).rejects.toThrow("concurrency");
+  });
+
   it("accepts puzzles without a VRF salt", () => {
     const digest = buildFaucetPowDigest(
       "alice@test",
@@ -113,6 +154,8 @@ describe("faucetPow", () => {
       basePuzzle.anchor_block_hash_hex,
       "0000000000000001",
       {
+        networkId: NETWORK_ID,
+        challengeSaltHex: null,
         scryptLogN: basePuzzle.scrypt_log_n,
         scryptR: basePuzzle.scrypt_r,
         scryptP: basePuzzle.scrypt_p,
@@ -120,7 +163,7 @@ describe("faucetPow", () => {
     );
     expect(digest).toHaveLength(32);
     expect(digest.toString("hex")).not.toBe(
-      "eb063260e99b7b31c7fdd0f6039c1df778c52bdd55d214d302f2ed8954024bc1",
+      "6481ebe9ad80954bd7629414f5a95123f52d6f14fbde40bc48a6bdac301fe9a4",
     );
   });
 });

@@ -19,12 +19,6 @@ import type {
   GovernancePreparedAction,
   GovernanceProposalDetailInput,
   GovernanceProposalListInput,
-  GovernanceLifecycleSnapshot,
-  GovernancePlainReferendumContractResult,
-  GovernanceLocksResult,
-  GovernanceProposalResult,
-  GovernanceReferendumResult,
-  GovernanceTallyResult,
   GovernanceUnlockStatsResponse,
   IrohaBridge,
   KaigiCallEvent,
@@ -35,7 +29,6 @@ import type {
   NexusStakingPolicy,
   NexusSumeragiStatus,
   NetworkStatsResponse,
-  OfflineReadinessView,
   PublicLaneRewardsResponseView,
   PublicLaneStakeResponseView,
   PublicLaneValidatorsResponseView,
@@ -43,17 +36,12 @@ import type {
   SubscriptionListResponseView,
   SubscriptionPlanListResponseView,
   SubscriptionListItemView,
-  SoraCloudHfDeployResponseView,
-  SoraCloudHfStatusResponseView,
+  SoraCloudHfSharedLeaseStatusResponseView,
   SoraCloudStatusResponseView,
-  SccpCapabilitiesResponse,
-  SccpProofManifestSetResponse,
-  SccpSoraOutboundMaterialResponse,
-  SccpRecentMessagesResponse,
   SigningAlgorithmOption,
   ToriiHealth,
   VpnAvailability,
-  VpnAuthContext,
+  VpnConnectionContext,
   VpnProfile,
   VpnReceipt,
   VpnStatus,
@@ -84,12 +72,12 @@ export const inspectEndpoint = (
 ): Promise<EndpointInspection> => bridge().inspectEndpoint(input);
 
 export const getSigningAlgorithms = (
-  toriiUrl?: string,
+  toriiUrl: string,
 ): Promise<SigningAlgorithmOption[]> =>
-  bridge().getSigningAlgorithms(toriiUrl ? { toriiUrl } : undefined);
+  bridge().getSigningAlgorithms({ toriiUrl });
 
-export const generateKeyPair = (input?: {
-  signingAlgorithm?: string;
+export const generateKeyPair = (input: {
+  signingAlgorithm: string;
   seedHex?: string;
 }) => bridge().generateKeyPair(input);
 
@@ -101,12 +89,14 @@ export const isSecureVaultAvailable = (): Promise<boolean> =>
 
 export const storeAccountSecret = (input: {
   accountId: string;
+  networkPrefix: number;
   privateKeyHex: string;
-  signingAlgorithm?: string;
+  signingAlgorithm: string;
 }): Promise<void> => bridge().storeAccountSecret(input);
 
 export const listAccountSecretFlags = (input: {
   accountIds: string[];
+  networkPrefix: number;
 }): Promise<Record<string, boolean>> => bridge().listAccountSecretFlags(input);
 
 export const copyTextToClipboard = (text: string): Promise<void> =>
@@ -115,23 +105,19 @@ export const copyTextToClipboard = (text: string): Promise<void> =>
 export const deriveAccountAddress = (params: {
   domain: string;
   publicKeyHex: string;
-  networkPrefix?: number;
-  signingAlgorithm?: string;
+  networkPrefix: number;
+  signingAlgorithm: string;
 }): AccountAddressView => bridge().deriveAccountAddress(params);
 
-export const derivePublicKey = (
-  input:
-    | string
-    | {
-        privateKeyHex: string;
-        signingAlgorithm?: string;
-      },
-) => bridge().derivePublicKey(input);
+export const derivePublicKey = (input: {
+  privateKeyHex: string;
+  signingAlgorithm: string;
+}) => bridge().derivePublicKey(input);
 
 export const resolveAccountAlias = (input: {
   toriiUrl: string;
   alias: string;
-  networkPrefix?: number;
+  networkPrefix: number;
 }): Promise<AccountAliasResolutionResponse> =>
   bridge().resolveAccountAlias(input);
 
@@ -201,14 +187,6 @@ export const scanConfidentialWallet = (
 ): Promise<ConfidentialAssetBalanceView> =>
   bridge().scanConfidentialWallet(input);
 
-export const getPrivateKaigiConfidentialXorState = (
-  input: Parameters<IrohaBridge["getPrivateKaigiConfidentialXorState"]>[0],
-) => bridge().getPrivateKaigiConfidentialXorState(input);
-
-export const selfShieldPrivateKaigiXor = (
-  input: Parameters<IrohaBridge["selfShieldPrivateKaigiXor"]>[0],
-) => bridge().selfShieldPrivateKaigiXor(input);
-
 export const fetchAccountAssets = (
   input: Parameters<IrohaBridge["fetchAccountAssets"]>[0],
 ): Promise<AccountAssetsResponse> => bridge().fetchAccountAssets(input);
@@ -240,27 +218,10 @@ export const getGovernanceCitizenCount = (
 ): Promise<GovernanceCitizenCountResponse> =>
   bridge().getGovernanceCitizenCount({ toriiUrl });
 
-export const getGovernanceProposal = (
-  input: Parameters<IrohaBridge["getGovernanceProposal"]>[0],
-): Promise<GovernanceProposalResult> => bridge().getGovernanceProposal(input);
-
-export const getGovernanceReferendum = (
-  input: Parameters<IrohaBridge["getGovernanceReferendum"]>[0],
-): Promise<GovernanceReferendumResult> =>
-  bridge().getGovernanceReferendum(input);
-
-export const getGovernanceTally = (
-  input: Parameters<IrohaBridge["getGovernanceTally"]>[0],
-): Promise<GovernanceTallyResult> => bridge().getGovernanceTally(input);
-
-export const getGovernanceLocks = (
-  input: Parameters<IrohaBridge["getGovernanceLocks"]>[0],
-): Promise<GovernanceLocksResult> => bridge().getGovernanceLocks(input);
-
 export const getGovernanceUnlockStats = (
-  toriiUrl: string,
+  input: Parameters<IrohaBridge["getGovernanceUnlockStats"]>[0],
 ): Promise<GovernanceUnlockStatsResponse> =>
-  bridge().getGovernanceUnlockStats({ toriiUrl });
+  bridge().getGovernanceUnlockStats(input);
 
 export const getGovernanceCouncilCurrent = (
   toriiUrl: string,
@@ -278,11 +239,6 @@ export const getGovernanceCurrentValidationFeePolicy = (
   input: Parameters<IrohaBridge["getGovernanceCurrentValidationFeePolicy"]>[0],
 ) => bridge().getGovernanceCurrentValidationFeePolicy(input);
 
-export const getGovernancePlainReferendumContract = (
-  input: Parameters<IrohaBridge["getGovernancePlainReferendumContract"]>[0],
-): Promise<GovernancePlainReferendumContractResult> =>
-  bridge().getGovernancePlainReferendumContract(input);
-
 export const prepareGovernanceCitizenRegistration = (
   input: Parameters<IrohaBridge["prepareGovernanceCitizenRegistration"]>[0],
 ): Promise<GovernancePreparedAction> =>
@@ -293,37 +249,9 @@ export const prepareGovernanceProposal = (
 ): Promise<GovernancePreparedAction> =>
   bridge().prepareGovernanceProposal(input);
 
-export const prepareGovernancePlainBallot = (
-  input: Parameters<IrohaBridge["prepareGovernancePlainBallot"]>[0],
-): Promise<GovernancePreparedAction> =>
-  bridge().prepareGovernancePlainBallot(input);
-
-export const prepareGovernanceParliamentBallot = (
-  input: Parameters<IrohaBridge["prepareGovernanceParliamentBallot"]>[0],
-): Promise<GovernancePreparedAction> =>
-  bridge().prepareGovernanceParliamentBallot(input);
-
-export const prepareGovernanceEnact = (
-  input: Parameters<IrohaBridge["prepareGovernanceEnact"]>[0],
-): Promise<GovernancePreparedAction> => bridge().prepareGovernanceEnact(input);
-
 export const confirmGovernanceAction = (
   input: Parameters<IrohaBridge["confirmGovernanceAction"]>[0],
 ) => bridge().confirmGovernanceAction(input);
-
-export const getGovernanceLifecycle = (input: {
-  toriiUrl: string;
-  proposalId?: string | null;
-  referendumId?: string | null;
-}): Promise<GovernanceLifecycleSnapshot> => {
-  const lifecycleLoader = bridge().getGovernanceLifecycle;
-  if (!lifecycleLoader) {
-    return Promise.reject(
-      new Error("Governance lifecycle endpoint is unavailable."),
-    );
-  }
-  return lifecycleLoader(input);
-};
 
 export const getExplorerMetrics = (
   toriiUrl: string,
@@ -332,7 +260,8 @@ export const getExplorerMetrics = (
 
 export const getNetworkStats = (input: {
   toriiUrl: string;
-  assetDefinitionId?: string;
+  assetDefinitionId: string;
+  networkPrefix: number;
 }): Promise<NetworkStatsResponse> => bridge().getNetworkStats(input);
 
 export const getExplorerAccountQr = (
@@ -348,7 +277,7 @@ export const getVpnProfile = (
 ): Promise<VpnProfile | null> => bridge().getVpnProfile(input);
 
 export const getVpnStatus = (
-  input?: Partial<VpnAuthContext>,
+  input?: VpnConnectionContext,
 ): Promise<VpnStatus> => bridge().getVpnStatus(input);
 
 export const connectVpn = (
@@ -362,12 +291,8 @@ export const disconnectVpn = (
 export const repairVpn = (): Promise<VpnStatus> => bridge().repairVpn();
 
 export const listVpnReceipts = (
-  input?: Partial<VpnAuthContext>,
+  input?: VpnConnectionContext,
 ): Promise<VpnReceipt[]> => bridge().listVpnReceipts(input);
-
-export const getOfflineReadiness = (
-  input: Parameters<IrohaBridge["getOfflineReadiness"]>[0],
-): Promise<OfflineReadinessView> => bridge().getOfflineReadiness(input);
 
 export const onboardAccount = (input: {
   toriiUrl: string;
@@ -384,7 +309,7 @@ export const requestFaucetFunds = (
     chainId: string;
     accountId: string;
     networkPrefix: number;
-    requestId?: string;
+    requestId: string;
   },
   onProgress?: (progress: FaucetRequestProgress) => void | Promise<void>,
 ): Promise<AccountFaucetResponse> =>
@@ -411,8 +336,9 @@ export const watchKaigiCallEvents = (
   onEvent: (event: KaigiCallEvent) => void | Promise<void>,
 ): Promise<string> => bridge().watchKaigiCallEvents(input, onEvent);
 
-export const stopWatchingKaigiCallEvents = (subscriptionId: string): void =>
-  bridge().stopWatchingKaigiCallEvents(subscriptionId);
+export const stopWatchingKaigiCallEvents = (
+  input: Parameters<IrohaBridge["stopWatchingKaigiCallEvents"]>[0],
+): void => bridge().stopWatchingKaigiCallEvents(input);
 
 export const pollKaigiMeetingSignals = (
   input: Parameters<IrohaBridge["pollKaigiMeetingSignals"]>[0],
@@ -500,217 +426,14 @@ export const getSoraCloudStatus = (
   input: Parameters<IrohaBridge["getSoraCloudStatus"]>[0],
 ): Promise<SoraCloudStatusResponseView> => bridge().getSoraCloudStatus(input);
 
-export const deploySoraCloudHf = (
-  input: Parameters<IrohaBridge["deploySoraCloudHf"]>[0],
-): Promise<SoraCloudHfDeployResponseView> => bridge().deploySoraCloudHf(input);
-
-export const reconcileSoraCloudHfLaunch = (
-  input: Parameters<IrohaBridge["reconcileSoraCloudHfLaunch"]>[0],
-): Promise<SoraCloudHfDeployResponseView> =>
-  bridge().reconcileSoraCloudHfLaunch(input);
-
-export const getSoraCloudHfStatus = (
-  input: Parameters<IrohaBridge["getSoraCloudHfStatus"]>[0],
-): Promise<SoraCloudHfStatusResponseView> =>
-  bridge().getSoraCloudHfStatus(input);
+export const getSoraCloudHfSharedLeaseStatus = (
+  input: Parameters<IrohaBridge["getSoraCloudHfSharedLeaseStatus"]>[0],
+): Promise<SoraCloudHfSharedLeaseStatusResponseView> =>
+  bridge().getSoraCloudHfSharedLeaseStatus(input);
 
 export const getParameters = (
   input: Parameters<IrohaBridge["getParameters"]>[0],
 ): Promise<Record<string, unknown>> => bridge().getParameters(input);
-
-export const getSccpCapabilities = (
-  input: Parameters<IrohaBridge["getSccpCapabilities"]>[0],
-): Promise<SccpCapabilitiesResponse> => bridge().getSccpCapabilities(input);
-
-export const getSccpProofManifests = (
-  input: Parameters<IrohaBridge["getSccpProofManifests"]>[0],
-): Promise<SccpProofManifestSetResponse> =>
-  bridge().getSccpProofManifests(input);
-
-export const getSccpSoraOutboundMaterial = (
-  input: Parameters<IrohaBridge["getSccpSoraOutboundMaterial"]>[0],
-): Promise<SccpSoraOutboundMaterialResponse> =>
-  bridge().getSccpSoraOutboundMaterial(input);
-
-export const listSccpRecentMessages = (
-  input: Parameters<IrohaBridge["listSccpRecentMessages"]>[0],
-): Promise<SccpRecentMessagesResponse> =>
-  bridge().listSccpRecentMessages(input);
-
-export const getSccpMessageProofBundle = (
-  input: Parameters<IrohaBridge["getSccpMessageProofBundle"]>[0],
-): Promise<Record<string, unknown>> =>
-  bridge().getSccpMessageProofBundle(input);
-
-export const getSccpMessageProofArtifact = (
-  input: Parameters<IrohaBridge["getSccpMessageProofArtifact"]>[0],
-): Promise<Record<string, unknown>> =>
-  bridge().getSccpMessageProofArtifact(input);
-
-export const getSccpMessageProofJob = (
-  input: Parameters<IrohaBridge["getSccpMessageProofJob"]>[0],
-): Promise<Record<string, unknown>> => bridge().getSccpMessageProofJob(input);
-
-export const submitSccpBridgeProof = (
-  input: Parameters<IrohaBridge["submitSccpBridgeProof"]>[0],
-): Promise<Record<string, unknown>> => bridge().submitSccpBridgeProof(input);
-
-export const submitSccpBridgeMessage = (
-  input: Parameters<IrohaBridge["submitSccpBridgeMessage"]>[0],
-): Promise<Record<string, unknown>> => bridge().submitSccpBridgeMessage(input);
-
-export const waitForSccpTransactionCommit = (
-  input: Parameters<IrohaBridge["waitForSccpTransactionCommit"]>[0],
-): Promise<Record<string, unknown>> =>
-  bridge().waitForSccpTransactionCommit(input);
-
-export const deploySccpTairaInboundSettlementContract = (
-  input: Parameters<IrohaBridge["deploySccpTairaInboundSettlementContract"]>[0],
-): Promise<Record<string, unknown> | null> =>
-  bridge().deploySccpTairaInboundSettlementContract(input);
-
-export const deriveZkIvmPayload = (
-  input: Parameters<IrohaBridge["deriveZkIvmPayload"]>[0],
-): Promise<Record<string, unknown>> => bridge().deriveZkIvmPayload(input);
-
-export const startZkIvmProveJob = (
-  input: Parameters<IrohaBridge["startZkIvmProveJob"]>[0],
-): Promise<Record<string, unknown>> => bridge().startZkIvmProveJob(input);
-
-export const getZkIvmProveJob = (
-  input: Parameters<IrohaBridge["getZkIvmProveJob"]>[0],
-): Promise<Record<string, unknown>> => bridge().getZkIvmProveJob(input);
-
-export const cancelZkIvmProveJob = (
-  input: Parameters<IrohaBridge["cancelZkIvmProveJob"]>[0],
-): Promise<Record<string, unknown>> => bridge().cancelZkIvmProveJob(input);
-
-export const submitZkIvmProvedTransaction = (
-  input: Parameters<IrohaBridge["submitZkIvmProvedTransaction"]>[0],
-): Promise<Record<string, unknown>> =>
-  bridge().submitZkIvmProvedTransaction(input);
-
-export const getTronTransaction = (
-  input: Parameters<IrohaBridge["getTronTransaction"]>[0],
-): Promise<Record<string, unknown>> => bridge().getTronTransaction(input);
-
-export const getTronAccount = (
-  input: Parameters<IrohaBridge["getTronAccount"]>[0],
-): Promise<Record<string, unknown>> => bridge().getTronAccount(input);
-
-export const getTronTransactionReceipt = (
-  input: Parameters<IrohaBridge["getTronTransactionReceipt"]>[0],
-): Promise<Record<string, unknown>> =>
-  bridge().getTronTransactionReceipt(input);
-
-export const getTronTransactionEvents = (
-  input: Parameters<IrohaBridge["getTronTransactionEvents"]>[0],
-): Promise<Record<string, unknown>> => bridge().getTronTransactionEvents(input);
-
-export const getTronSolidBlock = (
-  input?: Parameters<IrohaBridge["getTronSolidBlock"]>[0],
-): Promise<Record<string, unknown>> => bridge().getTronSolidBlock(input);
-
-export const getTronWitnesses = (
-  input?: Parameters<IrohaBridge["getTronWitnesses"]>[0],
-): Promise<Record<string, unknown>> => bridge().getTronWitnesses(input);
-
-export const getTronFinalityData = (
-  input?: Parameters<IrohaBridge["getTronFinalityData"]>[0],
-): Promise<Record<string, unknown>> => bridge().getTronFinalityData(input);
-
-export const getSccpNileTestTronSigner = (): ReturnType<
-  IrohaBridge["getSccpNileTestTronSigner"]
-> => bridge().getSccpNileTestTronSigner();
-
-export const signSccpNileTestTronTransaction = (
-  input: Parameters<IrohaBridge["signSccpNileTestTronTransaction"]>[0],
-): ReturnType<IrohaBridge["signSccpNileTestTronTransaction"]> =>
-  bridge().signSccpNileTestTronTransaction(input);
-
-export const broadcastTronTransaction = (
-  input: Parameters<IrohaBridge["broadcastTronTransaction"]>[0],
-): Promise<Record<string, unknown>> => bridge().broadcastTronTransaction(input);
-
-export const triggerTronSmartContract = (
-  input: Parameters<IrohaBridge["triggerTronSmartContract"]>[0],
-): Promise<Record<string, unknown>> => bridge().triggerTronSmartContract(input);
-
-export const triggerTronConstantContract = (
-  input: Parameters<IrohaBridge["triggerTronConstantContract"]>[0],
-): Promise<Record<string, unknown>> =>
-  bridge().triggerTronConstantContract(input);
-
-export const callEvmRpc = (
-  input: Parameters<IrohaBridge["callEvmRpc"]>[0],
-): Promise<unknown> => bridge().callEvmRpc(input);
-
-export const getEvmChainId = (
-  input?: Parameters<IrohaBridge["getEvmChainId"]>[0],
-): Promise<string> => bridge().getEvmChainId(input);
-
-export const getEvmBalance = (
-  input: Parameters<IrohaBridge["getEvmBalance"]>[0],
-): Promise<string> => bridge().getEvmBalance(input);
-
-export const getEvmCode = (
-  input: Parameters<IrohaBridge["getEvmCode"]>[0],
-): Promise<string> => bridge().getEvmCode(input);
-
-export const callEvmContract = (
-  input: Parameters<IrohaBridge["callEvmContract"]>[0],
-): Promise<string> => bridge().callEvmContract(input);
-
-export const getEvmTransactionReceipt = (
-  input: Parameters<IrohaBridge["getEvmTransactionReceipt"]>[0],
-): Promise<Record<string, unknown> | null> =>
-  bridge().getEvmTransactionReceipt(input);
-
-export const getEvmTransaction = (
-  input: Parameters<IrohaBridge["getEvmTransaction"]>[0],
-): Promise<Record<string, unknown> | null> => bridge().getEvmTransaction(input);
-
-export const getEvmBlockByHash = (
-  input: Parameters<IrohaBridge["getEvmBlockByHash"]>[0],
-): Promise<Record<string, unknown> | null> => bridge().getEvmBlockByHash(input);
-
-export const getEvmLogs = (
-  input: Parameters<IrohaBridge["getEvmLogs"]>[0],
-): Promise<Record<string, unknown>[]> => bridge().getEvmLogs(input);
-
-export const callSolanaRpc = (
-  input: Parameters<IrohaBridge["callSolanaRpc"]>[0],
-): Promise<unknown> => bridge().callSolanaRpc(input);
-
-export const getSolanaBalance = (
-  input: Parameters<IrohaBridge["getSolanaBalance"]>[0],
-): Promise<string> => bridge().getSolanaBalance(input);
-
-export const getSolanaTokenBalance = (
-  input: Parameters<IrohaBridge["getSolanaTokenBalance"]>[0],
-): Promise<Record<string, unknown>> => bridge().getSolanaTokenBalance(input);
-
-export const prepareSolanaAssociatedTokenAccount = (
-  input: Parameters<IrohaBridge["prepareSolanaAssociatedTokenAccount"]>[0],
-) => bridge().prepareSolanaAssociatedTokenAccount(input);
-
-export const getSolanaSignatureStatus = (
-  input: Parameters<IrohaBridge["getSolanaSignatureStatus"]>[0],
-): Promise<Record<string, unknown> | null> =>
-  bridge().getSolanaSignatureStatus(input);
-
-export const getSolanaTransaction = (
-  input: Parameters<IrohaBridge["getSolanaTransaction"]>[0],
-): Promise<Record<string, unknown> | null> =>
-  bridge().getSolanaTransaction(input);
-
-export const buildSolanaTransaction = (
-  input: Parameters<IrohaBridge["buildSolanaTransaction"]>[0],
-): Promise<string> => bridge().buildSolanaTransaction(input);
-
-export const broadcastSolanaTransaction = (
-  input: Parameters<IrohaBridge["broadcastSolanaTransaction"]>[0],
-): Promise<string> => bridge().broadcastSolanaTransaction(input);
 
 export const bondPublicLaneStake = (
   input: Parameters<IrohaBridge["bondPublicLaneStake"]>[0],

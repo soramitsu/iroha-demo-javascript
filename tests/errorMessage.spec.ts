@@ -37,12 +37,14 @@ describe("sanitizeErrorMessage", () => {
     );
   });
 
-  it("formats opaque norito literals inside readable errors", () => {
+  it("does not invent an asset identity for an opaque literal", () => {
     expect(
       sanitizeErrorMessage(
         "Shield policy check failed for norito:00112233445566778899aabbccddeeff",
       ),
-    ).toBe("Shield policy check failed for 4Zust3cNxsgov3757wxRW7DtR8n6");
+    ).toBe(
+      "Shield policy check failed for norito:00112233445566778899aabbccddeeff",
+    );
   });
 
   it("collapses HTML gateway responses to readable text", () => {

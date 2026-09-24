@@ -1,4 +1,7 @@
+// @vitest-environment node
+
 import { describe, expect, it, vi } from "vitest";
+import { createConnectSessionPreview, NetworkId } from "@iroha/iroha-js";
 import {
   IrohaConnectBoundary,
   type IrohaConnectBoundaryDependencies,
@@ -13,23 +16,38 @@ import {
   deriveConnectDirectionKeys,
   encodeCiphertextConnectFrame,
   encryptConnectEnvelope,
-  generateWalletConnectKeyPair,
+  generateConnectWalletKeyPair,
   hexToBytes,
   type ConnectEnvelopePayload,
   type ConnectPermissions,
   type ConnectPreview,
 } from "@/utils/soraswapConnectWire";
+import { TAIRA_NETWORK_ID } from "@/utils/firstReleaseNetworkIdentity";
+import { deriveAccountAddressView } from "../electron/accountAddress";
+
+const ACCOUNT_A = deriveAccountAddressView({
+  domain: "default",
+  publicKeyHex:
+    "CE7FA46C9DCE7EA4B125E2E36BDB63EA33073E7590AC92816AE1E861B7048B03",
+  networkPrefix: 369,
+}).accountId;
+const ACCOUNT_B = deriveAccountAddressView({
+  domain: "default",
+  publicKeyHex:
+    "8E7FA46C9DCE7EA4B125E2E36BDB63EA33073E7590AC92816AE1E861B7048B03",
+  networkPrefix: 369,
+}).accountId;
 
 const CONTEXT_A: IrohaConnectWalletContext = {
   toriiUrl: "https://taira.sora.org",
   chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
   networkPrefix: 369,
-  accountId: `testu${"a".repeat(32)}`,
+  accountId: ACCOUNT_A,
 };
 
 const CONTEXT_B: IrohaConnectWalletContext = {
   ...CONTEXT_A,
-  accountId: `testu${"b".repeat(32)}`,
+  accountId: ACCOUNT_B,
 };
 
 const PERMISSIONS: ConnectPermissions = {
@@ -38,11 +56,32 @@ const PERMISSIONS: ConnectPermissions = {
   resources: ["example.test"],
 };
 
-const sidFromByte = (value: number) =>
-  bytesToBase64(Uint8Array.from({ length: 32 }, () => value))
-    .replace(/\+/gu, "-")
-    .replace(/\//gu, "_")
-    .replace(/=+$/gu, "");
+const NETWORK_ID = NetworkId.parse(TAIRA_NETWORK_ID);
+
+const exactSessionInput = (
+  appKeyPair: { publicKeyHex: string; privateKeyHex: string },
+  nonceByte: number,
+) => {
+  const nonce = Uint8Array.from({ length: 16 }, () => nonceByte);
+  const preview = createConnectSessionPreview({
+    networkId: NETWORK_ID,
+    nonce,
+    appKeyPair: {
+      publicKey: hexToBytes(appKeyPair.publicKeyHex),
+      privateKey: hexToBytes(appKeyPair.privateKeyHex),
+    },
+  });
+  return {
+    preview,
+    input: {
+      sid: preview.sidBase64Url,
+      appPublicKeyHex: appKeyPair.publicKeyHex,
+      nonceBase64Url: Buffer.from(nonce).toString("base64url"),
+      relayToken: "relay-secret",
+      requestedNetworkId: TAIRA_NETWORK_ID,
+    },
+  };
+};
 
 const fakeSignature = {
   algorithmCode: 0,
@@ -54,6 +93,7 @@ const fakeSignature = {
 const createHarness = (input?: {
   authorize?: IrohaConnectBoundaryDependencies["authorize"];
   now?: () => number;
+  randomToken?: () => string;
 }) => {
   const assertContext = vi.fn(async (context: IrohaConnectWalletContext) => ({
     ...context,
@@ -71,6 +111,7 @@ const createHarness = (input?: {
     authorize,
     sign,
     ...(input?.now ? { now: input.now } : {}),
+    ...(input?.randomToken ? { randomToken: input.randomToken } : {}),
   });
   return { boundary, assertContext, authorize, sign };
 };
@@ -93,15 +134,13 @@ const activateSession = async (
   } = {},
 ): Promise<ActiveHarnessSession> => {
   const context = input.context ?? CONTEXT_A;
-  const sid = sidFromByte(input.sidByte ?? 1);
-  const appKeyPair = generateWalletConnectKeyPair();
+  const appKeyPair = generateConnectWalletKeyPair();
+  const identity = exactSessionInput(appKeyPair, input.sidByte ?? 1);
+  const sid = identity.input.sid;
   boundary.setContext(context);
   const prepared = await boundary.prepareSession({
     context,
-    sid,
-    appPublicKeyHex: appKeyPair.publicKeyHex,
-    relayToken: "relay-secret",
-    requestedChainId: context.chainId,
+    ...identity.input,
     permissions: input.permissions ?? PERMISSIONS,
   });
   const approved = await boundary.approveSession(prepared);
@@ -111,10 +150,8 @@ const activateSession = async (
   }
   const preview: ConnectPreview = {
     sid,
-    sidBytesHex: bytesToHex(
-      Uint8Array.from({ length: 32 }, () => input.sidByte ?? 1),
-    ),
-    nonceHex: "",
+    sidBytesHex: bytesToHex(identity.preview.sidBytes),
+    nonceHex: bytesToHex(identity.preview.nonce),
     privateKeyHex: appKeyPair.privateKeyHex,
     publicKeyHex: appKeyPair.publicKeyHex,
     walletUri: "",
@@ -183,6 +220,59 @@ const decryptResponse = (
 };
 
 describe("IrohaConnect preload-owned approval boundary", () => {
+  it("requires generated boundary tokens to be canonical 32-byte base64url", async () => {
+    const { boundary, assertContext, authorize, sign } = createHarness({
+      randomToken: () => "renderer-shaped-token",
+    });
+    boundary.setContext(CONTEXT_A);
+    const appKeyPair = generateConnectWalletKeyPair();
+    const identity = exactSessionInput(appKeyPair, 40);
+
+    await expect(
+      boundary.prepareSession({
+        context: CONTEXT_A,
+        ...identity.input,
+        permissions: PERMISSIONS,
+      }),
+    ).rejects.toThrow("exact 32-byte base64url token");
+
+    expect(assertContext).toHaveBeenCalledTimes(1);
+    expect(authorize).not.toHaveBeenCalled();
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it("rejects noncanonical text and native confirmation controls", async () => {
+    const { boundary, assertContext, authorize, sign } = createHarness();
+    boundary.setContext(CONTEXT_A);
+    const appKeyPair = generateConnectWalletKeyPair();
+    const identity = exactSessionInput(appKeyPair, 42);
+
+    await expect(
+      boundary.prepareSession({
+        context: CONTEXT_A,
+        ...identity.input,
+        relayToken: "relay\u202esecret",
+        permissions: PERMISSIONS,
+      }),
+    ).rejects.toThrow("bounded canonical text");
+
+    expect(assertContext).not.toHaveBeenCalled();
+    expect(authorize).not.toHaveBeenCalled();
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it("requires an origin-only endpoint before endpoint or vault access", async () => {
+    const { boundary, assertContext, authorize, sign } = createHarness();
+    const context = { ...CONTEXT_A, toriiUrl: "https://taira.sora.org/proxy" };
+    expect(() => boundary.setContext(context)).toThrow(
+      "canonical endpoint origin",
+    );
+
+    expect(assertContext).not.toHaveBeenCalled();
+    expect(authorize).not.toHaveBeenCalled();
+    expect(sign).not.toHaveBeenCalled();
+  });
+
   it("rejects direct session approval calls before authorization or vault access", async () => {
     const { boundary, authorize, sign } = createHarness();
     boundary.setContext(CONTEXT_A);
@@ -195,18 +285,71 @@ describe("IrohaConnect preload-owned approval boundary", () => {
     expect(sign).not.toHaveBeenCalled();
   });
 
+  it("rejects an unbound SID tuple before authorization or vault access", async () => {
+    const { boundary, assertContext, authorize, sign } = createHarness();
+    boundary.setContext(CONTEXT_A);
+    const appKeyPair = generateConnectWalletKeyPair();
+    const identity = exactSessionInput(appKeyPair, 2);
+
+    await expect(
+      boundary.prepareSession({
+        context: CONTEXT_A,
+        ...identity.input,
+        nonceBase64Url: Buffer.alloc(16, 0x7f).toString("base64url"),
+        permissions: PERMISSIONS,
+      }),
+    ).rejects.toThrow("does not bind the exact NetworkId");
+
+    expect(assertContext).not.toHaveBeenCalled();
+    expect(authorize).not.toHaveBeenCalled();
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed permission manifests before endpoint or vault access", async () => {
+    const sparseMethods = new Array<string>(2);
+    sparseMethods[1] = "sign_raw";
+    const malformed: unknown[] = [
+      { methods: ["sign_raw", "sign_raw"], events: [], resources: null },
+      { methods: new Array(17).fill("method"), events: [], resources: null },
+      { methods: ["sign_raw"], events: [], resources: null, extra: true },
+      {
+        methods: Object.assign(["sign_raw"], { extra: true }),
+        events: [],
+        resources: null,
+      },
+      { methods: sparseMethods, events: [], resources: null },
+      { methods: new Uint8Array([1]), events: [], resources: null },
+    ];
+
+    for (const permissions of malformed) {
+      const { boundary, assertContext, authorize, sign } = createHarness();
+      boundary.setContext(CONTEXT_A);
+      const appKeyPair = generateConnectWalletKeyPair();
+      const identity = exactSessionInput(appKeyPair, 41);
+
+      await expect(
+        boundary.prepareSession({
+          context: CONTEXT_A,
+          ...identity.input,
+          permissions: permissions as ConnectPermissions,
+        }),
+      ).rejects.toThrow("exact bounded permission manifest");
+      expect(assertContext).not.toHaveBeenCalled();
+      expect(authorize).not.toHaveBeenCalled();
+      expect(sign).not.toHaveBeenCalled();
+    }
+  });
+
   it("requires trusted native authorization before the pairing signature", async () => {
     const { boundary, authorize, sign } = createHarness({
       authorize: async () => false,
     });
     boundary.setContext(CONTEXT_A);
-    const appKeyPair = generateWalletConnectKeyPair();
+    const appKeyPair = generateConnectWalletKeyPair();
+    const identity = exactSessionInput(appKeyPair, 2);
     const prepared = await boundary.prepareSession({
       context: CONTEXT_A,
-      sid: sidFromByte(2),
-      appPublicKeyHex: appKeyPair.publicKeyHex,
-      relayToken: "relay-secret",
-      requestedChainId: CONTEXT_A.chainId,
+      ...identity.input,
       permissions: PERMISSIONS,
     });
 
@@ -227,13 +370,11 @@ describe("IrohaConnect preload-owned approval boundary", () => {
         }),
     });
     boundary.setContext(CONTEXT_A);
-    const appKeyPair = generateWalletConnectKeyPair();
+    const appKeyPair = generateConnectWalletKeyPair();
+    const identity = exactSessionInput(appKeyPair, 3);
     const prepared = await boundary.prepareSession({
       context: CONTEXT_A,
-      sid: sidFromByte(3),
-      appPublicKeyHex: appKeyPair.publicKeyHex,
-      relayToken: "relay-secret",
-      requestedChainId: CONTEXT_A.chainId,
+      ...identity.input,
       permissions: PERMISSIONS,
     });
 
@@ -257,13 +398,11 @@ describe("IrohaConnect preload-owned approval boundary", () => {
         }),
     });
     boundary.setContext(CONTEXT_A);
-    const appKeyPair = generateWalletConnectKeyPair();
+    const appKeyPair = generateConnectWalletKeyPair();
+    const identity = exactSessionInput(appKeyPair, 31);
     const prepared = await boundary.prepareSession({
       context: CONTEXT_A,
-      sid: sidFromByte(31),
-      appPublicKeyHex: appKeyPair.publicKeyHex,
-      relayToken: "relay-secret",
-      requestedChainId: CONTEXT_A.chainId,
+      ...identity.input,
       permissions: PERMISSIONS,
     });
 

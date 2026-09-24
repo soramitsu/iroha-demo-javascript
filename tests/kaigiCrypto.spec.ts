@@ -38,6 +38,52 @@ describe("Kaigi crypto helpers", () => {
     ).toThrow();
   });
 
+  it("rejects non-exact sealed boxes before key agreement", () => {
+    const hostKeys = generateKaigiX25519KeyPair();
+    const encrypted = encryptKaigiPayload(
+      { value: "secret" },
+      hostKeys.publicKeyBase64Url,
+    );
+
+    expect(() =>
+      decryptKaigiPayload(
+        { ...encrypted, compatibility_hint: true } as typeof encrypted,
+        hostKeys,
+      ),
+    ).toThrow(/missing or unknown fields/u);
+    expect(() =>
+      decryptKaigiPayload({ ...encrypted, ivBase64Url: "AA" }, hostKeys),
+    ).toThrow(/exactly 12 bytes/u);
+  });
+
+  it("bounds encrypted plaintext before allocating crypto output", () => {
+    const hostKeys = generateKaigiX25519KeyPair();
+    expect(() =>
+      encryptKaigiPayload(
+        { value: "x".repeat(1024 * 1024) },
+        hostKeys.publicKeyBase64Url,
+      ),
+    ).toThrow(/exceeds/u);
+  });
+
+  it("rejects oversized encoded ciphertext before attempting decryption", () => {
+    const hostKeys = generateKaigiX25519KeyPair();
+    const encrypted = encryptKaigiPayload(
+      { value: "secret" },
+      hostKeys.publicKeyBase64Url,
+    );
+
+    expect(() =>
+      decryptKaigiPayload(
+        {
+          ...encrypted,
+          ciphertextBase64Url: "A".repeat(Math.ceil((1024 * 1024 * 4) / 3) + 1),
+        },
+        hostKeys,
+      ),
+    ).toThrow(/exceeds 1048576 bytes/u);
+  });
+
   it("round-trips payloads encrypted with the invite secret", () => {
     const secret = "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1u";
     const payload = {

@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ed25519, x25519 } from "@noble/curves/ed25519";
-import { AccountAddress } from "@iroha/iroha-js";
+import { AccountAddress, NetworkId } from "@iroha/iroha-js";
 import {
   createConnectAppSession,
   createConnectSessionPreview,
@@ -15,11 +15,12 @@ import {
   decodeConnectEnvelope,
   decodeConnectFrame,
   decryptConnectEnvelope,
-  deriveWalletConnectDirectionKeys,
+  deriveConnectWalletDirectionKeys,
   encodeApproveConnectFrame,
   encodeCiphertextConnectFrame,
   encodeConnectEnvelope,
   encryptConnectEnvelope,
+  generateConnectWalletKeyPair,
 } from "@/utils/soraswapConnectWire";
 
 type SocketHandler = (event: Event | MessageEvent) => void;
@@ -79,6 +80,21 @@ class RecordingWebSocket {
 }
 
 describe("IrohaConnect linked SDK interoperability", () => {
+  it("wipes the generated X25519 private-key bytes after exporting the pair", () => {
+    const generatedPrivateKey = new Uint8Array(32).fill(0x5a);
+    const randomPrivateKey = vi
+      .spyOn(x25519.utils, "randomPrivateKey")
+      .mockReturnValue(generatedPrivateKey);
+    try {
+      const pair = generateConnectWalletKeyPair();
+      expect(pair.privateKeyHex).toBe("5a".repeat(32));
+      expect(pair.publicKeyHex).toMatch(/^[0-9a-f]{64}$/u);
+      expect(generatedPrivateKey).toEqual(new Uint8Array(32));
+    } finally {
+      randomPrivateKey.mockRestore();
+    }
+  });
+
   it("enforces exact first-release Open signing grants", () => {
     const permissions = {
       methods: ["sign_raw", "sign_transaction"],
@@ -164,11 +180,15 @@ describe("IrohaConnect linked SDK interoperability", () => {
 
   it("establishes a current v1 SDK app session and completes a raw signature", async () => {
     RecordingWebSocket.instances = [];
-    const chainId = "interop-chain";
+    const networkId = NetworkId.fromBytes(
+      Uint8Array.from({ length: 32 }, (_, index) =>
+        index === 31 ? 0x13 : 0x11,
+      ),
+    );
     const relayToken = "relay-token-v1";
     const appPrivateKey = new Uint8Array(32).fill(0x31);
     const preview = createConnectSessionPreview({
-      chainId,
+      networkId,
       node: "https://taira.sora.org",
       nonce: new Uint8Array(16).fill(0x42),
       appKeyPair: {
@@ -214,6 +234,7 @@ describe("IrohaConnect linked SDK interoperability", () => {
     }).toI105(369);
     const approvalPreimage = buildApprovePreimage({
       sid: preview.sidBase64Url,
+      networkId: preview.networkId.toString(),
       appPublicKeyHex: bytesToHex(preview.appKeyPair.publicKey),
       walletPublicKeyHex: bytesToHex(walletPublicKey),
       accountId,
@@ -239,7 +260,7 @@ describe("IrohaConnect linked SDK interoperability", () => {
     );
     await expect(approvalPromise).resolves.toMatchObject({ accountId });
 
-    const keys = deriveWalletConnectDirectionKeys({
+    const keys = deriveConnectWalletDirectionKeys({
       sid: preview.sidBase64Url,
       appPublicKeyHex: bytesToHex(preview.appKeyPair.publicKey),
       walletPrivateKeyHex: bytesToHex(walletPrivateKey),

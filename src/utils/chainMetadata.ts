@@ -9,53 +9,105 @@ export type ChainMetadataDraft = {
 };
 
 const MAX_NETWORK_PREFIX = 0x3fff;
+const MAX_CHAIN_ID_CHARACTERS = 256;
 const FIRST_RELEASE_CHAIN_METADATA_KEYS = [
   "chain_id",
   "network_prefix",
 ] as const;
+const UNSAFE_TECHNICAL_TEXT = /[\p{Cc}\u202a-\u202e\u2066-\u2069]/u;
 
-const trimString = (value: unknown): string => String(value ?? "").trim();
+const readExactDataRecord = (
+  value: unknown,
+  expectedKeys: readonly string[],
+  label: string,
+): Readonly<Record<string, unknown>> => {
+  let prototype: object | null;
+  let ownKeys: PropertyKey[];
+  try {
+    prototype =
+      value !== null && typeof value === "object"
+        ? Object.getPrototypeOf(value)
+        : null;
+    ownKeys =
+      value !== null && typeof value === "object" ? Reflect.ownKeys(value) : [];
+  } catch {
+    throw new TypeError(`${label} must be an exact data object.`);
+  }
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    (prototype !== Object.prototype && prototype !== null) ||
+    ownKeys.length !== expectedKeys.length ||
+    ownKeys.some(
+      (key) => typeof key !== "string" || !expectedKeys.includes(key),
+    )
+  ) {
+    throw new TypeError(`${label} contains missing or unknown fields.`);
+  }
 
-const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-export const normalizeChainIdValue = (value: unknown): string | null => {
-  const normalized = trimString(value);
-  return normalized || null;
+  const snapshot: Record<string, unknown> = {};
+  for (const key of expectedKeys) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new TypeError(`${label} must be an exact data object.`);
+    }
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+      throw new TypeError(`${label} must contain only enumerable data fields.`);
+    }
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
 };
 
-export const normalizeNetworkPrefixValue = (value: unknown): number | null => {
-  const candidate = typeof value === "string" ? value.trim() : value;
-  if (candidate === null || candidate === undefined || candidate === "") {
+export const normalizeChainIdValue = (value: unknown): string | null => {
+  if (typeof value !== "string") {
     return null;
   }
-  const normalized = Number(candidate);
+  const normalized = value.trim();
   if (
-    !Number.isInteger(normalized) ||
-    normalized < 0 ||
-    normalized > MAX_NETWORK_PREFIX
+    !normalized ||
+    normalized.length > MAX_CHAIN_ID_CHARACTERS ||
+    normalized.normalize("NFC") !== normalized ||
+    UNSAFE_TECHNICAL_TEXT.test(normalized)
   ) {
     return null;
   }
   return normalized;
 };
 
+export const normalizeNetworkPrefixValue = (value: unknown): number | null => {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > MAX_NETWORK_PREFIX
+  ) {
+    return null;
+  }
+  return value;
+};
+
 export const normalizeChainMetadata = (
   draft: ChainMetadataDraft,
-  fallback?: ChainMetadataDraft,
 ): ChainMetadata => {
-  const chainId =
-    normalizeChainIdValue(draft.chainId) ??
-    normalizeChainIdValue(fallback?.chainId);
-  const networkPrefix =
-    normalizeNetworkPrefixValue(draft.networkPrefix) ??
-    normalizeNetworkPrefixValue(fallback?.networkPrefix);
+  const exactDraft = readExactDataRecord(
+    draft,
+    ["chainId", "networkPrefix"],
+    "Chain metadata",
+  );
+  const chainId = normalizeChainIdValue(exactDraft.chainId);
+  const networkPrefix = normalizeNetworkPrefixValue(exactDraft.networkPrefix);
 
-  if (!chainId) {
-    throw new Error("Torii endpoint did not expose a chain ID.");
+  if (!chainId || chainId !== exactDraft.chainId) {
+    throw new Error("Chain metadata must contain an exact canonical chain ID.");
   }
   if (networkPrefix === null) {
-    throw new Error("Torii endpoint did not expose a valid network prefix.");
+    throw new Error(
+      "Chain metadata must contain an integer network prefix between 0 and 16383.",
+    );
   }
 
   return { chainId, networkPrefix };
@@ -64,34 +116,24 @@ export const normalizeChainMetadata = (
 export const parseFirstReleaseChainMetadataPayload = (
   payload: unknown,
 ): ChainMetadata => {
-  if (!isPlainRecord(payload)) {
-    throw new TypeError("Chain metadata must be an object.");
-  }
-  const actualKeys = Object.keys(payload).sort();
-  const expectedKeys = [...FIRST_RELEASE_CHAIN_METADATA_KEYS].sort();
+  const exactPayload = readExactDataRecord(
+    payload,
+    FIRST_RELEASE_CHAIN_METADATA_KEYS,
+    "Chain metadata",
+  );
   if (
-    actualKeys.length !== expectedKeys.length ||
-    actualKeys.some((key, index) => key !== expectedKeys[index])
-  ) {
-    throw new TypeError("Chain metadata contains missing or unknown fields.");
-  }
-  if (
-    typeof payload.chain_id !== "string" ||
-    !payload.chain_id ||
-    payload.chain_id.trim() !== payload.chain_id
+    typeof exactPayload.chain_id !== "string" ||
+    normalizeChainIdValue(exactPayload.chain_id) !== exactPayload.chain_id
   ) {
     throw new TypeError("Chain metadata chain_id must be canonical text.");
   }
-  if (
-    typeof payload.network_prefix !== "number" ||
-    normalizeNetworkPrefixValue(payload.network_prefix) === null
-  ) {
+  if (normalizeNetworkPrefixValue(exactPayload.network_prefix) === null) {
     throw new TypeError(
       "Chain metadata network_prefix must be an integer between 0 and 16383.",
     );
   }
   return {
-    chainId: payload.chain_id,
-    networkPrefix: payload.network_prefix,
+    chainId: exactPayload.chain_id,
+    networkPrefix: exactPayload.network_prefix as number,
   };
 };

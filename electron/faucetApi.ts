@@ -1,11 +1,19 @@
-import { normalizeAssetDefinitionId } from "@iroha/iroha-js";
+import { normalizeAssetDefinitionId } from "@iroha/iroha-js/normalizers";
+import { TAIRA_NETWORK_PREFIX } from "../src/utils/firstReleaseNetworkIdentity";
 import { normalizeCanonicalAccountIdLiteral } from "./accountAddress";
-import { solveFaucetPowPuzzle, type FaucetPowPuzzle } from "./faucetPow";
+import {
+  decodeFaucetPowPuzzle,
+  solveFaucetPowPuzzle,
+  type FaucetPowPuzzle,
+} from "./faucetPow";
 import {
   normalizeAccountAssetListPayload,
+  normalizeBaseUrl,
   readApiErrorDetail,
 } from "./preload-utils";
 import type { TransactionFinalityProof } from "./transactionFinality";
+import { resolveFirstReleaseNetworkIdForConfiguredIdentity } from "./transactionFeeQuote";
+import { readBoundedJsonResponse } from "./boundedJsonResponse";
 
 export type AccountFaucetResponseDto = {
   account_id: string;
@@ -19,7 +27,6 @@ export type AccountFaucetResponseDto = {
 export type AccountFaucetResponse = Omit<AccountFaucetResponseDto, "status"> & {
   status: string;
   finality: TransactionFinalityProof;
-  fee?: unknown;
 };
 
 const ACCOUNT_FAUCET_RESPONSE_KEYS = Object.freeze(
@@ -78,12 +85,12 @@ const NORITO_CONTENT_TYPE = "application/x-norito";
 const TAIRA_PUBLIC_HOST = "taira.sora.org";
 const MINAMOTO_PUBLIC_HOST = "minamoto.sora.org";
 const MINAMOTO_CHAIN_ID = "00000000-0000-0000-0000-000000000000";
-const TAIRA_NETWORK_PREFIX = 369;
 const MINAMOTO_NETWORK_PREFIX = 753;
 const TAIRA_FAUCET_AUTHORITY =
   "testuﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV";
 const TAIRA_FAUCET_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 const TAIRA_FAUCET_CLAIM_AMOUNT = "25000";
+const MAX_FAUCET_JSON_BYTES = 32 * 1024;
 
 const exactFaucetResponseRecord = (value: unknown): Record<string, unknown> => {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -228,17 +235,15 @@ const createAbortError = () => {
   return error;
 };
 
-const normalizeFaucetNetworkPrefix = (value: unknown): number | undefined => {
-  if (value === undefined || value === null || value === "") {
-    return undefined;
-  }
-  const parsed =
-    typeof value === "string" ? Number(value.trim()) : Number(value);
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 0x3fff) {
-    return undefined;
-  }
-  return parsed;
-};
+const parseBoundedJsonResponse = async (
+  response: Response,
+  label: string,
+): Promise<unknown> =>
+  readBoundedJsonResponse(response, {
+    label,
+    maximumBytes: MAX_FAUCET_JSON_BYTES,
+    requireApplicationJson: true,
+  });
 
 const readAbortReason = (signal: AbortSignal) =>
   signal.reason instanceof Error ? signal.reason : createAbortError();
@@ -373,65 +378,42 @@ const buildFaucetDisabledMessage = (baseUrl: string): string =>
       ? "The TAIRA endpoint has its account faucet disabled. This is an endpoint/operator configuration problem, not a wallet problem; ask a TAIRA operator to enable the faucet."
       : "This endpoint does not provide starter funds. Minamoto mainnet has no faucet; switch Settings to the TAIRA testnet preset or use an already-funded account.";
 
-const readFaucetPuzzleNetworkPrefix = (puzzle: FaucetPowPuzzle): number => {
-  const networkPrefix = normalizeFaucetNetworkPrefix(puzzle.chain_discriminant);
-  if (networkPrefix === undefined) {
-    throw new Error(
-      "Faucet puzzle is missing a valid chain_discriminant network prefix.",
-    );
-  }
-  return networkPrefix;
-};
-
-const readFaucetPuzzleChainId = (puzzle: FaucetPowPuzzle): string => {
-  const chainId = String(puzzle.chain_id ?? "").trim();
-  if (!chainId) {
-    throw new Error("Faucet puzzle is missing its chain_id.");
-  }
-  return chainId;
-};
-
-const assertFaucetPuzzleMatchesConfiguredNetwork = (
-  puzzle: FaucetPowPuzzle,
-  expectedChainId: string,
-  expectedNetworkPrefix: number,
-) => {
-  const actualNetworkPrefix = readFaucetPuzzleNetworkPrefix(puzzle);
-  const actualChainId = readFaucetPuzzleChainId(puzzle);
-  if (actualNetworkPrefix !== expectedNetworkPrefix) {
-    throw new Error(
-      `Faucet endpoint network prefix mismatch: expected ${expectedNetworkPrefix}, got ${actualNetworkPrefix}. TAIRA must use ${TAIRA_NETWORK_PREFIX} and Minamoto must use ${MINAMOTO_NETWORK_PREFIX}; redeploy the faucet endpoint with the correct chain profile before claiming.`,
-    );
-  }
-  if (actualChainId.toLowerCase() !== expectedChainId.toLowerCase()) {
-    throw new Error(
-      `Faucet endpoint chain id mismatch: expected ${expectedChainId}, got ${actualChainId}. TAIRA must use ${TAIRA_NETWORK_PREFIX} and Minamoto must not expose a faucet; redeploy the faucet endpoint with the correct chain profile before claiming.`,
-    );
-  }
-};
-
 const normalizeExpectedFaucetIdentity = (
   chainId: string,
   networkPrefix: number,
 ) => {
-  const normalizedChainId = String(chainId ?? "").trim();
-  if (!normalizedChainId) {
+  if (
+    typeof chainId !== "string" ||
+    chainId.length === 0 ||
+    chainId.trim() !== chainId
+  ) {
     throw new Error("chainId is required before requesting faucet funds.");
   }
-  const normalizedNetworkPrefix = normalizeFaucetNetworkPrefix(networkPrefix);
-  if (normalizedNetworkPrefix === undefined) {
+  if (
+    typeof networkPrefix !== "number" ||
+    !Number.isSafeInteger(networkPrefix) ||
+    networkPrefix < 0 ||
+    networkPrefix > 0x3fff
+  ) {
     throw new Error(
       "networkPrefix must be an integer between 0 and 16383 before requesting faucet funds.",
     );
   }
-  if (normalizedChainId.toLowerCase() === MINAMOTO_CHAIN_ID) {
+  if (
+    chainId === MINAMOTO_CHAIN_ID ||
+    networkPrefix === MINAMOTO_NETWORK_PREFIX
+  ) {
     throw new Error(
       "Minamoto mainnet must not expose a faucet. Switch Settings to the TAIRA testnet preset to request starter XOR.",
     );
   }
   return {
-    chainId: normalizedChainId,
-    networkPrefix: normalizedNetworkPrefix,
+    chainId,
+    networkPrefix,
+    networkId: resolveFirstReleaseNetworkIdForConfiguredIdentity({
+      chainId,
+      networkPrefix,
+    }),
   };
 };
 
@@ -446,7 +428,7 @@ const readKnownTairaFaucetBalance = async (
   try {
     throwIfAborted(signal);
     const response = await fetchImpl(
-      `${baseUrl}/v1/accounts/${encodeURIComponent(TAIRA_FAUCET_AUTHORITY)}/assets`,
+      `${baseUrl}/v1/accounts/${encodeURIComponent(TAIRA_FAUCET_AUTHORITY)}/assets?count_mode=exact&limit=50`,
       {
         method: "GET",
         signal,
@@ -459,15 +441,18 @@ const readKnownTairaFaucetBalance = async (
     if (!response.ok) {
       return null;
     }
-    const payload = normalizeAccountAssetListPayload(await response.json());
-    const holding = payload.items.find((item) => {
-      const assetDefinitionId = item.asset_definition_id?.trim() ?? "";
-      return (
-        assetDefinitionId === TAIRA_FAUCET_ASSET_DEFINITION_ID ||
-        item.asset_id.startsWith(`${TAIRA_FAUCET_ASSET_DEFINITION_ID}#`)
-      );
-    });
-    return holding?.quantity.trim() || null;
+    const payload = normalizeAccountAssetListPayload(
+      await parseBoundedJsonResponse(response, "TAIRA faucet balance response"),
+      {
+        expectedAccountId: TAIRA_FAUCET_AUTHORITY,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+        maximumItems: 50,
+      },
+    );
+    const holding = payload.items.find(
+      (item) => item.asset_definition_id === TAIRA_FAUCET_ASSET_DEFINITION_ID,
+    );
+    return holding?.quantity ?? null;
   } catch {
     throwIfAborted(signal);
     return null;
@@ -532,8 +517,9 @@ export const requestFaucetFundsWithPuzzle = async ({
   puzzleRetryDelayMs = DEFAULT_PUZZLE_RETRY_DELAY_MS,
   onStatus,
 }: RequestFaucetFundsWithPowInput): Promise<AccountFaucetResponseDto> => {
-  if (isKnownMinamotoPublicEndpoint(baseUrl)) {
-    throw new Error(buildFaucetDisabledMessage(baseUrl));
+  const canonicalBaseUrl = normalizeBaseUrl(baseUrl);
+  if (isKnownMinamotoPublicEndpoint(canonicalBaseUrl)) {
+    throw new Error(buildFaucetDisabledMessage(canonicalBaseUrl));
   }
   const expectedIdentity = normalizeExpectedFaucetIdentity(
     chainId,
@@ -553,7 +539,7 @@ export const requestFaucetFundsWithPuzzle = async ({
       attempts: retryAttempts,
     });
     const puzzleResponse = await fetchImpl(
-      `${baseUrl}/v1/accounts/faucet/puzzle`,
+      `${canonicalBaseUrl}/v1/accounts/faucet/puzzle`,
       {
         method: "GET",
         signal,
@@ -582,36 +568,32 @@ export const requestFaucetFundsWithPuzzle = async ({
       break;
     }
 
-    const puzzle = (await puzzleResponse.json()) as FaucetPowPuzzle;
-    throwIfAborted(signal);
-    assertFaucetPuzzleMatchesConfiguredNetwork(
-      puzzle,
-      expectedIdentity.chainId,
+    const puzzle = decodeFaucetPowPuzzle(
+      await parseBoundedJsonResponse(puzzleResponse, "Faucet puzzle response"),
+      expectedIdentity.networkId,
       expectedIdentity.networkPrefix,
     );
+    throwIfAborted(signal);
     const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
       accountId,
       "accountId",
       expectedIdentity.networkPrefix,
     );
-    const powPayload =
-      puzzle.difficulty_bits > 0
-        ? (await emitStatus(onStatus, {
-            phase: "solvingPuzzle",
-            attempt,
-            attempts: retryAttempts,
-          }),
-          await (signal
-            ? solvePuzzle(normalizedAccountId, puzzle, { signal })
-            : solvePuzzle(normalizedAccountId, puzzle)))
-        : null;
+    await emitStatus(onStatus, {
+      phase: "solvingPuzzle",
+      attempt,
+      attempts: retryAttempts,
+    });
+    const powPayload = await (signal
+      ? solvePuzzle(normalizedAccountId, puzzle, { signal })
+      : solvePuzzle(normalizedAccountId, puzzle));
     throwIfAborted(signal);
     await emitStatus(onStatus, {
       phase: "submittingClaim",
       attempt,
       attempts: retryAttempts,
     });
-    const response = await fetchImpl(`${baseUrl}/v1/accounts/faucet`, {
+    const response = await fetchImpl(`${canonicalBaseUrl}/v1/accounts/faucet`, {
       method: "POST",
       signal,
       headers: {
@@ -620,12 +602,8 @@ export const requestFaucetFundsWithPuzzle = async ({
       },
       body: JSON.stringify({
         account_id: normalizedAccountId,
-        ...(powPayload
-          ? {
-              pow_anchor_height: powPayload.anchorHeight,
-              pow_nonce_hex: powPayload.nonceHex,
-            }
-          : {}),
+        pow_anchor_height: powPayload.anchorHeight,
+        pow_nonce_hex: powPayload.nonceHex,
       }),
     });
     throwIfAborted(signal);
@@ -634,11 +612,15 @@ export const requestFaucetFundsWithPuzzle = async ({
       const genericNoritoRejection =
         response.status === 400 && isNoritoResponse(response) && !detail;
       const diagnosticDetail = genericNoritoRejection
-        ? await readKnownTairaFaucetFundingIssue(baseUrl, fetchImpl, signal)
+        ? await readKnownTairaFaucetFundingIssue(
+            canonicalBaseUrl,
+            fetchImpl,
+            signal,
+          )
         : null;
       const message =
         diagnosticDetail ??
-        buildFaucetRequestErrorMessage(response, detail, baseUrl);
+        buildFaucetRequestErrorMessage(response, detail, canonicalBaseUrl);
       if (
         response.status === 400 &&
         !diagnosticDetail &&
@@ -658,16 +640,19 @@ export const requestFaucetFundsWithPuzzle = async ({
       }
       throw new Error(`Faucet request failed (${response.status}): ${message}`);
     }
-    const payload = (await response.json()) as unknown;
+    const payload = await parseBoundedJsonResponse(
+      response,
+      "Account faucet response",
+    );
     return decodeAccountFaucetResponse(payload, {
       requestedAccountId: normalizedAccountId,
       networkPrefix: expectedIdentity.networkPrefix,
-      baseUrl,
+      baseUrl: canonicalBaseUrl,
     });
   }
 
   const message = buildFaucetPuzzleFailureMessage(
-    baseUrl,
+    canonicalBaseUrl,
     puzzleStatus,
     puzzleStatusText,
     puzzleDetail,

@@ -212,7 +212,7 @@ select:hover:not(:disabled) {
   border-color: var(--color-border-strong);
   box-shadow:
     var(--shadow-inset),
-    0 0 0 1px color-mix(in srgb, var(--gi-rim) 42%, transparent);
+    0 0 0 1px color-mix(in srgb, var(--gi-rim-light) 42%, transparent);
 }
 
 input:focus,
@@ -268,8 +268,7 @@ label {
 .form-grid,
 .wizard-form-grid,
 .subscription-form-grid,
-.soracloud-form,
-.sccp-form {
+.soracloud-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-4);
@@ -279,8 +278,7 @@ label {
 .form-grid > .ui-field,
 .wizard-form-grid > label,
 .subscription-form-grid > label,
-.soracloud-form label,
-.sccp-field {
+.soracloud-form label {
   min-width: 0;
   display: grid;
   gap: 7px;
@@ -724,10 +722,7 @@ button.card:active:not(:disabled),
 }
 
 .ui-segmented,
-.payment-mode-toggle,
-.kaigi-mode-toggle,
-.sccp-direction-tabs,
-.sccp-route-toggle {
+.kaigi-mode-toggle {
   width: fit-content;
   padding: 4px;
   display: inline-grid;
@@ -741,10 +736,7 @@ button.card:active:not(:disabled),
 }
 
 .ui-segmented-option,
-.payment-mode-toggle button,
-.kaigi-mode-toggle button,
-.sccp-direction-tabs button,
-.sccp-route-toggle button {
+.kaigi-mode-toggle button {
   min-height: 44px;
   padding: 7px 13px;
   border: 0;
@@ -755,10 +747,7 @@ button.card:active:not(:disabled),
 }
 
 .ui-segmented-option:hover:not(:disabled),
-.payment-mode-toggle button:hover:not(:disabled),
-.kaigi-mode-toggle button:hover:not(:disabled),
-.sccp-direction-tabs button:hover:not(:disabled),
-.sccp-route-toggle button:hover:not(:disabled) {
+.kaigi-mode-toggle button:hover:not(:disabled) {
   color: var(--color-text);
   background: var(--color-surface-soft);
   box-shadow: var(--shadow-hover);
@@ -766,10 +755,7 @@ button.card:active:not(:disabled),
 }
 
 .ui-segmented-option.active,
-.payment-mode-toggle button.active,
-.kaigi-mode-toggle button.active,
-.sccp-direction-tabs button.active,
-.sccp-route-toggle button.active {
+.kaigi-mode-toggle button.active {
   color: var(--color-accent);
   background: color-mix(
     in srgb,
@@ -1120,8 +1106,7 @@ button.card:active:not(:disabled),
   .form-grid,
   .wizard-form-grid,
   .subscription-form-grid,
-  .soracloud-form,
-  .sccp-form {
+  .soracloud-form {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -1147,10 +1132,7 @@ button.card:active:not(:disabled),
   }
 
   .ui-segmented,
-  .payment-mode-toggle,
-  .kaigi-mode-toggle,
-  .sccp-direction-tabs,
-  .sccp-route-toggle {
+  .kaigi-mode-toggle {
     width: 100%;
     grid-auto-columns: minmax(0, 1fr);
   }
@@ -1194,10 +1176,7 @@ button.card:active:not(:disabled),
   button.card:hover:not(:disabled),
   .card[role="button"]:hover,
   .ui-segmented-option:hover:not(:disabled),
-  .payment-mode-toggle button:hover:not(:disabled),
-  .kaigi-mode-toggle button:hover:not(:disabled),
-  .sccp-direction-tabs button:hover:not(:disabled),
-  .sccp-route-toggle button:hover:not(:disabled) {
+  .kaigi-mode-toggle button:hover:not(:disabled) {
     transform: none;
   }
 }

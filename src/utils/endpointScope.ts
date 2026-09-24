@@ -1,18 +1,20 @@
 import { normalizeEndpointUrl } from "./endpoint";
 import type { EndpointInspection } from "../types/endpointInspection";
 
-export const ENDPOINT_DERIVED_STORAGE_VERSION = "v2";
+export const ENDPOINT_DERIVED_STORAGE_VERSION = "v3";
 
 export interface EndpointIdentityScopeInput {
   toriiUrl: string;
   observedChainId: string;
   observedNetworkPrefix: number;
+  observedGenesisHash: string;
 }
 
 export interface EndpointIdentityScope {
   origin: string;
   chainId: string;
   networkPrefix: number;
+  genesisHash: string;
   storageSegment: string;
 }
 
@@ -49,15 +51,23 @@ export const buildEndpointIdentityScope = (
       "Observed network prefix must be an integer between 0 and 16383.",
     );
   }
+  const genesisHash = input.observedGenesisHash;
+  if (!/^[0-9a-f]{64}$/u.test(genesisHash)) {
+    throw new Error(
+      "Observed genesis hash must be exactly 64 lowercase hexadecimal characters.",
+    );
+  }
   return {
     origin,
     chainId,
     networkPrefix: input.observedNetworkPrefix,
+    genesisHash,
     storageSegment: [
       ENDPOINT_DERIVED_STORAGE_VERSION,
       encodeURIComponent(origin),
       encodeURIComponent(chainId),
       String(input.observedNetworkPrefix),
+      genesisHash,
     ].join(":"),
   };
 };
@@ -81,10 +91,14 @@ export const buildEndpointDerivedStorageKey = (
 export const getTrustedEndpointIdentityScopeInput = (
   inspection: EndpointInspection,
 ): EndpointIdentityScopeInput | null => {
-  if (!inspection.observed || inspection.identityStatus === "conflicting") {
+  if (
+    !inspection.observed ||
+    inspection.identityStatus === "conflicting" ||
+    !inspection.observed.genesisHash
+  ) {
     return null;
   }
-  const hasMatchingAuthoritativeEvidence = inspection.evidence.some(
+  const hasMatchingChainIdentityEvidence = inspection.evidence.some(
     (entry) =>
       (entry.source === "governance-capabilities-v1" ||
         entry.source === "chain-metadata" ||
@@ -92,13 +106,23 @@ export const getTrustedEndpointIdentityScopeInput = (
       entry.identity.chainId === inspection.observed?.chainId &&
       entry.identity.networkPrefix === inspection.observed?.networkPrefix,
   );
-  if (!hasMatchingAuthoritativeEvidence) {
+  const hasMatchingGenesisEvidence = inspection.evidence.some(
+    (entry) =>
+      (entry.source === "governance-capabilities-v1" ||
+        entry.source === "genesis-fingerprint" ||
+        entry.source === "blocked-deployment-fingerprint") &&
+      entry.identity.chainId === inspection.observed?.chainId &&
+      entry.identity.networkPrefix === inspection.observed?.networkPrefix &&
+      entry.identity.genesisHash === inspection.observed?.genesisHash,
+  );
+  if (!hasMatchingChainIdentityEvidence || !hasMatchingGenesisEvidence) {
     return null;
   }
   return {
     toriiUrl: inspection.toriiUrl,
     observedChainId: inspection.observed.chainId,
     observedNetworkPrefix: inspection.observed.networkPrefix,
+    observedGenesisHash: inspection.observed.genesisHash,
   };
 };
 

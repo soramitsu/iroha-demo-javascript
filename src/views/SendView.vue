@@ -12,50 +12,7 @@
           }}
         </strong>
       </p>
-      <div class="actions-row send-tools">
-        <button
-          type="button"
-          class="icon-cta secondary"
-          :aria-expanded="scannerSheetOpen"
-          @click="toggleScanner"
-        >
-          <img :src="sendIcon" alt="" />
-          <span>{{
-            scannerSheetOpen ? t("Stop scanner") : t("Scan payment QR")
-          }}</span>
-        </button>
-        <button
-          type="button"
-          class="icon-cta secondary"
-          @click="scanner.openFilePicker"
-        >
-          <img :src="sendIcon" alt="" />
-          <span>{{ t("Upload QR image") }}</span>
-        </button>
-        <input
-          ref="scannerFileInputRef"
-          type="file"
-          accept="image/*"
-          class="sr-only"
-          :aria-label="t('Upload QR image')"
-          @change="scanner.decodeFile"
-        />
-      </div>
     </header>
-
-    <QrScannerSheet
-      :open="scannerSheetOpen"
-      :title="t('Scan payment QR')"
-      :description="t('or upload a QR image')"
-      :close-label="t('Cancel')"
-      @close="closeScanner"
-    >
-      <div class="scanner-frame active">
-        <div class="scanner">
-          <video ref="scannerVideoRef" autoplay muted playsinline></video>
-        </div>
-      </div>
-    </QrScannerSheet>
 
     <div class="send-layout">
       <aside class="send-context">
@@ -94,28 +51,12 @@
 
       <div class="send-form-pane">
         <template v-if="!reviewing">
-          <SegmentedControl
-            class="payment-mode-toggle"
-            data-testid="send-mode-control"
-            :model-value="sendMode"
-            :label="t('Send mode')"
-            :options="sendModeOptions"
-            @update:model-value="setSendMode"
-          />
-
           <div class="form-grid send-form">
             <label>
               {{ t("Recipient") }}
               <input
                 v-model="form.destination"
                 data-testid="destination-account-input"
-                :placeholder="
-                  form.shielded
-                    ? t(
-                        'Paste private address, scan a Receive QR, or enter your own wallet to make funds private.',
-                      )
-                    : ''
-                "
               />
               <span
                 v-if="destinationResolutionMessage"
@@ -124,20 +65,6 @@
               >
                 {{ destinationResolutionMessage }}
               </span>
-              <span
-                v-else-if="
-                  form.shielded &&
-                  !destinationIsSelf &&
-                  !hasShieldedPaymentAddress
-                "
-                class="field-feedback"
-              >
-                {{
-                  t(
-                    "Paste a private address or scan a Receive QR before sending privately.",
-                  )
-                }}
-              </span>
             </label>
             <label>
               {{ t("Amount") }}
@@ -145,30 +72,22 @@
                 v-model="form.quantity"
                 type="number"
                 min="0"
-                :step="form.shielded ? '1' : '0.01'"
+                step="0.01"
               />
             </label>
-            <label v-if="!form.shielded">
+            <label>
               {{ t("Memo (optional)") }}
-              <input v-model="form.memo" />
+              <input
+                v-model="form.memo"
+                data-testid="send-memo-input"
+                maxlength="1024"
+              />
             </label>
-            <p v-else class="helper private-mode-note">
-              {{
-                t(
-                  "Private transfers use a recipient private address or Receive QR and do not include memos.",
-                )
-              }}
-            </p>
           </div>
 
           <p class="transaction-fee-note">
             <span>{{ t("Fee") }}</span>
-            <strong>{{
-              formatTransactionFee(
-                transactionFeeHintForEndpoint(session.connection.toriiUrl),
-                t,
-              )
-            }}</strong>
+            <strong>{{ formatTransactionFee(null, t) }}</strong>
           </p>
           <p
             v-if="!networkWriteSupported"
@@ -193,13 +112,9 @@
         <section v-else class="send-review" :aria-label="t('Review')">
           <header class="send-review-header">
             <p class="send-review-kicker">{{ t("Review") }}</p>
-            <h2>{{ submitActionLabel }}</h2>
+            <h2>{{ t("Send") }}</h2>
           </header>
           <dl class="send-review-list">
-            <div>
-              <dt>{{ t("Send mode") }}</dt>
-              <dd>{{ form.shielded ? t("Private") : t("Standard") }}</dd>
-            </div>
             <div>
               <dt>{{ t("Recipient") }}</dt>
               <dd>{{ reviewDestinationLabel }}</dd>
@@ -208,20 +123,13 @@
               <dt>{{ t("Amount") }}</dt>
               <dd>{{ normalizedQuantity }} {{ activeAssetLabel }}</dd>
             </div>
-            <div v-if="!form.shielded && form.memo">
+            <div v-if="form.memo">
               <dt>{{ t("Memo (optional)") }}</dt>
               <dd>{{ form.memo }}</dd>
             </div>
             <div>
               <dt>{{ t("Fee") }}</dt>
-              <dd>
-                {{
-                  formatTransactionFee(
-                    transactionFeeHintForEndpoint(session.connection.toriiUrl),
-                    t,
-                  )
-                }}
-              </dd>
+              <dd>{{ formatTransactionFee(null, t) }}</dd>
             </div>
           </dl>
           <div class="actions send-review-actions">
@@ -239,22 +147,16 @@
               :disabled="sending || !isValid"
               @click="handleSend"
             >
-              {{ sending ? t("Submitting…") : submitActionLabel }}
+              {{ sending ? t("Submitting…") : t("Send") }}
             </button>
           </div>
         </section>
 
         <div class="send-feedback">
-          <p v-if="scanMessage || scannerMessage" class="helper send-note">
-            {{ scanMessage || scannerMessage }}
-          </p>
-          <p v-if="shieldCapabilityMessage" class="helper send-note">
-            {{ shieldCapabilityMessage }}
-          </p>
           <p
             v-if="statusMessage"
             class="helper send-note send-status"
-            :class="`send-status-${statusTone}`"
+            :class="'send-status-' + statusTone"
             :role="statusTone === 'error' ? 'alert' : 'status'"
             :aria-live="statusTone === 'error' ? 'assertive' : 'polite'"
           >
@@ -267,17 +169,8 @@
 </template>
 
 <script setup lang="ts">
-import {
-  computed,
-  nextTick,
-  onBeforeUnmount,
-  reactive,
-  ref,
-  toRef,
-  watch,
-} from "vue";
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
-import { QrScannerSheet, SegmentedControl } from "@/components/ui";
 import {
   fetchAccountAssets,
   resolveAccountAlias,
@@ -285,30 +178,19 @@ import {
 } from "@/services/iroha";
 import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
-import { useQrScanner } from "@/composables/useQrScanner";
-import { useShieldCapability } from "@/composables/useShieldCapability";
-import { isPositiveWholeAmount } from "@/utils/confidential";
 import { getPublicAccountId } from "@/utils/accountId";
 import {
   extractAssetDefinitionId,
   formatAssetDefinitionLabel,
   resolveToriiXorAsset,
-  shouldReplaceConfiguredAssetDefinitionId,
 } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 import {
   appendTransactionFee,
   formatTransactionFee,
-  transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
 import { assertFinalizedSubmissionResult } from "@/utils/transactionFinality";
-import {
-  CONFIDENTIAL_PAYMENT_ADDRESS_PREFIX,
-  parseConfidentialPaymentAddressText,
-  type ConfidentialPaymentAddressPayload,
-} from "@/utils/confidentialPaymentAddress";
 import type { AccountAssetsResponse } from "@/types/iroha";
-import SendIcon from "@/assets/send.svg";
 
 const session = useSessionStore();
 const endpointStore = useEndpointStore();
@@ -328,18 +210,11 @@ const form = reactive({
   destination: "",
   quantity: "0",
   memo: "",
-  shielded: false,
-  shieldedReceiveKeyId: "",
-  shieldedReceivePublicKeyBase64Url: "",
-  shieldedOwnerTagHex: "",
-  shieldedDiversifierHex: "",
-  shieldedAddressAccountId: "",
 });
 const sending = ref(false);
 const reviewing = ref(false);
 const statusMessage = ref("");
 const statusTone = ref<"neutral" | "success" | "error">("neutral");
-const scanMessage = ref("");
 const destinationResolution = reactive({
   input: "",
   toriiUrl: "",
@@ -350,128 +225,8 @@ const destinationResolution = reactive({
   resolving: false,
   error: "",
 });
-const shieldedRecipientSource = ref<"none" | "qr" | "address-input">("none");
-const shieldedPaymentAddressText = ref("");
 let destinationResolveTimer: ReturnType<typeof setTimeout> | null = null;
 let destinationResolveSequence = 0;
-const persistResolvedShieldAssetDefinitionId = (
-  resolvedAssetDefinitionId: string,
-) => {
-  const normalizedResolvedAssetDefinitionId = extractAssetDefinitionId(
-    resolvedAssetDefinitionId,
-  ).trim();
-  if (
-    !normalizedResolvedAssetDefinitionId ||
-    !shouldReplaceConfiguredAssetDefinitionId({
-      configuredAssetDefinitionId: session.connection.assetDefinitionId,
-      detectedAssetDefinitionId: normalizedResolvedAssetDefinitionId,
-      knownAssetIds: [resolvedAssetDefinitionId],
-    })
-  ) {
-    return;
-  }
-  session.$patch({
-    connection: {
-      ...session.connection,
-      assetDefinitionId: normalizedResolvedAssetDefinitionId,
-    },
-  });
-};
-const { shieldSupported, shieldCapabilityMessage, shieldResolvedAssetId } =
-  useShieldCapability({
-    toriiUrl: toRef(session.connection, "toriiUrl"),
-    accountId: activeAccountDisplayId,
-    assetDefinitionId: toRef(session.connection, "assetDefinitionId"),
-    shielded: toRef(form, "shielded"),
-    operation: "shieldedTransfer",
-    translate: t,
-    onResolvedAssetDefinitionId: persistResolvedShieldAssetDefinitionId,
-  });
-const resetShieldedRecipientFields = () => {
-  form.shieldedReceiveKeyId = "";
-  form.shieldedReceivePublicKeyBase64Url = "";
-  form.shieldedOwnerTagHex = "";
-  form.shieldedDiversifierHex = "";
-  form.shieldedAddressAccountId = "";
-  shieldedRecipientSource.value = "none";
-  shieldedPaymentAddressText.value = "";
-};
-const applyShieldedPaymentAddress = (
-  payload: ConfidentialPaymentAddressPayload,
-  source: "qr" | "address-input",
-  rawAddressText = "",
-) => {
-  form.shielded = true;
-  form.shieldedReceiveKeyId = payload.receiveKeyId;
-  form.shieldedReceivePublicKeyBase64Url = payload.receivePublicKeyBase64Url;
-  form.shieldedOwnerTagHex = payload.shieldedOwnerTagHex;
-  form.shieldedDiversifierHex = payload.shieldedDiversifierHex;
-  form.shieldedAddressAccountId = "";
-  shieldedRecipientSource.value = source;
-  shieldedPaymentAddressText.value =
-    source === "address-input" ? rawAddressText.trim() : "";
-};
-const scannerSheetOpen = ref(false);
-const scanner = useQrScanner(
-  (payload) => {
-    scannerSheetOpen.value = false;
-    const paymentAddress = parseConfidentialPaymentAddressText(payload);
-    if (paymentAddress.ok) {
-      applyShieldedPaymentAddress(paymentAddress.payload, "qr");
-      scanMessage.value = t("QR decoded successfully.");
-      return;
-    }
-    if (
-      paymentAddress.reason !== "none" &&
-      (paymentAddress.reason !== "invalid" ||
-        payload.trim().startsWith(CONFIDENTIAL_PAYMENT_ADDRESS_PREFIX))
-    ) {
-      resetShieldedRecipientFields();
-      if (paymentAddress.reason === "legacy") {
-        form.shielded = false;
-        scanMessage.value = t(
-          "Legacy private Receive QR codes are no longer supported. Ask the recipient to refresh their Receive QR.",
-        );
-        return;
-      }
-      scanMessage.value = t("Private payment address is invalid.");
-      return;
-    }
-
-    try {
-      const parsed = JSON.parse(payload);
-      const parsedAccountId = parsed.accountId
-        ? String(parsed.accountId).trim()
-        : "";
-      if (parsedAccountId) {
-        form.destination = parsedAccountId;
-      }
-      if (parsed.amount) {
-        form.quantity = String(parsed.amount);
-      }
-      resetShieldedRecipientFields();
-      scanMessage.value = t("QR decoded successfully.");
-    } catch (err) {
-      resetShieldedRecipientFields();
-      scanMessage.value = t("QR payload is invalid.");
-      console.warn("Invalid QR payload", err);
-    }
-  },
-  { translate: t },
-);
-const scannerMessage = scanner.message;
-const scannerVideoRef = scanner.videoRef;
-const scannerFileInputRef = scanner.fileInputRef;
-const sendIcon = SendIcon;
-
-const sendMode = computed(() => (form.shielded ? "private" : "standard"));
-const sendModeOptions = computed(() => [
-  { value: "standard", label: t("Standard") },
-  { value: "private", label: t("Private"), disabled: !shieldSupported.value },
-]);
-const setSendMode = (mode: string) => {
-  form.shielded = mode === "private";
-};
 
 const normalizedQuantity = computed(() => String(form.quantity).trim());
 const destinationValue = computed(() => form.destination.trim());
@@ -491,28 +246,12 @@ const destinationResolutionIsUsable = computed(
 const resolvedDestinationAccountId = computed(() =>
   destinationResolutionIsUsable.value ? destinationResolution.accountId : "",
 );
-const destinationIsShieldedAddressInput = computed(
-  () =>
-    form.shielded &&
-    hasShieldedPaymentAddress.value &&
-    Boolean(shieldedPaymentAddressText.value) &&
-    destinationValue.value === shieldedPaymentAddressText.value,
+const destinationAccountIdForSubmit = computed(
+  () => resolvedDestinationAccountId.value || destinationValue.value,
 );
-const destinationAccountIdForSubmit = computed(() =>
-  destinationIsShieldedAddressInput.value
-    ? form.shieldedAddressAccountId.trim()
-    : resolvedDestinationAccountId.value || destinationValue.value,
+const reviewDestinationLabel = computed(
+  () => destinationAccountIdForSubmit.value || destinationValue.value,
 );
-const reviewDestinationLabel = computed(() => {
-  if (form.shielded && hasShieldedPaymentAddress.value) {
-    return (
-      form.shieldedAddressAccountId.trim() ||
-      resolvedDestinationAccountId.value ||
-      t("Private address")
-    );
-  }
-  return destinationAccountIdForSubmit.value || destinationValue.value;
-});
 const destinationResolutionMessage = computed(() => {
   if (!destinationResolutionMatchesContext.value) {
     return "";
@@ -541,7 +280,6 @@ const destinationResolutionMessage = computed(() => {
 });
 const resolvedAssetDefinitionId = computed(
   () =>
-    extractAssetDefinitionId(shieldResolvedAssetId.value).trim() ||
     extractAssetDefinitionId(session.connection.assetDefinitionId).trim() ||
     session.connection.assetDefinitionId.trim(),
 );
@@ -575,55 +313,39 @@ const activeAssetBalance = computed(() => {
   return activeAsset.value?.quantity ?? "0";
 });
 const sendAssetsReady = computed(() => sendAssetsState.value === "ready");
-const isTransparentAmountValid = computed(() => Number(form.quantity) > 0);
-const isShieldAmountValid = computed(() =>
-  isPositiveWholeAmount(normalizedQuantity.value),
-);
+const isAmountValid = computed(() => Number(form.quantity) > 0);
+const isMemoValid = computed(() => {
+  if (!form.memo) return true;
+  if (
+    form.memo.trim() !== form.memo ||
+    form.memo.normalize("NFC") !== form.memo
+  ) {
+    return false;
+  }
+  for (const character of form.memo) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined || codePoint <= 0x1f || codePoint === 0x7f) {
+      return false;
+    }
+  }
+  return (
+    !/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(form.memo) &&
+    new TextEncoder().encode(form.memo).byteLength <= 1_024
+  );
+});
 const isDestinationValid = computed(() => {
   if (!destinationValue.value) {
     return false;
   }
-  if (
-    destinationResolutionMatchesContext.value &&
-    destinationResolution.error
-  ) {
-    return false;
-  }
-  return true;
-});
-const destinationIsSelf = computed(() => {
-  const destination = destinationAccountIdForSubmit.value;
-  return Boolean(
-    destination &&
-      (destination === activeAccountDisplayId.value ||
-        destination === activeAccount.value?.accountId ||
-        destination === activeAccount.value?.i105AccountId),
+  return !(
+    destinationResolutionMatchesContext.value && destinationResolution.error
   );
 });
-const submitActionLabel = computed(() =>
-  form.shielded
-    ? destinationIsSelf.value
-      ? t("Create private balance")
-      : t("Send privately")
-    : t("Send"),
-);
-const hasV3ShieldedPaymentAddress = computed(
+const networkWriteSupported = computed(
   () =>
-    /^[A-Za-z0-9_-]{8,128}$/.test(form.shieldedReceiveKeyId.trim()) &&
-    /^[A-Za-z0-9_-]+$/.test(form.shieldedReceivePublicKeyBase64Url.trim()) &&
-    /^[0-9a-f]{64}$/i.test(form.shieldedOwnerTagHex.trim()) &&
-    /^[0-9a-f]{64}$/i.test(form.shieldedDiversifierHex.trim()),
-);
-const hasShieldedPaymentAddress = computed(
-  () => hasV3ShieldedPaymentAddress.value,
-);
-const networkWriteSupported = computed(() => {
-  const feature = form.shielded ? "confidentialTransfers" : "assetTransfers";
-  return (
     endpointStore.writeAllowed &&
-    endpointStore.inspection?.features[feature].supported === true
-  );
-});
+    endpointStore.inspection?.features.assetTransfers.supported === true,
+);
 const networkWritePrerequisite = computed(() => {
   if (endpointStore.state === "checking") {
     return t("Wait for endpoint capability inspection to finish.");
@@ -634,13 +356,9 @@ const networkWritePrerequisite = computed(() => {
       t("Writes are blocked until the endpoint identity is verified.")
     );
   }
-  return form.shielded
-    ? t(
-        "This endpoint does not advertise the required confidential transfer operations.",
-      )
-    : t(
-        "This endpoint does not advertise the required asset transfer operations.",
-      );
+  return t(
+    "This endpoint does not advertise the required asset transfer operations.",
+  );
 });
 
 const cancelDestinationResolution = () => {
@@ -750,58 +468,19 @@ const scheduleDestinationResolution = () => {
   }, 350);
 };
 
-const handleDestinationInputChange = () => {
-  const destination = destinationValue.value;
-  const parsedPaymentAddress = parseConfidentialPaymentAddressText(destination);
-  if (parsedPaymentAddress.ok) {
-    applyShieldedPaymentAddress(
-      parsedPaymentAddress.payload,
-      "address-input",
-      destination,
-    );
-    cancelDestinationResolution();
-    resetDestinationResolution();
-    scanMessage.value = t("Private payment address loaded.");
-    return;
-  }
-  if (parsedPaymentAddress.reason !== "none") {
-    resetShieldedRecipientFields();
-    cancelDestinationResolution();
-    resetDestinationResolution();
-    scanMessage.value =
-      parsedPaymentAddress.reason === "legacy"
-        ? t(
-            "Legacy private Receive QR codes are no longer supported. Ask the recipient to refresh their Receive QR.",
-          )
-        : t("Private payment address is invalid.");
-    return;
-  }
-
-  const qrRecipientWasReplaced =
-    shieldedRecipientSource.value === "qr" &&
-    destination !== form.shieldedAddressAccountId.trim();
-  if (
-    shieldedRecipientSource.value === "address-input" ||
-    qrRecipientWasReplaced
-  ) {
-    resetShieldedRecipientFields();
-  }
-  scheduleDestinationResolution();
-};
-
-watch(destinationValue, handleDestinationInputChange);
+watch(destinationValue, scheduleDestinationResolution);
 
 watch(
   [() => session.connection.toriiUrl, () => session.connection.networkPrefix],
   () => {
     reviewing.value = false;
-    handleDestinationInputChange();
+    scheduleDestinationResolution();
   },
   { flush: "sync" },
 );
 
 watch(
-  () => [form.destination, form.quantity, form.memo, form.shielded],
+  () => [form.destination, form.quantity, form.memo],
   () => {
     reviewing.value = false;
   },
@@ -824,6 +503,7 @@ const refreshSendAssets = async () => {
     const result = await fetchAccountAssets({
       toriiUrl,
       accountId,
+      networkPrefix: session.connection.networkPrefix,
       limit: 200,
     });
     if (
@@ -858,9 +538,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
-  if (destinationResolveTimer) {
-    clearTimeout(destinationResolveTimer);
-  }
+  cancelDestinationResolution();
 });
 
 const isValid = computed(() =>
@@ -869,13 +547,10 @@ const isValid = computed(() =>
       sendAssetsReady.value &&
       session.hasAccount &&
       activeAccount.value &&
-      session.connection.assetDefinitionId &&
-      (form.shielded
-        ? isShieldAmountValid.value
-        : isTransparentAmountValid.value) &&
-      (form.shielded
-        ? destinationIsSelf.value || hasShieldedPaymentAddress.value
-        : isDestinationValid.value),
+      resolvedAssetDefinitionId.value &&
+      isAmountValid.value &&
+      isMemoValid.value &&
+      isDestinationValid.value,
   ),
 );
 
@@ -895,22 +570,12 @@ const openReview = async () => {
     statusTone.value = "error";
     return;
   }
-  if (form.shielded && !shieldSupported.value) {
+  const resolvedDestination = await resolveDestinationNow();
+  if (!resolvedDestination) {
     statusMessage.value =
-      shieldCapabilityMessage.value || t("Shield mode is unavailable.");
+      destinationResolution.error || t("Unable to resolve recipient.");
     statusTone.value = "error";
     return;
-  }
-  const shouldResolveDestination =
-    Boolean(destinationValue.value) && !destinationIsShieldedAddressInput.value;
-  if (shouldResolveDestination) {
-    const resolvedDestination = await resolveDestinationNow();
-    if (!resolvedDestination) {
-      statusMessage.value =
-        destinationResolution.error || t("Unable to resolve recipient.");
-      statusTone.value = "error";
-      return;
-    }
   }
   statusMessage.value = "";
   statusTone.value = "neutral";
@@ -936,99 +601,43 @@ const handleSend = async () => {
     statusTone.value = "error";
     return;
   }
-  const account = activeAccount.value;
-  if (form.shielded && !shieldSupported.value) {
+  if (!destinationResolutionIsUsable.value) {
+    await resolveDestinationNow();
+  }
+  if (!destinationResolutionIsUsable.value) {
     statusMessage.value =
-      shieldCapabilityMessage.value || t("Shield mode is unavailable.");
+      destinationResolution.error || t("Unable to resolve recipient.");
     statusTone.value = "error";
     return;
   }
-  if (form.shielded) {
-    const amount = normalizedQuantity.value;
-    if (!isPositiveWholeAmount(amount)) {
-      statusMessage.value = t(
-        "Shield amount must be a whole number greater than zero.",
-      );
-      statusTone.value = "error";
-      return;
-    }
-  }
-  const submitMode = form.shielded ? "shield" : "transfer";
+
+  const account = activeAccount.value;
   sending.value = true;
   statusMessage.value = "";
   statusTone.value = "neutral";
   try {
-    const requiresResolvedDestination =
-      Boolean(destinationValue.value) &&
-      !destinationIsShieldedAddressInput.value;
-    if (requiresResolvedDestination && !destinationResolutionIsUsable.value) {
-      await resolveDestinationNow();
-    }
-    if (requiresResolvedDestination && !destinationResolutionIsUsable.value) {
-      statusMessage.value =
-        destinationResolution.error || t("Unable to resolve recipient.");
-      statusTone.value = "error";
-      return;
-    }
-    if (form.shielded) {
-      if (!destinationIsSelf.value && !hasShieldedPaymentAddress.value) {
-        statusMessage.value = t(
-          "Paste a private address or scan a Receive QR before sending privately.",
-        );
-        statusTone.value = "error";
-        return;
-      }
-    }
-    const destinationAccountId =
-      form.shielded &&
-      !destinationIsSelf.value &&
-      hasShieldedPaymentAddress.value
-        ? form.shieldedAddressAccountId.trim() || undefined
-        : destinationAccountIdForSubmit.value || undefined;
     const result = await transferAsset({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
       assetDefinitionId: resolvedAssetDefinitionId.value,
       accountId: account.accountId,
-      destinationAccountId,
+      destinationAccountId: destinationAccountIdForSubmit.value,
       networkPrefix: session.connection.networkPrefix,
       quantity: normalizedQuantity.value,
-      privateKeyHex: account.privateKeyHex,
-      metadata: !form.shielded && form.memo ? { memo: form.memo } : undefined,
-      shielded: form.shielded,
-      shieldedOwnerTagHex: form.shieldedOwnerTagHex,
-      shieldedDiversifierHex: form.shieldedDiversifierHex,
-      shieldedRecipient:
-        form.shielded && !destinationIsSelf.value
-          ? {
-              receiveKeyId: form.shieldedReceiveKeyId,
-              receivePublicKeyBase64Url: form.shieldedReceivePublicKeyBase64Url,
-              ownerTagHex: form.shieldedOwnerTagHex,
-              diversifierHex: form.shieldedDiversifierHex,
-            }
-          : undefined,
+      ...(form.memo ? { memo: form.memo } : {}),
     });
     assertFinalizedSubmissionResult(result);
-    if (submitMode === "shield") {
-      session.updateActiveAccount({ localOnly: false });
-    }
-    const successMessage =
-      submitMode === "shield"
-        ? destinationIsSelf.value
-          ? t("Private balance created: {hash}", {
-              hash: result.hash,
-            })
-          : t("Private shielded transfer finalized on-chain: {hash}", {
-              hash: result.hash,
-            })
-        : t("Transaction finalized on-chain: {hash}", { hash: result.hash });
+    const successMessage = t("Transaction finalized on-chain: {hash}", {
+      hash: result.hash,
+    });
     statusMessage.value = appendTransactionFee(
-      `${successMessage} · ${t("Block {height}", {
-        height: result.finality.blockHeight,
-      })}`,
-      result,
+      successMessage +
+        " · " +
+        t("Block {height}", {
+          height: result.finality.blockHeight,
+        }),
+      result.feeQuote,
       t,
-      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
     statusTone.value = "success";
     reviewing.value = false;
@@ -1043,26 +652,7 @@ const handleSend = async () => {
     sending.value = false;
   }
 };
-
-const toggleScanner = async () => {
-  scanMessage.value = "";
-  if (scannerSheetOpen.value) {
-    scanner.stop();
-    scannerSheetOpen.value = false;
-    return;
-  }
-  scannerSheetOpen.value = true;
-  await nextTick();
-  scanner.message.value = "";
-  await scanner.start();
-};
-
-const closeScanner = () => {
-  scanner.stop();
-  scannerSheetOpen.value = false;
-};
 </script>
-
 <style scoped>
 .send-shell {
   display: grid;
@@ -1077,22 +667,6 @@ const closeScanner = () => {
   gap: 16px;
   padding-bottom: 18px;
   border-bottom: 1px solid var(--color-border);
-}
-
-.send-tools {
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.send-tools .icon-cta {
-  min-width: 0;
-}
-
-.send-tools .icon-cta span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .send-account-copy {
@@ -1221,44 +795,6 @@ const closeScanner = () => {
   unicode-bidi: plaintext;
 }
 
-.scanner-drawer {
-  width: min(100%, 720px);
-  justify-self: end;
-  animation: send-reveal 160ms ease-out;
-}
-
-.scanner-frame {
-  min-height: 280px;
-  border-radius: var(--radius-panel);
-  border: 1px solid var(--color-border);
-  background: var(--color-media-stage);
-  overflow: hidden;
-  display: grid;
-  place-items: center;
-}
-
-.scanner-frame.active {
-  border-color: color-mix(
-    in srgb,
-    var(--color-accent) 46%,
-    var(--color-border)
-  );
-}
-
-.scanner {
-  width: 100%;
-  height: 100%;
-  min-height: 280px;
-}
-
-video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  background: var(--color-media-stage);
-}
-
 .send-form {
   gap: 18px;
 }
@@ -1282,17 +818,6 @@ video {
   backdrop-filter: var(--frost-filter-panel);
 }
 
-.payment-mode-toggle {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-  padding: 4px;
-  border-radius: 14px;
-  border: 1px solid var(--color-border);
-  background: var(--color-surface-inset);
-  box-shadow: var(--shadow-inset);
-}
-
 .field-feedback {
   color: var(--color-text-muted);
   font-size: 0.78rem;
@@ -1303,12 +828,6 @@ video {
 
 .field-feedback.error {
   color: var(--color-danger);
-}
-
-.private-mode-note {
-  padding-inline-start: 12px;
-  border-inline-start: 2px solid
-    color-mix(in srgb, var(--color-accent) 62%, transparent);
 }
 
 .send-feedback {
@@ -1415,10 +934,6 @@ video {
     grid-template-columns: minmax(0, 1fr) minmax(240px, 0.8fr);
     align-items: start;
   }
-
-  .send-tools {
-    justify-content: flex-start;
-  }
 }
 
 @media (max-width: 760px) {
@@ -1426,21 +941,6 @@ video {
     gap: 14px;
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .send-tools {
-    width: 100%;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-  }
-
-  .send-tools .icon-cta {
-    width: 100%;
-    justify-content: center;
-    min-height: 48px;
-    padding-inline: 12px;
-    text-align: center;
   }
 
   .send-context {
@@ -1454,11 +954,6 @@ video {
     border-radius: 18px;
   }
 
-  .scanner-frame,
-  .scanner {
-    min-height: 220px;
-  }
-
   .send-note {
     padding: 10px 12px;
   }
@@ -1469,8 +964,7 @@ video {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .send-review,
-  .scanner-drawer {
+  .send-review {
     animation: none;
   }
 }

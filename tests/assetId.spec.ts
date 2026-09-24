@@ -2,328 +2,159 @@ import { describe, expect, it } from "vitest";
 import {
   areAssetDefinitionIdsEquivalent,
   buildAssetHoldingIdLiteral,
-  decodeNoritoAssetDefinitionId,
   deriveAssetSymbol,
   extractAssetHoldingDataspaceSuffix,
   extractAssetDefinitionId,
   formatAssetDefinitionLabel,
   formatAssetReferenceLabel,
-  formatOpaqueAssetLiteralsInText,
+  isCanonicalAssetDefinitionId,
   resolveToriiXorAsset,
   shouldReplaceConfiguredAssetDefinitionId,
   splitAssetReference,
 } from "@/utils/assetId";
 
+const XOR = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const OTHER = "61CtjvNd9T3THAR65GsMVHr82Bjc";
+const ACCOUNT =
+  "testuロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY";
+
 describe("asset ID helpers", () => {
-  it("splits legacy asset references into definition and account", () => {
-    expect(splitAssetReference("xor#wonderland##alice@wonderland")).toEqual({
-      definitionId: "xor#wonderland",
-      accountId: "alice@wonderland",
-    });
-    expect(splitAssetReference("xor#wonderland#alice@wonderland")).toEqual({
-      definitionId: "xor#wonderland",
-      accountId: "alice@wonderland",
-    });
+  it("accepts only checksum-valid UUIDv4-backed Base58 definition IDs", () => {
+    expect(isCanonicalAssetDefinitionId(XOR)).toBe(true);
+    expect(isCanonicalAssetDefinitionId(OTHER)).toBe(true);
+    expect(isCanonicalAssetDefinitionId(` ${XOR}`)).toBe(false);
+    expect(isCanonicalAssetDefinitionId("4Zust3cNxsgov3757wxRW7DtR8n6")).toBe(
+      false,
+    );
+    expect(
+      isCanonicalAssetDefinitionId("norito:00112233445566778899aabbccddeeff"),
+    ).toBe(false);
+    expect(isCanonicalAssetDefinitionId("xor#universal")).toBe(false);
   });
 
-  it("keeps canonical encoded IDs intact", () => {
-    expect(splitAssetReference("norito:abcdef0123456789")).toEqual({
-      definitionId: "norito:abcdef0123456789",
+  it("parses only current definition and holding literals", () => {
+    expect(splitAssetReference(XOR)).toEqual({
+      definitionId: XOR,
       accountId: "",
     });
-    expect(extractAssetDefinitionId("norito:abcdef0123456789##n42u...")).toBe(
-      "norito:abcdef0123456789",
-    );
-  });
-
-  it("splits TAIRA base58 asset references that append an I105 account id", () => {
-    expect(
-      splitAssetReference(
-        "6TEAJqbb8oEPmLncoNiMRbLEK6tw#testuロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
-      ),
-    ).toEqual({
-      definitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-      accountId:
-        "testuロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+    expect(splitAssetReference(`${XOR}#${ACCOUNT}`)).toEqual({
+      definitionId: XOR,
+      accountId: ACCOUNT,
     });
-    expect(
-      extractAssetDefinitionId(
-        "6TEAJqbb8oEPmLncoNiMRbLEK6tw#testuロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
-      ),
-    ).toBe("6TEAJqbb8oEPmLncoNiMRbLEK6tw");
-  });
-
-  it("splits base58 asset holdings with a dataspace suffix", () => {
-    const holdingId =
-      "6TEAJqbb8oEPmLncoNiMRbLEK6tw#sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY#dataspace:2";
-    expect(splitAssetReference(holdingId)).toEqual({
-      definitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-      accountId:
-        "sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY#dataspace:2",
+    expect(splitAssetReference(`${XOR}#${ACCOUNT}#dataspace:2`)).toEqual({
+      definitionId: XOR,
+      accountId: `${ACCOUNT}#dataspace:2`,
     });
-    expect(extractAssetDefinitionId(holdingId)).toBe(
-      "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-    );
-    expect(extractAssetHoldingDataspaceSuffix(holdingId)).toBe("#dataspace:2");
+    expect(extractAssetHoldingDataspaceSuffix(`${XOR}#${ACCOUNT}`)).toBe("");
+    expect(
+      extractAssetHoldingDataspaceSuffix(`${XOR}#${ACCOUNT}#dataspace:2`),
+    ).toBe("#dataspace:2");
   });
 
-  it("builds source holding IDs from a definition and account literal", () => {
+  it.each([
+    "xor#wonderland##alice@wonderland",
+    "xor#wonderland#alice@wonderland",
+    `${XOR}##${ACCOUNT}`,
+    `${XOR}#${ACCOUNT}#dataspace:02`,
+    `${XOR}#${ACCOUNT}#dataspace:18446744073709551616`,
+    ` ${XOR}`,
+  ])("rejects retired or non-canonical references: %s", (literal) => {
+    expect(splitAssetReference(literal)).toEqual({
+      definitionId: "",
+      accountId: "",
+    });
+    expect(extractAssetDefinitionId(literal)).toBe("");
+  });
+
+  it("builds exact global and dataspace holding IDs", () => {
     expect(
       buildAssetHoldingIdLiteral({
-        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-        accountId:
-          "sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+        assetDefinitionId: XOR,
+        accountId: ACCOUNT,
       }),
-    ).toBe(
-      "6TEAJqbb8oEPmLncoNiMRbLEK6tw#sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
-    );
-  });
-
-  it("preserves dataspace suffixes when building source holding IDs", () => {
+    ).toBe(`${XOR}#${ACCOUNT}`);
     expect(
       buildAssetHoldingIdLiteral({
-        assetDefinitionId:
-          "6TEAJqbb8oEPmLncoNiMRbLEK6tw#sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY#dataspace:2",
-        accountId:
-          "sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+        assetDefinitionId: `${XOR}#${ACCOUNT}#dataspace:2`,
+        accountId: ACCOUNT,
       }),
-    ).toBe(
-      "6TEAJqbb8oEPmLncoNiMRbLEK6tw#sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY#dataspace:2",
-    );
-  });
-
-  it("decodes norito definitions when building source holding IDs", () => {
-    expect(
+    ).toBe(`${XOR}#${ACCOUNT}#dataspace:2`);
+    expect(() =>
       buildAssetHoldingIdLiteral({
-        assetDefinitionId: "norito:00112233445566778899aabbccddeeff",
-        accountId:
-          "sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+        assetDefinitionId: "xor#universal",
+        accountId: ACCOUNT,
       }),
-    ).toBe(
-      "4Zust3cNxsgov3757wxRW7DtR8n6#sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+    ).toThrow("exact Base58 asset definition");
+    expect(() =>
+      buildAssetHoldingIdLiteral({
+        assetDefinitionId: XOR,
+        accountId: ACCOUNT,
+        dataspaceSuffix: "#dataspace:02",
+      }),
+    ).toThrow("must be canonical");
+  });
+
+  it("uses exact identity comparisons without encoding adapters", () => {
+    expect(areAssetDefinitionIdsEquivalent(XOR, `${XOR}#${ACCOUNT}`)).toBe(
+      true,
     );
-  });
-
-  it("derives readable symbols without guessing from opaque substrings", () => {
-    expect(deriveAssetSymbol("token#wonderland")).toBe("TOKEN");
-    expect(deriveAssetSymbol("XOR#wonderland##alice@wonderland")).toBe("XOR");
-    expect(deriveAssetSymbol("6TEAJqbb8oEPmLncoNiMRbLEK6tw")).toBe("XOR");
-    expect(deriveAssetSymbol("norito:abcdefxorfeed")).toBe("ASSET");
-  });
-
-  it("uses fallback labels for opaque encoded IDs", () => {
-    expect(deriveAssetSymbol("norito:abcdef0123456789", "units")).toBe("units");
-    expect(deriveAssetSymbol("", "units")).toBe("units");
-  });
-
-  it("decodes canonical norito asset IDs into standard base58 literals", () => {
+    expect(areAssetDefinitionIdsEquivalent(XOR, OTHER)).toBe(false);
     expect(
-      decodeNoritoAssetDefinitionId("norito:00112233445566778899aabbccddeeff"),
-    ).toBe("4Zust3cNxsgov3757wxRW7DtR8n6");
-    expect(
-      formatAssetDefinitionLabel("norito:00112233445566778899aabbccddeeff"),
-    ).toBe("4Zust3cNxsgov3757wxRW7DtR8n6");
-    expect(
-      formatAssetReferenceLabel(
-        "norito:00112233445566778899aabbccddeeff##alice@wonderland",
+      areAssetDefinitionIdsEquivalent(
+        XOR,
+        "norito:00112233445566778899aabbccddeeff",
       ),
-    ).toBe("4Zust3cNxsgov3757wxRW7DtR8n6 | alice@wonderland");
+    ).toBe(false);
   });
 
-  it("falls back to shortened labels when norito literals are not decodable", () => {
-    expect(formatAssetDefinitionLabel("norito:abcdef0123456789")).toBe(
-      "abcdef01...23456789",
+  it("labels the pinned XOR asset without guessing symbols from IDs", () => {
+    expect(deriveAssetSymbol(XOR)).toBe("XOR");
+    expect(deriveAssetSymbol(OTHER)).toBe("ASSET");
+    expect(deriveAssetSymbol(OTHER, "units")).toBe("units");
+    expect(formatAssetDefinitionLabel(`${XOR}#${ACCOUNT}`)).toBe(XOR);
+    expect(formatAssetDefinitionLabel("xor#universal")).toBe("—");
+    expect(formatAssetReferenceLabel(`${XOR}#${ACCOUNT}`)).toBe(
+      `${XOR}#${ACCOUNT}`,
     );
-    expect(
-      formatAssetDefinitionLabel("norito:abcdefghijklmnopqrstuvwxyz012345"),
-    ).toBe("abcdefgh...yz012345");
-    expect(
-      formatAssetReferenceLabel(
-        "norito:abcdefghijklmnopqrstuvwxyz012345##alice@wonderland",
-      ),
-    ).toBe("abcdefgh...yz012345 | alice@wonderland");
+    expect(formatAssetReferenceLabel("xor#universal")).toBe("—");
   });
 
-  it("replaces opaque norito literals inside user-facing text", () => {
-    expect(
-      formatOpaqueAssetLiteralsInText(
-        'shield policy mismatch for "norito:00112233445566778899aabbccddeeff"',
-      ),
-    ).toBe('shield policy mismatch for "4Zust3cNxsgov3757wxRW7DtR8n6"');
+  it("resolves only explicitly preferred current asset IDs", () => {
+    const assets = [
+      { asset_id: `${OTHER}#${ACCOUNT}`, quantity: "5" },
+      { asset_id: `${XOR}#${ACCOUNT}`, quantity: "25" },
+    ];
+    expect(resolveToriiXorAsset(assets, [XOR])).toEqual(assets[1]);
+    expect(resolveToriiXorAsset(assets, [])).toBeNull();
+    expect(resolveToriiXorAsset(assets, ["xor#universal"])).toBeNull();
   });
 
-  it("prefers the live Torii XOR asset over unrelated cached asset buckets", () => {
+  it("updates configuration only from exact live holding evidence", () => {
     expect(
-      resolveToriiXorAsset(
-        [
-          {
-            asset_id: "norito:cachedbucket",
-            quantity: "25000",
-          },
-          {
-            asset_id: "xor#universal##alice@wonderland",
-            quantity: "75000",
-          },
-        ],
-        ["xor#universal"],
-      ),
-    ).toEqual({
-      asset_id: "xor#universal##alice@wonderland",
-      quantity: "75000",
-    });
-  });
-
-  it("uses a Torii-resolved preferred XOR asset id when the live asset is opaque", () => {
+      shouldReplaceConfiguredAssetDefinitionId({
+        configuredAssetDefinitionId: "",
+        detectedAssetDefinitionId: OTHER,
+        knownAssetIds: [`${OTHER}#${ACCOUNT}`],
+      }),
+    ).toBe(true);
     expect(
-      resolveToriiXorAsset(
-        [
-          {
-            asset_id: "norito:resolvedxorasset##alice@wonderland",
-            quantity: "40",
-          },
-          {
-            asset_id: "xor#universal##alice@wonderland",
-            quantity: "5",
-          },
-        ],
-        ["norito:resolvedxorasset"],
-      ),
-    ).toEqual({
-      asset_id: "norito:resolvedxorasset##alice@wonderland",
-      quantity: "40",
-    });
-  });
-
-  it("does not mistake an unrelated positive Torii holding for XOR", () => {
+      shouldReplaceConfiguredAssetDefinitionId({
+        configuredAssetDefinitionId: XOR,
+        detectedAssetDefinitionId: OTHER,
+        knownAssetIds: [`${OTHER}#${ACCOUNT}`],
+      }),
+    ).toBe(true);
     expect(
-      resolveToriiXorAsset([
-        {
-          asset_id: "norito:firstasset",
-          quantity: "25",
-        },
-        {
-          asset_id: "norito:secondasset",
-          quantity: "0",
-        },
-      ]),
-    ).toBeNull();
-  });
-
-  it("does not trust an unpreferred XOR alias as network identity evidence", () => {
-    expect(
-      resolveToriiXorAsset([
-        {
-          asset_id: "xor#universal##alice@wonderland",
-          quantity: "25",
-        },
-      ]),
-    ).toBeNull();
-  });
-
-  it("matches an equivalent configured asset before explicit XOR aliases", () => {
-    expect(
-      resolveToriiXorAsset(
-        [
-          {
-            asset_id: "xor#universal##alice@wonderland",
-            quantity: "100",
-          },
-          {
-            asset_id: "4Zust3cNxsgov3757wxRW7DtR8n6##alice@wonderland",
-            quantity: "5",
-          },
-        ],
-        ["norito:00112233445566778899aabbccddeeff"],
-      ),
-    ).toEqual({
-      asset_id: "4Zust3cNxsgov3757wxRW7DtR8n6##alice@wonderland",
-      quantity: "5",
-    });
-  });
-
-  it("does not treat asset names that merely contain xor as explicit XOR", () => {
-    expect(
-      resolveToriiXorAsset([
-        {
-          asset_id: "notxor#universal##alice@wonderland",
-          quantity: "25",
-        },
-      ]),
-    ).toBeNull();
-  });
-
-  it("replaces stale legacy asset aliases with a detected live asset bucket", () => {
+      shouldReplaceConfiguredAssetDefinitionId({
+        configuredAssetDefinitionId: XOR,
+        detectedAssetDefinitionId: OTHER,
+        knownAssetIds: [`${XOR}#${ACCOUNT}`],
+      }),
+    ).toBe(false);
     expect(
       shouldReplaceConfiguredAssetDefinitionId({
         configuredAssetDefinitionId: "xor#universal",
-        detectedAssetDefinitionId: "61CtjvNd9T3THAR65GsMVHr82Bjc",
-      }),
-    ).toBe(true);
-  });
-
-  it("replaces stale alias-style assets when live balances expose a detected bucket", () => {
-    expect(
-      shouldReplaceConfiguredAssetDefinitionId({
-        configuredAssetDefinitionId: "xor#wonderland",
-        detectedAssetDefinitionId: "61CtjvNd9T3THAR65GsMVHr82Bjc",
-        knownAssetIds: ["61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland"],
-      }),
-    ).toBe(true);
-  });
-
-  it("keeps canonical configured assets even when live balances use another encoding", () => {
-    expect(
-      shouldReplaceConfiguredAssetDefinitionId({
-        configuredAssetDefinitionId: "4Zust3cNxsgov3757wxRW7DtR8n6",
-        detectedAssetDefinitionId: "norito:00112233445566778899aabbccddeeff",
-        knownAssetIds: ["norito:00112233445566778899aabbccddeeff"],
-      }),
-    ).toBe(false);
-  });
-
-  it("treats semantically equivalent base58 and norito asset ids as the same asset", () => {
-    expect(
-      areAssetDefinitionIdsEquivalent(
-        "4Zust3cNxsgov3757wxRW7DtR8n6",
-        "norito:00112233445566778899aabbccddeeff",
-      ),
-    ).toBe(true);
-  });
-
-  it("keeps canonical Base58 asset definition IDs case-sensitive", () => {
-    expect(
-      areAssetDefinitionIdsEquivalent(
-        "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-        "6teAJqbb8oEPmLncoNiMRbLEK6tw",
-      ),
-    ).toBe(false);
-  });
-
-  it("rejects non-canonical uppercase Norito asset encodings", () => {
-    expect(
-      areAssetDefinitionIdsEquivalent(
-        "4Zust3cNxsgov3757wxRW7DtR8n6",
-        "norito:00112233445566778899AABBCCDDEEFF",
-      ),
-    ).toBe(false);
-  });
-
-  it("replaces stale canonical asset buckets when live balances expose a different bucket", () => {
-    expect(
-      shouldReplaceConfiguredAssetDefinitionId({
-        configuredAssetDefinitionId: "5OldBucket1111111111111111111",
-        detectedAssetDefinitionId: "61CtjvNd9T3THAR65GsMVHr82Bjc",
-        knownAssetIds: ["61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland"],
-      }),
-    ).toBe(true);
-  });
-
-  it("avoids churn when live evidence only changes the asset encoding", () => {
-    expect(
-      shouldReplaceConfiguredAssetDefinitionId({
-        configuredAssetDefinitionId: "4Zust3cNxsgov3757wxRW7DtR8n6",
-        detectedAssetDefinitionId: "norito:00112233445566778899aabbccddeeff",
-        knownAssetIds: ["norito:00112233445566778899aabbccddeeff"],
+        detectedAssetDefinitionId: OTHER,
       }),
     ).toBe(false);
   });

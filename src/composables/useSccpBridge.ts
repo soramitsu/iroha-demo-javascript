@@ -21,12 +21,12 @@ import {
   type SccpRouteLoadFailure,
   type SccpRouteReadiness,
 } from "@/utils/sccp";
+import type { AccountAssetItem } from "@/types/iroha";
 import type {
-  AccountAssetItem,
   SccpCapabilitiesResponse,
   SccpProofManifestSetResponse,
   SccpSoraOutboundMaterialResponse,
-} from "@/types/iroha";
+} from "@/types/sccpDormant";
 import { normalizeEndpointUrl } from "@/utils/endpoint";
 
 const exactSolanaRouteAllowsOutboundMaterial = (

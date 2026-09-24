@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AccountAddress } from "@iroha/iroha-js";
+import { AccountAddress } from "@iroha/iroha-js/address";
 
 import {
   type FaucetRequestProgress,
@@ -9,18 +9,20 @@ import {
   shouldRetryFaucetPuzzle,
 } from "../electron/faucetApi";
 import type { FaucetPowPuzzle } from "../electron/faucetPow";
+import { TAIRA_NETWORK_ID } from "../src/utils/firstReleaseNetworkIdentity";
 
 const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 const MINAMOTO_CHAIN_ID = "00000000-0000-0000-0000-000000000000";
 const TAIRA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 const OTHER_ASSET_DEFINITION_ID = "61CtjvNd9T3THAR65GsMVHr82Bjc";
+const TAIRA_FAUCET_AUTHORITY =
+  "testuﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV";
 const FAUCET_TX_HASH = "ab".repeat(32);
 const RETRY_TX_HASH = "cd".repeat(32);
 const JSON_RETRY_TX_HASH = "ef".repeat(32);
-
 const basePuzzle: FaucetPowPuzzle = {
-  algorithm: "scrypt-leading-zero-bits-v1",
-  chain_id: TAIRA_CHAIN_ID,
+  algorithm: "scrypt-leading-zero-bits-v2",
+  network_id: TAIRA_NETWORK_ID,
   chain_discriminant: 369,
   difficulty_bits: 4,
   anchor_height: 42,
@@ -56,7 +58,7 @@ const accountFaucetResponse = (
 });
 
 describe("faucetApi", () => {
-  it("canonicalizes the account literal onto the active network before solving and posting the faucet proof", async () => {
+  it("uses the exact active-network account before solving and posting the faucet proof", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
@@ -98,7 +100,7 @@ describe("faucetApi", () => {
 
     const result = await requestFaucetFundsWithPuzzle({
       baseUrl: "https://taira.sora.org",
-      accountId: soraAccountId,
+      accountId: testnetAccountId,
       chainId: TAIRA_CHAIN_ID,
       networkPrefix: 369,
       fetchImpl,
@@ -244,11 +246,11 @@ describe("faucetApi", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects the retired TAIRA chain id before solving a faucet puzzle", async () => {
+  it("rejects a puzzle from a different genesis network before solving", async () => {
     const puzzle = {
       ...basePuzzle,
-      chain_id: "809574f5-fee7-5e69-bfcf-52451e42d50f",
-      chain_discriminant: 369,
+      network_id:
+        "hash:CC62233AC63EC4131207A35C28B84D5FB22F0C954BD7B2D0F2EDC50541117121#1C42",
     };
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(
       new Response(JSON.stringify(puzzle), {
@@ -269,25 +271,22 @@ describe("faucetApi", () => {
         fetchImpl,
         solvePuzzle,
       }),
-    ).rejects.toThrow(
-      `Faucet endpoint chain id mismatch: expected ${TAIRA_CHAIN_ID}, got 809574f5-fee7-5e69-bfcf-52451e42d50f.`,
-    );
+    ).rejects.toThrow("does not match the release-pinned network");
     expect(solvePuzzle).not.toHaveBeenCalled();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects a custom endpoint puzzle whose chain id differs from the verified write connection", async () => {
+  it("rejects a custom endpoint puzzle from a different genesis network", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           ...basePuzzle,
-          chain_id: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+          network_id:
+            "hash:CC62233AC63EC4131207A35C28B84D5FB22F0C954BD7B2D0F2EDC50541117121#1C42",
         }),
         {
           status: 200,
-          headers: {
-            "content-type": "application/json",
-          },
+          headers: { "content-type": "application/json" },
         },
       ),
     );
@@ -302,16 +301,14 @@ describe("faucetApi", () => {
         fetchImpl,
         solvePuzzle,
       }),
-    ).rejects.toThrow(
-      `Faucet endpoint chain id mismatch: expected ${TAIRA_CHAIN_ID}, got 809574f5-fee7-5e69-bfcf-52451e42d50f.`,
-    );
+    ).rejects.toThrow("does not match the release-pinned network");
     expect(solvePuzzle).not.toHaveBeenCalled();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed when a puzzle omits the exact first-release identity fields", async () => {
-    const puzzle = { ...basePuzzle };
-    delete puzzle.chain_id;
+    const puzzle: Partial<FaucetPowPuzzle> = { ...basePuzzle };
+    delete puzzle.network_id;
     delete puzzle.chain_discriminant;
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(
       new Response(
@@ -332,18 +329,60 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
-        baseUrl: "https://custom-torii.example",
+        baseUrl: "https://taira.sora.org",
         accountId: testnetAccountId,
         chainId: TAIRA_CHAIN_ID,
         networkPrefix: 369,
         fetchImpl,
         solvePuzzle,
       }),
-    ).rejects.toThrow(
-      "Faucet puzzle is missing a valid chain_discriminant network prefix.",
-    );
+    ).rejects.toThrow("unsupported shape");
     expect(solvePuzzle).not.toHaveBeenCalled();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects duplicate-key and oversized puzzle JSON before solving", async () => {
+    const canonicalJson = JSON.stringify(basePuzzle);
+    const duplicateJson = canonicalJson.replace(
+      `"network_id":"${TAIRA_NETWORK_ID}"`,
+      `"network_id":"${TAIRA_NETWORK_ID}","network_id":"${TAIRA_NETWORK_ID}"`,
+    );
+    const solvePuzzle = vi.fn();
+    const input = {
+      baseUrl: "https://taira.sora.org",
+      accountId: testnetAccountId,
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: 369,
+      solvePuzzle,
+    };
+
+    await expect(
+      requestFaucetFundsWithPuzzle({
+        ...input,
+        fetchImpl: vi.fn<typeof fetch>().mockResolvedValueOnce(
+          new Response(duplicateJson, {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      }),
+    ).rejects.toThrow(/duplicate key/i);
+
+    await expect(
+      requestFaucetFundsWithPuzzle({
+        ...input,
+        fetchImpl: vi.fn<typeof fetch>().mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({ ...basePuzzle, padding: "x".repeat(33_000) }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          ),
+        ),
+      }),
+    ).rejects.toThrow(/byte limit/i);
+    expect(solvePuzzle).not.toHaveBeenCalled();
   });
 
   it("rejects an invalid verified network identity before any request", async () => {
@@ -368,7 +407,7 @@ describe("faucetApi", () => {
       new Response(
         JSON.stringify({
           ...basePuzzle,
-          chain_id: "00000000-0000-0000-0000-000000000000",
+          network_id: TAIRA_NETWORK_ID,
           chain_discriminant: 753,
         }),
         {
@@ -585,12 +624,22 @@ describe("faucetApi", () => {
           JSON.stringify({
             items: [
               {
-                account_id: "faucet",
+                account_id: TAIRA_FAUCET_AUTHORITY,
                 asset: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-                quantity: "8427.65210",
+                asset_alias: null,
+                asset_name: "XOR",
+                scope: "global",
+                quantity: "8427.6521",
+                primary_alias: null,
+                primary_alias_name: null,
+                primary_alias_dataspace: null,
+                primary_alias_domain: null,
+                has_primary_alias: false,
               },
             ],
             total: 1,
+            has_more: false,
+            count_mode: "exact",
           }),
           {
             status: 200,
@@ -616,7 +665,7 @@ describe("faucetApi", () => {
         }),
       }),
     ).rejects.toThrow(
-      "Faucet request failed (400): TAIRA faucet is out of funds. The faucet authority has 8427.65210 XOR available, but each claim requires 25000 XOR.",
+      "Faucet request failed (400): TAIRA faucet is out of funds. The faucet authority has 8427.6521 XOR available, but each claim requires 25000 XOR.",
     );
     expect(fetchImpl).toHaveBeenCalledTimes(3);
     expect(fetchImpl).toHaveBeenNthCalledWith(

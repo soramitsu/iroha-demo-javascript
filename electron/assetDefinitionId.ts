@@ -1,21 +1,24 @@
-const BASE58_ASSET_DEFINITION_ID_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{28}$/u;
-const NORITO_ASSET_DEFINITION_ID_PATTERN = /^norito:[0-9a-f]{32}$/u;
+import { normalizeAssetDefinitionId } from "@iroha/iroha-js/normalizers";
 
 export const normalizeFirstReleaseAssetDefinitionId = (
   value: unknown,
   label = "assetDefinitionId",
 ) => {
-  const literal = String(value ?? "").trim();
-  if (!literal) {
+  if (typeof value !== "string" || value.length === 0) {
     throw new Error(`${label} is required.`);
   }
-  if (
-    !BASE58_ASSET_DEFINITION_ID_PATTERN.test(literal) &&
-    !NORITO_ASSET_DEFINITION_ID_PATTERN.test(literal)
-  ) {
+  let normalized: string;
+  try {
+    normalized = normalizeAssetDefinitionId(value, label);
+  } catch {
     throw new Error(
-      `${label} must be an exact first-release asset definition literal: a 28-character Base58 address or lowercase norito: followed by 32 lowercase hex characters.`,
+      `${label} must be an exact canonical Base58 asset definition ID.`,
     );
   }
-  return literal;
+  if (normalized !== value) {
+    throw new Error(
+      `${label} must be an exact canonical Base58 asset definition ID.`,
+    );
+  }
+  return normalized;
 };

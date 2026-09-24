@@ -17,7 +17,7 @@ export function assertFinalizedMutationReceipt(
   receipt: unknown,
   options?: {
     label?: string;
-    hashFields?: string[];
+    hashFields?: readonly string[];
   },
 ): FinalizedMutationReceipt;
 

@@ -119,6 +119,7 @@ import {
   SCCP_BSC_DIAGNOSTIC_VERIFIER_KEY_HASHES,
   SCCP_BSC_DOMAIN,
   SCCP_BSC_NETWORK,
+  SCCP_FIRST_RELEASE_UNSUPPORTED_ROUTE_ERROR,
   SCCP_SORA_DOMAIN,
   SCCP_SOLANA_DOMAIN,
   SCCP_SOLANA_NETWORK,
@@ -176,7 +177,6 @@ import {
   evmSccpDestinationBinding,
   tronSccpDestinationBinding,
   buildSccpTonChunkedMessageBodyBocsFromBytes,
-  buildRecordSccpMessageInstructionBytes,
   sccpDestinationBindingHash,
   sccpSourceAdapterEngineDeploymentHash,
   sccpSourceVerifierMaterialHash,
@@ -7036,7 +7036,7 @@ describe("SCCP helpers", () => {
     ).toBeNull();
   });
 
-  it("reads TAIRA burn-record material and builds ZK IVM requests", () => {
+  it("reads TAIRA burn-record material but rejects retired route construction", () => {
     const manifest = {
       tronBridgeAddress: VALID_TRON_ADDRESS,
       ...BURN_RECORD_MATERIAL,
@@ -7051,485 +7051,61 @@ describe("SCCP helpers", () => {
       },
       gasLimit: 123456,
     });
-    expect(
-      readSccpTairaBurnRecordMaterial({
-        tairaXorBurnRecord: {
-          ...BURN_RECORD_MATERIAL.tairaXorBurnRecord,
-          vkRef: {
-            ...BURN_RECORD_MATERIAL.tairaXorBurnRecord.vkRef,
-            backend: "halo2_ipa",
-          },
-        },
-      })?.vkRef.backend,
-    ).toBe("halo2/ipa");
 
-    const result = buildTairaXorOutboundBurnRecordRequest({
-      manifest,
-      tairaSender: TAIRA_SENDER,
-      tronRecipient: VALID_TRON_ADDRESS,
-      amountDecimal: "2.25",
-      nonce: "7",
-    });
-
-    expect(result.outbound.messageId).toMatch(/^0x[0-9a-f]{64}$/u);
-    expect(result.zkIvmRequest.request).toMatchObject({
-      authority: TAIRA_SENDER,
-      bytecode: BURN_RECORD_ARTIFACT_B64,
-      vkRef: {
-        backend: "halo2/ipa",
-        name: "taira-xor-burn-record-v1",
-      },
-    });
-    expect(result.zkIvmRequest.request.metadata).toMatchObject({
-      gas_limit: 123456,
-      contract_entrypoint: "burn_and_record",
-      contract_payload: {
-        sender: TAIRA_SENDER,
-        settlement_asset: VALID_ASSET_DEFINITION_ID,
-        amount: "2250000000000000000",
-      },
-    });
-    expect(result.zkIvmRequest.descriptor.chain_id).toBe(TAIRA_CHAIN_ID);
-    expect(result.zkIvmRequest.contract.descriptor.chain_id).toBe(
-      TAIRA_CHAIN_ID,
-    );
-    expect(
-      String(
-        (
-          result.zkIvmRequest.request.metadata.contract_payload as Record<
-            string,
-            unknown
-          >
-        ).record_instruction,
-      ),
-    ).toMatch(/^0x4e525430[0-9a-f]+$/u);
-    expect(
-      readSccpTairaBurnRecordMaterial({
-        tairaXorBurnRecord: {
-          ...BURN_RECORD_MATERIAL.tairaXorBurnRecord,
-          gasLimit: 1.5,
-        },
-      }),
-    ).toBeNull();
-    expect(
-      readSccpTairaBurnRecordMaterial({
-        tairaXorBurnRecord: {
-          ...BURN_RECORD_MATERIAL.tairaXorBurnRecord,
-          settlementAssetDefinitionId: "xor#universal",
-        },
-      }),
-    ).toBeNull();
-    expect(
-      readSccpTairaBurnRecordMaterial({
-        tairaXorBurnRecord: {
-          ...BURN_RECORD_MATERIAL.tairaXorBurnRecord,
-          contractArtifactB64: "TnJ0MA==",
-        },
-      }),
-    ).toBeNull();
-    expect(
-      readSccpTairaBurnRecordMaterial({
-        tairaXorBurnRecord: {
-          ...BURN_RECORD_MATERIAL.tairaXorBurnRecord,
-          contractArtifactB64: "not base64",
-        },
-      }),
-    ).toBeNull();
-  });
-
-  it("rejects unsafe or incomplete TAIRA burn-record request material", () => {
-    expect(() =>
-      buildTairaXorOutboundBurnRecordRequest({
-        manifest: {
-          tronBridgeAddress: VALID_TRON_ADDRESS,
-        },
-        tairaSender: TAIRA_SENDER,
-        tronRecipient: VALID_TRON_ADDRESS,
-        amountDecimal: "1",
-        nonce: "7",
-      }),
-    ).toThrow(/burn-record ZK contract material/);
-
-    expect(() =>
-      buildTairaXorOutboundBurnRecordRequest({
-        manifest: {
-          tronBridgeAddress: VALID_TRON_ADDRESS,
-          tairaXorBurnRecord: {
-            ...BURN_RECORD_MATERIAL.tairaXorBurnRecord,
-            settlementAssetDefinitionId: "xor#universal",
-          },
-        },
-        tairaSender: TAIRA_SENDER,
-        tronRecipient: VALID_TRON_ADDRESS,
-        amountDecimal: "1",
-        nonce: "7",
-      }),
-    ).toThrow(/canonical asset definition id/);
-
-    expect(() =>
-      buildTairaXorOutboundBurnRecordRequest({
-        manifest: {
-          tronBridgeAddress: VALID_TRON_ADDRESS,
-          ...BURN_RECORD_MATERIAL,
-        },
-        tairaSender: TAIRA_SENDER,
-        tronRecipient: VALID_TRON_ADDRESS,
-        amountDecimal: "1",
-        nonce: "7",
-        authority: TAIRA_OTHER_ACCOUNT_ID,
-      }),
-    ).toThrow(/authority must match/i);
-  });
-
-  it("builds TAIRA to TRON canonical outbound previews from SDK bindings", () => {
-    const preview = buildTairaXorOutboundPreview({
-      manifest: {
-        tronBridgeAddress: VALID_TRON_ADDRESS,
-      },
-      tairaSender: TAIRA_SENDER,
-      tronRecipient: VALID_TRON_ADDRESS,
-      amountDecimal: "2.25",
-      nonce: "7",
-    });
-
-    expect(preview.payload).toMatchObject({
-      source_domain: 0,
-      dest_domain: SCCP_TRON_DOMAIN,
-      asset_id: "xor",
-      amount: "2250000000000000000",
-      recipient: VALID_TRON_ADDRESS,
-      route_id: "taira_tron_xor",
-    });
-    expect(preview.messageId).toMatch(/^0x[0-9a-f]{64}$/u);
-    expect(preview.payloadHash).toMatch(/^0x[0-9a-f]{64}$/u);
-    expect(preview.contractPayloadHash).toMatch(/^0x[0-9a-f]{64}$/u);
-    expect(preview.canonicalPayloadHex).toMatch(/^0x[0-9a-f]+$/u);
-    expect(preview.recordDescriptor).toMatchObject({
-      execution_kind: "ivm_proved_record_sccp_message_v1",
-      chain_id: TAIRA_CHAIN_ID,
-      network_prefix: TAIRA_NETWORK_PREFIX,
-      message_id: preview.messageId,
-      canonical_payload_hex: preview.canonicalPayloadHex,
-      execution_requirements: {
-        executable: "IvmProved",
-        overlay_instruction: "RecordSccpMessage",
-        settlement_instruction: "Burn<Numeric, Asset>",
-        settlement_asset_selector: "nexus.fees.fee_asset_id",
-        settlement_asset_key: "xor",
-        settlement_account_binding:
-          "burn.destination.account == payload.sender",
-        settlement_amount_binding:
-          "sum(whole-unit burns) >= sum(recorded amounts) per sender",
-        proof_gate: "sccp_recording_proof_verified",
-        normal_transaction_supported: false,
-      },
-    });
-    expect(preview.recordDescriptor.record_instruction).toMatchObject({
-      kind: "RecordSccpMessage",
-      payload_bytes_hex: preview.canonicalPayloadHex,
-    });
-    expect(() =>
-      buildTairaXorOutboundPreview({
-        manifest: {},
-        tairaSender: TAIRA_SENDER,
-        tronRecipient: VALID_TRON_ADDRESS,
-        amountDecimal: "2.25",
-        nonce: "7",
-      }),
-    ).toThrow(/deployment address/);
-    expect(() =>
-      buildTairaXorOutboundPreview({
-        manifest: {
-          tronBridgeAddress: VALID_TRON_ADDRESS,
-        },
-        tairaSender: MINAMOTO_ACCOUNT_ID,
-        tronRecipient: VALID_TRON_ADDRESS,
-        amountDecimal: "2.25",
-        nonce: "7",
-      }),
-    ).toThrow(/canonical TAIRA I105/);
-  });
-
-  it("builds TAIRA to BSC canonical outbound previews and burn-record requests from SDK bindings", () => {
-    const preview = buildTairaXorBscOutboundPreview({
-      manifest: READY_BSC_MANIFEST,
-      tairaSender: TAIRA_SENDER,
-      bscRecipient: BSC_RECIPIENT_ADDRESS.toUpperCase(),
-      amountDecimal: "2.25",
-      nonce: "7",
-    });
-
-    expect(preview.payload).toMatchObject({
-      source_domain: 0,
-      dest_domain: SCCP_BSC_DOMAIN,
-      asset_id: "xor",
-      amount: "2250000000",
-      recipient: BSC_RECIPIENT_ADDRESS,
-      route_id: "taira_bsc_xor",
-    });
-    expect(preview.messageId).toMatch(/^0x[0-9a-f]{64}$/u);
-    expect(preview.payloadHash).toMatch(/^0x[0-9a-f]{64}$/u);
-    expect(preview.contractPayloadHash).toMatch(/^0x[0-9a-f]{64}$/u);
-    expect(preview.canonicalPayloadHex).toMatch(/^0x[0-9a-f]+$/u);
-    expect(preview.recordDescriptor).toMatchObject({
-      execution_kind: "ivm_proved_record_sccp_message_v1",
-      chain_id: TAIRA_CHAIN_ID,
-      network_prefix: TAIRA_NETWORK_PREFIX,
-      route_id: "taira_bsc_xor",
-      message_id: preview.messageId,
-      canonical_payload_hex: preview.canonicalPayloadHex,
-    });
-
-    const mixedAddressPreview = buildTairaXorBscOutboundPreview({
-      manifest: READY_BSC_MANIFEST,
-      tairaSender: TAIRA_SENDER,
-      bscRecipient: BSC_MIXED_RECIPIENT_ADDRESS_LOWER,
-      amountDecimal: "2.25",
-      nonce: "7",
-    });
-    expect(mixedAddressPreview.payload).toMatchObject({
-      recipient: BSC_MIXED_RECIPIENT_ADDRESS,
-    });
-    expect(
-      normalizeEvmAddress(String(mixedAddressPreview.payload.recipient)),
-    ).toBe(BSC_MIXED_RECIPIENT_ADDRESS_LOWER);
-    expect(mixedAddressPreview.canonicalPayloadHex).toBe(
-      bytesToHex(
-        canonicalSccpTransferPayloadBytes({
-          ...TAIRA_TO_BSC_TRANSFER_PAYLOAD,
-          amount: "2250000000",
-          recipient: BSC_MIXED_RECIPIENT_ADDRESS,
-        }),
-      ),
-    );
-
-    const request = buildTairaXorBscOutboundBurnRecordRequest({
-      manifest: READY_BSC_MANIFEST,
-      tairaSender: TAIRA_SENDER,
-      bscRecipient: BSC_RECIPIENT_ADDRESS,
-      amountDecimal: "2.25",
-      nonce: "7",
-    });
-    expect(request.outbound.messageId).toBe(preview.messageId);
-    expect(request.zkIvmRequest).toMatchObject({
-      route_id: "taira_bsc_xor",
-      asset_key: "xor",
-      descriptor: {
-        route_id: "taira_bsc_xor",
-        dest_domain: SCCP_BSC_DOMAIN,
-      },
-    });
-    expect(request.zkIvmRequest.request).toMatchObject({
-      vkRef: {
-        backend: "halo2/ipa",
-        name: "taira-xor-burn-record-v1",
-      },
-    });
-    expect(request.zkIvmRequest.descriptor.chain_id).toBe(TAIRA_CHAIN_ID);
-    expect(request.zkIvmRequest.contract.descriptor.chain_id).toBe(
-      TAIRA_CHAIN_ID,
-    );
-    const legacyBackendRequest = buildTairaXorBscOutboundBurnRecordRequest({
-      manifest: {
-        ...READY_BSC_MANIFEST,
-        tairaXorBurnRecord: {
-          ...READY_BSC_MANIFEST.tairaXorBurnRecord,
-          vkRef: {
-            ...READY_BSC_MANIFEST.tairaXorBurnRecord.vkRef,
-            backend: "halo2_ipa",
-          },
-        },
-      },
-      tairaSender: TAIRA_SENDER,
-      bscRecipient: BSC_RECIPIENT_ADDRESS,
-      amountDecimal: "2.25",
-      nonce: "7",
-    });
-    expect(legacyBackendRequest.material.vkRef.backend).toBe("halo2/ipa");
-    expect(legacyBackendRequest.zkIvmRequest.request).toMatchObject({
-      vkRef: {
-        backend: "halo2/ipa",
-      },
-    });
-    expect(() =>
-      buildTairaXorBscOutboundPreview({
-        manifest: {},
-        tairaSender: TAIRA_SENDER,
-        bscRecipient: BSC_RECIPIENT_ADDRESS,
-        amountDecimal: "2.25",
-        nonce: "7",
-      }),
-    ).toThrow(/BSC bridge deployment address/);
-    expect(() =>
-      buildTairaXorBscOutboundBurnRecordRequest({
-        manifest: READY_BSC_MANIFEST,
-        tairaSender: TAIRA_SENDER,
-        bscRecipient: VALID_TRON_ADDRESS,
-        amountDecimal: "2.25",
-        nonce: "7",
-      }),
-    ).toThrow(/EVM address|recipientAddress|BSC/i);
-  });
-
-  it("builds TAIRA to TON canonical outbound previews and burn-record requests", () => {
-    const preview = buildTairaXorTonOutboundPreview({
-      manifest: READY_TON_MANIFEST,
-      tairaSender: TAIRA_SENDER,
-      tonRecipient: TON_RECIPIENT_ADDRESS,
-      amountDecimal: "2.25",
-      nonce: "7",
-    });
-
-    expect(preview.payload).toMatchObject({
-      source_domain: SCCP_SORA_DOMAIN,
-      dest_domain: SCCP_TON_DOMAIN,
-      asset_id: "xor",
-      amount: "2250000000",
-      recipient_codec: SCCP_CODEC_TON_RAW,
-      recipient: TON_RECIPIENT_ADDRESS,
-      route_id: SCCP_TON_XOR_ROUTE_ID,
-    });
-    expect(preview.messageId).toMatch(/^0x[0-9a-f]{64}$/u);
-    expect(preview.payloadHash).toMatch(/^0x[0-9a-f]{64}$/u);
-    expect(preview.contractPayloadHash).toMatch(/^0x[0-9a-f]{64}$/u);
-    expect(preview.canonicalPayloadHex).toBe(
-      bytesToHex(
-        canonicalSccpTransferPayloadBytes({
-          version: 1,
-          source_domain: SCCP_SORA_DOMAIN,
-          dest_domain: SCCP_TON_DOMAIN,
+    const retiredRouteCalls = [
+      () =>
+        buildTairaXorOutboundPreview({
+          manifest,
+          tairaSender: TAIRA_SENDER,
+          tronRecipient: VALID_TRON_ADDRESS,
+          amountDecimal: "2.25",
           nonce: "7",
-          asset_home_domain: SCCP_SORA_DOMAIN,
-          asset_id_codec: SCCP_CODEC_TEXT_UTF8,
-          asset_id: "xor",
-          amount: "2250000000",
-          sender_codec: SCCP_CODEC_TEXT_UTF8,
-          sender: TAIRA_SENDER,
-          recipient_codec: SCCP_CODEC_TON_RAW,
-          recipient: TON_RECIPIENT_ADDRESS,
-          route_id_codec: SCCP_CODEC_TEXT_UTF8,
-          route_id: SCCP_TON_XOR_ROUTE_ID,
         }),
-      ),
-    );
-    expect(preview.recordDescriptor).toMatchObject({
-      execution_kind: "ivm_proved_record_sccp_message_v1",
-      chain_id: TAIRA_CHAIN_ID,
-      network_prefix: TAIRA_NETWORK_PREFIX,
-      route_id: SCCP_TON_XOR_ROUTE_ID,
-      source_domain: SCCP_SORA_DOMAIN,
-      dest_domain: SCCP_TON_DOMAIN,
-      message_id: preview.messageId,
-      canonical_payload_hex: preview.canonicalPayloadHex,
-      record_instruction: {
-        kind: "RecordSccpMessage",
-        payload_bytes_hex: preview.canonicalPayloadHex,
-      },
-      execution_requirements: {
-        executable: "IvmProved",
-        overlay_instruction: "RecordSccpMessage",
-        settlement_instruction: "Burn<Numeric, Asset>",
-        settlement_asset_selector: "nexus.fees.fee_asset_id",
-        normal_transaction_supported: false,
-      },
-    });
+      () =>
+        buildTairaXorOutboundBurnRecordRequest({
+          manifest,
+          tairaSender: TAIRA_SENDER,
+          tronRecipient: VALID_TRON_ADDRESS,
+          amountDecimal: "2.25",
+          nonce: "7",
+        }),
+      () =>
+        buildTairaXorBscOutboundPreview({
+          manifest: READY_BSC_MANIFEST,
+          tairaSender: TAIRA_SENDER,
+          bscRecipient: BSC_RECIPIENT_ADDRESS,
+          amountDecimal: "2.25",
+          nonce: "7",
+        }),
+      () =>
+        buildTairaXorBscOutboundBurnRecordRequest({
+          manifest: READY_BSC_MANIFEST,
+          tairaSender: TAIRA_SENDER,
+          bscRecipient: BSC_RECIPIENT_ADDRESS,
+          amountDecimal: "2.25",
+          nonce: "7",
+        }),
+      () =>
+        buildTairaXorTonOutboundPreview({
+          manifest: READY_TON_MANIFEST,
+          tairaSender: TAIRA_SENDER,
+          tonRecipient: TON_RECIPIENT_ADDRESS,
+          amountDecimal: "2.25",
+          nonce: "7",
+        }),
+      () =>
+        buildTairaXorTonOutboundBurnRecordRequest({
+          manifest: READY_TON_MANIFEST,
+          tairaSender: TAIRA_SENDER,
+          tonRecipient: TON_RECIPIENT_ADDRESS,
+          amountDecimal: "2.25",
+          nonce: "7",
+        }),
+    ];
 
-    const request = buildTairaXorTonOutboundBurnRecordRequest({
-      manifest: READY_TON_MANIFEST,
-      tairaSender: TAIRA_SENDER,
-      tonRecipient: TON_RECIPIENT_ADDRESS,
-      amountDecimal: "2.25",
-      nonce: "7",
-    });
-    expect(request.outbound.messageId).toBe(preview.messageId);
-    expect(request.zkIvmRequest).toMatchObject({
-      route_id: SCCP_TON_XOR_ROUTE_ID,
-      asset_key: "xor",
-      descriptor: {
-        route_id: SCCP_TON_XOR_ROUTE_ID,
-        dest_domain: SCCP_TON_DOMAIN,
-      },
-    });
-    expect(request.zkIvmRequest.request).toMatchObject({
-      authority: TAIRA_SENDER,
-      bytecode: BURN_RECORD_ARTIFACT_B64,
-      vkRef: {
-        backend: "halo2/ipa",
-        name: "taira-xor-burn-record-v1",
-      },
-      metadata: {
-        gas_limit: 123456,
-        contract_entrypoint: "burn_and_record",
-        contract_payload: {
-          sender: TAIRA_SENDER,
-          settlement_asset: VALID_ASSET_DEFINITION_ID,
-          amount: "2250000000",
-        },
-      },
-    });
-    expect(request.zkIvmRequest.descriptor.chain_id).toBe(TAIRA_CHAIN_ID);
-    expect(request.zkIvmRequest.contract.descriptor.chain_id).toBe(
-      TAIRA_CHAIN_ID,
-    );
-    const tonEnvelopePayloadHex = bytesToHex(
-      canonicalSccpPayloadEnvelopeBytes({
-        kind: "Transfer",
-        value: request.outbound.payload,
-      }),
-    );
-    expect(request.outbound.canonicalPayloadHex).not.toBe(
-      tonEnvelopePayloadHex,
-    );
-    expect(
-      (
-        request.zkIvmRequest.descriptor.record_instruction as Record<
-          string,
-          unknown
-        >
-      ).payload_bytes_hex,
-    ).toBe(tonEnvelopePayloadHex);
-    expect(
-      (
-        request.zkIvmRequest.request.metadata.contract_payload as Record<
-          string,
-          unknown
-        >
-      ).record_instruction,
-    ).toBe(
-      bytesToHex(
-        buildRecordSccpMessageInstructionBytes(
-          hexToBytes(tonEnvelopePayloadHex),
-        ),
-      ),
-    );
-    expect(
-      String(
-        (
-          request.zkIvmRequest.request.metadata.contract_payload as Record<
-            string,
-            unknown
-          >
-        ).record_instruction,
-      ),
-    ).toMatch(/^0x4e525430[0-9a-f]+$/u);
-    expect(() =>
-      buildTairaXorTonOutboundPreview({
-        manifest: {},
-        tairaSender: TAIRA_SENDER,
-        tonRecipient: TON_RECIPIENT_ADDRESS,
-        amountDecimal: "2.25",
-        nonce: "7",
-      }),
-    ).toThrow(/TON bridge deployment address/);
-    expect(() =>
-      buildTairaXorTonOutboundBurnRecordRequest({
-        manifest: READY_TON_MANIFEST,
-        tairaSender: TAIRA_SENDER,
-        tonRecipient: `0:${"00".repeat(32)}`,
-        amountDecimal: "2.25",
-        nonce: "7",
-      }),
-    ).toThrow(/TON raw address account hash|TON raw recipient address/);
+    for (const call of retiredRouteCalls) {
+      expect(call).toThrow(SCCP_FIRST_RELEASE_UNSUPPORTED_ROUTE_ERROR);
+    }
   });
 
   it("binds TAIRA message proof jobs to TRON finalize proof requests", () => {

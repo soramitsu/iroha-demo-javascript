@@ -2,17 +2,14 @@
 
 import { ToriiClient } from "@iroha/iroha-js";
 import {
-  TAIRA_XOR_ASSET_DEFINITION_ID,
   assertCurrentReadSurface,
   assertOfficialV2WriteSurface,
   classifyTairaIdentity,
   normalizeToriiBaseUrl,
   probeJson,
   validateAccountAssets,
-  validateCanonicalAssetDefinitionId,
   validateCitizenStatus,
   validateFinalizedTransactionRead,
-  validateOfflineReadiness,
   validateOwnedSubscriptions,
   validatePublicLaneValidators,
 } from "./taira-read-contract-utils.mjs";
@@ -21,9 +18,6 @@ const toriiUrl = normalizeToriiBaseUrl(
   process.env.E2E_TORII_URL ?? "https://taira.sora.org",
 );
 const requireOfficialV2 = process.argv.includes("--require-v2");
-const assetDefinitionId = validateCanonicalAssetDefinitionId(
-  process.env.E2E_ASSET_DEFINITION_ID ?? TAIRA_XOR_ASSET_DEFINITION_ID,
-);
 const publicLaneId = 0;
 
 const status = await probeJson(fetch, toriiUrl, "/status");
@@ -120,11 +114,6 @@ const finalizedTransaction = validateFinalizedTransactionRead({
   block: explorerBlock.payload,
   metrics: explorerMetrics.payload,
 });
-const offlineReadiness = await probeJson(
-  fetch,
-  toriiUrl,
-  `/v1/offline/readiness?asset_definition_id=${encodeURIComponent(assetDefinitionId)}`,
-);
 const kaigiRelayHealth = await probeJson(
   fetch,
   toriiUrl,
@@ -140,9 +129,7 @@ assertCurrentReadSurface({
   soraCloud: soraCloud.payload,
   subscriptionPlans: subscriptionPlans.payload,
   explorerMetrics: explorerMetrics.payload,
-  offlineReadiness: offlineReadiness.payload,
   kaigiRelayHealth: kaigiRelayHealth.payload,
-  requestedAssetDefinitionId: assetDefinitionId,
   requestedLaneId: publicLaneId,
   requestedValidator: stakeValidator,
 });
@@ -190,7 +177,7 @@ if (requestedCitizenAccount) {
   const accountAssets = await probeJson(
     fetch,
     toriiUrl,
-    `/v1/accounts/${encodedAccountId}/assets`,
+    `/v1/accounts/${encodedAccountId}/assets?limit=200&offset=0&count_mode=exact`,
   );
   validateCitizenStatus(citizenStatus.payload, requestedCitizenAccount);
   validateOwnedSubscriptions(ownedSubscriptions.payload);
@@ -212,7 +199,6 @@ if (requireOfficialV2 && identity.state !== "matched") {
   );
 }
 if (requireOfficialV2) {
-  validateOfflineReadiness(offlineReadiness.payload, assetDefinitionId, 21);
   assertOfficialV2WriteSurface(openApi.payload);
 }
 
@@ -222,7 +208,6 @@ console.log(
     `Identity: ${identity.state} (${identity.chainId}).`,
     `Access: ${identity.accessMode}.`,
     `Citizens: ${citizenCount.payload.total}.`,
-    `Asset readiness: ${assetDefinitionId} (${offlineReadiness.payload.ready ? "ready" : "blocked"}).`,
     `Lane ${publicLaneId} validators: ${validators.payload.items.length}; stake filter verified.`,
     `Explorer block: ${explorerMetrics.payload.block}.`,
     `Finality read: ${finalizedTransaction.transactionHash} in finalized block ${finalizedTransaction.blockHeight}.`,

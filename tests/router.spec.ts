@@ -1,30 +1,46 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
+import { AccountAddress } from "@iroha/iroha-js/address";
 import router, { APP_NAV_ITEMS } from "@/router";
-import { SESSION_STORAGE_KEY } from "@/stores/session";
+import {
+  SESSION_SCHEMA,
+  SESSION_STORAGE_KEY,
+  SESSION_VERSION,
+} from "@/stores/session";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { useSessionStore } from "@/stores/session";
 
+const ALICE_PUBLIC_KEY_HEX =
+  "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737";
+const ALICE_ACCOUNT_ID = AccountAddress.fromAccount({
+  publicKey: Uint8Array.from(
+    ALICE_PUBLIC_KEY_HEX.match(/.{2}/gu)!.map((byte) =>
+      Number.parseInt(byte, 16),
+    ),
+  ),
+}).toI105(TAIRA_CHAIN_PRESET.connection.networkPrefix);
+
 const savedSession = {
-  hydrated: true,
+  schema: SESSION_SCHEMA,
+  version: SESSION_VERSION,
   connection: { ...TAIRA_CHAIN_PRESET.connection },
   authority: {
     accountId: "",
-    privateKeyHex: "",
+    signingAlgorithm: "ed25519",
     hasStoredSecret: false,
   },
   accounts: [
     {
       displayName: "Alice",
-      domain: "wonderland",
-      accountId: "alice@wonderland",
-      publicKeyHex: "ab".repeat(32),
-      privateKeyHex: "cd".repeat(32),
+      domain: "default",
+      accountId: ALICE_ACCOUNT_ID,
+      publicKeyHex: ALICE_PUBLIC_KEY_HEX,
+      signingAlgorithm: "ed25519",
       hasStoredSecret: true,
+      localOnly: false,
     },
   ],
-  activeAccountId: "alice@wonderland",
-  customChains: [],
+  activeAccountId: ALICE_ACCOUNT_ID,
 };
 
 describe("router guard", () => {
@@ -108,9 +124,8 @@ describe("router guard", () => {
       "SoraCloud",
       "VPN",
       "Kaigi",
-      "Offline",
-      "SCCP Bridge",
     ]);
+    expect(APP_NAV_ITEMS.some((item) => item.to === "/offline")).toBe(false);
     expect(
       APP_NAV_ITEMS.filter((item) => item.navPlacement === "footer")
         .sort((left, right) => left.navOrder - right.navOrder)
@@ -131,10 +146,7 @@ describe("router guard", () => {
     const navigableRoutes = router
       .getRoutes()
       .filter(
-        (route) =>
-          route.path !== "/" &&
-          route.path !== "/parliament" &&
-          Boolean(route.components?.default),
+        (route) => route.path !== "/" && Boolean(route.components?.default),
       )
       .map((route) => route.path)
       .sort();
@@ -142,6 +154,9 @@ describe("router guard", () => {
 
     expect(new Set(metadataRoutes).size).toBe(metadataRoutes.length);
     expect(metadataRoutes).toEqual(navigableRoutes);
+    expect(router.getRoutes().some((route) => route.path === "/sccp")).toBe(
+      false,
+    );
   });
 
   it("uses unique, finite ordering coordinates within every nav group", () => {
@@ -177,14 +192,6 @@ describe("router guard", () => {
         navPlacement: item.navPlacement,
       });
     }
-  });
-
-  it("redirects the legacy parliament URL to canonical governance", async () => {
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(savedSession));
-
-    await router.push("/parliament");
-
-    expect(router.currentRoute.value.path).toBe("/governance");
   });
 
   it("does not pass through the root redirect when no saved wallet exists", async () => {

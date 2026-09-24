@@ -50,6 +50,7 @@ export type SubscriptionDataContext = {
   networkPrefix: number;
   observedChainId: string;
   observedNetworkPrefix: number | null;
+  observedGenesisHash: string;
   identityStatus: string;
 };
 
@@ -136,6 +137,10 @@ const normalizeSubscriptionContext = (
       "Observed network prefix is invalid for subscription data.",
     );
   }
+  const observedGenesisHash = input.observedGenesisHash.trim();
+  if (observedGenesisHash && !/^[0-9a-f]{64}$/u.test(observedGenesisHash)) {
+    throw new Error("Observed genesis hash is invalid for subscription data.");
+  }
   return {
     toriiUrl,
     accountId: input.accountId.trim(),
@@ -143,6 +148,7 @@ const normalizeSubscriptionContext = (
     networkPrefix: input.networkPrefix,
     observedChainId: input.observedChainId.trim(),
     observedNetworkPrefix: input.observedNetworkPrefix,
+    observedGenesisHash,
     identityStatus: input.identityStatus.trim(),
   };
 };
@@ -157,6 +163,7 @@ const contextsMatch = (
   left?.networkPrefix === right?.networkPrefix &&
   left?.observedChainId === right?.observedChainId &&
   left?.observedNetworkPrefix === right?.observedNetworkPrefix &&
+  left?.observedGenesisHash === right?.observedGenesisHash &&
   left?.identityStatus === right?.identityStatus;
 
 const subscriptionMutationKey = (
@@ -170,6 +177,7 @@ const subscriptionMutationKey = (
     context.networkPrefix,
     context.observedChainId,
     context.observedNetworkPrefix,
+    context.observedGenesisHash,
     context.identityStatus,
     subscriptionId,
   ]);
@@ -235,6 +243,7 @@ const assertSuccessfulSubscriptionResult = (
 };
 
 const SUBSCRIPTION_PAGE_SIZE = 100;
+const SUBSCRIPTION_MAX_ITEMS = 10_000;
 
 const loadAllSubscriptionRecords = async (context: SubscriptionDataContext) => {
   const items: SubscriptionListItemView[] = [];
@@ -250,6 +259,9 @@ const loadAllSubscriptionRecords = async (context: SubscriptionDataContext) => {
     if (
       !Number.isSafeInteger(page.total) ||
       page.total < 0 ||
+      page.total > SUBSCRIPTION_MAX_ITEMS ||
+      !Array.isArray(page.items) ||
+      page.items.length > SUBSCRIPTION_PAGE_SIZE ||
       (expectedTotal !== null && page.total !== expectedTotal)
     ) {
       throw new Error("Subscription pagination returned an invalid total.");
@@ -287,6 +299,9 @@ const loadAllSubscriptionPlans = async (context: SubscriptionDataContext) => {
     if (
       !Number.isSafeInteger(page.total) ||
       page.total < 0 ||
+      page.total > SUBSCRIPTION_MAX_ITEMS ||
+      !Array.isArray(page.items) ||
+      page.items.length > SUBSCRIPTION_PAGE_SIZE ||
       (expectedTotal !== null && page.total !== expectedTotal)
     ) {
       throw new Error(

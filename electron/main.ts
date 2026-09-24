@@ -6,13 +6,19 @@ import {
   ipcMain,
   protocol,
   session,
+  shell,
   systemPreferences,
+  type IpcMainInvokeEvent,
 } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { VpnRuntime } from "./vpnRuntime";
-import { SecureVault } from "./secureVault";
+import {
+  SECURE_VAULT_MAX_RECEIVE_KEY_BATCH,
+  SecureVault,
+  type ConfidentialReceiveKeyRecord,
+} from "./secureVault";
 import {
   extractKaigiDeepLinkFromArgv,
   parseKaigiDeepLinkToHashRoute,
@@ -24,7 +30,10 @@ import {
 import {
   RENDERER_PROTOCOL_PRIVILEGES,
   RENDERER_PROTOCOL_SCHEME,
+  isSafeExternalNavigationUrl,
+  isTrustedRendererNavigationUrl,
   readRendererProtocolAsset,
+  rendererSecurityHeadersForDestination,
   resolveRendererEntryUrl,
 } from "./rendererProtocol";
 import {
@@ -38,23 +47,14 @@ import {
   fetchGovernanceValidationFeePolicyInMain,
 } from "./governanceValidationFeeFinality";
 import {
-  GOVERNANCE_PLAIN_REFERENDUM_IPC_CHANNEL,
-  GovernancePlainReferendumFinalityStore,
-  assertGovernancePlainReferendumTrustedSender,
-  fetchGovernancePlainReferendumContract,
-  governancePlainReferendumSourcePath,
-  loadGovernancePlainReferendumSource,
-} from "./governancePlainReferendum";
-import { nodeFetch } from "./nodeFetch";
-import {
   IROHA_CONNECT_CONFIRMATION_CHANNEL,
-  type IrohaConnectConfirmation,
+  isIrohaConnectConfirmation,
 } from "./irohaConnectBoundary";
-import {
-  SORACLOUD_SETTLEMENT_CONFIRMATION_CHANNEL,
-  isSoraCloudHfSettlementConfirmation,
-} from "./soraCloudSettlementBoundary";
 import { installGlobalIrohaJsNativeBinding } from "./irohaJsNativeDir";
+import { assertTrustedMainFrameIpcSender } from "./ipcTrustedMainFrame";
+import { requireFirstReleaseIpcInputObject } from "./firstReleaseIpcInput";
+import { requireFirstReleaseInputArray } from "./firstReleaseReadInput";
+import { nodeFetch } from "./nodeFetch";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -63,9 +63,6 @@ installGlobalIrohaJsNativeBinding(import.meta.url);
 
 const isMac = process.platform === "darwin";
 const WEBRTC_IP_HANDLING_POLICY = "default_public_and_private_interfaces";
-const DEFAULT_SCCP_PROVER_V8_HEAP_MB = 8192;
-const MIN_SCCP_PROVER_V8_HEAP_MB = 1024;
-const MAX_SCCP_PROVER_V8_HEAP_MB = 32768;
 const requestSystemMediaAccess = isMac
   ? (kind: "camera" | "microphone") => systemPreferences.askForMediaAccess(kind)
   : undefined;
@@ -79,6 +76,7 @@ const getTrustedRendererUrl = () =>
     environmentUrl: process.env["ELECTRON_RENDERER_URL"],
   });
 let mainWindow: BrowserWindow | null = null;
+let mainWindowTrustedRendererUrl: string | null = null;
 let pendingKaigiHashRoute: string | null = extractKaigiDeepLinkFromArgv(
   process.argv,
 );
@@ -86,32 +84,6 @@ const devProfileSuffix = createHash("sha1")
   .update(process.cwd())
   .digest("hex")
   .slice(0, 10);
-
-const configureSccpProverHeap = () => {
-  const rawValue =
-    process.env["SCCP_BSC_PROVER_V8_HEAP_MB"] ??
-    process.env["VITE_SCCP_BSC_PROVER_V8_HEAP_MB"] ??
-    String(DEFAULT_SCCP_PROVER_V8_HEAP_MB);
-  const normalizedValue = String(rawValue).trim().toLowerCase();
-  if (
-    !normalizedValue ||
-    normalizedValue === "0" ||
-    normalizedValue === "false" ||
-    normalizedValue === "off"
-  ) {
-    return;
-  }
-  const parsed = Number(normalizedValue);
-  const heapMb = Number.isFinite(parsed)
-    ? Math.min(
-        MAX_SCCP_PROVER_V8_HEAP_MB,
-        Math.max(MIN_SCCP_PROVER_V8_HEAP_MB, Math.trunc(parsed)),
-      )
-    : DEFAULT_SCCP_PROVER_V8_HEAP_MB;
-  app.commandLine.appendSwitch("js-flags", `--max-old-space-size=${heapMb}`);
-};
-
-configureSccpProverHeap();
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -134,8 +106,28 @@ if (!app.requestSingleInstanceLock()) {
 
 const formatHashRoute = (hashRoute: string) => `#${hashRoute}`;
 
+const isWindowAtTrustedRendererEntry = (window: BrowserWindow): boolean => {
+  try {
+    return Boolean(
+      window === mainWindow &&
+        !window.isDestroyed() &&
+        mainWindowTrustedRendererUrl &&
+        isTrustedRendererNavigationUrl(
+          window.webContents.getURL(),
+          mainWindowTrustedRendererUrl,
+        ),
+    );
+  } catch {
+    return false;
+  }
+};
+
 const flushPendingKaigiHashRoute = async (window: BrowserWindow | null) => {
-  if (!window || window.isDestroyed() || !pendingKaigiHashRoute) {
+  if (
+    !window ||
+    !isWindowAtTrustedRendererEntry(window) ||
+    !pendingKaigiHashRoute
+  ) {
     return;
   }
   const hashRoute = pendingKaigiHashRoute;
@@ -143,10 +135,9 @@ const flushPendingKaigiHashRoute = async (window: BrowserWindow | null) => {
   try {
     await window.webContents.executeJavaScript(
       `window.location.hash = ${JSON.stringify(formatHashRoute(hashRoute))};`,
-      true,
     );
   } catch (_error) {
-    pendingKaigiHashRoute = hashRoute;
+    pendingKaigiHashRoute ??= hashRoute;
   }
 };
 
@@ -195,7 +186,9 @@ const registerRendererProtocol = () => {
         status: 200,
         headers: {
           "Content-Type": asset.contentType,
-          "X-Content-Type-Options": "nosniff",
+          ...rendererSecurityHeadersForDestination(
+            request.destination || request.headers.get("Sec-Fetch-Dest") || "",
+          ),
         },
       });
     } catch {
@@ -214,6 +207,7 @@ app.on("open-url", (event, url) => {
 });
 
 const createWindow = () => {
+  const trustedRendererUrl = getTrustedRendererUrl();
   const window = new BrowserWindow({
     width: 1280,
     height: 900,
@@ -233,85 +227,185 @@ const createWindow = () => {
   // Keep WebRTC on the OS default route so Chromium does not probe AWDL/link-local
   // interfaces that routinely time out on macOS during Kaigi STUN gathering.
   window.webContents.setWebRTCIPHandlingPolicy(WEBRTC_IP_HANDLING_POLICY);
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isSafeExternalNavigationUrl(url)) {
+      void shell.openExternal(url).catch(() => undefined);
+    }
+    return { action: "deny" };
+  });
+  window.webContents.on("will-navigate", (event, targetUrl) => {
+    if (!isTrustedRendererNavigationUrl(targetUrl, trustedRendererUrl)) {
+      event.preventDefault();
+    }
+  });
+  window.webContents.on("will-redirect", (event, targetUrl) => {
+    if (!isTrustedRendererNavigationUrl(targetUrl, trustedRendererUrl)) {
+      event.preventDefault();
+    }
+  });
   window.webContents.on("did-finish-load", () => {
     void flushPendingKaigiHashRoute(window);
   });
   window.on("closed", () => {
     if (mainWindow === window) {
       mainWindow = null;
+      mainWindowTrustedRendererUrl = null;
     }
   });
 
-  window.loadURL(getTrustedRendererUrl());
   mainWindow = window;
+  mainWindowTrustedRendererUrl = trustedRendererUrl;
+  window.loadURL(trustedRendererUrl);
   return window;
 };
 
 const vpnRuntime = new VpnRuntime({
   userDataPath: app.getPath("userData"),
   helperVersion: `embedded-${app.getVersion()}`,
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
 });
 const secureVault = new SecureVault(app.getPath("userData"));
 const governanceValidationFeeFinalityStore =
   new GovernanceValidationFeeFinalityStore(app.getPath("userData"));
-const governancePlainReferendumFinalityStore =
-  new GovernancePlainReferendumFinalityStore(app.getPath("userData"));
 
 let quittingForVpnShutdown = false;
 
+const assertTrustedMainFrameIpcEvent = (event: IpcMainInvokeEvent): void => {
+  assertTrustedMainFrameIpcSender({
+    owner: BrowserWindow.fromWebContents(event.sender),
+    mainWindow,
+    senderFrame: event.senderFrame,
+    mainFrame: event.sender.mainFrame,
+    trustedRendererUrl: mainWindowTrustedRendererUrl ?? "",
+  });
+};
+
+const assertNoIpcArguments = (
+  values: readonly unknown[],
+  label: string,
+): void => {
+  if (values.length !== 0) {
+    throw new Error(`${label} does not accept arguments.`);
+  }
+};
+
 const registerVpnHandlers = () => {
-  ipcMain.handle("vpn:getAvailability", (_event, input) =>
-    vpnRuntime.getAvailability(input),
-  );
-  ipcMain.handle("vpn:getProfile", (_event, input) =>
-    vpnRuntime.getProfile(input),
-  );
-  ipcMain.handle("vpn:getStatus", (_event, input) =>
-    vpnRuntime.getStatus(input),
-  );
-  ipcMain.handle("vpn:connect", (_event, input) => vpnRuntime.connect(input));
-  ipcMain.handle("vpn:disconnect", (_event, input) =>
-    vpnRuntime.disconnect(input),
-  );
-  ipcMain.handle("vpn:disconnectLocal", () => vpnRuntime.disconnectLocal());
-  ipcMain.handle("vpn:repair", () => vpnRuntime.repair());
-  ipcMain.handle("vpn:listReceipts", (_event, input) =>
-    vpnRuntime.listReceipts(input),
-  );
+  ipcMain.handle("vpn:getAvailability", (event, input) => {
+    assertTrustedMainFrameIpcEvent(event);
+    return vpnRuntime.getAvailability(input);
+  });
+  ipcMain.handle("vpn:getProfile", (event, input) => {
+    assertTrustedMainFrameIpcEvent(event);
+    return vpnRuntime.getProfile(input);
+  });
+  ipcMain.handle("vpn:getStatus", (event, input) => {
+    assertTrustedMainFrameIpcEvent(event);
+    return vpnRuntime.getStatus(input);
+  });
+  ipcMain.handle("vpn:connect", (event, input) => {
+    assertTrustedMainFrameIpcEvent(event);
+    return vpnRuntime.connect(input);
+  });
+  ipcMain.handle("vpn:disconnect", (event, input) => {
+    assertTrustedMainFrameIpcEvent(event);
+    return vpnRuntime.disconnect(input);
+  });
+  ipcMain.handle("vpn:disconnectLocal", (event, ...args: unknown[]) => {
+    assertTrustedMainFrameIpcEvent(event);
+    assertNoIpcArguments(args, "Local VPN disconnect");
+    return vpnRuntime.disconnectLocal();
+  });
+  ipcMain.handle("vpn:repair", (event, ...args: unknown[]) => {
+    assertTrustedMainFrameIpcEvent(event);
+    assertNoIpcArguments(args, "VPN repair");
+    return vpnRuntime.repair();
+  });
+  ipcMain.handle("vpn:listReceipts", (event, input) => {
+    assertTrustedMainFrameIpcEvent(event);
+    return vpnRuntime.listReceipts(input);
+  });
 };
 
 const registerVaultHandlers = () => {
-  ipcMain.handle("vault:isAvailable", () => secureVault.isAvailable());
-  ipcMain.handle("vault:storeAccountSecret", (_event, input) =>
-    secureVault.storeAccountSecret(input),
-  );
-  ipcMain.handle("vault:getAccountSecret", (_event, input) =>
-    secureVault.getAccountSecret(input.accountId),
-  );
-  ipcMain.handle("vault:getAccountSecretMaterial", (_event, input) =>
-    secureVault.getAccountSecretMaterial(input.accountId),
-  );
-  ipcMain.handle("vault:listAccountSecretFlags", (_event, input) =>
-    secureVault.listAccountSecretFlags(
-      Array.isArray(input?.accountIds) ? input.accountIds : [],
-    ),
-  );
-  ipcMain.handle("vault:storeReceiveKey", (_event, input) =>
-    secureVault.storeReceiveKey(input),
-  );
-  ipcMain.handle("vault:getReceiveKey", (_event, input) =>
-    secureVault.getReceiveKey(input.keyId),
-  );
-  ipcMain.handle("vault:listReceiveKeysForAccount", (_event, input) =>
-    secureVault.listReceiveKeysForAccount(input.accountId),
-  );
+  ipcMain.handle("vault:isAvailable", (event, ...args: unknown[]) => {
+    assertTrustedMainFrameIpcEvent(event);
+    assertNoIpcArguments(args, "Secure vault availability");
+    return secureVault.isAvailable();
+  });
+  ipcMain.handle("vault:storeAccountSecret", (event, input) => {
+    assertTrustedMainFrameIpcEvent(event);
+    return secureVault.storeAccountSecret(
+      requireFirstReleaseIpcInputObject(input, {
+        label: "Secure vault account-secret IPC input",
+        required: ["accountId", "privateKeyHex", "signingAlgorithm"],
+      }) as {
+        accountId: string;
+        privateKeyHex: string;
+        signingAlgorithm: string;
+      },
+    );
+  });
+  ipcMain.handle("vault:getAccountSecretMaterial", (event, input) => {
+    assertTrustedMainFrameIpcEvent(event);
+    const exactInput = requireFirstReleaseIpcInputObject<{
+      accountId: string;
+    }>(input, {
+      label: "Secure vault account-secret read IPC input",
+      required: ["accountId"],
+    });
+    return secureVault.getAccountSecretMaterial(exactInput.accountId);
+  });
+  ipcMain.handle("vault:listAccountSecretFlags", (event, input) => {
+    assertTrustedMainFrameIpcEvent(event);
+    const exactInput = requireFirstReleaseIpcInputObject<{
+      accountIds: string[];
+    }>(input, {
+      label: "Secure vault account-secret flags IPC input",
+      required: ["accountIds"],
+    });
+    return secureVault.listAccountSecretFlags(exactInput.accountIds);
+  });
+  ipcMain.handle("vault:storeReceiveKeys", async (event, input) => {
+    assertTrustedMainFrameIpcEvent(event);
+    const exactInput = requireFirstReleaseIpcInputObject<{
+      records: ConfidentialReceiveKeyRecord[];
+    }>(input, {
+      label: "Secure vault receive-key batch IPC input",
+      required: ["records"],
+    });
+    const records = requireFirstReleaseInputArray(
+      exactInput.records,
+      "Secure vault receive-key batch IPC records",
+      SECURE_VAULT_MAX_RECEIVE_KEY_BATCH,
+    );
+    await secureVault.storeReceiveKeys(
+      records as readonly ConfidentialReceiveKeyRecord[],
+    );
+    return { stored: records.length };
+  });
+  ipcMain.handle("vault:listReceiveKeysForAccount", (event, input) => {
+    assertTrustedMainFrameIpcEvent(event);
+    const exactInput = requireFirstReleaseIpcInputObject<{
+      accountId: string;
+    }>(input, {
+      label: "Secure vault receive-key list IPC input",
+      required: ["accountId"],
+    });
+    return secureVault.listReceiveKeysForAccount(exactInput.accountId);
+  });
 };
 
 const registerGovernanceRuntimeConfigHandler = () => {
-  ipcMain.handle(GOVERNANCE_RUNTIME_CONFIG_IPC_CHANNEL, () =>
-    loadGovernanceRuntimeConfig({
-      userDataPath: app.getPath("userData"),
-    }),
+  ipcMain.handle(
+    GOVERNANCE_RUNTIME_CONFIG_IPC_CHANNEL,
+    (event, ...args: unknown[]) => {
+      assertTrustedMainFrameIpcEvent(event);
+      assertNoIpcArguments(args, "Governance runtime configuration");
+      return loadGovernanceRuntimeConfig({
+        userDataPath: app.getPath("userData"),
+      });
+    },
   );
 };
 
@@ -325,7 +419,7 @@ const registerGovernanceValidationFeePolicyHandler = () => {
         ownerDestroyed: !owner || owner.isDestroyed(),
         senderFrame: event.senderFrame,
         mainFrame: event.sender.mainFrame,
-        trustedRendererUrl: getTrustedRendererUrl(),
+        trustedRendererUrl: mainWindowTrustedRendererUrl ?? "",
         requestPayload,
       });
       const runtimeConfig = loadGovernanceRuntimeConfig({
@@ -334,32 +428,6 @@ const registerGovernanceValidationFeePolicyHandler = () => {
       return fetchGovernanceValidationFeePolicyInMain({
         runtimeConfig,
         finalityStore: governanceValidationFeeFinalityStore,
-      });
-    },
-  );
-};
-
-const registerGovernancePlainReferendumHandler = () => {
-  ipcMain.handle(
-    GOVERNANCE_PLAIN_REFERENDUM_IPC_CHANNEL,
-    (event, observedIdentity: unknown) => {
-      const owner = BrowserWindow.fromWebContents(event.sender);
-      assertGovernancePlainReferendumTrustedSender({
-        ownerMatchesMainWindow: Boolean(owner && owner === mainWindow),
-        ownerDestroyed: !owner || owner.isDestroyed(),
-        senderFrame: event.senderFrame,
-        mainFrame: event.sender.mainFrame,
-        trustedRendererUrl: getTrustedRendererUrl(),
-      });
-      const sourcePath = governancePlainReferendumSourcePath({
-        isPackaged: app.isPackaged,
-        appPath: app.getAppPath(),
-        resourcesPath: process.resourcesPath,
-      });
-      return fetchGovernancePlainReferendumContract({
-        source: loadGovernancePlainReferendumSource(sourcePath),
-        observedIdentity,
-        finalityStore: governancePlainReferendumFinalityStore,
         fetcher: nodeFetch,
       });
     },
@@ -376,31 +444,13 @@ const confirmationText = (value: unknown, maxLength = 512) =>
     .trim()
     .slice(0, maxLength);
 
-const isIrohaConnectConfirmation = (
-  value: unknown,
-): value is IrohaConnectConfirmation => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  const kind = (value as { kind?: unknown }).kind;
-  return (
-    kind === "session" ||
-    kind === "sign_request_raw" ||
-    kind === "sign_request_tx"
-  );
-};
-
 const registerIrohaConnectConfirmationHandler = () => {
   ipcMain.handle(
     IROHA_CONNECT_CONFIRMATION_CHANNEL,
     async (event, input: unknown) => {
+      assertTrustedMainFrameIpcEvent(event);
       const owner = BrowserWindow.fromWebContents(event.sender);
-      if (
-        !owner ||
-        owner !== mainWindow ||
-        owner.isDestroyed() ||
-        !isIrohaConnectConfirmation(input)
-      ) {
+      if (!owner || !isIrohaConnectConfirmation(input)) {
         return false;
       }
       const requestKind =
@@ -414,6 +464,7 @@ const registerIrohaConnectConfirmationHandler = () => {
         `Session: ${confirmationText(input.sid)}`,
         `Endpoint: ${confirmationText(input.toriiUrl)}`,
         `Chain: ${confirmationText(input.chainId)}`,
+        `Network prefix: ${input.networkPrefix}`,
       ];
       if (input.kind === "session") {
         detail.push(
@@ -442,67 +493,25 @@ const registerIrohaConnectConfirmationHandler = () => {
   );
 };
 
-const registerSoraCloudSettlementConfirmationHandler = () => {
-  ipcMain.handle(
-    SORACLOUD_SETTLEMENT_CONFIRMATION_CHANNEL,
-    async (event, input: unknown) => {
-      const owner = BrowserWindow.fromWebContents(event.sender);
-      if (
-        !owner ||
-        owner !== mainWindow ||
-        owner.isDestroyed() ||
-        !isSoraCloudHfSettlementConfirmation(input)
-      ) {
-        return false;
-      }
-      const profile = input.resourceProfile;
-      const result = await dialog.showMessageBox(owner, {
-        type: "warning",
-        title: "SoraCloud settlement approval",
-        message: "Approve this SoraCloud lease and its maximum compute charge?",
-        detail: [
-          `Account: ${confirmationText(input.accountId)}`,
-          `Endpoint: ${confirmationText(input.toriiUrl)}`,
-          `Model: ${confirmationText(`${input.repoId}@${input.resolvedRevision}`)}`,
-          `Service: ${confirmationText(input.serviceName)}`,
-          `Storage: ${confirmationText(input.storageClass)} for ${input.leaseTermMs} ms`,
-          `Settlement asset: ${confirmationText(input.leaseAssetDefinitionId)}`,
-          `Storage base fee: ${confirmationText(input.storageBaseFee)}`,
-          `Maximum compute reservation charge: ${confirmationText(input.maxComputeReservationFee)}`,
-          `Profile: ${profile.requiredModelBytes} model bytes, ${profile.diskCacheBytesFloor} disk bytes, ${profile.ramBytesFloor} RAM bytes, ${profile.vramBytesFloor} VRAM bytes`,
-          `Runtime: ${confirmationText(profile.backendFamily)} / ${confirmationText(profile.modelFormat)}`,
-          "The actual compute charge may be lower and can never exceed the reviewed maximum.",
-        ].join("\n"),
-        buttons: ["Reject", "Approve"],
-        defaultId: 0,
-        cancelId: 0,
-        noLink: true,
-      });
-      return result.response === 1;
-    },
-  );
-};
-
 app.whenReady().then(() => {
   registerRendererProtocol();
   registerVpnHandlers();
   registerVaultHandlers();
   registerGovernanceRuntimeConfigHandler();
   registerGovernanceValidationFeePolicyHandler();
-  registerGovernancePlainReferendumHandler();
   registerIrohaConnectConfirmationHandler();
-  registerSoraCloudSettlementConfirmationHandler();
-  registerMediaPermissionHandlers(
-    session.defaultSession,
-    getTrustedRendererUrl,
+  registerMediaPermissionHandlers(session.defaultSession, {
+    getRendererUrl: () => mainWindowTrustedRendererUrl ?? undefined,
+    getTrustedWebContents: () => mainWindow?.webContents ?? null,
     requestSystemMediaAccess,
     getSystemMediaAccessStatus,
-  );
-  registerDisplayMediaRequestHandler(
-    session.defaultSession,
-    () => desktopCapturer.getSources({ types: ["screen", "window"] }),
-    getTrustedRendererUrl,
-  );
+  });
+  registerDisplayMediaRequestHandler(session.defaultSession, {
+    getSources: () =>
+      desktopCapturer.getSources({ types: ["screen", "window"] }),
+    getRendererUrl: () => mainWindowTrustedRendererUrl ?? undefined,
+    getTrustedMainFrame: () => mainWindow?.webContents.mainFrame ?? null,
+  });
   registerKaigiProtocol();
   createWindow();
 

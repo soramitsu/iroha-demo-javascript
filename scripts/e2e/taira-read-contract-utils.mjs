@@ -1,3 +1,5 @@
+/* global BigInt */
+
 export const OFFICIAL_TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 export const ARCHIVED_TAIRA_CHAIN_ID = "809574f5-fee7-5e69-bfcf-52451e42d50f";
 export const TAIRA_NETWORK_PREFIX = 369;
@@ -11,7 +13,6 @@ export const CURRENT_READ_OPERATIONS = Object.freeze([
   "GET /v1/kaigi/relays/health",
   "GET /v1/nexus/public-lanes/{}/stake",
   "GET /v1/nexus/public-lanes/{}/validators",
-  "GET /v1/offline/readiness",
   "GET /v1/soracloud/status",
   "GET /v1/subscriptions",
   "GET /v1/subscriptions/plans",
@@ -30,7 +31,6 @@ export const OFFICIAL_V2_WRITE_OPERATIONS = Object.freeze([
   "POST /v1/pipeline/transactions",
   "POST /v1/pipeline/transaction-entrypoints",
   "POST /v1/zk/roots",
-  "POST /v1/confidential/relay/submit",
   "POST /v1/zk/ivm/derive",
   "POST /v1/zk/ivm/prove",
   "DELETE /v1/zk/ivm/prove/{}",
@@ -45,7 +45,8 @@ export const OFFICIAL_V2_WRITE_OPERATIONS = Object.freeze([
   "POST /v1/subscriptions/{}/cancel",
   "POST /v1/subscriptions/{}/keep",
   "POST /v1/subscriptions/{}/charge-now",
-  "POST /v1/soracloud/hf/deploy",
+  "POST /v1/soracloud/hf/lease/join",
+  "GET /v1/soracloud/hf/lease/status",
   "POST /v1/vpn/quotes",
   "POST /v1/vpn/sessions",
   "DELETE /v1/vpn/sessions/{}",
@@ -69,6 +70,13 @@ const requireExactKeys = (value, allowedKeys, label) => {
     throw new Error(
       `${label} contains unexpected fields: ${unexpected.join(", ")}.`,
     );
+  }
+};
+
+const requireExactFieldSet = (value, expectedKeys, label) => {
+  requireExactKeys(value, expectedKeys, label);
+  if (Object.keys(value).length !== expectedKeys.length) {
+    throw new Error(`${label} is missing required fields.`);
   }
 };
 
@@ -551,129 +559,395 @@ const assertSubscriptionDraftOpenApiContract = (openApi) => {
   }
 };
 
-const assertSoraCloudHfDraftOpenApiContract = (openApi) => {
-  const operation = findOpenApiOperation(
+const assertSoraCloudHfSharedLeaseOpenApiContract = (openApi) => {
+  const join = findOpenApiOperation(
     openApi,
-    "POST /v1/soracloud/hf/deploy",
+    "POST /v1/soracloud/hf/lease/join",
   );
-  const contractVersion = "cap-bound-local-signing-v1";
-  if (operation["x-iroha-soracloud-hf-deploy-contract"] !== contractVersion) {
-    throw new Error(
-      "OpenAPI SoraCloud HF deploy operation is not the cap-bound local-signing contract.",
-    );
-  }
+  const status = findOpenApiOperation(
+    openApi,
+    "GET /v1/soracloud/hf/lease/status",
+  );
   const components = requireRecord(openApi.components, "OpenAPI components");
   const schemas = requireRecord(components.schemas, "OpenAPI schemas");
-  const draft = requireRecord(
-    schemas.SoracloudHfDeployDraftV1,
-    "OpenAPI schema SoracloudHfDeployDraftV1",
+
+  const schemaProperties = (name) => {
+    const schema = requireRecord(schemas[name], `OpenAPI schema ${name}`);
+    if (schema.type !== "object" || schema.additionalProperties !== false) {
+      throw new Error(`OpenAPI schema ${name} must be a closed object.`);
+    }
+    const properties = requireRecord(
+      schema.properties,
+      `OpenAPI schema ${name} properties`,
+    );
+    requireExactStringSet(
+      schema.required,
+      Object.keys(properties),
+      `OpenAPI schema ${name} required fields`,
+    );
+    return properties;
+  };
+  const assertClosedSchema = (name, fields) => {
+    const properties = schemaProperties(name);
+    requireExactKeys(properties, fields, `OpenAPI schema ${name} properties`);
+    if (Object.keys(properties).length !== fields.length) {
+      throw new Error(`OpenAPI schema ${name} is missing required fields.`);
+    }
+    return properties;
+  };
+  const assertPropertyRef = (properties, field, expected, label) => {
+    if (readJsonSchemaRef(properties[field], label) !== expected) {
+      throw new Error(`${label} uses an unsupported schema.`);
+    }
+  };
+  const assertNullableRef = (properties, field, expected, label) => {
+    const property = requireRecord(properties[field], label);
+    if (
+      !Array.isArray(property.anyOf) ||
+      property.anyOf.length !== 2 ||
+      !property.anyOf.some(
+        (candidate) => isRecord(candidate) && candidate.$ref === expected,
+      ) ||
+      !property.anyOf.some(
+        (candidate) => isRecord(candidate) && candidate.type === "null",
+      )
+    ) {
+      throw new Error(`${label} must be the exact nullable reference.`);
+    }
+  };
+  const responseRef = (operation, operationName) =>
+    readJsonSchemaRef(
+      requireRecord(
+        requireRecord(
+          requireRecord(
+            requireRecord(operation.responses, `${operationName} responses`)[
+              "200"
+            ],
+            `${operationName} response 200`,
+          ).content,
+          `${operationName} response content`,
+        )["application/json"],
+        `${operationName} JSON response`,
+      ).schema,
+      `${operationName} response schema`,
+    );
+  const joinBody = requireRecord(
+    join.requestBody,
+    "OpenAPI SoraCloud shared-lease join requestBody",
   );
-  const instruction = requireRecord(
-    schemas.SoracloudTxInstruction,
-    "OpenAPI schema SoracloudTxInstruction",
-  );
-  if (
-    draft.type !== "object" ||
-    draft.additionalProperties !== false ||
-    draft["x-iroha-soracloud-hf-deploy-contract"] !== contractVersion
-  ) {
+  if (joinBody.required !== true) {
     throw new Error(
-      "OpenAPI SoraCloud HF draft must be the closed cap-bound local-signing V1 object.",
+      "OpenAPI SoraCloud shared-lease join body must be required.",
     );
   }
-  requireExactStringSet(
-    draft.required,
-    ["ok", "authority", "signed_by", "tx_instructions"],
-    "OpenAPI SoraCloud HF draft required fields",
-  );
-  const draftProperties = requireRecord(
-    draft.properties,
-    "OpenAPI SoraCloud HF draft properties",
-  );
-  requireExactKeys(
-    draftProperties,
-    ["ok", "authority", "signed_by", "tx_instructions"],
-    "OpenAPI SoraCloud HF draft properties",
-  );
-  const txInstructions = requireRecord(
-    draftProperties.tx_instructions,
-    "OpenAPI SoraCloud HF draft tx_instructions",
+  const joinRequestRef = readJsonSchemaRef(
+    requireRecord(
+      requireRecord(
+        requireRecord(
+          joinBody.content,
+          "OpenAPI SoraCloud shared-lease join request content",
+        )["application/json"],
+        "OpenAPI SoraCloud shared-lease join JSON request",
+      ).schema,
+      "OpenAPI SoraCloud shared-lease join request schema",
+    ),
+    "OpenAPI SoraCloud shared-lease join request schema",
   );
   if (
-    txInstructions.type !== "array" ||
-    txInstructions.minItems !== 1 ||
-    txInstructions.maxItems !== 3 ||
-    readJsonSchemaRef(
-      txInstructions.items,
-      "OpenAPI SoraCloud HF draft tx_instructions.items",
-    ) !== "#/components/schemas/SoracloudTxInstruction"
+    joinRequestRef !== "#/components/schemas/SignedHfSharedLeaseJoinRequest" ||
+    responseRef(join, "OpenAPI SoraCloud shared-lease join") !==
+      "#/components/schemas/SoracloudMutationDraftResponse" ||
+    responseRef(status, "OpenAPI SoraCloud shared-lease status") !==
+      "#/components/schemas/HfSharedLeaseStatusResponse"
   ) {
     throw new Error(
-      "OpenAPI SoraCloud HF draft instructions must contain the bounded one-to-three instruction contract.",
+      "OpenAPI SoraCloud shared-lease routes use unsupported request or response schemas.",
     );
   }
 
+  const queryParameters = Array.isArray(status.parameters)
+    ? status.parameters.filter(
+        (parameter) => isRecord(parameter) && parameter.in === "query",
+      )
+    : [];
+  const expectedQuery = new Map([
+    ["repo_id", true],
+    ["revision", true],
+    ["storage_class", true],
+    ["lease_term_ms", true],
+    ["account_id", false],
+  ]);
   if (
-    instruction.type !== "object" ||
-    instruction.additionalProperties !== false
+    queryParameters.length !== expectedQuery.size ||
+    queryParameters.some(
+      (parameter) =>
+        !isRecord(parameter) ||
+        typeof parameter.name !== "string" ||
+        expectedQuery.get(parameter.name) !== parameter.required,
+    )
   ) {
     throw new Error(
-      "OpenAPI SoraCloud transaction instruction must be a closed object.",
+      "OpenAPI SoraCloud shared-lease status query is not exact.",
+    );
+  }
+  const querySchema = (name) =>
+    requireRecord(
+      requireRecord(
+        queryParameters.find((parameter) => parameter.name === name),
+        `OpenAPI SoraCloud status ${name} parameter`,
+      ).schema,
+      `OpenAPI SoraCloud status ${name} schema`,
+    );
+  if (
+    querySchema("revision").pattern !== "^[0-9a-f]{40}$" ||
+    querySchema("lease_term_ms").format !== "uint64" ||
+    querySchema("lease_term_ms").minimum !== 0
+  ) {
+    throw new Error(
+      "OpenAPI SoraCloud status revision or lease term schema is unsupported.",
     );
   }
   requireExactStringSet(
-    instruction.required,
-    ["wire_id", "payload_hex"],
-    "OpenAPI SoraCloud transaction instruction required fields",
+    querySchema("storage_class").enum,
+    ["hot", "warm", "cold"],
+    "OpenAPI SoraCloud status storage classes",
   );
-  const instructionProperties = requireRecord(
-    instruction.properties,
-    "OpenAPI SoraCloud transaction instruction properties",
+
+  const signedRequest = assertClosedSchema("SignedHfSharedLeaseJoinRequest", [
+    "payload",
+    "provenance",
+  ]);
+  assertPropertyRef(
+    signedRequest,
+    "payload",
+    "#/components/schemas/HfSharedLeaseJoinPayload",
+    "OpenAPI signed shared-lease payload",
   );
-  requireExactKeys(
-    instructionProperties,
-    ["wire_id", "payload_hex"],
-    "OpenAPI SoraCloud transaction instruction properties",
+  assertPropertyRef(
+    signedRequest,
+    "provenance",
+    "#/components/schemas/ManifestProvenance",
+    "OpenAPI signed shared-lease provenance",
   );
-  const payloadHex = requireRecord(
-    instructionProperties.payload_hex,
-    "OpenAPI SoraCloud transaction instruction payload_hex",
+  const joinPayload = assertClosedSchema("HfSharedLeaseJoinPayload", [
+    "repo_id",
+    "revision",
+    "service_name",
+    "apartment_name",
+    "storage_class",
+    "lease_term_ms",
+    "lease_asset_definition_id",
+    "base_fee",
+  ]);
+  requireExactStringSet(
+    requireRecord(
+      joinPayload.storage_class,
+      "OpenAPI shared-lease payload storage_class",
+    ).enum,
+    ["hot", "warm", "cold"],
+    "OpenAPI shared-lease payload storage classes",
+  );
+  assertClosedSchema("ManifestProvenance", ["signer", "signature"]);
+  const mutation = assertClosedSchema("SoracloudMutationDraftResponse", [
+    "ok",
+    "authority",
+    "signed_by",
+    "tx_instructions",
+  ]);
+  const instructions = requireRecord(
+    mutation.tx_instructions,
+    "OpenAPI SoraCloud mutation tx_instructions",
   );
   if (
-    payloadHex.type !== "string" ||
-    payloadHex.pattern !== "^(?:[0-9a-f]{2})+$"
+    instructions.type !== "array" ||
+    instructions.minItems !== 1 ||
+    readJsonSchemaRef(
+      instructions.items,
+      "OpenAPI SoraCloud mutation tx_instructions.items",
+    ) !== "#/components/schemas/SoracloudTxInstruction"
+  ) {
+    throw new Error("OpenAPI SoraCloud mutation instructions are unsupported.");
+  }
+  const instruction = assertClosedSchema("SoracloudTxInstruction", [
+    "wire_id",
+    "payload_hex",
+  ]);
+  if (
+    requireRecord(
+      instruction.payload_hex,
+      "OpenAPI SoraCloud instruction payload_hex",
+    ).pattern !== "^(?:[0-9a-f]{2})+$"
   ) {
     throw new Error(
       "OpenAPI SoraCloud instruction payload must be canonical lowercase framed bytes.",
     );
   }
 
-  const responses = requireRecord(
-    operation.responses,
-    "OpenAPI SoraCloud HF deploy responses",
+  const statusResponse = assertClosedSchema("HfSharedLeaseStatusResponse", [
+    "schema_version",
+    "source",
+    "pool",
+    "member",
+    "latest_audit_event",
+    "audit_event_count",
+    "storage_base_fee",
+  ]);
+  assertPropertyRef(
+    statusResponse,
+    "source",
+    "#/components/schemas/SoraHfSourceRecordV1",
+    "OpenAPI shared-lease source",
   );
-  const success = requireRecord(
-    responses["200"],
-    "OpenAPI SoraCloud HF deploy response 200",
+  assertNullableRef(
+    statusResponse,
+    "pool",
+    "#/components/schemas/SoraHfSharedLeasePoolV1",
+    "OpenAPI shared-lease pool",
   );
-  const responseRef = readJsonSchemaRef(
-    requireRecord(
-      requireRecord(
+  assertNullableRef(
+    statusResponse,
+    "member",
+    "#/components/schemas/SoraHfSharedLeaseMemberV1",
+    "OpenAPI shared-lease member",
+  );
+  assertNullableRef(
+    statusResponse,
+    "latest_audit_event",
+    "#/components/schemas/SoraHfSharedLeaseAuditEventV1",
+    "OpenAPI shared-lease latest audit event",
+  );
+  assertClosedSchema("SoraHfSourceRecordV1", [
+    "schema_version",
+    "source_id",
+    "repo_id",
+    "resolved_revision",
+    "created_at_ms",
+    "updated_at_ms",
+  ]);
+  assertClosedSchema("SoraHfSharedLeasePoolV1", [
+    "schema_version",
+    "pool_id",
+    "source_id",
+    "storage_class",
+    "lease_asset_definition_id",
+    "base_fee",
+    "lease_term_ms",
+    "window_started_at_ms",
+    "window_expires_at_ms",
+    "active_member_count",
+    "status",
+    "queued_next_window",
+  ]);
+  assertClosedSchema("SoraHfSharedLeaseQueuedWindowV1", [
+    "sponsor_account_id",
+    "lease_asset_definition_id",
+    "base_fee",
+    "sponsored_at_ms",
+    "window_started_at_ms",
+    "window_expires_at_ms",
+    "service_name",
+    "apartment_name",
+  ]);
+  assertClosedSchema("SoraHfSharedLeaseMemberV1", [
+    "schema_version",
+    "pool_id",
+    "source_id",
+    "account_id",
+    "status",
+    "joined_at_ms",
+    "updated_at_ms",
+    "total_paid",
+    "total_refunded",
+    "last_charge",
+    "service_bindings",
+    "apartment_bindings",
+  ]);
+  assertClosedSchema("SoraHfSharedLeaseAuditEventV1", [
+    "schema_version",
+    "sequence",
+    "action",
+    "pool_id",
+    "source_id",
+    "account_id",
+    "occurred_at_ms",
+    "active_member_count",
+    "charged",
+    "refunded",
+    "lease_expires_at_ms",
+    "service_name",
+    "apartment_name",
+  ]);
+  const assertUnitVariants = (name, tag, variants) => {
+    const alternatives = requireRecord(
+      schemas[name],
+      `OpenAPI schema ${name}`,
+    ).oneOf;
+    if (
+      !Array.isArray(alternatives) ||
+      alternatives.length !== variants.length
+    ) {
+      throw new Error(`OpenAPI schema ${name} variants are not exact.`);
+    }
+    const actual = alternatives.map((candidate, index) => {
+      const schema = requireRecord(
+        candidate,
+        `OpenAPI schema ${name}[${index}]`,
+      );
+      if (schema.type !== "object" || schema.additionalProperties !== false) {
+        throw new Error(`OpenAPI schema ${name}[${index}] must be closed.`);
+      }
+      requireExactStringSet(
+        schema.required,
+        [tag, "value"],
+        `OpenAPI schema ${name}[${index}] required fields`,
+      );
+      const properties = requireRecord(
+        schema.properties,
+        `OpenAPI schema ${name}[${index}] properties`,
+      );
+      requireExactKeys(
+        properties,
+        [tag, "value"],
+        `OpenAPI schema ${name}[${index}] properties`,
+      );
+      if (
+        Object.keys(properties).length !== 2 ||
         requireRecord(
-          success.content,
-          "OpenAPI SoraCloud HF deploy response content",
-        )["application/json"],
-        "OpenAPI SoraCloud HF deploy JSON response",
-      ).schema,
-      "OpenAPI SoraCloud HF deploy response schema",
-    ),
-    "OpenAPI SoraCloud HF deploy response schema",
-  );
-  if (responseRef !== "#/components/schemas/SoracloudHfDeployDraftV1") {
-    throw new Error(
-      "OpenAPI SoraCloud HF deploy must return the unsigned cap-bound draft.",
-    );
-  }
+          properties.value,
+          `OpenAPI schema ${name}[${index}].value`,
+        ).type !== "null"
+      ) {
+        throw new Error(
+          `OpenAPI schema ${name}[${index}] is not a unit variant.`,
+        );
+      }
+      return requireNonEmptyString(
+        requireRecord(
+          properties[tag],
+          `OpenAPI schema ${name}[${index}].${tag}`,
+        ).const,
+        `OpenAPI schema ${name}[${index}].${tag}.const`,
+      );
+    });
+    requireExactStringSet(actual, variants, `OpenAPI schema ${name} variants`);
+  };
+  assertUnitVariants("SoraHfSharedLeaseStatusV1", "status", [
+    "Active",
+    "Draining",
+    "Expired",
+    "Retired",
+  ]);
+  assertUnitVariants("SoraHfSharedLeaseMemberStatusV1", "status", [
+    "Active",
+    "Left",
+  ]);
+  assertUnitVariants("SoraHfSharedLeaseActionV1", "action", [
+    "CreateWindow",
+    "Join",
+    "Leave",
+    "Renew",
+    "Retire",
+  ]);
 };
 
 export const normalizeToriiBaseUrl = (value) => {
@@ -688,13 +962,16 @@ export const normalizeToriiBaseUrl = (value) => {
 };
 
 export const validateCanonicalAssetDefinitionId = (value) => {
-  const assetDefinitionId = String(value ?? "").trim();
-  if (!/^[1-9A-HJ-NP-Za-km-z]{28}$/u.test(assetDefinitionId)) {
+  if (
+    typeof value !== "string" ||
+    value.trim() !== value ||
+    !/^[1-9A-HJ-NP-Za-km-z]{28}$/u.test(value)
+  ) {
     throw new Error(
       "Asset definition fixture must be a canonical 28-character Base58 identifier.",
     );
   }
-  return assetDefinitionId;
+  return value;
 };
 
 export const probeJson = async (
@@ -1433,29 +1710,102 @@ export const validateOwnedSubscriptions = (payload) => {
 
 export const validateAccountAssets = (payload, requestedAccountId) => {
   const assets = requireRecord(payload, "Account assets");
+  requireExactFieldSet(
+    assets,
+    ["items", "total", "has_more", "count_mode"],
+    "Account assets",
+  );
   if (!Array.isArray(assets.items)) {
     throw new Error("Account assets.items must be an array.");
+  }
+  if (assets.items.length > 200) {
+    throw new Error("Account assets.items exceeds the requested item limit.");
   }
   const total = requireNonNegativeSafeInteger(
     assets.total,
     "Account assets.total",
   );
-  if (total < assets.items.length) {
-    throw new Error("Account assets.total cannot be smaller than items.");
+  const hasMore = requireBoolean(assets.has_more, "Account assets.has_more");
+  if (assets.count_mode !== "exact") {
+    throw new Error('Account assets.count_mode must be "exact".');
   }
+  if (
+    total < assets.items.length ||
+    (hasMore && total <= assets.items.length) ||
+    (!hasMore && total !== assets.items.length)
+  ) {
+    throw new Error(
+      "Account assets pagination metadata does not match its items.",
+    );
+  }
+  const holdingKeys = new Set();
   for (const [index, rawItem] of assets.items.entries()) {
-    const item = requireRecord(rawItem, `Account assets.items[${index}]`);
+    const label = `Account assets.items[${index}]`;
+    const item = requireRecord(rawItem, label);
+    requireExactFieldSet(
+      item,
+      [
+        "account_id",
+        "asset",
+        "asset_alias",
+        "asset_name",
+        "scope",
+        "quantity",
+        "primary_alias",
+        "primary_alias_name",
+        "primary_alias_dataspace",
+        "primary_alias_domain",
+        "has_primary_alias",
+      ],
+      label,
+    );
     if (item.account_id !== requestedAccountId) {
       throw new Error(
-        `Account assets.items[${index}].account_id does not match the requested account.`,
+        `${label}.account_id does not match the requested account.`,
       );
     }
-    validateCanonicalAssetDefinitionId(item.asset);
-    requireDecimalAmount(
-      item.quantity,
-      `Account assets.items[${index}].quantity`,
-    );
-    requireNonEmptyString(item.scope, `Account assets.items[${index}].scope`);
+    const assetDefinitionId = validateCanonicalAssetDefinitionId(item.asset);
+    if (
+      item.asset_alias !== null &&
+      (typeof item.asset_alias !== "string" ||
+        !item.asset_alias ||
+        item.asset_alias.trim() !== item.asset_alias)
+    ) {
+      throw new Error(`${label}.asset_alias must be canonical text or null.`);
+    }
+    requireNonEmptyString(item.asset_name, `${label}.asset_name`);
+    const scope = requireNonEmptyString(item.scope, `${label}.scope`);
+    if (scope !== "global" && !/^dataspace:(?:0|[1-9]\d*)$/u.test(scope)) {
+      throw new Error(`${label}.scope must be an exact balance scope.`);
+    }
+    if (
+      scope.startsWith("dataspace:") &&
+      BigInt(scope.slice("dataspace:".length)) > 0xffff_ffff_ffff_ffffn
+    ) {
+      throw new Error(`${label}.scope dataspace ID exceeds u64.`);
+    }
+    if (
+      typeof item.quantity !== "string" ||
+      item.quantity.length > 155 ||
+      !/^(?:0|[1-9]\d*)(?:\.\d*[1-9])?$/u.test(item.quantity) ||
+      (item.quantity.includes(".") && item.quantity.split(".")[1].length > 28)
+    ) {
+      throw new Error(`${label}.quantity must be a canonical quantity.`);
+    }
+    if (
+      item.primary_alias !== null ||
+      item.primary_alias_name !== null ||
+      item.primary_alias_dataspace !== null ||
+      item.primary_alias_domain !== null ||
+      item.has_primary_alias !== false
+    ) {
+      throw new Error(`${label} contains unsupported primary alias data.`);
+    }
+    const holdingKey = `${assetDefinitionId}\u0000${scope}`;
+    if (holdingKeys.has(holdingKey)) {
+      throw new Error(`${label} duplicates an account asset holding.`);
+    }
+    holdingKeys.add(holdingKey);
   }
   return assets;
 };
@@ -1471,7 +1821,7 @@ export const assertOfficialV2WriteSurface = (openApi) => {
     );
   }
   assertSubscriptionDraftOpenApiContract(openApi);
-  assertSoraCloudHfDraftOpenApiContract(openApi);
+  assertSoraCloudHfSharedLeaseOpenApiContract(openApi);
 };
 
 export const assertCurrentReadSurface = ({
@@ -1483,10 +1833,7 @@ export const assertCurrentReadSurface = ({
   soraCloud,
   subscriptionPlans,
   explorerMetrics,
-  offlineReadiness,
   kaigiRelayHealth,
-  requestedAssetDefinitionId,
-  requiredOfflineAbiVersion,
   requestedLaneId,
   requestedValidator,
 }) => {
@@ -1529,10 +1876,5 @@ export const assertCurrentReadSurface = ({
     throw new Error("Subscription plan list is missing.");
   }
   validateExplorerMetrics(explorerMetrics);
-  validateOfflineReadiness(
-    offlineReadiness,
-    requestedAssetDefinitionId,
-    requiredOfflineAbiVersion,
-  );
   validateKaigiRelayHealth(kaigiRelayHealth);
 };

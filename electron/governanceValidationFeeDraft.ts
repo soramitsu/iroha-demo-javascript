@@ -1,122 +1,105 @@
-import {
-  TAIRA_GOVERNANCE_XOR_ASSET_ID,
-  type GovernanceValidationFeePlainElectorateRulesV1,
-} from "./governanceCapabilities";
+import { Buffer } from "node:buffer";
+
+import { requireFirstReleaseJsonObject } from "./firstReleaseResourceLimits";
 
 export const VALIDATION_FEE_POLICY_DRAFT_PATH =
   "/v1/validation-fee/proposals/draft";
 export const VALIDATION_FEE_POLICY_DRAFT_WIRE_ID =
-  "iroha_data_model::isi::governance::ProposeValidationFeePolicy";
+  "iroha.instruction.v1::governance::ProposeValidationFeePolicy";
 export const VALIDATION_FEE_POLICY_DRAFT_DECODED_VARIANT =
   "ProposeValidationFeePolicy";
 export const VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID =
-  "iroha_data_model::isi::governance::ProposeValidationFeePayoutLifecycle";
+  "iroha.instruction.v1::governance::ProposeValidationFeePayoutLifecycle";
 export const VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_DECODED_VARIANT =
   "ProposeValidationFeePayoutLifecycle";
 
 const MAX_U64 = 0xffff_ffff_ffff_ffffn;
-const ACTIVATION_DELAY_BLOCKS = 120_960n;
-const REQUIRED_SBD_FEE = "0.10";
-const NATIVE_QUANTITY_SBD_FEE = "0.1";
-const APP_SBD_ASSET_ID = "sbd#cbsi";
 const NATIVE_SBD_ASSET_DEFINITION_ID = "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
 const LOWER_HEX_32 = /^[0-9a-f]{64}$/u;
-const POLICY_KEYS = Object.freeze([
-  "chain_id",
-  "charging_mode",
-  "ds_asset_id",
-  "ds_scale",
-  "effective_from_height",
-  "exemption_classes",
-  "expires_after_height",
-  "fee",
-  "genesis_hash",
-  "policy_version",
-  "previous_policy_hash",
-  "schema_version",
-  "treasury_account_id",
-  "treasury_payout_binding",
-]);
-const PAYOUT_BINDING_KEYS = Object.freeze([
-  "batch_sbd",
-  "code_hash",
-  "contract_address",
-  "entrypoint",
-  "max_xor_out",
-  "min_xor_out",
-  "pool_vault_account_id",
-  "recipients",
-  "sbd_asset_id",
-  "treasury_account_id",
-  "xor_asset_id",
-]);
+const NETWORK_ID = /^hash:[0-9A-F]{64}#[0-9A-F]{4}$/u;
+const INSTRUCTION_PAYLOAD_MAX_HEX_CHARACTERS = 8 * 1024 * 1024;
 
 type PlainRecord = Record<string, unknown>;
 
-export interface ValidationFeePlainElectorateRulesWire
-  extends Record<string, unknown> {
-  voting_asset_id: typeof TAIRA_GOVERNANCE_XOR_ASSET_ID;
-  bond_escrow_account: string;
-  slash_receiver_account: string;
-  ballot_amount: "150";
-  ballot_duration_blocks: "3600";
-  citizenship_amount: "10000";
-  max_members: "256";
-  conviction_step_blocks: "100";
-  max_conviction: "6";
-  min_turnout: "1";
-  approval_threshold_numerator: "1";
-  approval_threshold_denominator: "2";
-  eligibility_rule: {
-    rule: "proposal_operator_at_or_before_gate_others_after_gate";
-    value: null;
-  };
+export type ValidationFeeFixedBytes32 = string;
+
+export interface ValidationFeePayoutRecipientWire extends PlainRecord {
+  account_id: string;
+  share: "0.25";
 }
 
-export interface ValidationFeePolicyDraftRequest
-  extends Record<string, unknown> {
+export interface ValidationFeePayoutBindingWire extends PlainRecord {
+  contract_address: string;
+  code_hash: ValidationFeeFixedBytes32;
+  entrypoint: "autonomous_validation_fee_tick";
+  treasury_account_id: string;
+  ds_asset_id: typeof NATIVE_SBD_ASSET_DEFINITION_ID;
+  xor_asset_id: string;
+  pool_vault_account_id: string;
+  batch_ds: "10";
+  min_xor_out: "4";
+  max_xor_out: "100";
+  recipients: ValidationFeePayoutRecipientWire[];
+}
+
+export type ValidationFeeChargingModeWire =
+  | {
+      charging_mode: "DISABLED";
+      value: null;
+    }
+  | {
+      charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION";
+      value: null;
+    };
+
+export interface ValidationFeePolicyWire extends PlainRecord {
+  schema_version: 1;
+  network_id: string;
+  policy_version: string;
+  previous_policy_hash: ValidationFeeFixedBytes32 | null;
+  ds_asset_id: typeof NATIVE_SBD_ASSET_DEFINITION_ID;
+  ds_scale: 2;
+  fee: "0" | "0.1";
+  treasury_account_id: string;
+  charging_mode: ValidationFeeChargingModeWire;
+  effective_from_height: string;
+  expires_after_height: string | null;
+  exemption_classes: [] | ["TREASURY_PAYOUT"];
+  treasury_payout_binding: ValidationFeePayoutBindingWire | null;
+}
+
+export interface ValidationFeePolicyDraftRequest extends PlainRecord {
   version: 1;
+  proposal_operator: string;
   proposal: {
     kind: "POLICY";
     payload: {
-      policy: PlainRecord;
-      payout_lifecycle_proposal_id: string | null;
+      policy: ValidationFeePolicyWire;
+      payout_lifecycle_proposal_id: ValidationFeeFixedBytes32 | null;
     };
   };
-  referendum_window: {
-    lower: string;
-    upper: string;
-  };
-  mode: "Plain";
-  plain_electorate_rules: ValidationFeePlainElectorateRulesWire;
 }
 
-export interface ValidationFeePolicyInstructionDraft {
+export interface ValidationFeePayoutLifecycleDraftRequest extends PlainRecord {
+  version: 1;
+  proposal_operator: string;
+  proposal: {
+    kind: "PAYOUT_LIFECYCLE";
+    payload: {
+      payout_binding: ValidationFeePayoutBindingWire;
+    };
+  };
+}
+
+export interface ValidationFeePolicyInstructionDraft extends PlainRecord {
   wire_id: typeof VALIDATION_FEE_POLICY_DRAFT_WIRE_ID;
   payload_hex: string;
 }
 
-export interface ValidationFeePayoutLifecycleInstructionDraft {
+export interface ValidationFeePayoutLifecycleInstructionDraft
+  extends PlainRecord {
   wire_id: typeof VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID;
   payload_hex: string;
-  proposalId: string;
-}
-
-export interface ValidationFeePayoutLifecycleDraftRequest
-  extends Record<string, unknown> {
-  version: 1;
-  proposal: {
-    kind: "PAYOUT_LIFECYCLE";
-    payload: {
-      payout_binding: PlainRecord;
-    };
-  };
-  referendum_window: {
-    lower: string;
-    upper: string;
-  };
-  mode: "Plain";
-  plain_electorate_rules: ValidationFeePlainElectorateRulesWire;
 }
 
 const record = (value: unknown, label: string): PlainRecord => {
@@ -131,51 +114,41 @@ const exactKeys = (
   expected: readonly string[],
   label: string,
 ): void => {
-  const actual = Object.keys(value).sort();
+  const ownKeys = Reflect.ownKeys(value);
   if (
-    actual.length !== expected.length ||
-    actual.some((key, index) => key !== expected[index])
+    ownKeys.some((key) => typeof key !== "string") ||
+    ownKeys.some((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return !descriptor?.enumerable || !("value" in descriptor);
+    })
+  ) {
+    throw new TypeError(`${label} must contain enumerable JSON data fields.`);
+  }
+  const actual = (ownKeys as string[]).sort();
+  const sortedExpected = [...expected].sort();
+  if (
+    actual.length !== sortedExpected.length ||
+    actual.some((key, index) => key !== sortedExpected[index])
   ) {
     throw new TypeError(
-      `${label} must contain exactly ${expected.join(", ")}.`,
+      `${label} must contain exactly ${sortedExpected.join(", ")}.`,
     );
   }
 };
 
-export const governanceExactJsonValuesEqual = (
-  left: unknown,
-  right: unknown,
-): boolean => {
-  if (Array.isArray(left) || Array.isArray(right)) {
-    return (
-      Array.isArray(left) &&
-      Array.isArray(right) &&
-      left.length === right.length &&
-      left.every((entry, index) =>
-        governanceExactJsonValuesEqual(entry, right[index]),
-      )
-    );
+const containsWhitespaceOrControl = (value: string): boolean => {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (
+      codePoint === undefined ||
+      codePoint <= 0x1f ||
+      (codePoint >= 0x7f && codePoint <= 0x9f) ||
+      /\s/u.test(character)
+    ) {
+      return true;
+    }
   }
-  const leftIsRecord =
-    left !== null && typeof left === "object" && !Array.isArray(left);
-  const rightIsRecord =
-    right !== null && typeof right === "object" && !Array.isArray(right);
-  if (leftIsRecord || rightIsRecord) {
-    if (!leftIsRecord || !rightIsRecord) return false;
-    const leftRecord = left as PlainRecord;
-    const rightRecord = right as PlainRecord;
-    const leftKeys = Object.keys(leftRecord).sort();
-    const rightKeys = Object.keys(rightRecord).sort();
-    return (
-      leftKeys.length === rightKeys.length &&
-      leftKeys.every(
-        (key, index) =>
-          key === rightKeys[index] &&
-          governanceExactJsonValuesEqual(leftRecord[key], rightRecord[key]),
-      )
-    );
-  }
-  return typeof left === typeof right && left === right;
+  return false;
 };
 
 const requiredText = (value: unknown, label: string): string => {
@@ -183,52 +156,58 @@ const requiredText = (value: unknown, label: string): string => {
     typeof value !== "string" ||
     value.length === 0 ||
     value.trim() !== value ||
-    Array.from(value).some((character) => {
-      const codePoint = character.codePointAt(0) ?? 0;
-      return codePoint < 0x20 || codePoint === 0x7f;
-    })
+    Buffer.byteLength(value, "utf8") > 512 ||
+    containsWhitespaceOrControl(value)
   ) {
-    throw new TypeError(`${label} must be canonical non-empty text.`);
+    throw new TypeError(`${label} must be bounded canonical non-empty text.`);
   }
   return value;
 };
 
-const lowerHex32 = (
+const canonicalNetworkId = (value: unknown, label: string): string => {
+  const networkId = requiredText(value, label);
+  if (!NETWORK_ID.test(networkId)) {
+    throw new TypeError(
+      `${label} must be one canonical checksummed uppercase NetworkId literal.`,
+    );
+  }
+  return networkId;
+};
+
+const canonicalU64 = (
   value: unknown,
   label: string,
-  options: { allowZero?: boolean } = {},
+  options: Readonly<{ positive?: boolean }> = {},
 ): string => {
+  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value)) {
+    throw new TypeError(
+      `${label} must be a canonical unsigned decimal string.`,
+    );
+  }
+  const parsed = BigInt(value);
+  if (parsed > MAX_U64 || (options.positive === true && parsed === 0n)) {
+    throw new TypeError(`${label} is outside the unsigned 64-bit range.`);
+  }
+  return value;
+};
+
+const fixedBytes32 = (
+  value: unknown,
+  label: string,
+  options: Readonly<{ allowZero?: boolean }> = {},
+): ValidationFeeFixedBytes32 => {
   if (typeof value !== "string" || !LOWER_HEX_32.test(value)) {
     throw new TypeError(
       `${label} must be exactly 64 lowercase hexadecimal digits.`,
     );
   }
-  if (!options.allowZero && /^0+$/u.test(value)) {
+  if (options.allowZero !== true && /^0{64}$/u.test(value)) {
     throw new TypeError(`${label} must be non-zero.`);
   }
   return value;
 };
 
-const safeUnsignedInteger = (
-  value: unknown,
-  label: string,
-  options: { positive?: boolean } = {},
-): string => {
-  let parsed: bigint;
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
-    parsed = BigInt(value);
-  } else if (typeof value === "string" && /^(?:0|[1-9]\d*)$/u.test(value)) {
-    parsed = BigInt(value);
-  } else {
-    throw new TypeError(`${label} must be a complete unsigned integer.`);
-  }
-  if (parsed > MAX_U64 || (options.positive && parsed === 0n)) {
-    throw new TypeError(`${label} is outside the unsigned 64-bit range.`);
-  }
-  return parsed.toString();
-};
-
-const exactChargingMode = (value: unknown): PlainRecord => {
+const exactChargingMode = (value: unknown): ValidationFeeChargingModeWire => {
   const mode = record(value, "validation-fee policy.charging_mode");
   exactKeys(
     mode,
@@ -236,132 +215,31 @@ const exactChargingMode = (value: unknown): PlainRecord => {
     "validation-fee policy.charging_mode",
   );
   if (
-    mode.charging_mode !== "PER_QUALIFYING_TRANSFER_INSTRUCTION" ||
+    (mode.charging_mode !== "DISABLED" &&
+      mode.charging_mode !== "PER_QUALIFYING_TRANSFER_INSTRUCTION") ||
     mode.value !== null
   ) {
     throw new TypeError(
-      "validation-fee policy.charging_mode must be the exact enabled first-release mode.",
+      "validation-fee policy.charging_mode is outside the closed native V1 enum.",
     );
   }
   return {
-    charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION",
+    charging_mode: mode.charging_mode,
     value: null,
   };
 };
 
-const exactStringArray = (value: unknown, label: string): string[] => {
-  if (
-    !Array.isArray(value) ||
-    value.some(
-      (entry) =>
-        typeof entry !== "string" ||
-        entry.length === 0 ||
-        entry.trim() !== entry,
-    )
-  ) {
-    throw new TypeError(`${label} must be an array of canonical strings.`);
-  }
-  return [...value];
-};
-
-const normalizePlainElectorateRules = (
+const normalizeRecipients = (
   value: unknown,
-): ValidationFeePlainElectorateRulesWire => {
-  const rules = record(value, "validation-fee PLAIN electorate rules");
-  exactKeys(
-    rules,
-    [
-      "approvalThresholdDenominator",
-      "approvalThresholdNumerator",
-      "ballotAmount",
-      "ballotDurationBlocks",
-      "bondEscrowAccount",
-      "citizenshipAmount",
-      "convictionStepBlocks",
-      "eligibilityRule",
-      "maxConviction",
-      "maxMembers",
-      "minTurnout",
-      "slashReceiverAccount",
-      "votingAssetId",
-    ],
-    "validation-fee PLAIN electorate rules",
-  );
-  const eligibility = record(
-    rules.eligibilityRule,
-    "validation-fee PLAIN electorate rules.eligibilityRule",
-  );
-  exactKeys(
-    eligibility,
-    ["rule", "value"],
-    "validation-fee PLAIN electorate rules.eligibilityRule",
-  );
-  if (
-    rules.votingAssetId !== TAIRA_GOVERNANCE_XOR_ASSET_ID ||
-    rules.ballotAmount !== "150" ||
-    rules.ballotDurationBlocks !== "3600" ||
-    rules.citizenshipAmount !== "10000" ||
-    rules.maxMembers !== "256" ||
-    rules.convictionStepBlocks !== "100" ||
-    rules.maxConviction !== "6" ||
-    rules.minTurnout !== "1" ||
-    rules.approvalThresholdNumerator !== "1" ||
-    rules.approvalThresholdDenominator !== "2" ||
-    eligibility.rule !==
-      "proposal_operator_at_or_before_gate_others_after_gate" ||
-    eligibility.value !== null
-  ) {
+  treasuryAccountId: string,
+  poolVaultAccountId: string,
+): ValidationFeePayoutRecipientWire[] => {
+  if (!Array.isArray(value) || value.length !== 4) {
     throw new TypeError(
-      "validation-fee PLAIN electorate rules must equal the exact first-release contract.",
+      "validation-fee payout binding.recipients must contain exactly four entries.",
     );
   }
-  return {
-    voting_asset_id: TAIRA_GOVERNANCE_XOR_ASSET_ID,
-    bond_escrow_account: requiredText(
-      rules.bondEscrowAccount,
-      "validation-fee PLAIN electorate rules.bondEscrowAccount",
-    ),
-    slash_receiver_account: requiredText(
-      rules.slashReceiverAccount,
-      "validation-fee PLAIN electorate rules.slashReceiverAccount",
-    ),
-    ballot_amount: "150",
-    ballot_duration_blocks: "3600",
-    citizenship_amount: "10000",
-    max_members: "256",
-    conviction_step_blocks: "100",
-    max_conviction: "6",
-    min_turnout: "1",
-    approval_threshold_numerator: "1",
-    approval_threshold_denominator: "2",
-    eligibility_rule: {
-      rule: "proposal_operator_at_or_before_gate_others_after_gate",
-      value: null,
-    },
-  };
-};
-
-const normalizePayoutBinding = (
-  value: unknown,
-  policy: { dsAssetId: string; treasuryAccountId: string },
-): PlainRecord | null => {
-  if (value === null) return null;
-  const binding = record(
-    value,
-    "validation-fee policy.treasury_payout_binding",
-  );
-  exactKeys(
-    binding,
-    PAYOUT_BINDING_KEYS,
-    "validation-fee policy.treasury_payout_binding",
-  );
-  const recipients = binding.recipients;
-  if (!Array.isArray(recipients) || recipients.length !== 4) {
-    throw new TypeError(
-      "validation-fee payout binding must contain exactly four recipients.",
-    );
-  }
-  const normalizedRecipients = recipients.map((entry, index) => {
+  const recipients = value.map((entry, index) => {
     const recipient = record(
       entry,
       `validation-fee payout binding.recipients[${index}]`,
@@ -380,16 +258,42 @@ const normalizePayoutBinding = (
         "validation-fee payout recipients must each receive exactly 0.25.",
       );
     }
-    return { account_id: accountId, share: "0.25" };
+    return { account_id: accountId, share: "0.25" as const };
   });
-  const recipientAccounts = normalizedRecipients.map(
-    (recipient) => recipient.account_id,
-  );
-  if (new Set(recipientAccounts).size !== recipientAccounts.length) {
+  const accounts = recipients.map(({ account_id }) => account_id);
+  if (
+    new Set(accounts).size !== accounts.length ||
+    accounts.includes(treasuryAccountId) ||
+    accounts.includes(poolVaultAccountId)
+  ) {
     throw new TypeError(
-      "validation-fee payout recipient accounts must be unique.",
+      "validation-fee payout recipients must be unique and differ from treasury and pool vault.",
     );
   }
+  return recipients;
+};
+
+const normalizePayoutBinding = (
+  value: unknown,
+): ValidationFeePayoutBindingWire => {
+  const binding = record(value, "validation-fee payout binding");
+  exactKeys(
+    binding,
+    [
+      "batch_ds",
+      "code_hash",
+      "contract_address",
+      "ds_asset_id",
+      "entrypoint",
+      "max_xor_out",
+      "min_xor_out",
+      "pool_vault_account_id",
+      "recipients",
+      "treasury_account_id",
+      "xor_asset_id",
+    ],
+    "validation-fee payout binding",
+  );
   const treasuryAccountId = requiredText(
     binding.treasury_account_id,
     "validation-fee payout binding.treasury_account_id",
@@ -398,46 +302,27 @@ const normalizePayoutBinding = (
     binding.pool_vault_account_id,
     "validation-fee payout binding.pool_vault_account_id",
   );
-  const appSbdAssetId = requiredText(
-    binding.sbd_asset_id,
-    "validation-fee payout binding.sbd_asset_id",
-  );
-  if (appSbdAssetId !== APP_SBD_ASSET_ID) {
-    throw new TypeError(
-      `validation-fee payout binding.sbd_asset_id must be ${APP_SBD_ASSET_ID}.`,
-    );
-  }
-  const sbdAssetId = NATIVE_SBD_ASSET_DEFINITION_ID;
   const xorAssetId = requiredText(
     binding.xor_asset_id,
     "validation-fee payout binding.xor_asset_id",
   );
   if (
-    treasuryAccountId !== policy.treasuryAccountId ||
-    sbdAssetId !== policy.dsAssetId
-  ) {
-    throw new TypeError(
-      "validation-fee payout binding must use the policy treasury and fee asset.",
-    );
-  }
-  if (
-    treasuryAccountId === poolVaultAccountId ||
-    sbdAssetId === xorAssetId ||
-    recipientAccounts.includes(treasuryAccountId) ||
-    recipientAccounts.includes(poolVaultAccountId)
-  ) {
-    throw new TypeError(
-      "validation-fee payout treasury, vault, assets, and recipients must be distinct.",
-    );
-  }
-  if (
+    binding.ds_asset_id !== NATIVE_SBD_ASSET_DEFINITION_ID ||
     binding.entrypoint !== "autonomous_validation_fee_tick" ||
-    binding.batch_sbd !== "10" ||
+    binding.batch_ds !== "10" ||
     binding.min_xor_out !== "4" ||
     binding.max_xor_out !== "100"
   ) {
     throw new TypeError(
-      "validation-fee payout binding must use the exact first-release entrypoint and payout bounds.",
+      "validation-fee payout binding differs from the exact first-release DS payout contract.",
+    );
+  }
+  if (
+    treasuryAccountId === poolVaultAccountId ||
+    NATIVE_SBD_ASSET_DEFINITION_ID === xorAssetId
+  ) {
+    throw new TypeError(
+      "validation-fee payout treasury, pool vault, and asset definitions must be distinct.",
     );
   }
   return {
@@ -445,170 +330,99 @@ const normalizePayoutBinding = (
       binding.contract_address,
       "validation-fee payout binding.contract_address",
     ),
-    code_hash: lowerHex32(
+    code_hash: fixedBytes32(
       binding.code_hash,
       "validation-fee payout binding.code_hash",
     ),
     entrypoint: "autonomous_validation_fee_tick",
     treasury_account_id: treasuryAccountId,
-    sbd_asset_id: sbdAssetId,
+    ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,
     xor_asset_id: xorAssetId,
     pool_vault_account_id: poolVaultAccountId,
-    batch_sbd: "10",
+    batch_ds: "10",
     min_xor_out: "4",
     max_xor_out: "100",
-    recipients: normalizedRecipients,
+    recipients: normalizeRecipients(
+      binding.recipients,
+      treasuryAccountId,
+      poolVaultAccountId,
+    ),
   };
 };
 
-const normalizeStandalonePayoutBinding = (value: unknown): PlainRecord => {
-  const binding = record(
-    value,
-    "validation-fee payout lifecycle.payout_binding",
-  );
-  exactKeys(
-    binding,
-    PAYOUT_BINDING_KEYS,
-    "validation-fee payout lifecycle.payout_binding",
-  );
-  return normalizePayoutBinding(binding, {
-    dsAssetId: NATIVE_SBD_ASSET_DEFINITION_ID,
-    treasuryAccountId: requiredText(
-      binding.treasury_account_id,
-      "validation-fee payout lifecycle.payout_binding.treasury_account_id",
-    ),
-  }) as PlainRecord;
-};
-
-const normalizeReferendumWindow = (
+const normalizePolicy = (
   value: unknown,
-): { lower: string; upper: string } => {
-  const window = record(value, "validation-fee referendum_window");
-  exactKeys(window, ["lower", "upper"], "validation-fee referendum_window");
-  const lower = safeUnsignedInteger(
-    window.lower,
-    "validation-fee referendum_window.lower",
-    { positive: true },
-  );
-  const upper = safeUnsignedInteger(
-    window.upper,
-    "validation-fee referendum_window.upper",
-    { positive: true },
-  );
-  if (BigInt(upper) < BigInt(lower)) {
-    throw new TypeError("validation-fee referendum window is reversed.");
-  }
-  return { lower, upper };
-};
-
-export function assertValidationFeeDraftWindowAgainstCapabilities(
-  window: { lower: string; upper: string },
-  capabilities: {
-    currentHeight: number | string;
-    minEnactmentDelay: number | string;
-    windowSpan: number | string;
-  },
-): void {
-  const { lower, upper } = normalizeReferendumWindow(window);
-  const currentHeight = BigInt(
-    safeUnsignedInteger(
-      capabilities.currentHeight,
-      "governance capabilities.current_height",
-    ),
-  );
-  const minEnactmentDelay = BigInt(
-    safeUnsignedInteger(
-      capabilities.minEnactmentDelay,
-      "governance capabilities.min_enactment_delay",
-    ),
-  );
-  const windowSpan = BigInt(
-    safeUnsignedInteger(
-      capabilities.windowSpan,
-      "governance capabilities.window_span",
-      { positive: true },
-    ),
-  );
-  const minimumLower = currentHeight + 1n + minEnactmentDelay;
-  if (minimumLower > MAX_U64 || BigInt(lower) < minimumLower) {
-    throw new TypeError(
-      "validation-fee referendum window.lower is earlier than current_height + 1 + min_enactment_delay.",
-    );
-  }
-  const inclusiveSpan = BigInt(upper) - BigInt(lower) + 1n;
-  if (inclusiveSpan !== windowSpan) {
-    throw new TypeError(
-      "validation-fee referendum window must have the exact inclusive capability window_span.",
-    );
-  }
-}
-
-const normalizePolicy = (value: unknown): PlainRecord => {
+  expectedNetworkId: string,
+): ValidationFeePolicyWire => {
   const policy = record(value, "validation-fee policy");
-  exactKeys(policy, POLICY_KEYS, "validation-fee policy");
-  if (policy.schema_version !== 1) {
-    throw new TypeError("validation-fee policy.schema_version must be 1.");
-  }
-  if (policy.ds_scale !== 2) {
-    throw new TypeError("validation-fee policy.ds_scale must be exactly 2.");
-  }
-  if (policy.fee !== REQUIRED_SBD_FEE) {
-    throw new TypeError("validation-fee policy.fee must be exactly 0.10 SBD.");
-  }
-  const chainId = requiredText(
-    policy.chain_id,
-    "validation-fee policy.chain_id",
+  exactKeys(
+    policy,
+    [
+      "charging_mode",
+      "ds_asset_id",
+      "ds_scale",
+      "effective_from_height",
+      "exemption_classes",
+      "expires_after_height",
+      "fee",
+      "network_id",
+      "policy_version",
+      "previous_policy_hash",
+      "schema_version",
+      "treasury_account_id",
+      "treasury_payout_binding",
+    ],
+    "validation-fee policy",
   );
-  const genesisHash = lowerHex32(
-    policy.genesis_hash,
-    "validation-fee policy.genesis_hash",
+  if (policy.schema_version !== 1 || policy.ds_scale !== 2) {
+    throw new TypeError(
+      "validation-fee policy must use schema_version 1 and ds_scale 2.",
+    );
+  }
+  const networkId = canonicalNetworkId(
+    policy.network_id,
+    "validation-fee policy.network_id",
   );
-  const policyVersion = safeUnsignedInteger(
+  if (networkId !== expectedNetworkId) {
+    throw new TypeError(
+      "validation-fee policy.network_id differs from the active exact network.",
+    );
+  }
+  if (policy.ds_asset_id !== NATIVE_SBD_ASSET_DEFINITION_ID) {
+    throw new TypeError(
+      `validation-fee policy.ds_asset_id must be ${NATIVE_SBD_ASSET_DEFINITION_ID}.`,
+    );
+  }
+  const policyVersion = canonicalU64(
     policy.policy_version,
     "validation-fee policy.policy_version",
     { positive: true },
   );
-  let previousPolicyHash: string | null = null;
-  if (policy.previous_policy_hash !== null) {
-    previousPolicyHash = lowerHex32(
-      policy.previous_policy_hash,
-      "validation-fee policy.previous_policy_hash",
-    );
-  }
+  const previousPolicyHash =
+    policy.previous_policy_hash === null
+      ? null
+      : fixedBytes32(
+          policy.previous_policy_hash,
+          "validation-fee policy.previous_policy_hash",
+        );
   if (
     (policyVersion === "1" && previousPolicyHash !== null) ||
-    (BigInt(policyVersion) > 1n && previousPolicyHash === null)
+    (policyVersion !== "1" && previousPolicyHash === null)
   ) {
     throw new TypeError(
-      "validation-fee policy previous hash does not match its version.",
+      "validation-fee policy previous_policy_hash does not match policy_version.",
     );
   }
-  const appDsAssetId = requiredText(
-    policy.ds_asset_id,
-    "validation-fee policy.ds_asset_id",
-  );
-  if (appDsAssetId !== APP_SBD_ASSET_ID) {
-    throw new TypeError(
-      `validation-fee policy.ds_asset_id must be ${APP_SBD_ASSET_ID}.`,
-    );
-  }
-  const dsAssetId = NATIVE_SBD_ASSET_DEFINITION_ID;
-  const treasuryAccountId = requiredText(
-    policy.treasury_account_id,
-    "validation-fee policy.treasury_account_id",
-  );
-  const effectiveFromHeight = safeUnsignedInteger(
+  const effectiveFromHeight = canonicalU64(
     policy.effective_from_height,
     "validation-fee policy.effective_from_height",
-    { positive: true },
   );
   const expiresAfterHeight =
     policy.expires_after_height === null
       ? null
-      : safeUnsignedInteger(
+      : canonicalU64(
           policy.expires_after_height,
           "validation-fee policy.expires_after_height",
-          { positive: true },
         );
   if (
     expiresAfterHeight !== null &&
@@ -618,144 +432,232 @@ const normalizePolicy = (value: unknown): PlainRecord => {
       "validation-fee policy expiry must be after its effective height.",
     );
   }
-  const exemptionClasses = exactStringArray(
-    policy.exemption_classes,
-    "validation-fee policy.exemption_classes",
-  );
-  const payoutBinding = normalizePayoutBinding(policy.treasury_payout_binding, {
-    dsAssetId,
-    treasuryAccountId,
-  });
+  const chargingMode = exactChargingMode(policy.charging_mode);
+  const payoutBinding =
+    policy.treasury_payout_binding === null
+      ? null
+      : normalizePayoutBinding(policy.treasury_payout_binding);
+  const exemptions = policy.exemption_classes;
   if (
-    exemptionClasses.length !== (payoutBinding ? 1 : 0) ||
-    (payoutBinding && exemptionClasses[0] !== "TREASURY_PAYOUT")
+    !Array.isArray(exemptions) ||
+    !(
+      exemptions.length === 0 ||
+      (exemptions.length === 1 && exemptions[0] === "TREASURY_PAYOUT")
+    )
   ) {
     throw new TypeError(
-      "validation-fee policy must use only TREASURY_PAYOUT with an exact payout binding.",
+      "validation-fee policy.exemption_classes is outside the closed native V1 set.",
+    );
+  }
+  const treasuryAccountId = requiredText(
+    policy.treasury_account_id,
+    "validation-fee policy.treasury_account_id",
+  );
+  const enabled =
+    chargingMode.charging_mode === "PER_QUALIFYING_TRANSFER_INSTRUCTION";
+  if (
+    (enabled && policy.fee !== "0.1") ||
+    (!enabled && policy.fee !== "0") ||
+    (!enabled && (exemptions.length !== 0 || payoutBinding !== null)) ||
+    (payoutBinding === null && exemptions.length !== 0) ||
+    (payoutBinding !== null &&
+      (exemptions.length !== 1 ||
+        payoutBinding.treasury_account_id !== treasuryAccountId))
+  ) {
+    throw new TypeError(
+      "validation-fee policy mode, amount, exemptions, and payout binding are inconsistent.",
     );
   }
   return {
     schema_version: 1,
-    chain_id: chainId,
-    genesis_hash: genesisHash,
+    network_id: networkId,
     policy_version: policyVersion,
     previous_policy_hash: previousPolicyHash,
-    ds_asset_id: dsAssetId,
+    ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,
     ds_scale: 2,
-    // Quantity's strict native JSON form removes insignificant trailing zeroes;
-    // ds_scale=2 and the input check above retain the exact 0.10 SBD policy.
-    fee: NATIVE_QUANTITY_SBD_FEE,
+    fee: policy.fee as "0" | "0.1",
     treasury_account_id: treasuryAccountId,
-    charging_mode: exactChargingMode(policy.charging_mode),
+    charging_mode: chargingMode,
     effective_from_height: effectiveFromHeight,
     expires_after_height: expiresAfterHeight,
-    exemption_classes: exemptionClasses,
+    exemption_classes: exemptions.length === 0 ? [] : ["TREASURY_PAYOUT"],
     treasury_payout_binding: payoutBinding,
   };
 };
 
-/**
- * Translate the renderer's exact native-name composer values into the strict
- * Torii V1 policy-draft DTO. No legacy names or unknown fields are accepted.
- */
+const draftContext = (
+  proposalOperatorValue: unknown,
+  expectedNetworkIdValue?: unknown,
+): { proposalOperator: string; expectedNetworkId: string | null } => ({
+  proposalOperator: requiredText(
+    proposalOperatorValue,
+    "validation-fee proposal_operator",
+  ),
+  expectedNetworkId:
+    expectedNetworkIdValue === undefined
+      ? null
+      : canonicalNetworkId(
+          expectedNetworkIdValue,
+          "validation-fee expected network_id",
+        ),
+});
+
+/** Build the exact current native policy draft request. */
 export function buildValidationFeePolicyDraftRequest(
   value: unknown,
-  plainElectorateRules: GovernanceValidationFeePlainElectorateRulesV1,
+  proposalOperatorValue: unknown,
+  expectedNetworkIdValue: unknown,
 ): ValidationFeePolicyDraftRequest {
-  const input = record(value, "validation-fee proposal input");
-  exactKeys(
-    input,
-    ["payout_lifecycle_proposal_id", "policy", "referendum_window"],
+  const input = requireFirstReleaseJsonObject(
+    value,
     "validation-fee proposal input",
   );
-  const policy = normalizePolicy(input.policy);
-  const { lower, upper } = normalizeReferendumWindow(input.referendum_window);
-  const effectiveHeight = BigInt(policy.effective_from_height as string);
-  const enactmentHeight = effectiveHeight - ACTIVATION_DELAY_BLOCKS;
-  if (
-    effectiveHeight > MAX_U64 ||
-    effectiveHeight <= ACTIVATION_DELAY_BLOCKS ||
-    enactmentHeight <= BigInt(upper)
-  ) {
-    throw new TypeError(
-      "validation-fee policy must encode enactment strictly after its inclusive referendum window and activation exactly 120,960 blocks later.",
-    );
+  exactKeys(
+    input,
+    ["payout_lifecycle_proposal_id", "policy"],
+    "validation-fee proposal input",
+  );
+  const { proposalOperator, expectedNetworkId } = draftContext(
+    proposalOperatorValue,
+    expectedNetworkIdValue,
+  );
+  if (expectedNetworkId === null) {
+    throw new TypeError("validation-fee expected network_id is required.");
   }
-  const payoutBinding = policy.treasury_payout_binding !== null;
-  const payoutLifecycleProposalId =
+  const policy = normalizePolicy(input.policy, expectedNetworkId);
+  const lifecycleId =
     input.payout_lifecycle_proposal_id === null
       ? null
-      : lowerHex32(
+      : fixedBytes32(
           input.payout_lifecycle_proposal_id,
           "validation-fee payout lifecycle proposal id",
         );
+  const payoutEnabled = policy.treasury_payout_binding !== null;
   if (
-    (payoutBinding && payoutLifecycleProposalId === null) ||
-    (!payoutBinding && payoutLifecycleProposalId !== null)
+    (payoutEnabled && lifecycleId === null) ||
+    (!payoutEnabled && lifecycleId !== null)
   ) {
     throw new TypeError(
-      payoutBinding
+      payoutEnabled
         ? "payout-enabled validation-fee policy requires a lifecycle proposal id."
         : "validation-fee policy without a payout binding cannot select a lifecycle proposal.",
     );
   }
   return {
     version: 1,
+    proposal_operator: proposalOperator,
     proposal: {
       kind: "POLICY",
       payload: {
         policy,
-        payout_lifecycle_proposal_id: payoutLifecycleProposalId,
+        payout_lifecycle_proposal_id: lifecycleId,
       },
     },
-    referendum_window: { lower, upper },
-    mode: "Plain",
-    plain_electorate_rules: normalizePlainElectorateRules(plainElectorateRules),
   };
 }
 
-/**
- * Build the lifecycle referendum which must be enacted before a payout-enabled
- * policy may reference the same immutable binding.
- */
+/** Build the exact current native payout-lifecycle draft request. */
 export function buildValidationFeePayoutLifecycleDraftRequest(
   value: unknown,
-  plainElectorateRules: GovernanceValidationFeePlainElectorateRulesV1,
+  proposalOperatorValue: unknown,
 ): ValidationFeePayoutLifecycleDraftRequest {
-  const input = record(value, "validation-fee payout lifecycle input");
-  exactKeys(
-    input,
-    ["payout_binding", "referendum_window"],
+  const input = requireFirstReleaseJsonObject(
+    value,
     "validation-fee payout lifecycle input",
   );
+  exactKeys(input, ["payout_binding"], "validation-fee payout lifecycle input");
+  const { proposalOperator } = draftContext(proposalOperatorValue);
   return {
     version: 1,
+    proposal_operator: proposalOperator,
     proposal: {
       kind: "PAYOUT_LIFECYCLE",
       payload: {
-        payout_binding: normalizeStandalonePayoutBinding(input.payout_binding),
+        payout_binding: normalizePayoutBinding(input.payout_binding),
       },
     },
-    referendum_window: normalizeReferendumWindow(input.referendum_window),
-    mode: "Plain",
-    plain_electorate_rules: normalizePlainElectorateRules(plainElectorateRules),
   };
 }
 
-const byteArrayHex = (value: unknown): string | null => {
-  if (
-    value instanceof Uint8Array ||
-    (Array.isArray(value) &&
-      value.every(
-        (entry) =>
-          Number.isInteger(entry) && Number(entry) >= 0 && Number(entry) <= 255,
-      ))
-  ) {
-    return Array.from(value as Uint8Array | number[])
-      .map((entry) => Number(entry).toString(16).padStart(2, "0"))
-      .join("");
+const exactJsonValuesEqual = (left: unknown, right: unknown): boolean => {
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right)) return false;
+    if (
+      Object.getPrototypeOf(left) !== Array.prototype ||
+      Object.getPrototypeOf(right) !== Array.prototype ||
+      left.length !== right.length
+    ) {
+      return false;
+    }
+    const leftKeys = Reflect.ownKeys(left);
+    const rightKeys = Reflect.ownKeys(right);
+    if (
+      leftKeys.length !== left.length + 1 ||
+      rightKeys.length !== right.length + 1 ||
+      !leftKeys.includes("length") ||
+      !rightKeys.includes("length")
+    ) {
+      return false;
+    }
+    for (let index = 0; index < left.length; index += 1) {
+      const key = String(index);
+      const leftDescriptor = Object.getOwnPropertyDescriptor(left, key);
+      const rightDescriptor = Object.getOwnPropertyDescriptor(right, key);
+      if (
+        !leftDescriptor?.enumerable ||
+        !("value" in leftDescriptor) ||
+        !rightDescriptor?.enumerable ||
+        !("value" in rightDescriptor) ||
+        !exactJsonValuesEqual(leftDescriptor.value, rightDescriptor.value)
+      ) {
+        return false;
+      }
+    }
+    return true;
   }
-  return null;
+  const leftIsRecord =
+    left !== null && typeof left === "object" && !Array.isArray(left);
+  const rightIsRecord =
+    right !== null && typeof right === "object" && !Array.isArray(right);
+  if (leftIsRecord || rightIsRecord) {
+    if (!leftIsRecord || !rightIsRecord) return false;
+    const leftRecord = left as PlainRecord;
+    const rightRecord = right as PlainRecord;
+    if (
+      ![Object.prototype, null].includes(Object.getPrototypeOf(leftRecord)) ||
+      ![Object.prototype, null].includes(Object.getPrototypeOf(rightRecord))
+    ) {
+      return false;
+    }
+    const leftOwnKeys = Reflect.ownKeys(leftRecord);
+    const rightOwnKeys = Reflect.ownKeys(rightRecord);
+    if (
+      leftOwnKeys.some((key) => typeof key !== "string") ||
+      rightOwnKeys.some((key) => typeof key !== "string")
+    ) {
+      return false;
+    }
+    const leftKeys = (leftOwnKeys as string[]).sort();
+    const rightKeys = (rightOwnKeys as string[]).sort();
+    if (leftKeys.length !== rightKeys.length) return false;
+    for (let index = 0; index < leftKeys.length; index += 1) {
+      const key = leftKeys[index];
+      if (key !== rightKeys[index]) return false;
+      const leftDescriptor = Object.getOwnPropertyDescriptor(leftRecord, key);
+      const rightDescriptor = Object.getOwnPropertyDescriptor(rightRecord, key);
+      if (
+        !leftDescriptor?.enumerable ||
+        !("value" in leftDescriptor) ||
+        !rightDescriptor?.enumerable ||
+        !("value" in rightDescriptor) ||
+        !exactJsonValuesEqual(leftDescriptor.value, rightDescriptor.value)
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return typeof left === typeof right && left === right;
 };
 
 const assertDecodedValue = (
@@ -763,25 +665,6 @@ const assertDecodedValue = (
   expected: unknown,
   label: string,
 ): void => {
-  const bytes = byteArrayHex(actual);
-  if (bytes !== null && typeof expected === "string" && bytes === expected) {
-    return;
-  }
-  if (
-    ((typeof actual === "number" &&
-      Number.isSafeInteger(actual) &&
-      actual >= 0) ||
-      (typeof actual === "bigint" && actual >= 0n) ||
-      (typeof actual === "string" && /^(?:0|[1-9]\d*)$/u.test(actual))) &&
-    ((typeof expected === "number" &&
-      Number.isSafeInteger(expected) &&
-      expected >= 0) ||
-      (typeof expected === "bigint" && expected >= 0n) ||
-      (typeof expected === "string" && /^(?:0|[1-9]\d*)$/u.test(expected))) &&
-    BigInt(actual) === BigInt(expected)
-  ) {
-    return;
-  }
   if (Array.isArray(expected)) {
     if (!Array.isArray(actual) || actual.length !== expected.length) {
       throw new TypeError(`${label} differs from the reviewed value.`);
@@ -798,9 +681,9 @@ const assertDecodedValue = (
   ) {
     const actualRecord = record(actual, label);
     const expectedRecord = expected as PlainRecord;
-    exactKeys(actualRecord, Object.keys(expectedRecord).sort(), label);
-    for (const [key, value] of Object.entries(expectedRecord)) {
-      assertDecodedValue(actualRecord[key], value, `${label}.${key}`);
+    exactKeys(actualRecord, Object.keys(expectedRecord), label);
+    for (const [key, expectedValue] of Object.entries(expectedRecord)) {
+      assertDecodedValue(actualRecord[key], expectedValue, `${label}.${key}`);
     }
     return;
   }
@@ -809,122 +692,71 @@ const assertDecodedValue = (
   }
 };
 
-const assertExactJsonValue = (
-  actual: unknown,
-  expected: unknown,
+const exactInstructionDraft = <TWireId extends string>(
+  value: unknown,
+  expectedWireId: TWireId,
   label: string,
-): void => {
-  if (Array.isArray(expected)) {
-    if (!Array.isArray(actual) || actual.length !== expected.length) {
-      throw new TypeError(`${label} differs from the reviewed value.`);
-    }
-    expected.forEach((entry, index) => {
-      assertExactJsonValue(actual[index], entry, `${label}[${index}]`);
-    });
-    return;
+): { wire_id: TWireId; payload_hex: string } => {
+  const instruction = record(value, label);
+  exactKeys(instruction, ["payload_hex", "wire_id"], label);
+  if (instruction.wire_id !== expectedWireId) {
+    throw new TypeError(`${label} must use exact wire id ${expectedWireId}.`);
   }
   if (
-    expected !== null &&
-    typeof expected === "object" &&
-    !Array.isArray(expected)
+    typeof instruction.payload_hex !== "string" ||
+    instruction.payload_hex.length > INSTRUCTION_PAYLOAD_MAX_HEX_CHARACTERS ||
+    !/^(?:[0-9a-f]{2})+$/u.test(instruction.payload_hex)
   ) {
-    const actualRecord = record(actual, label);
-    const expectedRecord = expected as PlainRecord;
-    exactKeys(actualRecord, Object.keys(expectedRecord).sort(), label);
-    for (const [key, value] of Object.entries(expectedRecord)) {
-      assertExactJsonValue(actualRecord[key], value, `${label}.${key}`);
-    }
-    return;
+    throw new TypeError(
+      `${label} payload must be bounded non-empty lowercase hexadecimal bytes.`,
+    );
   }
-  if (typeof actual !== typeof expected || actual !== expected) {
-    throw new TypeError(`${label} differs from the reviewed value.`);
-  }
-};
-
-const validationFeePolicyResponsePayload = (
-  request: ValidationFeePolicyDraftRequest,
-): PlainRecord => {
-  const policy = request.proposal.payload.policy;
-  const payoutBinding = policy.treasury_payout_binding;
   return {
-    policy: {
-      ...policy,
-      genesis_hash: (policy.genesis_hash as string).toUpperCase(),
-      previous_policy_hash:
-        policy.previous_policy_hash === null
-          ? null
-          : (policy.previous_policy_hash as string).toUpperCase(),
-      treasury_payout_binding:
-        payoutBinding === null
-          ? null
-          : {
-              ...(payoutBinding as PlainRecord),
-              code_hash: (
-                (payoutBinding as PlainRecord).code_hash as string
-              ).toUpperCase(),
-            },
-    },
-    payout_lifecycle_proposal_id:
-      request.proposal.payload.payout_lifecycle_proposal_id === null
-        ? null
-        : request.proposal.payload.payout_lifecycle_proposal_id.toUpperCase(),
-    plain_electorate_rules: request.plain_electorate_rules,
+    wire_id: expectedWireId,
+    payload_hex: instruction.payload_hex,
   };
 };
 
-const validationFeePayoutLifecycleResponsePayload = (
-  request: ValidationFeePayoutLifecycleDraftRequest,
-): PlainRecord => ({
-  payout_binding: {
-    ...request.proposal.payload.payout_binding,
-    code_hash: (
-      request.proposal.payload.payout_binding.code_hash as string
-    ).toUpperCase(),
-  },
-  plain_electorate_rules: request.plain_electorate_rules,
-});
-
-/**
- * Verify the strict Torii response before any returned instruction can enter
- * the signing pipeline.
- */
-export function assertValidationFeePolicyDraftResponse(
+const draftResponse = (
   value: unknown,
-  request: ValidationFeePolicyDraftRequest,
+  proposalOperator: string,
   expectedProposalId: string,
-): ValidationFeePolicyInstructionDraft {
+  expectedKind: PlainRecord,
+): PlainRecord => {
   const response = record(value, "validation-fee proposal draft response");
   exactKeys(
     response,
-    ["proposal_id", "proposal_kind", "tx_instructions", "version"],
+    [
+      "proposal_id",
+      "proposal_kind",
+      "proposal_operator",
+      "tx_instructions",
+      "version",
+    ],
     "validation-fee proposal draft response",
   );
-  if (response.version !== 1) {
+  if (
+    response.version !== 1 ||
+    response.proposal_operator !== proposalOperator
+  ) {
     throw new TypeError(
-      "validation-fee proposal draft response.version must be 1.",
+      "validation-fee proposal draft response version or proposal_operator differs from the request.",
     );
   }
-  const proposalId = lowerHex32(
-    response.proposal_id,
-    "validation-fee proposal draft response.proposal_id",
-  );
-  const expected = lowerHex32(
-    expectedProposalId,
-    "expected native validation-fee proposal id",
-  );
-  if (proposalId !== expected) {
+  if (
+    typeof response.proposal_id !== "string" ||
+    !LOWER_HEX_32.test(response.proposal_id) ||
+    response.proposal_id !== expectedProposalId
+  ) {
     throw new TypeError(
       "validation-fee proposal draft response.proposal_id differs from the native proposal fingerprint.",
     );
   }
-  assertExactJsonValue(
-    response.proposal_kind,
-    {
-      kind: "ValidationFeePolicy",
-      payload: validationFeePolicyResponsePayload(request),
-    },
-    "validation-fee proposal draft response.proposal_kind",
-  );
+  if (!exactJsonValuesEqual(response.proposal_kind, expectedKind)) {
+    throw new TypeError(
+      "validation-fee proposal draft response.proposal_kind differs from the exact requested proposal.",
+    );
+  }
   if (
     !Array.isArray(response.tx_instructions) ||
     response.tx_instructions.length !== 1
@@ -933,32 +765,61 @@ export function assertValidationFeePolicyDraftResponse(
       "validation-fee proposal draft response must contain exactly one instruction.",
     );
   }
-  const instruction = record(
-    response.tx_instructions[0],
-    "validation-fee proposal draft instruction",
+  return response;
+};
+
+export function assertValidationFeePolicyDraftResponse(
+  value: unknown,
+  request: ValidationFeePolicyDraftRequest,
+  expectedProposalId: string,
+): ValidationFeePolicyInstructionDraft {
+  const expected = {
+    kind: "ValidationFeePolicy",
+    payload: {
+      proposal_operator: request.proposal_operator,
+      policy: request.proposal.payload.policy,
+      payout_lifecycle_proposal_id:
+        request.proposal.payload.payout_lifecycle_proposal_id,
+    },
+  };
+  const response = draftResponse(
+    value,
+    request.proposal_operator,
+    expectedProposalId,
+    expected,
   );
-  exactKeys(
-    instruction,
-    ["payload_hex", "wire_id"],
-    "validation-fee proposal draft instruction",
+  return exactInstructionDraft(
+    (response.tx_instructions as unknown[])[0],
+    VALIDATION_FEE_POLICY_DRAFT_WIRE_ID,
+    "validation-fee policy draft instruction",
   );
-  if (instruction.wire_id !== VALIDATION_FEE_POLICY_DRAFT_WIRE_ID) {
-    throw new TypeError(
-      `validation-fee proposal draft instruction must use ${VALIDATION_FEE_POLICY_DRAFT_WIRE_ID}.`,
-    );
-  }
-  if (
-    typeof instruction.payload_hex !== "string" ||
-    !/^(?:[0-9a-f]{2})+$/u.test(instruction.payload_hex)
-  ) {
-    throw new TypeError(
-      "validation-fee proposal draft instruction payload must be non-empty lowercase hexadecimal bytes.",
-    );
-  }
-  return instruction as unknown as ValidationFeePolicyInstructionDraft;
 }
 
-/** Verify the locally decoded instruction against every reviewed field. */
+export function assertValidationFeePayoutLifecycleDraftResponse(
+  value: unknown,
+  request: ValidationFeePayoutLifecycleDraftRequest,
+  expectedProposalId: string,
+): ValidationFeePayoutLifecycleInstructionDraft {
+  const expected = {
+    kind: "ValidationFeePayoutLifecycle",
+    payload: {
+      proposal_operator: request.proposal_operator,
+      payout_binding: request.proposal.payload.payout_binding,
+    },
+  };
+  const response = draftResponse(
+    value,
+    request.proposal_operator,
+    expectedProposalId,
+    expected,
+  );
+  return exactInstructionDraft(
+    (response.tx_instructions as unknown[])[0],
+    VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID,
+    "validation-fee payout lifecycle draft instruction",
+  );
+}
+
 export function assertValidationFeePolicyDecodedInstruction(
   value: unknown,
   request: ValidationFeePolicyDraftRequest,
@@ -970,90 +831,10 @@ export function assertValidationFeePolicyDecodedInstruction(
         policy: request.proposal.payload.policy,
         payout_lifecycle_proposal_id:
           request.proposal.payload.payout_lifecycle_proposal_id,
-        referendum_window: request.referendum_window,
-        mode: "Plain",
-        plain_electorate_rules: request.plain_electorate_rules,
       },
     },
-    "decoded validation-fee proposal instruction",
+    "decoded validation-fee policy instruction",
   );
-}
-
-export function assertValidationFeePayoutLifecycleDraftResponse(
-  value: unknown,
-  request: ValidationFeePayoutLifecycleDraftRequest,
-  expectedProposalId: string,
-): ValidationFeePayoutLifecycleInstructionDraft {
-  const response = record(
-    value,
-    "validation-fee payout lifecycle draft response",
-  );
-  exactKeys(
-    response,
-    ["proposal_id", "proposal_kind", "tx_instructions", "version"],
-    "validation-fee payout lifecycle draft response",
-  );
-  if (response.version !== 1) {
-    throw new TypeError(
-      "validation-fee payout lifecycle draft response.version must be 1.",
-    );
-  }
-  const proposalId = lowerHex32(
-    response.proposal_id,
-    "validation-fee payout lifecycle draft response.proposal_id",
-  );
-  const expected = lowerHex32(
-    expectedProposalId,
-    "expected native validation-fee payout-lifecycle proposal id",
-  );
-  if (proposalId !== expected) {
-    throw new TypeError(
-      "validation-fee payout lifecycle draft response.proposal_id differs from the native proposal fingerprint.",
-    );
-  }
-  assertExactJsonValue(
-    response.proposal_kind,
-    {
-      kind: "ValidationFeePayoutLifecycle",
-      payload: validationFeePayoutLifecycleResponsePayload(request),
-    },
-    "validation-fee payout lifecycle draft response.proposal_kind",
-  );
-  if (
-    !Array.isArray(response.tx_instructions) ||
-    response.tx_instructions.length !== 1
-  ) {
-    throw new TypeError(
-      "validation-fee payout lifecycle draft response must contain exactly one instruction.",
-    );
-  }
-  const instruction = record(
-    response.tx_instructions[0],
-    "validation-fee payout lifecycle draft instruction",
-  );
-  exactKeys(
-    instruction,
-    ["payload_hex", "wire_id"],
-    "validation-fee payout lifecycle draft instruction",
-  );
-  if (instruction.wire_id !== VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID) {
-    throw new TypeError(
-      `validation-fee payout lifecycle draft instruction must use ${VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID}.`,
-    );
-  }
-  if (
-    typeof instruction.payload_hex !== "string" ||
-    !/^(?:[0-9a-f]{2})+$/u.test(instruction.payload_hex)
-  ) {
-    throw new TypeError(
-      "validation-fee payout lifecycle draft instruction payload must be non-empty lowercase hexadecimal bytes.",
-    );
-  }
-  return {
-    wire_id: VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID,
-    payload_hex: instruction.payload_hex as string,
-    proposalId: expected,
-  };
 }
 
 export function assertValidationFeePayoutLifecycleDecodedInstruction(
@@ -1065,11 +846,8 @@ export function assertValidationFeePayoutLifecycleDecodedInstruction(
     {
       ProposeValidationFeePayoutLifecycle: {
         payout_binding: request.proposal.payload.payout_binding,
-        referendum_window: request.referendum_window,
-        mode: "Plain",
-        plain_electorate_rules: request.plain_electorate_rules,
       },
     },
-    "decoded validation-fee payout lifecycle proposal instruction",
+    "decoded validation-fee payout lifecycle instruction",
   );
 }

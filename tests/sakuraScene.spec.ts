@@ -5,7 +5,12 @@ import { mount, type VueWrapper } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SakuraScene from "@/components/SakuraScene.vue";
-import { useThemeStore } from "@/stores/theme";
+import {
+  THEME_SCHEMA,
+  THEME_STORAGE_KEY,
+  THEME_VERSION,
+  useThemeStore,
+} from "@/stores/theme";
 
 type MotionListener = (event: MediaQueryListEvent) => void;
 
@@ -144,7 +149,7 @@ describe("SakuraScene", () => {
 
   afterEach(() => {
     wrappers.splice(0).forEach((wrapper) => wrapper.unmount());
-    localStorage.removeItem("iroha-demo:theme");
+    localStorage.removeItem(THEME_STORAGE_KEY);
     document.documentElement.style.removeProperty("--parallax-x");
     document.documentElement.style.removeProperty("--parallax-y");
     vi.restoreAllMocks();
@@ -226,7 +231,14 @@ describe("SakuraScene", () => {
     ["dark", "rgba(252, 181, 212, 0.9)"],
     ["light", "rgba(247, 166, 198, 0.92)"],
   ] as const)("preserves the %s-theme sakura color", (theme, color) => {
-    localStorage.setItem("iroha-demo:theme", theme);
+    localStorage.setItem(
+      THEME_STORAGE_KEY,
+      JSON.stringify({
+        schema: THEME_SCHEMA,
+        version: THEME_VERSION,
+        theme,
+      }),
+    );
     installMotionPreference(true);
 
     mountScene();

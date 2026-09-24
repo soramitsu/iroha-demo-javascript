@@ -1,5 +1,10 @@
+// @vitest-environment node
+
 import { describe, expect, it, vi } from "vitest";
-import { createConnectSessionPreview } from "@iroha/iroha-js";
+import {
+  createConnectSessionPreview,
+  NetworkId,
+} from "@iroha/iroha-js/connect-browser";
 import {
   bootstrapPortableConnectPreviewSession,
   createPortableConnectSessionPreview,
@@ -8,6 +13,10 @@ import {
 } from "../electron/connectPreview";
 
 describe("connectPreview", () => {
+  const networkId = NetworkId.fromBytes(
+    Buffer.from(`${"11".repeat(31)}13`, "hex"),
+  );
+
   it("matches the SDK preview session id and URIs for fixed inputs", () => {
     const appKeyPair = {
       publicKey: Buffer.alloc(32, 0x11),
@@ -15,8 +24,8 @@ describe("connectPreview", () => {
     };
     const nonce = Buffer.alloc(16, 0x33);
     const options = {
-      chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
-      node: "taira.sora.org",
+      networkId,
+      node: "https://taira.sora.org",
       nonce,
       appKeyPair,
     };
@@ -24,8 +33,8 @@ describe("connectPreview", () => {
     const portable = createPortableConnectSessionPreview(options);
     const sdk = createConnectSessionPreview(options);
 
-    expect(portable.sidBytes.toString("hex")).toBe(
-      sdk.sidBytes.toString("hex"),
+    expect(Buffer.from(portable.sidBytes).toString("hex")).toBe(
+      Buffer.from(sdk.sidBytes).toString("hex"),
     );
     expect(portable.sidBase64Url).toBe(sdk.sidBase64Url);
     expect(portable.walletUri).toBe(sdk.walletUri);
@@ -36,6 +45,8 @@ describe("connectPreview", () => {
     const createConnectSession = vi.fn().mockResolvedValue({
       token_wallet: "wallet-token",
       token_app: "app-token",
+      token_management: "management-token",
+      token_relay: "relay-token",
       wallet_uri: "iroha://connect?...",
       app_uri: "iroha://connect/app?...",
     });
@@ -43,8 +54,8 @@ describe("connectPreview", () => {
     const result = await bootstrapPortableConnectPreviewSession(
       { createConnectSession } as never,
       {
-        chainId: "alpha-net",
-        node: "taira.sora.org",
+        networkId,
+        node: "https://taira.sora.org",
         nonce: Buffer.alloc(16, 0x03),
         appKeyPair: {
           publicKey: Buffer.alloc(32, 0x01),
@@ -55,11 +66,16 @@ describe("connectPreview", () => {
 
     expect(createConnectSession).toHaveBeenCalledWith({
       sid: result.preview.sidBase64Url,
-      node: "taira.sora.org",
+      networkId,
+      appPublicKey: Uint8Array.from(Buffer.alloc(32, 0x01)),
+      nonce: Uint8Array.from(Buffer.alloc(16, 0x03)),
+      node: "https://taira.sora.org",
     });
     expect(result.tokens).toEqual({
       wallet: "wallet-token",
       app: "app-token",
+      management: "management-token",
+      relay: "relay-token",
     });
   });
 
@@ -67,12 +83,14 @@ describe("connectPreview", () => {
     const createConnectSession = vi.fn().mockResolvedValue({
       token_wallet: "wallet-token",
       token_app: "app-token",
+      token_management: "management-token",
+      token_relay: "relay-token",
     });
 
     const result = await bootstrapPortableConnectPreviewSession(
       { createConnectSession } as never,
       {
-        chainId: "alpha-net",
+        networkId,
         nonce: Buffer.alloc(16, 0x04),
         appKeyPair: {
           publicKey: Buffer.alloc(32, 0x05),
@@ -83,13 +101,24 @@ describe("connectPreview", () => {
 
     expect(createConnectSession).toHaveBeenCalledWith({
       sid: result.preview.sidBase64Url,
+      networkId,
+      appPublicKey: Uint8Array.from(Buffer.alloc(32, 0x05)),
+      nonce: Uint8Array.from(Buffer.alloc(16, 0x04)),
     });
+  });
+
+  it("rejects a human-facing chain id in place of the exact NetworkId", () => {
+    expect(() =>
+      createPortableConnectSessionPreview({
+        networkId: "fc56984b-2be7-431d-840e-21514d1883f0",
+      } as never),
+    ).toThrow("networkId must be a NetworkId");
   });
 
   it("rejects invalid nonce lengths", () => {
     expect(() =>
       createPortableConnectSessionPreview({
-        chainId: "alpha-net",
+        networkId,
         nonce: Buffer.alloc(15, 0x01),
         appKeyPair: {
           publicKey: Buffer.alloc(32, 0x07),

@@ -15,7 +15,7 @@ import {
   getSccpNileTestTronSigner,
   signSccpNileTestTronTransaction,
 } from "@/services/iroha";
-import type { SccpNileTestTronSignerStatus } from "@/types/iroha";
+import type { SccpNileTestTronSignerStatus } from "@/types/sccpDormant";
 import { parseJsonWithoutDuplicateObjectKeys } from "@/utils/json";
 import { snapshotSccpJsonDataValue } from "@/utils/sccpDataSnapshot";
 

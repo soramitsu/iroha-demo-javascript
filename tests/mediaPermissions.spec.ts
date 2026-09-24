@@ -15,6 +15,11 @@ type TestMediaAccessStatus =
   | "restricted"
   | "unknown";
 
+const liveWebContents = (url = "http://localhost:5173/#/kaigi") => ({
+  getURL: () => url,
+  isDestroyed: () => false,
+});
+
 describe("Electron media permissions", () => {
   it("grants camera and microphone to the app renderer only", () => {
     expect(
@@ -47,11 +52,12 @@ describe("Electron media permissions", () => {
     expect(
       shouldGrantMediaPermission({
         permission: "media",
-        rendererUrl: "iroha-app://renderer",
+        rendererUrl: "iroha-app://renderer/index.html",
         details: {
           isMainFrame: true,
           mediaType: "audio",
-          securityOrigin: "iroha-app://renderer/kaigi",
+          securityOrigin: "iroha-app://renderer",
+          requestingUrl: "iroha-app://renderer/index.html#/kaigi",
         },
       }),
     ).toBe(true);
@@ -64,11 +70,12 @@ describe("Electron media permissions", () => {
       expect(
         shouldGrantMediaPermission({
           permission: "media",
-          rendererUrl: "iroha-app://renderer",
+          rendererUrl: "iroha-app://renderer/index.html",
           details: {
             isMainFrame: true,
             mediaType: "audio",
             securityOrigin,
+            requestingUrl: "iroha-app://renderer/index.html#/kaigi",
           },
         }),
       ).toBe(false);
@@ -92,10 +99,14 @@ describe("Electron media permissions", () => {
     expect(
       shouldGrantDisplayCaptureRequest(
         {
-          frame: { url: "iroha-app://renderer/#/wallet" },
+          frame: { url: "iroha-app://renderer/index.html#/wallet" },
           securityOrigin: "https://attacker.invalid",
+          videoRequested: true,
+          audioRequested: false,
+          userGesture: true,
         },
         "iroha-app://renderer/index.html",
+        null,
       ),
     ).toBe(false);
   });
@@ -157,14 +168,20 @@ describe("Electron media permissions", () => {
   });
 
   it("checks display capture requests against the trusted app URL", () => {
+    const trustedFrame = {
+      url: "http://localhost:5173/#/wallet",
+    };
     expect(
       shouldGrantDisplayCaptureRequest(
         {
-          frame: {
-            url: "http://localhost:5173/#/wallet",
-          },
+          frame: trustedFrame,
+          securityOrigin: "http://localhost:5173",
+          videoRequested: true,
+          audioRequested: false,
+          userGesture: true,
         },
         "http://localhost:5173",
+        trustedFrame,
       ),
     ).toBe(true);
 
@@ -174,8 +191,13 @@ describe("Electron media permissions", () => {
           frame: {
             url: "https://example.invalid",
           },
+          securityOrigin: "https://example.invalid",
+          videoRequested: true,
+          audioRequested: false,
+          userGesture: true,
         },
         "http://localhost:5173",
+        trustedFrame,
       ),
     ).toBe(false);
   });
@@ -183,19 +205,23 @@ describe("Electron media permissions", () => {
   it("registers matching request and check handlers", async () => {
     const setPermissionRequestHandler = vi.fn();
     const setPermissionCheckHandler = vi.fn();
+    const owner = liveWebContents();
 
     registerMediaPermissionHandlers(
       {
         setPermissionRequestHandler,
         setPermissionCheckHandler,
       },
-      () => "http://localhost:5173",
+      {
+        getRendererUrl: () => "http://localhost:5173",
+        getTrustedWebContents: () => owner,
+      },
     );
 
     const requestHandler = setPermissionRequestHandler.mock.calls[0]?.[0];
     const checkHandler = setPermissionCheckHandler.mock.calls[0]?.[0];
     const callback = vi.fn();
-    requestHandler(null, "media", callback, {
+    requestHandler(owner, "media", callback, {
       isMainFrame: true,
       mediaTypes: ["video"],
       requestingUrl: "http://localhost:5173/#/kaigi",
@@ -203,11 +229,112 @@ describe("Electron media permissions", () => {
 
     await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(true));
     expect(
-      checkHandler(null, "media", "http://localhost:5173", {
+      checkHandler(owner, "media", "http://localhost:5173", {
         isMainFrame: true,
         mediaType: "video",
+        requestingUrl: "http://localhost:5173/#/kaigi",
       }),
     ).toBe(true);
+  });
+
+  it("denies absent or ambiguous media request details", () => {
+    const base = {
+      permission: "media",
+      rendererUrl: "http://localhost:5173",
+    } as const;
+    expect(
+      shouldGrantMediaPermission({
+        ...base,
+        details: {
+          isMainFrame: true,
+          requestingUrl: "http://localhost:5173/#/kaigi",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      shouldGrantMediaPermission({
+        ...base,
+        details: {
+          isMainFrame: true,
+          mediaTypes: ["video", "video"],
+          requestingUrl: "http://localhost:5173/#/kaigi",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      shouldGrantMediaPermission({
+        ...base,
+        details: {
+          isMainFrame: false,
+          mediaTypes: ["video"],
+          requestingUrl: "http://localhost:5173/#/kaigi",
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("binds permission handlers to the active trusted WebContents", async () => {
+    const setPermissionRequestHandler = vi.fn();
+    const setPermissionCheckHandler = vi.fn();
+    const owner = liveWebContents();
+    const foreignOwner = liveWebContents();
+
+    registerMediaPermissionHandlers(
+      { setPermissionRequestHandler, setPermissionCheckHandler },
+      {
+        getRendererUrl: () => "http://localhost:5173",
+        getTrustedWebContents: () => owner,
+      },
+    );
+
+    const requestHandler = setPermissionRequestHandler.mock.calls[0]?.[0];
+    const checkHandler = setPermissionCheckHandler.mock.calls[0]?.[0];
+    const details = {
+      isMainFrame: true,
+      mediaTypes: ["video"],
+      requestingUrl: "http://localhost:5173/#/kaigi",
+    };
+    const callback = vi.fn();
+    requestHandler(foreignOwner, "media", callback, details);
+    expect(callback).toHaveBeenCalledWith(false);
+    expect(
+      checkHandler(foreignOwner, "media", "http://localhost:5173", {
+        ...details,
+        mediaType: "video",
+        mediaTypes: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it("rechecks WebContents ownership after an asynchronous system prompt", async () => {
+    const setPermissionRequestHandler = vi.fn();
+    const setPermissionCheckHandler = vi.fn();
+    const owner = liveWebContents();
+    let activeOwner = owner;
+    let finishPrompt: ((value: boolean) => void) | undefined;
+
+    registerMediaPermissionHandlers(
+      { setPermissionRequestHandler, setPermissionCheckHandler },
+      {
+        getRendererUrl: () => "http://localhost:5173",
+        getTrustedWebContents: () => activeOwner,
+        requestSystemMediaAccess: () =>
+          new Promise<boolean>((resolve) => {
+            finishPrompt = resolve;
+          }),
+      },
+    );
+
+    const callback = vi.fn();
+    setPermissionRequestHandler.mock.calls[0]?.[0](owner, "media", callback, {
+      isMainFrame: true,
+      mediaTypes: ["video"],
+      requestingUrl: "http://localhost:5173/#/kaigi",
+    });
+    await vi.waitFor(() => expect(finishPrompt).toBeTypeOf("function"));
+    activeOwner = liveWebContents();
+    finishPrompt?.(true);
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(false));
   });
 
   it("maps renderer media details to macOS media access kinds", () => {
@@ -291,19 +418,23 @@ describe("Electron media permissions", () => {
     const setPermissionRequestHandler = vi.fn();
     const setPermissionCheckHandler = vi.fn();
     const requestSystemMediaAccess = vi.fn(async () => true);
+    const owner = liveWebContents();
 
     registerMediaPermissionHandlers(
       {
         setPermissionRequestHandler,
         setPermissionCheckHandler,
       },
-      () => "http://localhost:5173",
-      requestSystemMediaAccess,
+      {
+        getRendererUrl: () => "http://localhost:5173",
+        getTrustedWebContents: () => owner,
+        requestSystemMediaAccess,
+      },
     );
 
     const requestHandler = setPermissionRequestHandler.mock.calls[0]?.[0];
     const callback = vi.fn();
-    requestHandler(null, "media", callback, {
+    requestHandler(owner, "media", callback, {
       isMainFrame: true,
       mediaTypes: ["video"],
       requestingUrl: "http://localhost:5173/#/kaigi",
@@ -318,30 +449,36 @@ describe("Electron media permissions", () => {
     const requestSystemMediaAccess = vi.fn(async () => true);
     let mediaAccessStatus: TestMediaAccessStatus = "not-determined";
     const getSystemMediaAccessStatus = vi.fn(() => mediaAccessStatus);
+    const owner = liveWebContents();
 
     registerMediaPermissionHandlers(
       {
         setPermissionRequestHandler,
         setPermissionCheckHandler,
       },
-      () => "http://localhost:5173",
-      requestSystemMediaAccess,
-      getSystemMediaAccessStatus,
+      {
+        getRendererUrl: () => "http://localhost:5173",
+        getTrustedWebContents: () => owner,
+        requestSystemMediaAccess,
+        getSystemMediaAccessStatus,
+      },
     );
 
     const checkHandler = setPermissionCheckHandler.mock.calls[0]?.[0];
     expect(
-      checkHandler(null, "media", "http://localhost:5173", {
+      checkHandler(owner, "media", "http://localhost:5173", {
         isMainFrame: true,
         mediaType: "video",
+        requestingUrl: "http://localhost:5173/#/kaigi",
       }),
     ).toBe(false);
 
     mediaAccessStatus = "granted";
     expect(
-      checkHandler(null, "media", "http://localhost:5173", {
+      checkHandler(owner, "media", "http://localhost:5173", {
         isMainFrame: true,
         mediaType: "video",
+        requestingUrl: "http://localhost:5173/#/kaigi",
       }),
     ).toBe(true);
   });
@@ -350,19 +487,23 @@ describe("Electron media permissions", () => {
     const setPermissionRequestHandler = vi.fn();
     const setPermissionCheckHandler = vi.fn();
     const requestSystemMediaAccess = vi.fn(async () => false);
+    const owner = liveWebContents();
 
     registerMediaPermissionHandlers(
       {
         setPermissionRequestHandler,
         setPermissionCheckHandler,
       },
-      () => "http://localhost:5173",
-      requestSystemMediaAccess,
+      {
+        getRendererUrl: () => "http://localhost:5173",
+        getTrustedWebContents: () => owner,
+        requestSystemMediaAccess,
+      },
     );
 
     const requestHandler = setPermissionRequestHandler.mock.calls[0]?.[0];
     const callback = vi.fn();
-    requestHandler(null, "media", callback, {
+    requestHandler(owner, "media", callback, {
       isMainFrame: true,
       mediaTypes: ["video"],
       requestingUrl: "http://localhost:5173/#/kaigi",
@@ -375,11 +516,17 @@ describe("Electron media permissions", () => {
     const setDisplayMediaRequestHandler = vi.fn();
     const screenSource = { id: "screen:1:0", name: "Entire Screen" };
     const getSources = vi.fn(async () => [screenSource]);
+    const trustedFrame = {
+      url: "http://localhost:5173/#/wallet",
+    };
 
     registerDisplayMediaRequestHandler(
       { setDisplayMediaRequestHandler },
-      getSources,
-      () => "http://localhost:5173",
+      {
+        getSources,
+        getRendererUrl: () => "http://localhost:5173",
+        getTrustedMainFrame: () => trustedFrame,
+      },
     );
 
     const handler = setDisplayMediaRequestHandler.mock.calls[0]?.[0];
@@ -387,9 +534,11 @@ describe("Electron media permissions", () => {
     const callback = vi.fn();
     await handler(
       {
-        frame: {
-          url: "http://localhost:5173/#/wallet",
-        },
+        frame: trustedFrame,
+        securityOrigin: "http://localhost:5173",
+        videoRequested: true,
+        audioRequested: false,
+        userGesture: true,
       },
       callback,
     );
@@ -403,9 +552,49 @@ describe("Electron media permissions", () => {
         frame: {
           url: "https://example.invalid",
         },
+        securityOrigin: "https://example.invalid",
+        videoRequested: true,
+        audioRequested: false,
+        userGesture: true,
       },
       deniedCallback,
     );
     expect(deniedCallback).toHaveBeenCalledWith({});
+  });
+
+  it("rechecks the active main frame after display-source discovery", async () => {
+    const setDisplayMediaRequestHandler = vi.fn();
+    const trustedFrame = { url: "http://localhost:5173/#/wallet" };
+    let activeFrame: object = trustedFrame;
+    let finishSourceLookup:
+      | ((sources: Array<{ id: string; name: string }>) => void)
+      | undefined;
+    registerDisplayMediaRequestHandler(
+      { setDisplayMediaRequestHandler },
+      {
+        getSources: () =>
+          new Promise((resolve) => {
+            finishSourceLookup = resolve;
+          }),
+        getRendererUrl: () => "http://localhost:5173",
+        getTrustedMainFrame: () => activeFrame,
+      },
+    );
+
+    const callback = vi.fn();
+    setDisplayMediaRequestHandler.mock.calls[0]?.[0](
+      {
+        frame: trustedFrame,
+        securityOrigin: "http://localhost:5173",
+        videoRequested: true,
+        audioRequested: false,
+        userGesture: true,
+      },
+      callback,
+    );
+    await vi.waitFor(() => expect(finishSourceLookup).toBeTypeOf("function"));
+    activeFrame = { url: "http://localhost:5173/#/wallet" };
+    finishSourceLookup?.([{ id: "screen:1:0", name: "Entire Screen" }]);
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith({}));
   });
 });

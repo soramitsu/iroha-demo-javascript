@@ -5,6 +5,8 @@ import { extname, isAbsolute, relative, resolve, sep } from "node:path";
 export const RENDERER_PROTOCOL_SCHEME = "iroha-app";
 export const RENDERER_PROTOCOL_HOST = "renderer";
 export const RENDERER_PROTOCOL_ORIGIN = `${RENDERER_PROTOCOL_SCHEME}://${RENDERER_PROTOCOL_HOST}`;
+export const RENDERER_ASSET_MAX_BYTES = 16 * 1024 * 1024;
+export const RENDERER_URL_MAX_LENGTH = 8 * 1024;
 export const RENDERER_PROTOCOL_PRIVILEGES = Object.freeze({
   standard: true,
   secure: true,
@@ -12,6 +14,82 @@ export const RENDERER_PROTOCOL_PRIVILEGES = Object.freeze({
   stream: true,
   codeCache: true,
 });
+
+export const RENDERER_CONTENT_SECURITY_POLICY = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'none'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "media-src 'self' blob:",
+  "connect-src 'self' data: wss: ws://localhost:* ws://127.0.0.1:* ws://[::1]:*",
+  "worker-src 'self' blob:",
+].join("; ");
+
+export const RENDERER_WORKER_CONTENT_SECURITY_POLICY = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "script-src 'self'",
+  "connect-src 'self'",
+  "worker-src 'none'",
+].join("; ");
+
+const rendererSecurityHeaders = (contentSecurityPolicy: string) =>
+  Object.freeze({
+    "Content-Security-Policy": contentSecurityPolicy,
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Permissions-Policy":
+      "camera=(self), microphone=(self), display-capture=(self), geolocation=(), payment=(), usb=()",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+  });
+
+export const RENDERER_SECURITY_HEADERS = rendererSecurityHeaders(
+  RENDERER_CONTENT_SECURITY_POLICY,
+);
+
+export const RENDERER_WORKER_SECURITY_HEADERS = rendererSecurityHeaders(
+  RENDERER_WORKER_CONTENT_SECURITY_POLICY,
+);
+
+export const rendererSecurityHeadersForDestination = (destination: string) =>
+  destination === "worker" || destination === "sharedworker"
+    ? RENDERER_WORKER_SECURITY_HEADERS
+    : RENDERER_SECURITY_HEADERS;
+
+const isBoundedExactUrlText = (value: string): boolean =>
+  value.length > 0 &&
+  value.length <= RENDERER_URL_MAX_LENGTH &&
+  value.trim() === value &&
+  !Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f;
+  });
+
+export const isSafeExternalNavigationUrl = (candidateUrl: string): boolean => {
+  if (!isBoundedExactUrlText(candidateUrl)) {
+    return false;
+  }
+  let candidate: URL;
+  try {
+    candidate = new URL(candidateUrl);
+  } catch {
+    return false;
+  }
+  return (
+    candidate.protocol === "https:" &&
+    !candidate.username &&
+    !candidate.password &&
+    Boolean(candidate.hostname)
+  );
+};
 
 const RENDERER_ASSET_CONTENT_TYPES = new Map([
   [".css", "text/css; charset=utf-8"],
@@ -93,6 +171,9 @@ export const resolveRendererProtocolAssetPath = ({
   requestUrl: string;
   rendererRoot: string;
 }): string => {
+  if (!isBoundedExactUrlText(requestUrl)) {
+    throw new Error("Renderer asset URL is invalid.");
+  }
   let parsed: URL;
   try {
     parsed = new URL(requestUrl);
@@ -139,7 +220,7 @@ export const readRendererProtocolAsset = async ({
     requestUrl,
     rendererRoot,
   });
-  const lexicalMetadata = await lstat(lexicalTarget);
+  const lexicalMetadata = await lstat(lexicalTarget, { bigint: true });
   if (lexicalMetadata.isSymbolicLink()) {
     throw new Error(
       "Renderer asset URL must not resolve through a target symlink.",
@@ -169,7 +250,47 @@ export const readRendererProtocolAsset = async ({
     if (!metadataBefore.isFile()) {
       throw new Error("Renderer asset URL must resolve to a regular file.");
     }
-    const bytes = await handle.readFile();
+    if (metadataBefore.size > BigInt(RENDERER_ASSET_MAX_BYTES)) {
+      throw new Error(
+        `Renderer asset exceeds ${RENDERER_ASSET_MAX_BYTES} bytes.`,
+      );
+    }
+    if (
+      lexicalMetadata.dev !== metadataBefore.dev ||
+      lexicalMetadata.ino !== metadataBefore.ino ||
+      lexicalMetadata.mode !== metadataBefore.mode ||
+      lexicalMetadata.nlink !== metadataBefore.nlink ||
+      lexicalMetadata.size !== metadataBefore.size ||
+      lexicalMetadata.mtimeNs !== metadataBefore.mtimeNs ||
+      lexicalMetadata.ctimeNs !== metadataBefore.ctimeNs
+    ) {
+      throw new Error("Renderer asset changed before it could be opened.");
+    }
+    const expectedSize = Number(metadataBefore.size);
+    const bytes = Buffer.alloc(expectedSize);
+    let offset = 0;
+    while (offset < expectedSize) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        expectedSize - offset,
+        offset,
+      );
+      if (bytesRead === 0) {
+        throw new Error("Renderer asset changed while it was being read.");
+      }
+      offset += bytesRead;
+    }
+    const growthProbe = Buffer.alloc(1);
+    const { bytesRead: growthBytesRead } = await handle.read(
+      growthProbe,
+      0,
+      1,
+      expectedSize,
+    );
+    if (growthBytesRead !== 0) {
+      throw new Error("Renderer asset changed while it was being read.");
+    }
     const metadataAfter = await handle.stat({ bigint: true });
     if (
       metadataBefore.dev !== metadataAfter.dev ||
@@ -179,7 +300,7 @@ export const readRendererProtocolAsset = async ({
       metadataBefore.size !== metadataAfter.size ||
       metadataBefore.mtimeNs !== metadataAfter.mtimeNs ||
       metadataBefore.ctimeNs !== metadataAfter.ctimeNs ||
-      BigInt(bytes.byteLength) !== metadataAfter.size
+      BigInt(offset) !== metadataAfter.size
     ) {
       throw new Error("Renderer asset changed while it was being read.");
     }
@@ -209,12 +330,15 @@ export const resolveRendererEntryUrl = ({
   isPackaged: boolean;
   environmentUrl?: string;
 }): string => {
-  if (isPackaged || !environmentUrl?.trim()) {
+  if (isPackaged || environmentUrl === undefined || environmentUrl === "") {
     return `${RENDERER_PROTOCOL_ORIGIN}/index.html`;
+  }
+  if (!isBoundedExactUrlText(environmentUrl)) {
+    throw new Error("Electron renderer development URL is invalid.");
   }
   let parsed: URL;
   try {
-    parsed = new URL(environmentUrl.trim());
+    parsed = new URL(environmentUrl);
   } catch {
     throw new Error("Electron renderer development URL is invalid.");
   }
@@ -229,4 +353,36 @@ export const resolveRendererEntryUrl = ({
     );
   }
   return parsed.toString();
+};
+
+export const isTrustedRendererNavigationUrl = (
+  candidateUrl: string,
+  trustedEntryUrl: string,
+): boolean => {
+  if (
+    !isBoundedExactUrlText(candidateUrl) ||
+    !isBoundedExactUrlText(trustedEntryUrl)
+  ) {
+    return false;
+  }
+  let candidate: URL;
+  let trusted: URL;
+  try {
+    candidate = new URL(candidateUrl);
+    trusted = new URL(trustedEntryUrl);
+  } catch {
+    return false;
+  }
+
+  return (
+    !candidate.username &&
+    !candidate.password &&
+    !trusted.username &&
+    !trusted.password &&
+    candidate.protocol === trusted.protocol &&
+    candidate.hostname.toLowerCase() === trusted.hostname.toLowerCase() &&
+    candidate.port === trusted.port &&
+    candidate.pathname === trusted.pathname &&
+    candidate.search === trusted.search
+  );
 };

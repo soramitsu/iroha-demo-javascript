@@ -1,21 +1,23 @@
+import { x25519 } from "@noble/curves/ed25519";
 import { defineStore } from "pinia";
-import type {
-  KaigiMeetingPrivacy,
-  KaigiPeerIdentityReveal,
-  KaigiSignalKeyPair,
-} from "@/types/iroha";
+import type { KaigiSignalKeyPair } from "@/types/iroha";
 import {
   buildEndpointIdentityScope,
   type EndpointIdentityScope,
   type EndpointIdentityScopeInput,
 } from "@/utils/endpointScope";
+import { normalizeAccountIdLiteralForNetwork } from "@/utils/accountId";
 import {
+  computeKaigiMeetingExpiryMs,
+  deriveKaigiMeetingCode,
   requireKaigiCallId,
   requireKaigiInviteSecretBase64Url,
 } from "@/utils/kaigiInvite";
 
 export const KAIGI_STORAGE_KEY = "iroha-demo:kaigi:host-sessions:v1";
-const OBSOLETE_KAIGI_STORAGE_KEYS = [
+const MAX_HOST_SESSIONS = 64;
+const RETIRED_KAIGI_STORAGE_KEYS = [
+  KAIGI_STORAGE_KEY,
   "iroha-demo:kaigi",
   "iroha-demo:kaigi:v2",
 ] as const;
@@ -32,8 +34,7 @@ export type KaigiHostSessionRecord = {
   expiresAtMs: number;
   title?: string;
   live: boolean;
-  privacyMode: KaigiMeetingPrivacy;
-  peerIdentityReveal: KaigiPeerIdentityReveal;
+  privacyMode: "transparent";
 };
 
 type KaigiStoreState = {
@@ -46,52 +47,228 @@ const defaultState = (): KaigiStoreState => ({
   hostSessions: [],
 });
 
-const trimString = (value: unknown): string => String(value ?? "").trim();
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
-const asRecord = (value: unknown): Record<string, unknown> | null =>
-  value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+const hasExactKeys = (
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): boolean => {
+  const keys = Object.keys(value);
+  const allowed = new Set([...required, ...optional]);
+  return (
+    required.every((key) => Object.prototype.hasOwnProperty.call(value, key)) &&
+    keys.every((key) => allowed.has(key))
+  );
+};
 
-const normalizeHostSession = (
-  value: Partial<KaigiHostSessionRecord> & Record<string, unknown>,
-): KaigiHostSessionRecord | null => {
-  const accountId = trimString(value.accountId);
-  const meetingCode = trimString(value.meetingCode);
-  const hostKaigiKeys = asRecord(value.hostKaigiKeys);
-  const endpointScopeRecord = asRecord(value.endpointScope);
-  const publicKeyBase64Url = trimString(hostKaigiKeys?.publicKeyBase64Url);
-  const privateKeyBase64Url = trimString(hostKaigiKeys?.privateKeyBase64Url);
-  const createdAtMs = Number(value.createdAtMs);
-  const scheduledStartMs = Number(value.scheduledStartMs);
-  const expiresAtMs = Number(value.expiresAtMs);
-  let endpointScope: EndpointIdentityScope;
-  let callId: string;
-  let inviteSecretBase64Url: string;
+const requireCanonicalText = (
+  value: unknown,
+  label: string,
+  maxLength: number,
+): string => {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    value.trim() !== value ||
+    value.normalize("NFC") !== value ||
+    value.length > maxLength ||
+    /[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(value)
+  ) {
+    throw new Error(`${label} must be canonical text.`);
+  }
+  return value;
+};
+
+const requireAccountId = (value: unknown, networkPrefix: number): string => {
+  const accountId = requireCanonicalText(value, "accountId", 1_024);
+  if (
+    normalizeAccountIdLiteralForNetwork(accountId, networkPrefix) !== accountId
+  ) {
+    throw new Error("accountId must be a canonical account literal.");
+  }
+  return accountId;
+};
+
+const requirePositiveSafeInteger = (value: unknown, label: string): number => {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive safe integer.`);
+  }
+  return value;
+};
+
+const bytesToBase64Url = (bytes: Uint8Array): string => {
+  let binary = "";
+  bytes.forEach((value) => {
+    binary += String.fromCharCode(value);
+  });
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/u, "");
+};
+
+const requireCanonicalKey = (value: unknown, label: string): Uint8Array => {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{43}$/u.test(value)) {
+    throw new Error(`${label} must encode exactly 32 bytes as base64url.`);
+  }
+  let bytes: Uint8Array;
   try {
-    endpointScope = buildEndpointIdentityScope({
-      toriiUrl: trimString(endpointScopeRecord?.origin),
-      observedChainId: trimString(endpointScopeRecord?.chainId),
-      observedNetworkPrefix: Number(endpointScopeRecord?.networkPrefix),
-    });
-    callId = requireKaigiCallId(value.callId);
-    inviteSecretBase64Url = requireKaigiInviteSecretBase64Url(
-      value.inviteSecretBase64Url,
-    );
+    const binary = atob(value.replace(/-/g, "+").replace(/_/g, "/") + "=");
+    bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
   } catch {
-    return null;
+    throw new Error(`${label} must encode exactly 32 bytes as base64url.`);
+  }
+  if (bytes.length !== 32 || bytesToBase64Url(bytes) !== value) {
+    throw new Error(`${label} must encode exactly 32 bytes as base64url.`);
+  }
+  return bytes;
+};
+
+const requireEndpointScope = (value: unknown): EndpointIdentityScope => {
+  if (
+    !isPlainRecord(value) ||
+    !hasExactKeys(value, [
+      "origin",
+      "chainId",
+      "networkPrefix",
+      "genesisHash",
+      "storageSegment",
+    ])
+  ) {
+    throw new Error("endpointScope is invalid.");
+  }
+  const origin = requireCanonicalText(
+    value.origin,
+    "endpointScope.origin",
+    2_048,
+  );
+  const chainId = requireCanonicalText(
+    value.chainId,
+    "endpointScope.chainId",
+    256,
+  );
+  const genesisHash = requireCanonicalText(
+    value.genesisHash,
+    "endpointScope.genesisHash",
+    64,
+  );
+  const storageSegment = requireCanonicalText(
+    value.storageSegment,
+    "endpointScope.storageSegment",
+    4_096,
+  );
+  if (typeof value.networkPrefix !== "number") {
+    throw new Error("endpointScope.networkPrefix is invalid.");
+  }
+  const canonical = buildEndpointIdentityScope({
+    toriiUrl: origin,
+    observedChainId: chainId,
+    observedNetworkPrefix: value.networkPrefix,
+    observedGenesisHash: genesisHash,
+  });
+  if (
+    canonical.origin !== origin ||
+    canonical.chainId !== chainId ||
+    canonical.networkPrefix !== value.networkPrefix ||
+    canonical.genesisHash !== genesisHash ||
+    canonical.storageSegment !== storageSegment
+  ) {
+    throw new Error("endpointScope is not canonical.");
+  }
+  return canonical;
+};
+
+const normalizeHostSession = (value: unknown): KaigiHostSessionRecord => {
+  if (
+    !isPlainRecord(value) ||
+    !hasExactKeys(
+      value,
+      [
+        "endpointScope",
+        "accountId",
+        "callId",
+        "meetingCode",
+        "inviteSecretBase64Url",
+        "hostKaigiKeys",
+        "createdAtMs",
+        "scheduledStartMs",
+        "expiresAtMs",
+        "live",
+        "privacyMode",
+      ],
+      ["title"],
+    )
+  ) {
+    throw new Error("Kaigi host session has missing or unknown fields.");
   }
   if (
-    !accountId ||
-    !meetingCode ||
-    !publicKeyBase64Url ||
-    !privateKeyBase64Url ||
-    !Number.isFinite(createdAtMs) ||
-    !Number.isFinite(scheduledStartMs) ||
-    !Number.isFinite(expiresAtMs)
+    !isPlainRecord(value.hostKaigiKeys) ||
+    !hasExactKeys(value.hostKaigiKeys, [
+      "publicKeyBase64Url",
+      "privateKeyBase64Url",
+    ])
   ) {
-    return null;
+    throw new Error("Kaigi host key pair is invalid.");
   }
+
+  const endpointScope = requireEndpointScope(value.endpointScope);
+  const accountId = requireAccountId(
+    value.accountId,
+    endpointScope.networkPrefix,
+  );
+  const callId = requireKaigiCallId(value.callId);
+  const meetingCode = requireCanonicalText(
+    value.meetingCode,
+    "meetingCode",
+    255,
+  );
+  if (deriveKaigiMeetingCode(callId) !== meetingCode) {
+    throw new Error("meetingCode must match callId.");
+  }
+  const inviteSecretBase64Url = requireKaigiInviteSecretBase64Url(
+    value.inviteSecretBase64Url,
+  );
+  const publicKeyBytes = requireCanonicalKey(
+    value.hostKaigiKeys.publicKeyBase64Url,
+    "hostKaigiKeys.publicKeyBase64Url",
+  );
+  const privateKeyBytes = requireCanonicalKey(
+    value.hostKaigiKeys.privateKeyBase64Url,
+    "hostKaigiKeys.privateKeyBase64Url",
+  );
+  if (
+    bytesToBase64Url(x25519.getPublicKey(privateKeyBytes)) !==
+    bytesToBase64Url(publicKeyBytes)
+  ) {
+    throw new Error("Kaigi host public and private keys do not match.");
+  }
+  const createdAtMs = requirePositiveSafeInteger(
+    value.createdAtMs,
+    "createdAtMs",
+  );
+  const scheduledStartMs = requirePositiveSafeInteger(
+    value.scheduledStartMs,
+    "scheduledStartMs",
+  );
+  const expiresAtMs = requirePositiveSafeInteger(
+    value.expiresAtMs,
+    "expiresAtMs",
+  );
+  if (
+    computeKaigiMeetingExpiryMs(scheduledStartMs) !== expiresAtMs ||
+    createdAtMs >= expiresAtMs
+  ) {
+    throw new Error("Kaigi host session timestamps are inconsistent.");
+  }
+  if (value.live !== true || value.privacyMode !== "transparent") {
+    throw new Error("Kaigi host session policy fields are invalid.");
+  }
+  const title = Object.prototype.hasOwnProperty.call(value, "title")
+    ? requireCanonicalText(value.title, "title", 256)
+    : undefined;
+
   return {
     endpointScope,
     accountId,
@@ -99,32 +276,15 @@ const normalizeHostSession = (
     meetingCode,
     inviteSecretBase64Url,
     hostKaigiKeys: {
-      publicKeyBase64Url,
-      privateKeyBase64Url,
+      publicKeyBase64Url: bytesToBase64Url(publicKeyBytes),
+      privateKeyBase64Url: bytesToBase64Url(privateKeyBytes),
     },
     createdAtMs,
     scheduledStartMs,
     expiresAtMs,
-    ...(trimString(value.title) ? { title: trimString(value.title) } : {}),
-    live: value.live !== false,
-    privacyMode:
-      String(value.privacyMode ?? "")
-        .trim()
-        .toLowerCase() === "transparent"
-        ? "transparent"
-        : "private",
-    peerIdentityReveal:
-      String(value.peerIdentityReveal ?? "")
-        .trim()
-        .toLowerCase() === "revealafterjoin" ||
-      String(value.peerIdentityReveal ?? "")
-        .trim()
-        .toLowerCase() === "reveal_after_join" ||
-      String(value.peerIdentityReveal ?? "")
-        .trim()
-        .toLowerCase() === "reveal-after-join"
-        ? "RevealAfterJoin"
-        : "Hidden",
+    ...(title ? { title } : {}),
+    live: true,
+    privacyMode: value.privacyMode,
   };
 };
 
@@ -135,47 +295,13 @@ export const useKaigiStore = defineStore("kaigi", {
       if (this.hydrated) {
         return;
       }
-      for (const obsoleteKey of OBSOLETE_KAIGI_STORAGE_KEYS) {
-        localStorage.removeItem(obsoleteKey);
-      }
-      const raw = localStorage.getItem(KAIGI_STORAGE_KEY);
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw) as Partial<KaigiStoreState>;
-          const hostSessions = Array.isArray(parsed.hostSessions)
-            ? parsed.hostSessions
-                .map((entry) =>
-                  entry && typeof entry === "object" && !Array.isArray(entry)
-                    ? normalizeHostSession(
-                        entry as Partial<KaigiHostSessionRecord> &
-                          Record<string, unknown>,
-                      )
-                    : null,
-                )
-                .filter((entry): entry is KaigiHostSessionRecord =>
-                  Boolean(entry),
-                )
-            : [];
-          this.$patch({
-            hydrated: true,
-            hostSessions,
-          });
-          return;
-        } catch (_error) {
-          localStorage.removeItem(KAIGI_STORAGE_KEY);
-        }
+      for (const retiredKey of RETIRED_KAIGI_STORAGE_KEYS) {
+        localStorage.removeItem(retiredKey);
       }
       this.hydrated = true;
     },
-    persist(snapshot?: KaigiStoreState) {
-      const payload = JSON.stringify(snapshot ?? this.$state);
-      localStorage.setItem(KAIGI_STORAGE_KEY, payload);
-    },
     saveHostSession(session: KaigiHostSessionRecord) {
       const normalized = normalizeHostSession(session);
-      if (!normalized) {
-        throw new Error("Kaigi host session is invalid.");
-      }
       const next = this.hostSessions.filter(
         (entry) =>
           !(
@@ -186,8 +312,7 @@ export const useKaigiStore = defineStore("kaigi", {
           ),
       );
       next.unshift(normalized);
-      this.hostSessions = next;
-      this.persist();
+      this.hostSessions = next.slice(0, MAX_HOST_SESSIONS);
     },
     removeHostSession(
       endpointIdentity: EndpointIdentityScopeInput,
@@ -195,21 +320,25 @@ export const useKaigiStore = defineStore("kaigi", {
       callId: string,
     ) {
       const scope = buildEndpointIdentityScope(endpointIdentity);
+      const canonicalAccountId = requireAccountId(
+        accountId,
+        scope.networkPrefix,
+      );
+      const canonicalCallId = requireKaigiCallId(callId);
       this.hostSessions = this.hostSessions.filter(
         (entry) =>
           !(
             entry.endpointScope.storageSegment === scope.storageSegment &&
-            entry.accountId === accountId &&
-            entry.callId === callId
+            entry.accountId === canonicalAccountId &&
+            entry.callId === canonicalCallId
           ),
       );
-      this.persist();
     },
     pruneExpired(nowMs = Date.now()) {
+      const timestamp = requirePositiveSafeInteger(nowMs, "nowMs");
       this.hostSessions = this.hostSessions.filter(
-        (entry) => entry.expiresAtMs > nowMs,
+        (entry) => entry.expiresAtMs > timestamp,
       );
-      this.persist();
     },
   },
   getters: {
@@ -220,15 +349,24 @@ export const useKaigiStore = defineStore("kaigi", {
         accountId: string,
         nowMs = Date.now(),
       ): KaigiHostSessionRecord | null => {
-        const scope = buildEndpointIdentityScope(endpointIdentity);
-        return (
-          state.hostSessions.find(
-            (entry) =>
-              entry.endpointScope.storageSegment === scope.storageSegment &&
-              entry.accountId === accountId &&
-              entry.expiresAtMs > nowMs,
-          ) ?? null
-        );
+        try {
+          const scope = buildEndpointIdentityScope(endpointIdentity);
+          const canonicalAccountId = requireAccountId(
+            accountId,
+            scope.networkPrefix,
+          );
+          const timestamp = requirePositiveSafeInteger(nowMs, "nowMs");
+          return (
+            state.hostSessions.find(
+              (entry) =>
+                entry.endpointScope.storageSegment === scope.storageSegment &&
+                entry.accountId === canonicalAccountId &&
+                entry.expiresAtMs > timestamp,
+            ) ?? null
+          );
+        } catch {
+          return null;
+        }
       },
   },
 });

@@ -27,6 +27,7 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const REQUIRED_NATIVE_BUILD_PROVENANCE_VERSION = 3;
 const REQUIRED_NATIVE_BUILD_EXECUTION_POLICY = "trusted-local-cargo-v1";
 const MAX_CHECKSUM_MANIFEST_BYTES = 1024 * 1024;
+const MAX_NATIVE_MODULE_BYTES = 256 * 1024 * 1024;
 const SNAPSHOT_DIRECTORY_PREFIX = "sora-iroha-js-native-v1-";
 const SNAPSHOT_DIRECTORY_PATTERN =
   /^sora-iroha-js-native-v1-([1-9][0-9]{0,9})-([A-Za-z0-9]{6})$/u;
@@ -60,7 +61,23 @@ interface MaterializedSnapshot {
   nativeSize: number;
 }
 
-const defaultReadBinaryFile: ReadBinaryFile = (path) => readFileSync(path);
+const defaultReadBinaryFile: ReadBinaryFile = (path) => {
+  const metadata = lstatSync(path);
+  const maximumBytes = path.endsWith(CHECKSUM_FILENAME)
+    ? MAX_CHECKSUM_MANIFEST_BYTES
+    : MAX_NATIVE_MODULE_BYTES;
+  if (
+    !metadata.isFile() ||
+    metadata.isSymbolicLink() ||
+    metadata.size <= 0 ||
+    metadata.size > maximumBytes
+  ) {
+    throw new Error(
+      "Packaged native provenance file is not a bounded regular file.",
+    );
+  }
+  return readFileSync(path);
+};
 const materializedSnapshotsByKey = new Map<string, MaterializedSnapshot>();
 const materializedSnapshotKeysByDirectory = new Map<string, string>();
 let snapshotExitCleanupRegistered = false;
@@ -574,7 +591,13 @@ const readVerifiedPackagedNativeBytes = (
     if (!manifestBytes.equals(canonicalManifestBytes)) return null;
 
     const nativeBytes = readBinaryFile(join(nativeDir, NATIVE_MODULE_FILENAME));
-    if (!Buffer.isBuffer(nativeBytes) || nativeBytes.length === 0) return null;
+    if (
+      !Buffer.isBuffer(nativeBytes) ||
+      nativeBytes.length === 0 ||
+      nativeBytes.length > MAX_NATIVE_MODULE_BYTES
+    ) {
+      return null;
+    }
 
     const nativeSha256 = sha256(nativeBytes);
     if (platformKey.startsWith("darwin-")) {

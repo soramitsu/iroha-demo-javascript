@@ -5,7 +5,6 @@
 .parliament-shell,
 .subscriptions-shell,
 .soracloud-shell,
-.sccp-shell,
 .vpn-shell {
   display: grid;
   gap: var(--space-4);
@@ -285,17 +284,6 @@
   gap: var(--space-3);
 }
 
-.shield-option {
-  min-height: 44px;
-  padding: 10px 12px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-surface-soft);
-}
-
 /* Subscriptions */
 
 .subscriptions-summary-card,
@@ -308,10 +296,7 @@
 .subscription-actions,
 .soracloud-command-actions,
 .soracloud-state-actions,
-.soracloud-form-actions,
-.sccp-command-actions,
-.sccp-form-actions,
-.sccp-route-strip {
+.soracloud-form-actions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -488,41 +473,6 @@
   margin: 0;
 }
 
-.soracloud-stepper {
-  margin-bottom: var(--space-4);
-  padding: 4px;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
-  border: 1px solid var(--color-border);
-  border-radius: 14px;
-  background: var(--color-surface-inset);
-  box-shadow: var(--shadow-inset);
-}
-
-.soracloud-stepper button {
-  min-width: 0;
-  color: var(--color-text-muted);
-  background: transparent;
-  box-shadow: none;
-}
-
-.soracloud-stepper button span {
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  border: 1px solid currentColor;
-  border-radius: 50%;
-  font-size: 0.7rem;
-}
-
-.soracloud-stepper button.active {
-  color: var(--color-accent);
-  background: var(--color-surface-raised);
-  box-shadow: var(--shadow-control);
-}
-
 .soracloud-form {
   grid-template-columns: minmax(0, 1fr);
 }
@@ -534,37 +484,16 @@
   gap: var(--space-4);
 }
 
-.soracloud-span-2 {
-  grid-column: 1 / -1;
-}
-
 .soracloud-form-actions {
   justify-content: flex-end;
 }
 
-.soracloud-launch-result {
-  padding: var(--space-3);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-  border: 1px solid
-    color-mix(in srgb, var(--color-success) 28%, var(--color-border));
-  border-radius: var(--radius-control);
-  background: var(--color-success-soft);
-}
-
-.soracloud-launch-fee {
-  color: var(--color-text-muted);
-  font-size: 0.78rem;
-}
-
-.soracloud-deployment-list {
+.soracloud-service-list {
   display: grid;
   gap: var(--space-2);
 }
 
-.soracloud-deployment-row {
+.soracloud-service-row {
   min-width: 0;
   padding: var(--space-3) var(--space-4);
   display: grid;
@@ -676,238 +605,6 @@
   box-shadow: var(--shadow-inset);
 }
 
-/* SCCP */
-
-.sccp-command-header,
-.sccp-transfer-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.sccp-command-actions {
-  justify-content: flex-end;
-}
-
-.sccp-route-toggle {
-  grid-template-columns: repeat(4, minmax(68px, 1fr));
-  grid-auto-flow: row;
-}
-
-.sccp-status-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0;
-  overflow: hidden;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-surface-inset);
-  box-shadow: var(--shadow-inset);
-}
-
-.sccp-status-grid .kv {
-  padding: var(--space-3);
-  border-bottom: 1px solid var(--color-border);
-  border-inline-end: 1px solid var(--color-border);
-}
-
-.sccp-route-strip {
-  margin-top: var(--space-3);
-}
-
-.sccp-reasons,
-.sccp-readiness-alert {
-  margin-top: var(--space-3);
-  padding: 12px 14px;
-  display: grid;
-  gap: 5px;
-  border: 1px solid
-    color-mix(in srgb, var(--color-warning) 30%, var(--color-border));
-  border-radius: var(--radius-control);
-  background: var(--color-warning-soft);
-  box-shadow: var(--shadow-inset);
-}
-
-.sccp-reasons p,
-.sccp-readiness-alert p {
-  margin: 0;
-}
-
-.sccp-transfer-header {
-  margin-bottom: var(--space-4);
-}
-
-.sccp-direction-tabs {
-  margin-bottom: var(--space-4);
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-auto-flow: row;
-}
-
-.sccp-form {
-  align-items: start;
-}
-
-.sccp-field-hint,
-.sccp-generated-id small {
-  color: var(--color-text-muted);
-  font-size: 0.74rem;
-}
-
-.sccp-resume-field,
-.sccp-generated-id,
-.sccp-form-actions {
-  grid-column: 1 / -1;
-}
-
-.sccp-generated-id {
-  min-width: 0;
-  padding: var(--space-3);
-  display: grid;
-  gap: 5px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-surface-inset);
-  box-shadow: var(--shadow-inset);
-}
-
-.sccp-generated-id code {
-  max-width: 100%;
-  overflow-x: auto;
-  color: var(--color-text-strong);
-}
-
-.sccp-form-actions {
-  justify-content: flex-end;
-}
-
-.sccp-lower-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
-  gap: var(--space-4);
-  align-items: start;
-}
-
-.sccp-progress-list,
-.sccp-timing-list,
-.sccp-activity-list,
-.sccp-link-list {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.sccp-progress-list,
-.sccp-timing-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.sccp-progress-list li,
-.sccp-timing-list li,
-.sccp-activity-item {
-  position: relative;
-  min-width: 0;
-  padding: var(--space-3);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  color: var(--color-text-muted);
-  background: var(--color-surface-inset);
-  box-shadow: var(--shadow-inset);
-}
-
-.sccp-progress-list li::before {
-  content: "";
-  position: absolute;
-  inset-inline-start: -5px;
-  inset-block-start: 50%;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--color-text-muted);
-  transform: translateY(-50%);
-}
-
-.sccp-progress-list li.complete::before,
-.sccp-timing-list li.complete {
-  color: var(--color-success);
-}
-
-.sccp-progress-list li.complete::before {
-  background: var(--color-success);
-}
-
-.sccp-progress-list li.active::before,
-.sccp-timing-list li.active {
-  color: var(--color-accent);
-}
-
-.sccp-progress-list li.active::before {
-  background: var(--color-accent);
-  box-shadow: 0 0 0 5px var(--color-accent-soft);
-}
-
-.sccp-timing-list li.failed {
-  color: var(--color-danger);
-}
-
-.sccp-progress-list small,
-.sccp-timing-list small,
-.sccp-activity-item small {
-  color: inherit;
-  text-align: end;
-}
-
-.sccp-progress-links {
-  margin-top: var(--space-4);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--color-border);
-}
-
-.sccp-progress-links h3 {
-  margin: 0;
-}
-
-.sccp-link-list {
-  margin-top: var(--space-3);
-}
-
-.sccp-link-list a {
-  min-height: 44px;
-  padding: 9px 11px;
-  display: flex;
-  align-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-surface-soft);
-  box-shadow: var(--shadow-control);
-}
-
-.sccp-progress-disclosure > summary,
-.sccp-activity-disclosure > summary {
-  min-height: 44px;
-  list-style: none;
-  cursor: pointer;
-}
-
-.sccp-progress-disclosure > summary::-webkit-details-marker,
-.sccp-activity-disclosure > summary::-webkit-details-marker {
-  display: none;
-}
-
-.sccp-activity-summary {
-  margin-bottom: 0;
-}
-
-.sccp-activity-disclosure[open] > .sccp-activity-summary {
-  margin-bottom: var(--space-4);
-  padding-bottom: var(--space-4);
-  border-bottom: 1px solid var(--color-border);
-}
-
 @media (max-width: 1120px) {
   .setup-shell,
   .parliament-shell {
@@ -929,8 +626,7 @@
 @media (max-width: 900px) {
   .account-wizard-shell,
   .subscriptions-overview,
-  .vpn-layout,
-  .sccp-lower-grid {
+  .vpn-layout {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -953,15 +649,12 @@
 }
 
 @media (max-width: 760px) {
-  .account-wizard-intro,
-  .sccp-command-header,
-  .sccp-transfer-header {
+  .account-wizard-intro {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .account-wizard-chips,
-  .sccp-command-actions {
+  .account-wizard-chips {
     justify-content: flex-start;
   }
 
@@ -972,29 +665,23 @@
   .soracloud-step-panel,
   .vpn-kpis,
   .vpn-profile-columns,
-  .vpn-details-grid,
-  .sccp-status-grid {
+  .vpn-details-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .subscription-span-2,
-  .subscription-submit,
-  .soracloud-span-2,
-  .sccp-resume-field,
-  .sccp-generated-id,
-  .sccp-form-actions {
+  .subscription-submit {
     grid-column: auto;
   }
 
   .subscription-submit,
-  .soracloud-form-actions > *,
-  .sccp-form-actions > * {
+  .soracloud-form-actions > * {
     width: 100%;
   }
 
   .subscription-header,
   .soracloud-command-header,
-  .soracloud-deployment-row {
+  .soracloud-service-row {
     align-items: stretch;
   }
 
@@ -1005,38 +692,17 @@
 
   .soracloud-command-actions,
   .soracloud-state-actions,
-  .soracloud-form-actions,
-  .sccp-form-actions {
+  .soracloud-form-actions {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .soracloud-deployment-row {
+  .soracloud-service-row {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
   .soracloud-row-side {
     grid-column: 1 / -1;
     justify-items: start;
-  }
-
-  .soracloud-stepper {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .sccp-route-toggle {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .sccp-progress-list li,
-  .sccp-timing-list li,
-  .sccp-activity-item {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .sccp-progress-list small,
-  .sccp-timing-list small,
-  .sccp-activity-item small {
-    text-align: start;
   }
 }

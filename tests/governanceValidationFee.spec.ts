@@ -1,4 +1,10 @@
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +28,7 @@ import {
   deriveGovernanceValidationFeeImmutableLedgerScope,
   fetchGovernanceValidationFeePolicyInMain,
 } from "../electron/governanceValidationFeeFinality";
+import { TAIRA_NETWORK_ID } from "../src/utils/firstReleaseNetworkIdentity";
 
 const irohaHash = (byte: string): string => byte.repeat(32);
 const plainHash = (byte: string): string => byte.repeat(32);
@@ -275,7 +282,18 @@ const status = (activeProjection = projection()) => ({
 const response = (value: unknown, responseStatus = 200) => ({
   ok: responseStatus >= 200 && responseStatus < 300,
   status: responseStatus,
-  json: vi.fn(async () => structuredClone(value)),
+  arrayBuffer: vi.fn(
+    async () =>
+      Uint8Array.from(Buffer.from(JSON.stringify(value), "utf8")).buffer,
+  ),
+});
+
+const rawResponse = (serialized: string, responseStatus = 200) => ({
+  ok: responseStatus >= 200 && responseStatus < 300,
+  status: responseStatus,
+  arrayBuffer: vi.fn(
+    async () => Uint8Array.from(Buffer.from(serialized, "utf8")).buffer,
+  ),
 });
 
 const coreFetcher = (
@@ -326,6 +344,20 @@ describe("governance validation-fee runtime config", () => {
         JSON.stringify(laterPostWindowEnactment),
       ),
     ).not.toThrow();
+  });
+
+  it("rejects ambiguous and oversized runtime config JSON", () => {
+    const serialized = JSON.stringify(enabledConfigJson());
+    expect(() =>
+      readGovernanceValidationFeeConfig(
+        serialized.replace('"enabled":true', '"enabled":true,"enabled":true'),
+      ),
+    ).toThrow(/valid JSON/);
+    expect(() =>
+      readGovernanceValidationFeeConfig(
+        `${serialized}${" ".repeat(1024 * 1024)}`,
+      ),
+    ).toThrow(/exceeds/);
   });
 
   it("rejects disabled, unknown, legacy, and invalid-delay fields", () => {
@@ -537,9 +569,83 @@ describe("packaged governance runtime config", () => {
       ).toThrow(/not valid JSON/);
     });
   });
+
+  it("bounds the descriptor read", () => {
+    withRuntimeConfigDirectory((userDataPath) => {
+      const path = governanceRuntimeConfigPath(userDataPath);
+      writeFileSync(path, Buffer.alloc(1024 * 1024 + 1, 0x20));
+      expect(() =>
+        loadGovernanceRuntimeConfig({ userDataPath, env: {} }),
+      ).toThrow(/exceeds 1048576 bytes/u);
+    });
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "refuses indirect runtime manifests",
+    () => {
+      withRuntimeConfigDirectory((userDataPath) => {
+        const path = governanceRuntimeConfigPath(userDataPath);
+        const target = join(userDataPath, "runtime-target.json");
+        writeFileSync(target, JSON.stringify(runtimeConfigManifest()), "utf8");
+        symlinkSync(target, path);
+        expect(() =>
+          loadGovernanceRuntimeConfig({ userDataPath, env: {} }),
+        ).toThrow(/could not be read|symbolic|link|ELOOP/u);
+      });
+    },
+  );
 });
 
 describe("governance validation-fee Core projection", () => {
+  it("rejects ambiguous, invalid-UTF8, and oversized Core JSON", async () => {
+    const config = readGovernanceValidationFeeConfig(
+      JSON.stringify(enabledConfigJson()),
+    );
+    const duplicateProjection = JSON.stringify(projection()).replace(
+      '"schema":"cbsi.validation-fee-ledger-projection.v1"',
+      '"schema":"cbsi.validation-fee-ledger-projection.v1","schema":"cbsi.validation-fee-ledger-projection.v1"',
+    );
+    await expect(
+      fetchGovernanceValidationFeePolicy({
+        config,
+        coreApiBaseUrl: "https://core.example",
+        fetcher: vi.fn(async (url: string) =>
+          url.endsWith("/policy")
+            ? rawResponse(duplicateProjection)
+            : response(status()),
+        ),
+      }),
+    ).rejects.toThrow(/bounded, strict UTF-8 JSON/);
+
+    await expect(
+      fetchGovernanceValidationFeePolicy({
+        config,
+        coreApiBaseUrl: "https://core.example",
+        fetcher: vi.fn(async (url: string) =>
+          url.endsWith("/policy")
+            ? {
+                ok: true,
+                status: 200,
+                arrayBuffer: vi.fn(async () => Uint8Array.from([0xff]).buffer),
+              }
+            : response(status()),
+        ),
+      }),
+    ).rejects.toThrow(/bounded, strict UTF-8 JSON/);
+
+    await expect(
+      fetchGovernanceValidationFeePolicy({
+        config,
+        coreApiBaseUrl: "https://core.example",
+        fetcher: vi.fn(async (url: string) =>
+          url.endsWith("/policy")
+            ? rawResponse(`{}${" ".repeat(4 * 1024 * 1024)}`)
+            : response(status()),
+        ),
+      }),
+    ).rejects.toThrow(/bounded, strict UTF-8 JSON/);
+  });
+
   it("accepts an explicit post-window enactment with the exact activation delay", async () => {
     const configJson = enabledConfigJson();
     configJson.expected.parliament.validationFeePolicy.enactment_window.enacted_at_height =
@@ -580,11 +686,10 @@ describe("governance validation-fee Core projection", () => {
     expect(view).toMatchObject({
       observedHeight: "126000",
       effective: {
-        chain_id: TAIRA_CHAIN_ID,
+        network_id: TAIRA_NETWORK_ID,
         policy_version: "1",
-        policy_hash: policyHash,
         ds_asset_id: CBSI_SBD_ASSET_DEFINITION_ID,
-        fee: "0.10",
+        fee: "0.1",
       },
       registryHead: {
         policyVersion: "1",

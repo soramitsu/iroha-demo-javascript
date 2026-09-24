@@ -3,44 +3,70 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import { mkdirSync, rmSync } from "node:fs";
 import { isIP } from "node:net";
 import { dirname, join } from "node:path";
-import { quoteAndSignTransaction, ToriiClient } from "@iroha/iroha-js";
+import { NetworkId } from "@iroha/iroha-js/canonical-request";
+import type { ToriiVpnQuote, ToriiVpnSession } from "@iroha/iroha-js";
 import { normalizeCryptoAlgorithm } from "@iroha/iroha-js/crypto";
 import { withBoundedHttpGetFetchRetry } from "./httpReadRetry";
 import { nodeFetch } from "./nodeFetch";
+import { readBoundedJsonResponse } from "./boundedJsonResponse";
 import {
   BundledVpnController,
   type VpnControllerStatus,
   type VpnLocalController,
 } from "./vpnController";
 import type {
-  VpnAuthContext,
   VpnAvailability,
   VpnExitClass,
   VpnProfile,
   VpnReceipt,
   VpnStatus,
 } from "../src/types/iroha";
-import { normalizeAccountIdLiteralForNetwork } from "../src/utils/accountId";
 import { normalizeEndpointUrl } from "../src/utils/endpoint";
+import { resolveFirstReleaseNetworkIdLiteral } from "../src/utils/firstReleaseNetworkIdentity";
 import { sanitizeErrorMessage } from "../src/utils/errorMessage";
 import {
   DEFAULT_SIGNING_ALGORITHM,
   signingAlgorithmLabel,
 } from "../src/utils/signingAlgorithms";
-import { buildAuthorityFeePaymentIntent } from "./feePayment";
 import { waitForFinalizedTransaction } from "./transactionFinality";
+import { FirstReleaseVpnTransport } from "./firstReleaseVpnTransport";
+import {
+  buildFirstReleaseAuthorityTransactionDraft,
+  signFirstReleaseAuthorityTransaction,
+  submitFirstReleaseTransaction,
+} from "./firstReleaseTransaction";
+import {
+  parseExactVpnProfile,
+  parseExactVpnQuote,
+  parseExactVpnReceipt,
+  parseExactVpnReceiptList,
+  parseExactVpnSession,
+} from "./vpnResponseSchema";
+import { requireFirstReleaseInputText } from "./firstReleaseReadInput";
+import { normalizeCanonicalAccountIdLiteral } from "./accountAddress";
 
 type VpnAvailabilityInput = {
   toriiUrl: string;
 };
 
-type VpnConnectInput = Omit<VpnAuthContext, "chainId" | "networkPrefix"> & {
+type VpnAuthContext = {
+  toriiUrl: string;
   chainId: string;
+  accountId: string;
   networkPrefix: number;
+  privateKeyHex: string;
+  signingAlgorithm: string;
+};
+
+type VpnConnectInput = VpnAuthContext & {
   exitClass: VpnExitClass;
 };
 
-type VpnStatusInput = Partial<VpnAuthContext>;
+type VpnStatusInput = Pick<
+  VpnAuthContext,
+  "toriiUrl" | "chainId" | "accountId" | "networkPrefix"
+> &
+  Partial<Pick<VpnAuthContext, "privateKeyHex" | "signingAlgorithm">>;
 
 type ActiveVpnSession = {
   toriiUrl: string;
@@ -56,6 +82,22 @@ type ActiveVpnSession = {
   expiresAtMs: number;
   connectedAtMs: number;
   meterFamily: string;
+  quoteId: string;
+  paymentReference: string;
+  paymentTxHash: string;
+  feeAssetId: string;
+  escrowAccountId: string;
+  operatorAccountId: string;
+  leaseFee: string;
+  flowLabelBits: number;
+  paddingBudgetMs: number;
+  relayIdHex: string;
+  relayMldsa65PublicKeyHex: string;
+  descriptorCommitHex: string;
+  tlsServerName: string;
+  relayTlsSpkiSha256Hex: string;
+  relayCertificateSha256Hex: string;
+  directorySnapshotDigestHex: string;
   routePushes: string[];
   excludedRoutes: string[];
   dnsServers: string[];
@@ -64,7 +106,8 @@ type ActiveVpnSession = {
   helperTicketHex: string;
   bytesIn: number;
   bytesOut: number;
-  pendingRemoteDelete: boolean;
+  status: "active";
+  pendingRemoteExpiry: boolean;
 };
 
 type VpnRuntimeContext = {
@@ -76,9 +119,9 @@ type VpnRuntimeContext = {
 };
 
 const SUPPORTED_PLATFORMS = new Set(["darwin", "linux"]);
-const MAX_RECEIPTS = 24;
 const VPN_PAYMENT_WAIT_TIMEOUT_MS = 60_000;
 const VPN_PAYMENT_POLL_INTERVAL_MS = 1_000;
+const MAX_VPN_FINALITY_JSON_BYTES = 1024 * 1024;
 const vpnToriiFetch: typeof fetch = (input, init) =>
   withBoundedHttpGetFetchRetry(nodeFetch, input, init);
 
@@ -96,11 +139,15 @@ const fetchVpnFinalityJson = async (
       `VPN payment finality read ${path} failed with HTTP ${response.status}.`,
     );
   }
-  return response.json();
+  return readBoundedJsonResponse(response, {
+    label: `VPN payment finality read ${path}`,
+    maximumBytes: MAX_VPN_FINALITY_JSON_BYTES,
+    requireApplicationJson: true,
+  });
 };
 
 const waitForVpnPaymentFinalizedBlock = async (
-  client: ToriiClient,
+  client: FirstReleaseVpnTransport,
   toriiUrl: string,
   hashHex: string,
 ) =>
@@ -108,8 +155,7 @@ const waitForVpnPaymentFinalizedBlock = async (
     hashHex,
     timeoutMs: VPN_PAYMENT_WAIT_TIMEOUT_MS,
     intervalMs: VPN_PAYMENT_POLL_INTERVAL_MS,
-    getGlobalStatus: () =>
-      client.getTransactionStatus(hashHex, { scope: "global" }),
+    getGlobalStatus: () => client.getTransactionStatus(hashHex),
     getExplorerTransaction: () =>
       fetchVpnFinalityJson(
         toriiUrl,
@@ -159,30 +205,42 @@ const emptyStatus = (overrides?: Partial<VpnStatus>): VpnStatus => ({
   ...overrides,
 });
 
-const normalizeHex = (value: string, label: string) => {
-  const normalized = value.trim().replace(/^0x/i, "");
+const normalizeHex = (value: unknown, label: string) => {
   if (
-    !normalized ||
-    normalized.length % 2 !== 0 ||
-    !/^[\da-f]+$/i.test(normalized)
+    typeof value !== "string" ||
+    (value.length !== 64 && value.length !== 128) ||
+    !/^[\da-f]+$/u.test(value)
   ) {
-    throw new Error(`${label} must be an even-length hex string.`);
+    throw new Error(
+      `${label} must be an exact lowercase 32- or 64-byte hex key.`,
+    );
   }
-  return normalized;
+  return value;
 };
 
 const toPrivateKeyBuffer = (privateKeyHex: string) =>
   Buffer.from(normalizeHex(privateKeyHex, "privateKeyHex"), "hex");
 
-const normalizeVpnSigningAlgorithm = (value?: string | null) =>
-  normalizeCryptoAlgorithm(value || DEFAULT_SIGNING_ALGORITHM);
+const normalizeVpnSigningAlgorithm = (value: unknown): string => {
+  const literal = requireFirstReleaseInputText(value, "signingAlgorithm", 64);
+  const normalized = normalizeCryptoAlgorithm(literal);
+  if (normalized !== literal) {
+    throw new Error("signingAlgorithm must be an exact supported identifier.");
+  }
+  return normalized;
+};
 
 const buildVpnCanonicalAuth = (
   auth: Pick<
     VpnAuthContext,
-    "accountId" | "privateKeyHex" | "signingAlgorithm"
+    | "accountId"
+    | "chainId"
+    | "networkPrefix"
+    | "privateKeyHex"
+    | "signingAlgorithm"
   >,
   operationLabel: string,
+  exactNetworkId?: NetworkId,
 ) => {
   const signingAlgorithm = normalizeVpnSigningAlgorithm(auth.signingAlgorithm);
   if (signingAlgorithm !== DEFAULT_SIGNING_ALGORITHM) {
@@ -190,19 +248,52 @@ const buildVpnCanonicalAuth = (
       `${operationLabel} currently requires an Ed25519 wallet because VPN canonical authentication is Ed25519-only. This wallet uses ${signingAlgorithmLabel(signingAlgorithm)}.`,
     );
   }
+  const networkId =
+    exactNetworkId ??
+    NetworkId.parse(
+      resolveFirstReleaseNetworkIdLiteral({
+        chainId: normalizeChainId(auth.chainId),
+        networkPrefix: auth.networkPrefix,
+      }),
+    );
   return {
     accountId: auth.accountId,
+    networkId,
+    networkPrefix: auth.networkPrefix,
+    // Allocate the secret only after every fallible public-field validation.
     privateKey: toPrivateKeyBuffer(auth.privateKeyHex),
   };
 };
 
-const normalizeChainId = (value: string) => {
-  const normalized = value.trim();
-  if (!normalized) {
-    throw new Error("chainId is required.");
+const runWithVpnCanonicalAuth = async <T>(
+  auth: Pick<
+    VpnAuthContext,
+    | "accountId"
+    | "chainId"
+    | "networkPrefix"
+    | "privateKeyHex"
+    | "signingAlgorithm"
+  >,
+  operationLabel: string,
+  operation: (
+    canonicalAuth: ReturnType<typeof buildVpnCanonicalAuth>,
+  ) => Promise<T>,
+  exactNetworkId?: NetworkId,
+): Promise<T> => {
+  const canonicalAuth = buildVpnCanonicalAuth(
+    auth,
+    operationLabel,
+    exactNetworkId,
+  );
+  try {
+    return await operation(canonicalAuth);
+  } finally {
+    canonicalAuth.privateKey.fill(0);
   }
-  return normalized;
 };
+
+const normalizeChainId = (value: unknown) =>
+  requireFirstReleaseInputText(value, "chainId", 128);
 
 const generateVpnMeteringPublicKeyHex = () => randomBytes(32).toString("hex");
 
@@ -221,25 +312,168 @@ const normalizeVpnTxInstructions = (
 const nowMs = () => Date.now();
 
 const normalizeVpnAccountId = (
-  value: string,
+  value: unknown,
   label: string,
-  networkPrefix?: number,
+  networkPrefix: number,
 ) => {
-  const normalized = normalizeAccountIdLiteralForNetwork(
-    value,
+  return normalizeCanonicalAccountIdLiteral(
+    requireFirstReleaseInputText(value, label, 1_024),
+    label,
     networkPrefix,
-  ).trim();
-  if (!normalized) {
-    throw new Error(`${label} is required.`);
+  );
+};
+
+const normalizeVpnNetworkPrefix = (value: unknown): number | null => {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    !Object.is(value, -0) &&
+    value >= 0 &&
+    value <= 0x3fff
+    ? value
+    : null;
+};
+
+const isPlainInputRecord = (
+  value: unknown,
+): value is Record<string, unknown> => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
+
+const requireExactInputKeys = (
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+  label: string,
+) => {
+  const actual = Object.keys(value).sort();
+  const allowed = new Set([...required, ...optional]);
+  if (
+    required.some((key) => !Object.prototype.hasOwnProperty.call(value, key)) ||
+    actual.some((key) => !allowed.has(key))
+  ) {
+    throw new Error(`${label} contains missing or unknown fields.`);
+  }
+};
+
+const normalizeVpnToriiUrl = (value: unknown): string => {
+  const literal = requireFirstReleaseInputText(value, "toriiUrl", 2_048);
+  const normalized = normalizeEndpointUrl(literal);
+  const endpoint = new URL(normalized);
+  if (
+    literal !== normalized ||
+    endpoint.protocol !== "https:" ||
+    endpoint.pathname !== "/"
+  ) {
+    throw new Error(
+      "toriiUrl must be an exact HTTPS origin without a path, query, fragment, credentials, or trailing slash.",
+    );
   }
   return normalized;
 };
 
-const normalizeVpnNetworkPrefix = (value: unknown): number | null => {
-  const normalized = Number(value);
-  return Number.isInteger(normalized) && normalized >= 0 && normalized <= 0x3fff
-    ? normalized
-    : null;
+const requireVpnAvailabilityInput = (value: unknown): VpnAvailabilityInput => {
+  if (!isPlainInputRecord(value)) {
+    throw new Error("VPN availability input must be a plain object.");
+  }
+  requireExactInputKeys(value, ["toriiUrl"], [], "VPN availability input");
+  return { toriiUrl: normalizeVpnToriiUrl(value.toriiUrl) };
+};
+
+const requireVpnStatusInput = (value: unknown): VpnStatusInput => {
+  if (!isPlainInputRecord(value)) {
+    throw new Error("VPN status input must be a plain object.");
+  }
+  requireExactInputKeys(
+    value,
+    ["toriiUrl", "chainId", "accountId", "networkPrefix"],
+    ["privateKeyHex", "signingAlgorithm"],
+    "VPN status input",
+  );
+  const networkPrefix = normalizeVpnNetworkPrefix(value.networkPrefix);
+  if (networkPrefix === null) {
+    throw new Error(
+      "networkPrefix must be an exact integer between 0 and 16383.",
+    );
+  }
+  const privateKeyPresent = Object.prototype.hasOwnProperty.call(
+    value,
+    "privateKeyHex",
+  );
+  const signingAlgorithmPresent = Object.prototype.hasOwnProperty.call(
+    value,
+    "signingAlgorithm",
+  );
+  if (signingAlgorithmPresent !== privateKeyPresent) {
+    throw new Error(
+      "privateKeyHex and signingAlgorithm must be provided together for authenticated VPN status input.",
+    );
+  }
+  const normalized: VpnStatusInput = {
+    toriiUrl: normalizeVpnToriiUrl(value.toriiUrl),
+    chainId: normalizeChainId(value.chainId),
+    accountId: normalizeVpnAccountId(
+      value.accountId,
+      "accountId",
+      networkPrefix,
+    ),
+    networkPrefix,
+  };
+  if (privateKeyPresent) {
+    normalized.privateKeyHex = normalizeHex(
+      value.privateKeyHex,
+      "privateKeyHex",
+    );
+    normalized.signingAlgorithm = normalizeVpnSigningAlgorithm(
+      value.signingAlgorithm,
+    );
+  }
+  return normalized;
+};
+
+const requireVpnConnectInput = (value: unknown): VpnConnectInput => {
+  if (!isPlainInputRecord(value)) {
+    throw new Error("VPN connect input must be a plain object.");
+  }
+  requireExactInputKeys(
+    value,
+    [
+      "toriiUrl",
+      "chainId",
+      "accountId",
+      "networkPrefix",
+      "privateKeyHex",
+      "signingAlgorithm",
+      "exitClass",
+    ],
+    [],
+    "VPN connect input",
+  );
+  const networkPrefix = normalizeVpnNetworkPrefix(value.networkPrefix);
+  if (networkPrefix === null) {
+    throw new Error(
+      "networkPrefix must be an exact integer between 0 and 16383.",
+    );
+  }
+  if (!isVpnExitClass(value.exitClass)) {
+    throw new Error("VPN exitClass is not supported by this endpoint.");
+  }
+  return {
+    toriiUrl: normalizeVpnToriiUrl(value.toriiUrl),
+    chainId: normalizeChainId(value.chainId),
+    accountId: normalizeVpnAccountId(
+      value.accountId,
+      "accountId",
+      networkPrefix,
+    ),
+    networkPrefix,
+    privateKeyHex: normalizeHex(value.privateKeyHex, "privateKeyHex"),
+    signingAlgorithm: normalizeVpnSigningAlgorithm(value.signingAlgorithm),
+    exitClass: value.exitClass,
+  };
 };
 
 const resolveVpnRuntimeContext = (
@@ -247,16 +481,16 @@ const resolveVpnRuntimeContext = (
     Pick<VpnAuthContext, "toriiUrl" | "chainId" | "accountId" | "networkPrefix">
   > | null,
 ): VpnRuntimeContext | null => {
-  const chainId = String(input?.chainId ?? "").trim();
-  const networkPrefix = normalizeVpnNetworkPrefix(input?.networkPrefix);
-  const accountIdRaw = String(input?.accountId ?? "").trim();
-  if (!input?.toriiUrl || !chainId || networkPrefix === null || !accountIdRaw) {
+  if (!input) {
     return null;
   }
   try {
-    const toriiUrl = normalizeEndpointUrl(input.toriiUrl);
+    const networkPrefix = normalizeVpnNetworkPrefix(input.networkPrefix);
+    if (networkPrefix === null) return null;
+    const toriiUrl = normalizeVpnToriiUrl(input.toriiUrl);
+    const chainId = normalizeChainId(input.chainId);
     const accountId = normalizeVpnAccountId(
-      accountIdRaw,
+      input.accountId,
       "accountId",
       networkPrefix,
     );
@@ -277,17 +511,10 @@ const VPN_EXIT_CLASSES: readonly VpnExitClass[] = [
   "low-latency",
   "high-security",
 ];
-const FULL_TUNNEL_ROUTE_PUSHES = ["0.0.0.0/0", "::/0"] as const;
 
 const isVpnExitClass = (value: unknown): value is VpnExitClass =>
   typeof value === "string" &&
   (VPN_EXIT_CLASSES as readonly string[]).includes(value);
-
-const inferTunnelAddressFamily = (value: string) => {
-  const address = value.split("/", 1)[0]?.trim() ?? "";
-  const family = isIP(address);
-  return family === 4 || family === 6 ? family : null;
-};
 
 export const resolveVpnRelayEndpoint = (
   relayEndpoint: string,
@@ -361,22 +588,13 @@ export const resolveVpnRelayEndpointForController = async (
 
 export const resolveVpnRoutePushesForController = (
   routePushes: readonly string[],
-  tunnelAddresses: readonly string[],
 ) => {
-  if (routePushes.length > 0) {
-    return [...routePushes];
+  if (routePushes.length === 0) {
+    throw new Error(
+      "VPN route pushes are required; the controller will not invent full-tunnel routes.",
+    );
   }
-
-  const families = new Set(
-    tunnelAddresses
-      .map(inferTunnelAddressFamily)
-      .filter((family): family is 4 | 6 => family === 4 || family === 6),
-  );
-
-  return FULL_TUNNEL_ROUTE_PUSHES.filter((cidr) => {
-    const family = inferTunnelAddressFamily(cidr);
-    return family ? families.has(family) : false;
-  });
+  return [...routePushes];
 };
 
 export const resolveVpnExcludedRoutesForController = (
@@ -408,87 +626,37 @@ export const resolveVpnExcludedRoutesForController = (
 };
 
 const normalizeProfile = (
-  profile: VpnProfile | null,
+  profile: unknown,
   toriiUrl: string,
 ): VpnProfile | null => {
   if (!profile) {
     return null;
   }
-  const stringArray = (value: unknown, label: string): string[] => {
-    if (
-      !Array.isArray(value) ||
-      value.some(
-        (entry) =>
-          typeof entry !== "string" || !entry.trim() || entry.trim() !== entry,
-      )
-    ) {
-      throw new Error(`VPN profile ${label} must be an array of strings.`);
-    }
-    return [...value];
-  };
-  if (typeof profile.available !== "boolean") {
-    throw new Error("VPN profile available must be a boolean.");
-  }
-  if (
-    !Array.isArray(profile.supportedExitClasses) ||
-    profile.supportedExitClasses.length === 0 ||
-    profile.supportedExitClasses.some((value) => !isVpnExitClass(value)) ||
-    new Set(profile.supportedExitClasses).size !==
-      profile.supportedExitClasses.length
-  ) {
-    throw new Error(
-      "VPN profile supportedExitClasses must contain unique supported service classes.",
-    );
-  }
-  const supportedExitClasses = [...profile.supportedExitClasses];
-  if (
-    !isVpnExitClass(profile.defaultExitClass) ||
-    !supportedExitClasses.includes(profile.defaultExitClass)
-  ) {
-    throw new Error(
-      "VPN profile defaultExitClass must be one of its supported service classes.",
-    );
-  }
-  if (
-    typeof profile.relayEndpoint !== "string" ||
-    !profile.relayEndpoint.trim()
-  ) {
-    throw new Error("VPN profile relayEndpoint is required.");
-  }
-  if (
-    !Number.isSafeInteger(profile.leaseSecs) ||
-    profile.leaseSecs <= 0 ||
-    !Number.isSafeInteger(profile.dnsPushIntervalSecs) ||
-    profile.dnsPushIntervalSecs <= 0 ||
-    !Number.isSafeInteger(profile.mtuBytes) ||
-    profile.mtuBytes <= 0
-  ) {
-    throw new Error(
-      "VPN profile lease, DNS interval, and MTU must be positive integers.",
-    );
-  }
-  if (
-    typeof profile.meterFamily !== "string" ||
-    !profile.meterFamily.trim() ||
-    typeof profile.displayBillingLabel !== "string" ||
-    !profile.displayBillingLabel.trim()
-  ) {
-    throw new Error("VPN profile meter family and billing label are required.");
-  }
+  const parsed = parseExactVpnProfile(profile);
   return {
-    available: profile.available,
-    relayEndpoint: resolveVpnRelayEndpoint(profile.relayEndpoint, toriiUrl),
-    supportedExitClasses,
-    defaultExitClass: profile.defaultExitClass,
-    leaseSecs: profile.leaseSecs,
-    dnsPushIntervalSecs: profile.dnsPushIntervalSecs,
-    meterFamily: profile.meterFamily,
-    routePushes: stringArray(profile.routePushes, "routePushes"),
-    excludedRoutes: stringArray(profile.excludedRoutes, "excludedRoutes"),
-    dnsServers: stringArray(profile.dnsServers, "dnsServers"),
-    tunnelAddresses: stringArray(profile.tunnelAddresses, "tunnelAddresses"),
-    mtuBytes: profile.mtuBytes,
-    displayBillingLabel: profile.displayBillingLabel,
+    ...parsed,
+    relayEndpoint: parsed.relayEndpoint
+      ? resolveVpnRelayEndpoint(parsed.relayEndpoint, toriiUrl)
+      : "",
+    supportedExitClasses: parsed.supportedExitClasses.map((value) => {
+      if (!isVpnExitClass(value)) {
+        throw new Error("VPN profile returned an unsupported service class.");
+      }
+      return value;
+    }),
+    defaultExitClass: (() => {
+      if (!isVpnExitClass(parsed.defaultExitClass)) {
+        throw new Error(
+          "VPN profile returned an unsupported default service class.",
+        );
+      }
+      return parsed.defaultExitClass;
+    })(),
+    routePushes: [...parsed.routePushes],
+    excludedRoutes: [...parsed.excludedRoutes],
+    dnsServers: [...parsed.dnsServers],
+    tunnelAddresses: [...parsed.tunnelAddresses],
+    flowLabelBits: 24,
   };
 };
 
@@ -508,26 +676,165 @@ const normalizeProfileExitClass = (
 };
 
 const normalizeReceipt = (
-  receipt: VpnReceipt,
+  receipt: unknown,
   toriiUrl?: string,
-  receiptSource: VpnReceipt["receiptSource"] = receipt.receiptSource ??
-    "local-fallback",
-): VpnReceipt => ({
-  sessionId: receipt.sessionId,
-  accountId: receipt.accountId,
-  exitClass: receipt.exitClass,
-  relayEndpoint: toriiUrl
-    ? resolveVpnRelayEndpoint(receipt.relayEndpoint, toriiUrl)
-    : receipt.relayEndpoint,
-  meterFamily: receipt.meterFamily,
-  connectedAtMs: receipt.connectedAtMs,
-  disconnectedAtMs: receipt.disconnectedAtMs,
-  durationMs: receipt.durationMs,
-  bytesIn: receipt.bytesIn,
-  bytesOut: receipt.bytesOut,
-  status: receipt.status,
-  receiptSource,
-});
+  expectedAccountId?: string,
+): VpnReceipt => {
+  const parsed = parseExactVpnReceipt(receipt);
+  if (expectedAccountId && parsed.accountId !== expectedAccountId) {
+    throw new Error(
+      "VPN receipt account does not match the authenticated wallet.",
+    );
+  }
+  if (!isVpnExitClass(parsed.exitClass)) {
+    throw new Error("VPN receipt returned an unsupported service class.");
+  }
+  if (
+    parsed.receiptSource !== "torii" &&
+    parsed.receiptSource !== "relay" &&
+    parsed.receiptSource !== "wsv"
+  ) {
+    throw new Error("VPN receipt returned an unsupported canonical source.");
+  }
+  const exitClass = parsed.exitClass;
+  const receiptSource = parsed.receiptSource;
+  return {
+    ...parsed,
+    exitClass,
+    relayEndpoint: toriiUrl
+      ? resolveVpnRelayEndpoint(parsed.relayEndpoint, toriiUrl)
+      : parsed.relayEndpoint,
+    receiptSource,
+    settleLeaseInstruction: parsed.settleLeaseInstruction
+      ? { ...parsed.settleLeaseInstruction }
+      : null,
+  };
+};
+
+const assertVpnFieldMatches = (
+  label: string,
+  actual: unknown,
+  expected: unknown,
+) => {
+  const matches =
+    Array.isArray(actual) && Array.isArray(expected)
+      ? actual.length === expected.length &&
+        actual.every((value, index) => value === expected[index])
+      : actual === expected;
+  if (!matches) {
+    throw new Error(
+      `${label} does not match the previously reviewed VPN data.`,
+    );
+  }
+};
+
+const VPN_PROFILE_BOUND_QUOTE_FIELDS = [
+  "relayEndpoint",
+  "leaseSecs",
+  "operatorAccountId",
+  "leaseFee",
+  "routePushes",
+  "excludedRoutes",
+  "dnsServers",
+  "tunnelAddresses",
+  "mtuBytes",
+  "meterFamily",
+  "flowLabelBits",
+  "paddingBudgetMs",
+  "relayIdHex",
+  "relayMldsa65PublicKeyHex",
+  "descriptorCommitHex",
+  "tlsServerName",
+  "relayTlsSpkiSha256Hex",
+  "relayCertificateSha256Hex",
+  "directorySnapshotDigestHex",
+] as const satisfies ReadonlyArray<keyof VpnProfile & keyof ToriiVpnQuote>;
+
+const normalizeQuote = (
+  value: unknown,
+  toriiUrl: string,
+  profile: VpnProfile,
+  expected: {
+    accountId: string;
+    exitClass: VpnExitClass;
+    meteringPublicKeyHex: string;
+  },
+): ToriiVpnQuote => {
+  const parsed = parseExactVpnQuote(value);
+  const normalized = {
+    ...parsed,
+    relayEndpoint: resolveVpnRelayEndpoint(parsed.relayEndpoint, toriiUrl),
+    routePushes: [...parsed.routePushes],
+    excludedRoutes: [...parsed.excludedRoutes],
+    dnsServers: [...parsed.dnsServers],
+    tunnelAddresses: [...parsed.tunnelAddresses],
+    openLeaseInstruction: { ...parsed.openLeaseInstruction },
+  };
+  assertVpnFieldMatches(
+    "VPN quote accountId",
+    normalized.accountId,
+    expected.accountId,
+  );
+  assertVpnFieldMatches(
+    "VPN quote exitClass",
+    normalized.exitClass,
+    expected.exitClass,
+  );
+  assertVpnFieldMatches(
+    "VPN quote meteringPublicKeyHex",
+    normalized.meteringPublicKeyHex,
+    expected.meteringPublicKeyHex,
+  );
+  for (const field of VPN_PROFILE_BOUND_QUOTE_FIELDS) {
+    assertVpnFieldMatches(
+      `VPN quote ${field}`,
+      normalized[field],
+      profile[field],
+    );
+  }
+  if (normalized.quoteExpiresAtMs <= nowMs()) {
+    throw new Error("VPN quote is already expired.");
+  }
+  return normalized;
+};
+
+const VPN_QUOTE_BOUND_SESSION_FIELDS = [
+  "accountId",
+  "exitClass",
+  "relayEndpoint",
+  "leaseSecs",
+  "meterFamily",
+  "quoteId",
+  "paymentReference",
+  "feeAssetId",
+  "escrowAccountId",
+  "operatorAccountId",
+  "leaseFee",
+  "flowLabelBits",
+  "paddingBudgetMs",
+  "relayIdHex",
+  "relayMldsa65PublicKeyHex",
+  "descriptorCommitHex",
+  "tlsServerName",
+  "relayTlsSpkiSha256Hex",
+  "relayCertificateSha256Hex",
+  "directorySnapshotDigestHex",
+  "routePushes",
+  "excludedRoutes",
+  "dnsServers",
+  "tunnelAddresses",
+  "mtuBytes",
+] as const satisfies ReadonlyArray<keyof ToriiVpnQuote & keyof ToriiVpnSession>;
+
+const VPN_STABLE_SESSION_FIELDS = [
+  ...VPN_QUOTE_BOUND_SESSION_FIELDS,
+  "sessionId",
+  "expiresAtMs",
+  "connectedAtMs",
+  "paymentTxHash",
+  "helperTicketHex",
+  "status",
+] as const satisfies ReadonlyArray<keyof ToriiVpnSession>;
 
 export class VpnRuntime {
   private readonly receiptsPath: string;
@@ -538,7 +845,7 @@ export class VpnRuntime {
 
   private readonly platform: string;
 
-  private readonly clients = new Map<string, ToriiClient>();
+  private readonly clients = new Map<string, FirstReleaseVpnTransport>();
 
   private readonly controller: VpnLocalController;
 
@@ -564,6 +871,8 @@ export class VpnRuntime {
     userDataPath: string;
     helperVersion: string;
     controller?: VpnLocalController;
+    isPackaged?: boolean;
+    resourcesPath?: string | null;
   }) {
     this.platform = process.platform;
     this.helperVersion = options.helperVersion;
@@ -573,18 +882,24 @@ export class VpnRuntime {
       "vpn",
       "active-session.json",
     );
-    this.controller = options.controller ?? new BundledVpnController();
+    this.controller =
+      options.controller ??
+      new BundledVpnController({
+        isPackaged: options.isPackaged === true,
+        resourcesPath: options.resourcesPath,
+      });
     mkdirSync(dirname(this.receiptsPath), { recursive: true });
     this.receipts = this.loadReceipts();
     this.activeSession = this.loadActiveSession();
     if (this.activeSession) {
-      this.state = this.activeSession.pendingRemoteDelete
-        ? "remote-delete-pending"
+      this.state = this.activeSession.pendingRemoteExpiry
+        ? "remote-expiry-pending"
         : "reconciling";
     }
   }
 
-  async getAvailability(input: VpnAvailabilityInput): Promise<VpnAvailability> {
+  async getAvailability(input: unknown): Promise<VpnAvailability> {
+    const validatedInput = requireVpnAvailabilityInput(input);
     if (!this.isPlatformSupported()) {
       return {
         platformSupported: false,
@@ -642,7 +957,7 @@ export class VpnRuntime {
     let profile: VpnProfile | null = null;
     let profileError: unknown = null;
     try {
-      profile = await this.fetchProfile(input.toriiUrl);
+      profile = await this.fetchProfile(validatedInput.toriiUrl);
     } catch (error) {
       profileError = error;
     }
@@ -692,20 +1007,23 @@ export class VpnRuntime {
     };
   }
 
-  async getProfile(input: VpnAvailabilityInput): Promise<VpnProfile | null> {
-    return this.fetchProfile(input.toriiUrl);
+  async getProfile(input: unknown): Promise<VpnProfile | null> {
+    const validatedInput = requireVpnAvailabilityInput(input);
+    return this.fetchProfile(validatedInput.toriiUrl);
   }
 
-  async getStatus(input?: VpnStatusInput): Promise<VpnStatus> {
-    if (!resolveVpnRuntimeContext(input)) {
+  async getStatus(input?: unknown): Promise<VpnStatus> {
+    if (input === undefined) {
       const controller = await this.controller.getStatus();
       return this.buildLocalControllerStatus(controller);
     }
-    const controller = await this.reconcile(input);
+    const validatedInput = requireVpnStatusInput(input);
+    const controller = await this.reconcile(validatedInput);
     return this.buildStatus(controller);
   }
 
   async connect(input: VpnConnectInput): Promise<VpnStatus> {
+    input = requireVpnConnectInput(input);
     if (!this.isPlatformSupported()) {
       throw new Error("Sora VPN currently supports macOS and Linux only.");
     }
@@ -757,6 +1075,12 @@ export class VpnRuntime {
 
     const exitClass = normalizeProfileExitClass(profile, input.exitClass);
     const chainId = normalizeChainId(input.chainId);
+    const networkId = NetworkId.parse(
+      resolveFirstReleaseNetworkIdLiteral({
+        chainId,
+        networkPrefix: input.networkPrefix,
+      }),
+    );
     const accountId = normalizeVpnAccountId(
       input.accountId,
       "accountId",
@@ -765,41 +1089,57 @@ export class VpnRuntime {
     const signingAlgorithm = normalizeVpnSigningAlgorithm(
       input.signingAlgorithm,
     );
-    const privateKey = toPrivateKeyBuffer(input.privateKeyHex);
     const client = this.getClient(input.toriiUrl);
-    let session: Awaited<ReturnType<ToriiClient["createVpnSession"]>> | null =
-      null;
+    let session: ToriiVpnSession | null = null;
+    let validatedSession: ActiveVpnSession | null = null;
+    let canonicalAuth: ReturnType<typeof buildVpnCanonicalAuth> | null = null;
     try {
-      const canonicalAuth = buildVpnCanonicalAuth(
+      canonicalAuth = buildVpnCanonicalAuth(
         {
           accountId,
+          chainId,
+          networkPrefix: input.networkPrefix,
           privateKeyHex: input.privateKeyHex,
           signingAlgorithm,
         },
         "VPN connect",
+        networkId,
       );
       const meteringPublicKeyHex = generateVpnMeteringPublicKeyHex();
-      const quote = await client.createVpnQuote(
-        {
-          exitClass,
-          meteringPublicKeyHex,
-        },
-        { canonicalAuth },
+      const quote = normalizeQuote(
+        await client.createVpnQuote(
+          {
+            exitClass,
+            meteringPublicKeyHex,
+          },
+          canonicalAuth,
+        ),
+        input.toriiUrl,
+        profile,
+        { accountId, exitClass, meteringPublicKeyHex },
       );
-      const paymentTransaction = await quoteAndSignTransaction(
-        client,
-        {
-          chainId,
-          authority: accountId,
-          instructions: normalizeVpnTxInstructions(quote.txInstructions),
-          feePayment: buildAuthorityFeePaymentIntent(),
-          privateKey,
-          privateKeyAlgorithm: signingAlgorithm,
-        },
-        { canonicalAuth },
+      const paymentDraft = buildFirstReleaseAuthorityTransactionDraft({
+        networkId,
+        networkPrefix: input.networkPrefix,
+        authority: accountId,
+        instructions: normalizeVpnTxInstructions([quote.openLeaseInstruction]),
+      });
+      const paymentFeeQuote = await client.quoteAuthorityTransaction(
+        paymentDraft,
+        canonicalAuth,
       );
+      const paymentTransaction = signFirstReleaseAuthorityTransaction({
+        networkId,
+        draft: paymentDraft,
+        quote: paymentFeeQuote,
+        privateKey: canonicalAuth.privateKey,
+        privateKeyAlgorithm: signingAlgorithm,
+      });
       const paymentTxHash = paymentTransaction.hash.toString("hex");
-      await client.submitTransaction(paymentTransaction.signedTransaction);
+      await submitFirstReleaseTransaction({
+        toriiUrl: input.toriiUrl,
+        signedTransaction: paymentTransaction.signedTransaction,
+      });
       await waitForVpnPaymentFinalizedBlock(
         client,
         input.toriiUrl,
@@ -812,18 +1152,24 @@ export class VpnRuntime {
           paymentTxHash,
           meteringPublicKeyHex,
         },
-        { canonicalAuth },
+        canonicalAuth,
       );
       if (session.exitClass !== exitClass) {
         throw new Error(
           `VPN session service class mismatch: requested "${exitClass}", received "${String(session.exitClass)}".`,
         );
       }
-      const normalizedSession = this.normalizeRemoteSession(session, {
-        ...input,
-        accountId,
-        signingAlgorithm,
-      });
+      const normalizedSession = this.normalizeRemoteSession(
+        session,
+        {
+          ...input,
+          accountId,
+          signingAlgorithm,
+        },
+        false,
+        { quote, paymentTxHash },
+      );
+      validatedSession = normalizedSession;
       const controllerRelayEndpoint =
         await resolveVpnRelayEndpointForController(
           normalizedSession.relayEndpoint,
@@ -831,14 +1177,12 @@ export class VpnRuntime {
         );
       const controllerRoutePushes = resolveVpnRoutePushesForController(
         normalizedSession.routePushes,
-        normalizedSession.tunnelAddresses,
       );
       await this.controller.connect({
         sessionId: normalizedSession.sessionId,
         relayEndpoint: controllerRelayEndpoint,
         exitClass: normalizedSession.exitClass,
         helperTicketHex: normalizedSession.helperTicketHex,
-        // Torii currently omits default route pushes for exit VPN sessions.
         routePushes: controllerRoutePushes,
         excludedRoutes: resolveVpnExcludedRoutesForController(
           normalizedSession.excludedRoutes,
@@ -854,51 +1198,44 @@ export class VpnRuntime {
       this.remoteSessionActive = true;
       this.state = "connected";
       this.lastError = null;
-      return this.getStatus(input);
+      return this.getStatus({
+        toriiUrl: normalizedSession.toriiUrl,
+        chainId: normalizedSession.chainId,
+        accountId: normalizedSession.accountId,
+        networkPrefix: normalizedSession.networkPrefix,
+        privateKeyHex: normalizedSession.privateKeyHex,
+        signingAlgorithm: normalizedSession.signingAlgorithm,
+      });
     } catch (error) {
-      if (session?.sessionId) {
-        const receipt = await this.getClient(input.toriiUrl)
-          .deleteVpnSession(session.sessionId, {
-            canonicalAuth: buildVpnCanonicalAuth(
-              {
-                accountId,
-                privateKeyHex: input.privateKeyHex,
-                signingAlgorithm,
-              },
-              "VPN session cleanup",
-            ),
-          })
-          .catch(() => null);
-        if (receipt) {
-          this.storeReceipt(
-            normalizeReceipt(receipt as unknown as VpnReceipt, input.toriiUrl),
-            {
-              ...input,
-              accountId,
-              chainId,
-              networkPrefix: input.networkPrefix,
-            },
-          );
-        }
+      if (validatedSession) {
+        validatedSession.pendingRemoteExpiry = true;
+        this.activeSession = validatedSession;
+        this.remoteSessionActive = true;
+        this.reconcileState = "remote-expiry-pending";
       }
       this.state = "error";
       this.lastError = sanitizeErrorMessage(
         error instanceof Error ? error.message : String(error),
       );
       throw error;
+    } finally {
+      canonicalAuth?.privateKey.fill(0);
     }
   }
 
-  async disconnect(input?: Partial<VpnAuthContext>): Promise<VpnStatus> {
+  async disconnect(input: unknown): Promise<VpnStatus> {
+    const validatedInput = requireVpnStatusInput(input);
     if (!this.activeSession) {
-      this.activateReceiptsContext(input);
-      const controller = await this.reconcile(input);
+      this.activateReceiptsContext(validatedInput);
+      const controller = await this.reconcile(validatedInput);
       this.state = controller.active ? "repair-needed" : "idle";
       return this.buildStatus(controller);
     }
 
-    if (!this.inputMatchesActiveSessionContext(input, this.activeSession)) {
-      this.markActiveSessionContextMismatch(input);
+    if (
+      !this.inputMatchesActiveSessionContext(validatedInput, this.activeSession)
+    ) {
+      this.markActiveSessionContextMismatch(validatedInput);
       const controller = await this.controller.getStatus();
       return this.buildStatus(controller);
     }
@@ -913,56 +1250,21 @@ export class VpnRuntime {
       return this.buildStatus(controller);
     }
 
-    const auth = this.resolveAuthInput(input, session);
-    if (!auth) {
-      session.pendingRemoteDelete = true;
-      this.persistActiveSession();
-      this.storeReceipt(
-        this.buildLocalFallbackReceipt(session, "remote-delete-pending"),
-        session,
-      );
-      this.remoteSessionActive = true;
-      this.state = "remote-delete-pending";
-      this.lastError =
-        "Local tunnel was disconnected, but authenticated remote session cleanup is still pending.";
-      return this.buildStatus(controller);
-    }
-
-    try {
-      const receipt = await this.getClient(auth.toriiUrl).deleteVpnSession(
-        session.sessionId,
-        {
-          canonicalAuth: buildVpnCanonicalAuth(auth, "VPN disconnect"),
-        },
-      );
-      if (receipt) {
-        this.storeReceipt(
-          normalizeReceipt(receipt as unknown as VpnReceipt, auth.toriiUrl),
-          auth,
-        );
-      }
-      await this.syncReceiptsFromServer(auth).catch(() => undefined);
+    session.pendingRemoteExpiry = true;
+    this.persistActiveSession();
+    this.remoteSessionActive = session.expiresAtMs > nowMs();
+    this.state = this.remoteSessionActive ? "remote-expiry-pending" : "idle";
+    this.reconcileState = this.remoteSessionActive
+      ? "remote-expiry-pending"
+      : "expired";
+    this.lastError = this.remoteSessionActive
+      ? "The local tunnel is disconnected. The prepaid remote lease remains active until its fixed expiry because the first-release Torii contract has no session-delete operation."
+      : null;
+    if (!this.remoteSessionActive) {
       this.activeSession = null;
       this.persistActiveSession();
-      this.remoteSessionActive = false;
-      this.state = "idle";
-      this.lastError = null;
-      this.reconcileState = null;
-      return this.getStatus(auth);
-    } catch (error) {
-      session.pendingRemoteDelete = true;
-      this.persistActiveSession();
-      this.storeReceipt(
-        this.buildLocalFallbackReceipt(session, "remote-delete-pending"),
-        session,
-      );
-      this.remoteSessionActive = true;
-      this.state = "remote-delete-pending";
-      this.lastError = sanitizeErrorMessage(
-        error instanceof Error ? error.message : String(error),
-      );
-      return this.buildStatus(controller);
     }
+    return this.buildStatus(controller);
   }
 
   async disconnectLocal(): Promise<VpnStatus> {
@@ -982,22 +1284,13 @@ export class VpnRuntime {
       return this.buildLocalControllerStatus(controller);
     }
 
-    this.activeSession.pendingRemoteDelete = true;
+    this.activeSession.pendingRemoteExpiry = true;
     this.persistActiveSession();
-    if (this.activeSessionContextVisible) {
-      this.storeReceipt(
-        this.buildLocalFallbackReceipt(
-          this.activeSession,
-          "remote-delete-pending",
-        ),
-        this.activeSession,
-      );
-    }
     this.remoteSessionActive = true;
-    this.state = "remote-delete-pending";
-    this.reconcileState = "remote-active-local-tunnel-down";
+    this.state = "remote-expiry-pending";
+    this.reconcileState = "remote-expiry-pending";
     this.lastError =
-      "Local tunnel was disconnected. Authenticated remote session cleanup is still pending.";
+      "The local tunnel is disconnected. The prepaid remote lease remains active until its fixed expiry because the first-release Torii contract has no session-delete operation.";
     return this.buildStatus(controller);
   }
 
@@ -1016,13 +1309,13 @@ export class VpnRuntime {
       this.lastError = null;
     } else if (this.activeSessionContextVisible) {
       this.state = controller.active
-        ? this.activeSession.pendingRemoteDelete
-          ? "remote-delete-pending"
+        ? this.activeSession.pendingRemoteExpiry
+          ? "remote-expiry-pending"
           : "connected"
         : "reconciling";
       this.reconcileState = controller.active
-        ? this.activeSession.pendingRemoteDelete
-          ? "remote-delete-pending"
+        ? this.activeSession.pendingRemoteExpiry
+          ? "remote-expiry-pending"
           : null
         : "local-controller-repaired-awaiting-live-status";
       this.lastError = null;
@@ -1030,18 +1323,17 @@ export class VpnRuntime {
     return this.buildLocalControllerStatus(controller);
   }
 
-  async listReceipts(input?: VpnStatusInput): Promise<VpnReceipt[]> {
-    if (!input) {
+  async listReceipts(input?: unknown): Promise<VpnReceipt[]> {
+    if (input === undefined) {
       this.activateReceiptsContext(null);
       return [];
     }
-    const receiptContext = this.activateReceiptsContext(input);
-    if (!receiptContext) {
-      return [];
-    }
-    const auth = this.resolveAuthInput(input, null);
+    const validatedInput = requireVpnStatusInput(input);
+    const receiptContext = this.activateReceiptsContext(validatedInput);
+    if (!receiptContext) throw new Error("VPN status input is invalid.");
+    const auth = this.resolveAuthInput(validatedInput, null);
     if (auth) {
-      await this.syncReceiptsFromServer(auth).catch(() => undefined);
+      await this.syncReceiptsFromServer(auth);
     }
     return this.receiptsContextKey === receiptContext.key
       ? [...this.receipts]
@@ -1105,21 +1397,19 @@ export class VpnRuntime {
   }
 
   private getClient(toriiUrl: string) {
-    const normalized = toriiUrl.trim();
+    const normalized = normalizeVpnToriiUrl(toriiUrl);
     const cached = this.clients.get(normalized);
     if (cached) {
       return cached;
     }
-    const client = new ToriiClient(normalized, {
-      fetchImpl: vpnToriiFetch,
-    });
+    const client = new FirstReleaseVpnTransport(normalized, nodeFetch);
     this.clients.set(normalized, client);
     return client;
   }
 
   private async fetchProfile(toriiUrl: string) {
     const profile = await this.getClient(toriiUrl).getVpnProfile();
-    return normalizeProfile(profile as VpnProfile | null, toriiUrl);
+    return normalizeProfile(profile, toriiUrl);
   }
 
   private loadReceipts(): VpnReceipt[] {
@@ -1147,56 +1437,79 @@ export class VpnRuntime {
     rmSync(this.activeSessionPath, { force: true });
   }
 
-  private storeReceipt(
-    receipt: VpnReceipt,
-    contextInput: Partial<VpnAuthContext> | ActiveVpnSession,
-  ) {
-    if (!this.activateReceiptsContext(contextInput)) {
-      return;
-    }
-    this.receiptsGeneration += 1;
-    const existingIndex = this.receipts.findIndex(
-      (item) => item.sessionId === receipt.sessionId,
-    );
-    if (existingIndex >= 0) {
-      this.receipts.splice(existingIndex, 1);
-    }
-    this.receipts = [receipt, ...this.receipts].slice(0, MAX_RECEIPTS);
-    this.persistReceipts();
-  }
-
-  private buildLocalFallbackReceipt(
-    session: ActiveVpnSession,
-    status: string,
-  ): VpnReceipt {
-    const disconnectedAtMs = nowMs();
-    return {
-      sessionId: session.sessionId,
-      accountId: session.accountId,
-      exitClass: session.exitClass,
-      relayEndpoint: session.relayEndpoint,
-      meterFamily: session.meterFamily,
-      connectedAtMs: session.connectedAtMs,
-      disconnectedAtMs,
-      durationMs: Math.max(0, disconnectedAtMs - session.connectedAtMs),
-      bytesIn: session.bytesIn,
-      bytesOut: session.bytesOut,
-      status,
-      receiptSource: "local-fallback",
-    };
-  }
-
   private normalizeRemoteSession(
-    session: Awaited<ReturnType<ToriiClient["createVpnSession"]>>,
+    session: unknown,
     auth: VpnAuthContext,
-    pendingRemoteDelete = false,
+    pendingRemoteExpiry = false,
+    expected?: {
+      quote?: ToriiVpnQuote;
+      paymentTxHash?: string;
+      previous?: ActiveVpnSession;
+    },
   ): ActiveVpnSession {
     const networkPrefix = normalizeVpnNetworkPrefix(auth.networkPrefix);
     if (networkPrefix === null) {
       throw new Error("networkPrefix is required for a VPN session.");
     }
-    if (!isVpnExitClass(session.exitClass)) {
+    const parsed = parseExactVpnSession(session);
+    if (!isVpnExitClass(parsed.exitClass)) {
       throw new Error("VPN session returned an unsupported service class.");
+    }
+    if (parsed.status !== "active") {
+      throw new Error("VPN session returned an unsupported status.");
+    }
+    const exitClass = parsed.exitClass;
+    const status: "active" = parsed.status;
+    const normalized = {
+      ...parsed,
+      exitClass,
+      relayEndpoint: resolveVpnRelayEndpoint(
+        parsed.relayEndpoint,
+        auth.toriiUrl,
+      ),
+      routePushes: [...parsed.routePushes],
+      excludedRoutes: [...parsed.excludedRoutes],
+      dnsServers: [...parsed.dnsServers],
+      tunnelAddresses: [...parsed.tunnelAddresses],
+      status,
+    };
+    assertVpnFieldMatches(
+      "VPN session accountId",
+      normalized.accountId,
+      auth.accountId,
+    );
+    if (normalized.expiresAtMs <= normalized.connectedAtMs) {
+      throw new Error("VPN session expiry must be after its connection time.");
+    }
+    if (expected?.quote) {
+      assertVpnFieldMatches(
+        "VPN session sessionId",
+        normalized.sessionId,
+        expected.quote.sessionIdHex,
+      );
+      for (const field of VPN_QUOTE_BOUND_SESSION_FIELDS) {
+        assertVpnFieldMatches(
+          `VPN session ${field}`,
+          normalized[field],
+          expected.quote[field],
+        );
+      }
+    }
+    if (expected?.paymentTxHash) {
+      assertVpnFieldMatches(
+        "VPN session paymentTxHash",
+        normalized.paymentTxHash,
+        expected.paymentTxHash,
+      );
+    }
+    if (expected?.previous) {
+      for (const field of VPN_STABLE_SESSION_FIELDS) {
+        assertVpnFieldMatches(
+          `VPN refreshed session ${field}`,
+          normalized[field],
+          expected.previous[field],
+        );
+      }
     }
     return {
       toriiUrl: auth.toriiUrl,
@@ -1205,25 +1518,39 @@ export class VpnRuntime {
       networkPrefix,
       privateKeyHex: auth.privateKeyHex,
       signingAlgorithm: normalizeVpnSigningAlgorithm(auth.signingAlgorithm),
-      sessionId: session.sessionId,
-      exitClass: session.exitClass,
-      relayEndpoint: resolveVpnRelayEndpoint(
-        session.relayEndpoint,
-        auth.toriiUrl,
-      ),
-      leaseSecs: session.leaseSecs,
-      expiresAtMs: session.expiresAtMs,
-      connectedAtMs: session.connectedAtMs,
-      meterFamily: session.meterFamily,
-      routePushes: [...session.routePushes],
-      excludedRoutes: [...session.excludedRoutes],
-      dnsServers: [...session.dnsServers],
-      tunnelAddresses: [...session.tunnelAddresses],
-      mtuBytes: session.mtuBytes,
-      helperTicketHex: session.helperTicketHex,
-      bytesIn: session.bytesIn,
-      bytesOut: session.bytesOut,
-      pendingRemoteDelete,
+      sessionId: normalized.sessionId,
+      exitClass: normalized.exitClass,
+      relayEndpoint: normalized.relayEndpoint,
+      leaseSecs: normalized.leaseSecs,
+      expiresAtMs: normalized.expiresAtMs,
+      connectedAtMs: normalized.connectedAtMs,
+      meterFamily: normalized.meterFamily,
+      quoteId: normalized.quoteId,
+      paymentReference: normalized.paymentReference,
+      paymentTxHash: normalized.paymentTxHash,
+      feeAssetId: normalized.feeAssetId,
+      escrowAccountId: normalized.escrowAccountId,
+      operatorAccountId: normalized.operatorAccountId,
+      leaseFee: normalized.leaseFee,
+      flowLabelBits: normalized.flowLabelBits,
+      paddingBudgetMs: normalized.paddingBudgetMs,
+      relayIdHex: normalized.relayIdHex,
+      relayMldsa65PublicKeyHex: normalized.relayMldsa65PublicKeyHex,
+      descriptorCommitHex: normalized.descriptorCommitHex,
+      tlsServerName: normalized.tlsServerName,
+      relayTlsSpkiSha256Hex: normalized.relayTlsSpkiSha256Hex,
+      relayCertificateSha256Hex: normalized.relayCertificateSha256Hex,
+      directorySnapshotDigestHex: normalized.directorySnapshotDigestHex,
+      routePushes: normalized.routePushes,
+      excludedRoutes: normalized.excludedRoutes,
+      dnsServers: normalized.dnsServers,
+      tunnelAddresses: normalized.tunnelAddresses,
+      mtuBytes: normalized.mtuBytes,
+      helperTicketHex: normalized.helperTicketHex,
+      bytesIn: normalized.bytesIn,
+      bytesOut: normalized.bytesOut,
+      status: normalized.status,
+      pendingRemoteExpiry,
     };
   }
 
@@ -1233,14 +1560,17 @@ export class VpnRuntime {
       return [];
     }
     const generation = ++this.receiptsGeneration;
-    const receipts = await this.getClient(auth.toriiUrl).listVpnReceipts({
-      canonicalAuth: buildVpnCanonicalAuth(auth, "VPN receipt sync"),
-    });
-    const normalizedReceipts = receipts.items
-      .map((item) =>
-        normalizeReceipt(item as unknown as VpnReceipt, auth.toriiUrl, "torii"),
-      )
-      .slice(0, MAX_RECEIPTS);
+    const receipts = await runWithVpnCanonicalAuth(
+      auth,
+      "VPN receipt sync",
+      async (canonicalAuth) =>
+        parseExactVpnReceiptList(
+          await this.getClient(auth.toriiUrl).listVpnReceipts(canonicalAuth),
+        ),
+    );
+    const normalizedReceipts = receipts.items.map((item) =>
+      normalizeReceipt(item, auth.toriiUrl, auth.accountId),
+    );
     if (
       this.receiptsContextKey !== context.key ||
       this.receiptsGeneration !== generation
@@ -1263,30 +1593,32 @@ export class VpnRuntime {
     const chainId = input?.chainId ?? session?.chainId;
     const accountIdRaw = input?.accountId ?? session?.accountId;
     const privateKeyHex = input?.privateKeyHex ?? session?.privateKeyHex;
+    const signingAlgorithmRaw =
+      input?.signingAlgorithm ?? session?.signingAlgorithm;
     const networkPrefix = input?.networkPrefix ?? session?.networkPrefix;
-    const signingAlgorithm = normalizeVpnSigningAlgorithm(
-      input?.signingAlgorithm ?? session?.signingAlgorithm,
-    );
+    const normalizedNetworkPrefix = normalizeVpnNetworkPrefix(networkPrefix);
     if (
       !toriiUrl ||
       !chainId ||
       !accountIdRaw ||
       !privateKeyHex ||
-      normalizeVpnNetworkPrefix(networkPrefix) === null
+      !signingAlgorithmRaw ||
+      normalizedNetworkPrefix === null
     ) {
       return null;
     }
+    const signingAlgorithm = normalizeVpnSigningAlgorithm(signingAlgorithmRaw);
     return {
       toriiUrl,
       chainId,
       accountId: normalizeVpnAccountId(
         accountIdRaw,
         "accountId",
-        networkPrefix,
+        normalizedNetworkPrefix,
       ),
       privateKeyHex,
       signingAlgorithm,
-      networkPrefix: normalizeVpnNetworkPrefix(networkPrefix) ?? undefined,
+      networkPrefix: normalizedNetworkPrefix,
     };
   }
 
@@ -1320,10 +1652,6 @@ export class VpnRuntime {
     this.activateReceiptsContext(input ?? this.activeSession);
 
     if (this.activeSession.expiresAtMs <= nowMs()) {
-      this.storeReceipt(
-        this.buildLocalFallbackReceipt(this.activeSession, "expired"),
-        this.activeSession,
-      );
       this.activeSession = null;
       this.persistActiveSession();
       this.remoteSessionActive = false;
@@ -1334,38 +1662,44 @@ export class VpnRuntime {
 
     const auth = this.resolveAuthInput(input, this.activeSession);
     if (!auth) {
-      this.remoteSessionActive = !this.activeSession.pendingRemoteDelete;
-      this.state = this.activeSession.pendingRemoteDelete
-        ? "remote-delete-pending"
+      this.remoteSessionActive = true;
+      this.state = this.activeSession.pendingRemoteExpiry
+        ? "remote-expiry-pending"
         : controller.active
           ? "connected"
           : "reconciling";
-      this.reconcileState = controller.active
-        ? null
-        : "waiting-for-authenticated-reconciliation";
+      this.reconcileState = this.activeSession.pendingRemoteExpiry
+        ? "remote-expiry-pending"
+        : controller.active
+          ? null
+          : "waiting-for-authenticated-reconciliation";
       return controller;
     }
 
-    const remote = await this.getClient(auth.toriiUrl).getVpnSession(
-      this.activeSession.sessionId,
-      {
-        canonicalAuth: buildVpnCanonicalAuth(auth, "VPN status refresh"),
-      },
+    const activeSessionId = this.activeSession.sessionId;
+    const remote = await runWithVpnCanonicalAuth(
+      auth,
+      "VPN status refresh",
+      (canonicalAuth) =>
+        this.getClient(auth.toriiUrl).getVpnSession(
+          activeSessionId,
+          canonicalAuth,
+        ),
     );
 
     if (remote) {
+      const previousSession = this.activeSession;
       this.activeSession = this.normalizeRemoteSession(
         remote,
         auth,
-        this.activeSession.pendingRemoteDelete,
+        previousSession.pendingRemoteExpiry,
+        { previous: previousSession },
       );
       this.persistActiveSession();
       this.remoteSessionActive = true;
-      if (this.activeSession.pendingRemoteDelete || !controller.active) {
-        this.state = "remote-delete-pending";
-        this.reconcileState = controller.active
-          ? "remote-delete-pending"
-          : "remote-active-local-tunnel-down";
+      if (this.activeSession.pendingRemoteExpiry || !controller.active) {
+        this.state = "remote-expiry-pending";
+        this.reconcileState = "remote-expiry-pending";
       } else if (controller.repairRequired) {
         this.state = "repair-needed";
         this.reconcileState = "controller-repair-required";

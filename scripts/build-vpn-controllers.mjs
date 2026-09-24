@@ -12,7 +12,7 @@ import process from "node:process";
 const repoRoot = resolve(import.meta.dirname, "..");
 const irohaRoot = resolve(repoRoot, "../iroha");
 const distRoot = resolve(repoRoot, "dist-native", "vpn");
-const macDistTargets = ["darwin", "mac"];
+const macDistTarget = "darwin";
 const macHelperAppName = "SoraVpnController.app";
 const macPacketEngineAppName = "SoraVpnPacketEngine.app";
 const macPacketEngineExecutableName = "sora-vpn-packet-engine";
@@ -20,7 +20,17 @@ const defaultMacHelperBundleId = "org.sora.wallet.demo.vpn-controller";
 const defaultMacPacketTunnelBundleId = "org.sora.wallet.demo.packet-tunnel";
 const defaultMacAppGroupId = "group.org.sora.wallet.demo.vpn";
 const defaultMacManagerDescription = "SORA Wallet VPN";
-const defaultMacNetworkExtensionEntitlement = "packet-tunnel-provider";
+const defaultMacNetworkExtensionEntitlement =
+  "packet-tunnel-provider-systemextension";
+const appleTeamPattern = /^[A-Z0-9]{10}$/u;
+const bundleIdPattern =
+  /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?){2,}$/u;
+
+const containsAsciiControlCharacter = (value) =>
+  Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f);
+  });
 
 const parsePlatformArg = () => {
   const index = process.argv.indexOf("--platform");
@@ -96,24 +106,6 @@ const copyBuiltBinary = (source, target) => {
   console.log(`copied ${source} -> ${target}`);
 };
 
-const copyBuiltDirectory = (source, target) => {
-  ensureParent(target);
-  cpSync(source, target, { recursive: true });
-  console.log(`copied ${source} -> ${target}`);
-};
-
-const copyBuiltBinaryToTargets = (source, targets) => {
-  for (const target of targets) {
-    copyBuiltBinary(source, target);
-  }
-};
-
-const copyBuiltDirectoryToTargets = (source, targets) => {
-  for (const target of targets) {
-    copyBuiltDirectory(source, target);
-  }
-};
-
 const readTrimmedEnv = (name) => {
   const value = process.env[name]?.trim();
   return value ? value : null;
@@ -130,6 +122,29 @@ const resolveMacBundleConfig = () => {
   const managerDescription =
     readTrimmedEnv("SORANET_VPN_MANAGER_DESCRIPTION") ||
     defaultMacManagerDescription;
+  if (
+    !bundleIdPattern.test(helperBundleId) ||
+    !bundleIdPattern.test(packetTunnelBundleId) ||
+    helperBundleId === packetTunnelBundleId ||
+    `${helperBundleId}.packet-engine` === packetTunnelBundleId
+  ) {
+    throw new Error(
+      "The macOS VPN helper, packet-engine, and PacketTunnel bundle IDs must be distinct reverse-DNS identifiers.",
+    );
+  }
+  if (!bundleIdPattern.test(appGroupId) || !appGroupId.startsWith("group.")) {
+    throw new Error(
+      "SORANET_VPN_APP_GROUP_ID must be a group-prefixed reverse-DNS identifier.",
+    );
+  }
+  if (
+    managerDescription.length > 128 ||
+    containsAsciiControlCharacter(managerDescription)
+  ) {
+    throw new Error(
+      "SORANET_VPN_MANAGER_DESCRIPTION must contain at most 128 characters and no control characters.",
+    );
+  }
   return {
     helperBundleId,
     packetTunnelBundleId,
@@ -144,6 +159,22 @@ const resolveMacSigningConfig = (macConfig) => {
   if (!teamId) {
     return null;
   }
+  if (!appleTeamPattern.test(teamId)) {
+    throw new Error(
+      "APPLE_DEVELOPMENT_TEAM must be the exact ten-character release team ID.",
+    );
+  }
+  const configuredNetworkExtensionEntitlement =
+    process.env["APPLE_VPN_NETWORK_EXTENSION_ENTITLEMENT"]?.trim();
+  if (
+    configuredNetworkExtensionEntitlement &&
+    configuredNetworkExtensionEntitlement !==
+      defaultMacNetworkExtensionEntitlement
+  ) {
+    throw new Error(
+      `APPLE_VPN_NETWORK_EXTENSION_ENTITLEMENT must be exactly ${defaultMacNetworkExtensionEntitlement}.`,
+    );
+  }
   return {
     teamId,
     xcodeIdentity:
@@ -154,9 +185,7 @@ const resolveMacSigningConfig = (macConfig) => {
     helperBundleId: macConfig.helperBundleId,
     packetTunnelBundleId: macConfig.packetTunnelBundleId,
     managerDescription: macConfig.managerDescription,
-    networkExtensionEntitlement:
-      process.env["APPLE_VPN_NETWORK_EXTENSION_ENTITLEMENT"]?.trim() ||
-      defaultMacNetworkExtensionEntitlement,
+    networkExtensionEntitlement: defaultMacNetworkExtensionEntitlement,
   };
 };
 
@@ -361,12 +390,7 @@ const buildMacPacketEngine = () => {
       NORITO_SKIP_BINDINGS_SYNC: "1",
     },
   });
-  copyBuiltBinaryToTargets(
-    join(irohaRoot, "target", "release", "sora-vpn-controller"),
-    macDistTargets.map((target) =>
-      join(distRoot, target, "sora-vpn-packet-engine"),
-    ),
-  );
+  return join(irohaRoot, "target", "release", "sora-vpn-controller");
 };
 
 const buildMacPacketTunnelExtension = (signing) => {
@@ -416,59 +440,46 @@ const stageMacControllerApp = ({
   signing,
   systemExtensionName,
 }) => {
-  const packetEngineEntitlementsPath = join(
-    distRoot,
-    "darwin",
-    "packet-engine-entitlements.plist",
+  const packetEngineEntitlementsPath = resolve(
+    repoRoot,
+    "buildResources",
+    "entitlements.vpn-packet-engine.plist",
   );
-  ensureParent(packetEngineEntitlementsPath);
+  const targetRoot = join(distRoot, macDistTarget);
+  const retiredMacAliasRoot = join(distRoot, "mac");
+  const appRoot = join(targetRoot, macHelperAppName);
+  rmSync(retiredMacAliasRoot, { recursive: true, force: true });
+  rmSync(targetRoot, { recursive: true, force: true });
+  mkdirSync(targetRoot, { recursive: true });
+  cpSync(builtApp, appRoot, { recursive: true });
+  mkdirSync(join(appRoot, "Contents", "Library", "SystemExtensions"), {
+    recursive: true,
+  });
+  mkdirSync(join(appRoot, "Contents", "Resources", "vpn"), {
+    recursive: true,
+  });
+  const packetEngineBundleId = `${
+    signing?.helperBundleId || defaultMacHelperBundleId
+  }.packet-engine`;
+  const stagedPacketEngineApp = join(
+    appRoot,
+    "Contents",
+    "Resources",
+    "vpn",
+    macPacketEngineAppName,
+  );
+  const stagedPacketEngine = join(
+    stagedPacketEngineApp,
+    "Contents",
+    "MacOS",
+    macPacketEngineExecutableName,
+  );
+  mkdirSync(join(stagedPacketEngineApp, "Contents", "MacOS"), {
+    recursive: true,
+  });
   writeFileSync(
-    packetEngineEntitlementsPath,
+    join(stagedPacketEngineApp, "Contents", "Info.plist"),
     `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-\t<key>com.apple.security.app-sandbox</key>
-\t<true/>
-\t<key>com.apple.security.inherit</key>
-\t<true/>
-</dict>
-</plist>
-`,
-  );
-  for (const target of macDistTargets) {
-    const targetRoot = join(distRoot, target);
-    const appRoot = join(targetRoot, macHelperAppName);
-    rmSync(appRoot, { recursive: true, force: true });
-    cpSync(builtApp, appRoot, { recursive: true });
-    mkdirSync(join(appRoot, "Contents", "Library", "SystemExtensions"), {
-      recursive: true,
-    });
-    mkdirSync(join(appRoot, "Contents", "Resources", "vpn"), {
-      recursive: true,
-    });
-    const packetEngineBundleId = `${
-      signing?.helperBundleId || defaultMacHelperBundleId
-    }.packet-engine`;
-    const stagedPacketEngineApp = join(
-      appRoot,
-      "Contents",
-      "Resources",
-      "vpn",
-      macPacketEngineAppName,
-    );
-    const stagedPacketEngine = join(
-      stagedPacketEngineApp,
-      "Contents",
-      "MacOS",
-      macPacketEngineExecutableName,
-    );
-    mkdirSync(join(stagedPacketEngineApp, "Contents", "MacOS"), {
-      recursive: true,
-    });
-    writeFileSync(
-      join(stagedPacketEngineApp, "Contents", "Info.plist"),
-      `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -493,37 +504,37 @@ const stageMacControllerApp = ({
 </dict>
 </plist>
 `,
-    );
-    cpSync(packetEnginePath, stagedPacketEngine);
-    const stagedSystemExtension = join(
+  );
+  cpSync(packetEnginePath, stagedPacketEngine);
+  const stagedSystemExtension = join(
+    appRoot,
+    "Contents",
+    "Library",
+    "SystemExtensions",
+    systemExtensionName,
+  );
+  cpSync(packetTunnelPath, stagedSystemExtension, { recursive: true });
+  signMacPath(stagedPacketEngineApp, signing, {
+    entitlementsPath: packetEngineEntitlementsPath,
+  });
+  signMacPath(stagedSystemExtension, signing, { preserveMetadata: true });
+  signMacPath(appRoot, signing, { preserveMetadata: true });
+  if (signing) {
+    assertMacVpnHelperEntitlements(appRoot);
+    assertMacSystemExtensionEntitlements(stagedSystemExtension);
+    assertMacPacketTunnelProviderMode(
       appRoot,
-      "Contents",
-      "Library",
-      "SystemExtensions",
-      systemExtensionName,
+      "macOS VPN helper app",
+      signing.networkExtensionEntitlement,
     );
-    cpSync(packetTunnelPath, stagedSystemExtension, { recursive: true });
-    signMacPath(stagedPacketEngineApp, signing, {
-      entitlementsPath: packetEngineEntitlementsPath,
-    });
-    signMacPath(stagedSystemExtension, signing, { preserveMetadata: true });
-    signMacPath(appRoot, signing, { preserveMetadata: true });
-    if (signing) {
-      assertMacVpnHelperEntitlements(appRoot);
-      assertMacSystemExtensionEntitlements(stagedSystemExtension);
-      assertMacPacketTunnelProviderMode(
-        appRoot,
-        "macOS VPN helper app",
-        signing.networkExtensionEntitlement,
-      );
-      assertMacPacketTunnelProviderMode(
-        stagedSystemExtension,
-        "macOS VPN system extension",
-        signing.networkExtensionEntitlement,
-      );
-    }
-    console.log(`assembled ${appRoot}`);
+    assertMacPacketTunnelProviderMode(
+      stagedSystemExtension,
+      "macOS VPN system extension",
+      signing.networkExtensionEntitlement,
+    );
   }
+  console.log(`assembled ${appRoot}`);
+  return appRoot;
 };
 
 const platform = parsePlatformArg();
@@ -534,34 +545,11 @@ if (platform === "linux") {
   const macConfig = resolveMacBundleConfig();
   const signing = resolveMacSigningConfig(macConfig);
   const builtControllerApp = buildMacControllerApp(signing);
-  buildMacPacketEngine();
+  const builtPacketEngine = buildMacPacketEngine();
   const builtPacketTunnel = buildMacPacketTunnelExtension(signing);
-  copyBuiltBinaryToTargets(
-    join(builtControllerApp, "Contents", "MacOS", "sora-vpn-controller"),
-    macDistTargets.map((target) =>
-      join(distRoot, target, "sora-vpn-controller"),
-    ),
-  );
-  copyBuiltBinaryToTargets(
-    join(irohaRoot, "target", "release", "sora-vpn-controller"),
-    macDistTargets.map((target) =>
-      join(distRoot, target, "sora-vpn-packet-engine"),
-    ),
-  );
-  copyBuiltDirectoryToTargets(
-    builtPacketTunnel,
-    macDistTargets.map((target) =>
-      join(distRoot, target, macConfig.systemExtensionName),
-    ),
-  );
   stageMacControllerApp({
     builtApp: builtControllerApp,
-    packetEnginePath: join(
-      irohaRoot,
-      "target",
-      "release",
-      "sora-vpn-controller",
-    ),
+    packetEnginePath: builtPacketEngine,
     packetTunnelPath: builtPacketTunnel,
     signing,
     systemExtensionName: macConfig.systemExtensionName,

@@ -8,6 +8,8 @@
     "tests/**/*.ts"
   ],
   "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
@@ -15,20 +17,47 @@
         "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
       ],
       "@iroha/iroha-js/address": [
-        "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
+        "node_modules/.cache/iroha-sdk-compat/active/address.d.ts"
       ],
       "@iroha/iroha-js/connect-browser": [
         "node_modules/.cache/iroha-sdk-compat/active/connect.browser.d.ts"
+      ],
+      "@iroha/iroha-js/browser": [
+        "node_modules/.cache/iroha-sdk-compat/active/browser.d.ts"
       ],
       "@iroha/iroha-js/canonical-request": [
         "node_modules/.cache/iroha-sdk-compat/active/canonical-request.d.ts"
       ],
       "@iroha/iroha-js/crypto": [
-        "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
+        "node_modules/.cache/iroha-sdk-compat/active/crypto.d.ts"
       ],
-      "@iroha/iroha-js/sccp": [
-        "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
+      "@iroha/iroha-js/instruction-builders": [
+        "node_modules/.cache/iroha-sdk-compat/active/instruction-builders.d.ts"
+      ],
+      "@iroha/iroha-js/normalizers": [
+        "node_modules/.cache/iroha-sdk-compat/active/normalizers.d.ts"
+      ],
+      "@iroha/iroha-js/transaction-codec": [
+        "node_modules/.cache/iroha-sdk-compat/active/transaction-codec.d.ts"
       ]
     }
-  }
+  },
+  "exclude": [
+    "src/views/SccpView.vue",
+    "src/composables/useBscWalletConnect.ts",
+    "src/composables/useSccpBridge.ts",
+    "src/composables/useSolanaWalletConnect.ts",
+    "src/composables/useTonWalletConnect.ts",
+    "src/composables/useTronWalletConnect.ts",
+    "src/utils/sccp*.ts",
+    "src/workers/sccpProver.worker.ts",
+    "tests/sccp.spec.ts",
+    "tests/sccpBsc*.spec.ts",
+    "tests/sccpNile*.spec.ts",
+    "tests/sccpProver*.spec.ts",
+    "tests/sccpSolana*.spec.ts",
+    "tests/sccpView.spec.ts",
+    "tests/tronTypeContracts.spec.ts",
+    "tests/useSccpBridge.spec.ts"
+  ]
 }

@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -94,14 +100,39 @@ const writeNativeBundle = (
   );
 };
 
-const assertCurrentPlainElectorateCustody = (value: unknown): void => {
-  const rules = JSON.parse(String(value)) as Record<string, unknown>;
-  expect(rules.bond_escrow_account).toBe(
-    "sorauﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K",
+const PROPOSAL_OPERATOR =
+  "sorauﾛ1Pｽp8zXFQﾗｷPsFﾒｶﾑ3ｵmﾉbｼｽUｱｶヱﾚBXヱﾊCﾋﾘﾈvuKFKM346";
+const SECOND_PROPOSAL_OPERATOR =
+  "sorauﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K";
+const POLICY_FINGERPRINT = Buffer.from(
+  "4742b1f274928767564c6effa414e640e6f635874d74684b06b95414c5afa16e",
+  "hex",
+);
+const PAYOUT_FINGERPRINT = Buffer.from(
+  "8fd84f6599e22db4da15f7152a914dc0091dd73a7906d5981cce37d485191c25",
+  "hex",
+);
+
+const currentOperatorBoundFingerprint = (
+  proposalOperator: unknown,
+  policyJson: unknown,
+  payoutLifecycleProposalId: unknown,
+): Buffer => {
+  if (policyJson === "{}") {
+    throw new Error(
+      "validation-fee policy must contain exactly [current fields]",
+    );
+  }
+  const policy = JSON.parse(String(policyJson)) as Record<string, unknown>;
+  expect(policy.network_id).toBe(
+    "hash:1313131313131313131313131313131313131313131313131313131313131313#9CE1",
   );
-  expect(rules.slash_receiver_account).toBe(
-    "sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX",
-  );
+  expect(payoutLifecycleProposalId).toBeNull();
+  if (proposalOperator === PROPOSAL_OPERATOR) return POLICY_FINGERPRINT;
+  if (proposalOperator === SECOND_PROPOSAL_OPERATOR) {
+    return Buffer.alloc(32, 0x86);
+  }
+  throw new Error("unexpected proposal operator");
 };
 
 const compatibleNativeModule = () => ({
@@ -112,11 +143,19 @@ const compatibleNativeModule = () => ({
     return null;
   },
   deriveConfidentialReceiveAddressV2() {},
-  buildConfidentialTransferProofV2() {},
-  buildConfidentialUnshieldProofV2() {},
-  buildConfidentialUnshieldProofV3() {},
   buildIvmProvedTransactionPayload() {},
   signQuotedIvmProvedTransactionPayload() {},
+  buildTransactionPayload() {},
+  signQuotedTransactionPayload() {},
+  encodeSignedTransactionVersioned(bytes: Uint8Array) {
+    return Buffer.from(bytes);
+  },
+  hashSignedTransaction() {
+    return Buffer.alloc(32);
+  },
+  decodeTransactionReceiptJson() {
+    return "{}";
+  },
   noritoDecodeInstruction() {
     return JSON.stringify({});
   },
@@ -126,32 +165,40 @@ const compatibleNativeModule = () => ({
   inspectSubscriptionTriggerAction() {
     return JSON.stringify({});
   },
+  validationFeeHijiriQuoteRequestV1() {},
+  validationFeeVerifyHijiriQuoteResponseV1() {},
   validationFeePolicyProposalFingerprintV1(
-    _policy: unknown,
+    proposalOperator: unknown,
+    policyJson: unknown,
     _payoutLifecycleProposalId: unknown,
-    _plainElectorateRules: unknown,
   ) {
-    void _policy;
-    void _payoutLifecycleProposalId;
-    assertCurrentPlainElectorateCustody(_plainElectorateRules);
-    return Buffer.from(
-      "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90",
-      "hex",
+    return currentOperatorBoundFingerprint(
+      proposalOperator,
+      policyJson,
+      _payoutLifecycleProposalId,
     );
   },
   validationFeePayoutLifecycleProposalFingerprintV1(
-    _payoutBinding: unknown,
-    _plainElectorateRules: unknown,
+    proposalOperator: unknown,
+    payoutBindingJson: unknown,
   ) {
-    void _payoutBinding;
-    assertCurrentPlainElectorateCustody(_plainElectorateRules);
-    return Buffer.from(
-      "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b",
-      "hex",
-    );
+    if (payoutBindingJson === "{}") {
+      throw new Error("payout binding must contain exactly [contract_address]");
+    }
+    const payoutBinding = JSON.parse(String(payoutBindingJson)) as Record<
+      string,
+      unknown
+    >;
+    expect(payoutBinding.ds_asset_id).toBe("7FF2EKZbaWzi5QTD6hewE2voveah");
+    expect(payoutBinding.xor_asset_id).toBe("5dHF5UNffENuEg9mhjYwY1jcZ1K5");
+    if (proposalOperator === PROPOSAL_OPERATOR) return PAYOUT_FINGERPRINT;
+    if (proposalOperator === SECOND_PROPOSAL_OPERATOR) {
+      return Buffer.alloc(32, 0x90);
+    }
+    throw new Error("unexpected proposal operator");
   },
   connectNoritoBridgeAbiVersion() {
-    return 21;
+    return 23;
   },
   securePrivateFileAbiVersion() {
     return 1;
@@ -189,9 +236,16 @@ const GOVERNANCE_FINGERPRINT_EXPORTS = [
 const ACTIVE_RUNTIME_NATIVE_EXPORTS = [
   "accountAddressParseEncoded",
   "accountAddressRender",
+  "buildTransactionPayload",
+  "signQuotedTransactionPayload",
+  "encodeSignedTransactionVersioned",
+  "hashSignedTransaction",
+  "decodeTransactionReceiptJson",
   "noritoDecodeInstruction",
   "noritoEncodeInstruction",
   "inspectSubscriptionTriggerAction",
+  "validationFeeHijiriQuoteRequestV1",
+  "validationFeeVerifyHijiriQuoteResponseV1",
   "securePrivateFileAbiVersion",
   "securePrivateDirectoryEnsure",
   "securePrivateFileRead",
@@ -259,21 +313,60 @@ describe("resolveNativeBuildRequirement", () => {
     expect(result.reason).toBe("missing native binary");
   });
 
-  it("requests a rebuild when the checksum manifest does not match the binary", () => {
+  it.each([
+    ["empty", 0],
+    ["oversized", 256 * 1024 * 1024 + 1],
+  ])("rejects an %s native binary before reading it", (_label, size) => {
     const tempPackage = makeTempPackage();
     tempRoots.push(tempPackage.root);
+    const nativeModulePath = join(tempPackage.nativeDir, "iroha_js_host.node");
+    writeFileSync(nativeModulePath, "", "utf8");
+    truncateSync(nativeModulePath, size);
 
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+    );
+
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toBe(
+      "native binary is not a bounded regular non-symbolic-link file",
+    );
+  });
+
+  it("rejects an oversized checksum manifest before parsing it", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
     writeFileSync(
       join(tempPackage.nativeDir, "iroha_js_host.node"),
       "native-binary",
       "utf8",
     );
-    writeFileSync(
-      join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
-      JSON.stringify({
-        "darwin-arm64": { sha256: sha256("different-binary") },
-      }),
-      "utf8",
+    const checksumManifestPath = join(
+      tempPackage.nativeDir,
+      "iroha_js_host.checksums.json",
+    );
+    writeFileSync(checksumManifestPath, "", "utf8");
+    truncateSync(checksumManifestPath, 1024 * 1024 + 1);
+
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+    );
+
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toBe(
+      "checksum manifest is not a bounded regular non-symbolic-link file",
+    );
+  });
+
+  it("requests a rebuild when the checksum manifest does not match the binary", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+
+    writeNativeBundle(
+      tempPackage.nativeDir,
+      releaseChecksumEntry({ sha256: sha256("different-binary") }),
     );
 
     const result = resolveNativeBuildRequirement(
@@ -291,18 +384,7 @@ describe("resolveNativeBuildRequirement", () => {
     const tempPackage = makeTempPackage();
     tempRoots.push(tempPackage.root);
 
-    writeFileSync(
-      join(tempPackage.nativeDir, "iroha_js_host.node"),
-      "native-binary",
-      "utf8",
-    );
-    writeFileSync(
-      join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
-      JSON.stringify({
-        "darwin-arm64": { sha256: sha256("native-binary") },
-      }),
-      "utf8",
-    );
+    writeNativeBundle(tempPackage.nativeDir, releaseChecksumEntry());
 
     const result = resolveNativeBuildRequirement(
       tempPackage.root,
@@ -316,24 +398,13 @@ describe("resolveNativeBuildRequirement", () => {
     expect(result.actualSha256).toBe(sha256("native-binary"));
   });
 
-  it("accepts checksum manifests that wrap platform hashes under entries", () => {
+  it("rejects a current wrapper whose provenance profile is incomplete", () => {
     const tempPackage = makeTempPackage();
     tempRoots.push(tempPackage.root);
 
-    writeFileSync(
-      join(tempPackage.nativeDir, "iroha_js_host.node"),
-      "native-binary",
-      "utf8",
-    );
-    writeFileSync(
-      join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
-      JSON.stringify({
-        entries: {
-          "darwin-arm64": { sha256: sha256("native-binary") },
-        },
-      }),
-      "utf8",
-    );
+    writeNativeBundle(tempPackage.nativeDir, {
+      sha256: sha256("native-binary"),
+    });
 
     const result = resolveNativeBuildRequirement(
       tempPackage.root,
@@ -341,28 +412,15 @@ describe("resolveNativeBuildRequirement", () => {
       compatibleNativeModule,
     );
 
-    expect(result.shouldBuild).toBe(false);
-    expect(result.reason).toBe("native binding is current");
-    expect(result.expectedSha256).toBe(sha256("native-binary"));
-    expect(result.actualSha256).toBe(sha256("native-binary"));
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toMatch(/missing native provenance fields/u);
   });
 
   it("requests a rebuild when required confidential v2 exports are missing", () => {
     const tempPackage = makeTempPackage();
     tempRoots.push(tempPackage.root);
 
-    writeFileSync(
-      join(tempPackage.nativeDir, "iroha_js_host.node"),
-      "native-binary",
-      "utf8",
-    );
-    writeFileSync(
-      join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
-      JSON.stringify({
-        "darwin-arm64": { sha256: sha256("native-binary") },
-      }),
-      "utf8",
-    );
+    writeNativeBundle(tempPackage.nativeDir, releaseChecksumEntry());
 
     const result = resolveNativeBuildRequirement(
       tempPackage.root,
@@ -383,18 +441,7 @@ describe("resolveNativeBuildRequirement", () => {
     const tempPackage = makeTempPackage();
     tempRoots.push(tempPackage.root);
 
-    writeFileSync(
-      join(tempPackage.nativeDir, "iroha_js_host.node"),
-      "native-binary",
-      "utf8",
-    );
-    writeFileSync(
-      join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
-      JSON.stringify({
-        "darwin-arm64": { sha256: sha256("native-binary") },
-      }),
-      "utf8",
-    );
+    writeNativeBundle(tempPackage.nativeDir, releaseChecksumEntry());
 
     for (const exportName of GOVERNANCE_FINGERPRINT_EXPORTS) {
       const nativeModule = compatibleNativeModule();
@@ -414,9 +461,7 @@ describe("resolveNativeBuildRequirement", () => {
   it("requests a rebuild when an active runtime native export is missing", () => {
     const tempPackage = makeTempPackage();
     tempRoots.push(tempPackage.root);
-    writeNativeBundle(tempPackage.nativeDir, {
-      sha256: sha256("native-binary"),
-    });
+    writeNativeBundle(tempPackage.nativeDir, releaseChecksumEntry());
 
     for (const exportName of ACTIVE_RUNTIME_NATIVE_EXPORTS) {
       const nativeModule = compatibleNativeModule();
@@ -433,22 +478,11 @@ describe("resolveNativeBuildRequirement", () => {
     }
   });
 
-  it("accepts opaque N-API fingerprint arities when known-answer vectors pass", () => {
+  it("accepts opaque N-API fingerprint arities when semantic probes pass", () => {
     const tempPackage = makeTempPackage();
     tempRoots.push(tempPackage.root);
 
-    writeFileSync(
-      join(tempPackage.nativeDir, "iroha_js_host.node"),
-      "native-binary",
-      "utf8",
-    );
-    writeFileSync(
-      join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
-      JSON.stringify({
-        "darwin-arm64": { sha256: sha256("native-binary") },
-      }),
-      "utf8",
-    );
+    writeNativeBundle(tempPackage.nativeDir, releaseChecksumEntry());
 
     const nativeModule = compatibleNativeModule();
     const policyFingerprint =
@@ -486,9 +520,7 @@ describe("resolveNativeBuildRequirement", () => {
   it("uses the secure-storage ABI probe instead of JavaScript arities", () => {
     const tempPackage = makeTempPackage();
     tempRoots.push(tempPackage.root);
-    writeNativeBundle(tempPackage.nativeDir, {
-      sha256: sha256("native-binary"),
-    });
+    writeNativeBundle(tempPackage.nativeDir, releaseChecksumEntry());
 
     const nativeModule = compatibleNativeModule();
     Reflect.set(nativeModule, "securePrivateDirectoryEnsure", () => {});
@@ -517,9 +549,7 @@ describe("resolveNativeBuildRequirement", () => {
   it("requests a rebuild when the secure private-file ABI is not exactly 1", () => {
     const tempPackage = makeTempPackage();
     tempRoots.push(tempPackage.root);
-    writeNativeBundle(tempPackage.nativeDir, {
-      sha256: sha256("native-binary"),
-    });
+    writeNativeBundle(tempPackage.nativeDir, releaseChecksumEntry());
 
     const nativeModule = compatibleNativeModule();
     nativeModule.securePrivateFileAbiVersion = () => 2;
@@ -538,9 +568,7 @@ describe("resolveNativeBuildRequirement", () => {
   it("requests a rebuild when the secure private-file ABI probe throws", () => {
     const tempPackage = makeTempPackage();
     tempRoots.push(tempPackage.root);
-    writeNativeBundle(tempPackage.nativeDir, {
-      sha256: sha256("native-binary"),
-    });
+    writeNativeBundle(tempPackage.nativeDir, releaseChecksumEntry());
 
     const nativeModule = compatibleNativeModule();
     nativeModule.securePrivateFileAbiVersion = () => {
@@ -558,22 +586,11 @@ describe("resolveNativeBuildRequirement", () => {
     );
   });
 
-  it("requests a rebuild when the native Connect bridge ABI is not exactly 21", () => {
+  it("requests a rebuild when the native Connect bridge ABI is not exactly 23", () => {
     const tempPackage = makeTempPackage();
     tempRoots.push(tempPackage.root);
 
-    writeFileSync(
-      join(tempPackage.nativeDir, "iroha_js_host.node"),
-      "native-binary",
-      "utf8",
-    );
-    writeFileSync(
-      join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
-      JSON.stringify({
-        "darwin-arm64": { sha256: sha256("native-binary") },
-      }),
-      "utf8",
-    );
+    writeNativeBundle(tempPackage.nativeDir, releaseChecksumEntry());
 
     const nativeModule = compatibleNativeModule();
     nativeModule.connectNoritoBridgeAbiVersion = () => 20;
@@ -585,36 +602,25 @@ describe("resolveNativeBuildRequirement", () => {
 
     expect(result.shouldBuild).toBe(true);
     expect(result.reason).toBe(
-      "connect Norito bridge ABI mismatch: expected 21, observed 20",
+      "connect Norito bridge ABI mismatch: expected 23, observed 20",
     );
   });
 
-  it("requests a rebuild when native fingerprint semantics do not match the canonical Rust vectors", () => {
+  it("requests a rebuild when policy fingerprints are not operator-bound", () => {
     const tempPackage = makeTempPackage();
     tempRoots.push(tempPackage.root);
 
-    writeFileSync(
-      join(tempPackage.nativeDir, "iroha_js_host.node"),
-      "native-binary",
-      "utf8",
-    );
-    writeFileSync(
-      join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
-      JSON.stringify({
-        "darwin-arm64": { sha256: sha256("native-binary") },
-      }),
-      "utf8",
-    );
+    writeNativeBundle(tempPackage.nativeDir, releaseChecksumEntry());
 
     const nativeModule = compatibleNativeModule();
     nativeModule.validationFeePolicyProposalFingerprintV1 = function (
-      _policy: unknown,
+      _proposalOperator: unknown,
+      _policyJson: unknown,
       _payoutLifecycleProposalId: unknown,
-      _plainElectorateRules: unknown,
     ) {
-      void _policy;
+      void _proposalOperator;
+      void _policyJson;
       void _payoutLifecycleProposalId;
-      void _plainElectorateRules;
       return Buffer.alloc(32);
     };
     const result = resolveNativeBuildRequirement(
@@ -624,8 +630,8 @@ describe("resolveNativeBuildRequirement", () => {
     );
 
     expect(result.shouldBuild).toBe(true);
-    expect(result.reason).toBe(
-      "native fingerprint contract mismatch for validationFeePolicyProposalFingerprintV1: expected 85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90, observed 0000000000000000000000000000000000000000000000000000000000000000",
+    expect(result.reason).toContain(
+      "native fingerprint contract mismatch for validationFeePolicyProposalFingerprintV1: expected deterministic operator-bound vector 4742b1f274928767564c6effa414e640e6f635874d74684b06b95414c5afa16e",
     );
   });
 
@@ -734,7 +740,7 @@ describe("resolveNativeBuildRequirement", () => {
 
       expect(result.shouldBuild).toBe(true);
       expect(result.reason).toBe(
-        `missing release native provenance fields for darwin-arm64: ${missingField}`,
+        `missing native provenance fields for darwin-arm64: ${missingField}`,
       );
     },
   );
@@ -824,7 +830,7 @@ describe("resolveNativeBuildRequirement", () => {
       );
       expect(result.shouldBuild).toBe(true);
       expect(result.reason).toBe(
-        "release checksum manifest must contain only entries.darwin-arm64",
+        "checksum manifest must contain only entries.darwin-arm64",
       );
     }
   });
@@ -848,8 +854,6 @@ describe("resolveNativeBuildRequirement", () => {
       releaseProvenanceRequirement(),
     );
     expect(result.shouldBuild).toBe(true);
-    expect(result.reason).toBe(
-      "release checksum manifest encoding is not canonical",
-    );
+    expect(result.reason).toBe("checksum manifest encoding is not canonical");
   });
 });

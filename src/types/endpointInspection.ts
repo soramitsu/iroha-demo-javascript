@@ -13,15 +13,13 @@ export type EndpointFeature =
   | "accountOnboarding"
   | "assetTransfers"
   | "faucetClaim"
-  | "confidentialTransfers"
   | "kaigiMeetings"
   | "governanceWrites"
   | "stakingWrites"
   | "subscriptionWrites"
-  | "soraCloudDeploy"
+  | "soraCloudHfSharedLease"
   | "vpnSessions"
-  | "irohaConnectSessions"
-  | "zkProofJobs";
+  | "irohaConnectSessions";
 
 export interface EndpointFeatureAvailability {
   supported: boolean;
@@ -39,6 +37,7 @@ export type EndpointIdentityEvidenceSource =
   | "governance-capabilities-v1"
   | "chain-metadata"
   | "response-headers"
+  | "genesis-fingerprint"
   | "blocked-deployment-fingerprint";
 
 export interface EndpointNetworkContext {

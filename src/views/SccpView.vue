@@ -552,13 +552,9 @@ import {
   readSccpSolanaSourceBridgeAddress,
   readSccpSolanaSourceStateAddress,
   readSccpSolanaTokenAddress,
-  readSccpTairaBurnRecordMaterial,
-  readSccpTonBridgeAddress,
   readSccpTonFinalizeMessageValueNano,
-  readSccpTonProofMaterial,
   readSccpTonSourceBridgeAddress,
   readSccpTonSourceProverModuleUrl,
-  readSccpTonTokenAddress,
   readSccpTonVerifierAddress,
   readSccpTonVerifierProtocolVersion,
   readSccpTronGatewayEndpoint,
@@ -608,7 +604,7 @@ import {
 
 const session = useSessionStore();
 const { t, n } = useAppI18n();
-const selectedCounterparty = ref<SccpCounterpartyKey>("tron");
+const selectedCounterparty = ref<SccpCounterpartyKey>("solana");
 const activeRoute = computed(
   () => SCCP_ROUTE_PROFILES[selectedCounterparty.value],
 );
@@ -618,7 +614,7 @@ const bsc = useBscWalletConnect();
 const ton = useTonWalletConnect();
 const solana = useSolanaWalletConnect();
 
-const direction = ref<SccpBridgeDirection>("taira-to-tron");
+const direction = ref<SccpBridgeDirection>("taira-to-solana");
 const amount = ref("");
 const tronRecipient = ref("");
 const bscRecipient = ref("");
@@ -839,15 +835,6 @@ const routeMessages = computed(() => {
   let messages: string[];
   if (!isTairaRoute.value) {
     messages = ["SCCP bridging is enabled only on TAIRA testnet."];
-  } else if (
-    isTonRoute.value &&
-    direction.value === "taira-to-ton" &&
-    routeReadyForAction.value &&
-    bridge.readiness.value.reasons.length > 0
-  ) {
-    messages = [
-      "TON destination leg is ready for TAIRA -> TON. The TON -> TAIRA tab will stay unavailable until the source proof lane is live.",
-    ];
   } else {
     messages = routeBlockingMessages.value;
   }
@@ -1026,121 +1013,14 @@ const readCapabilityString = (
   }
   return "";
 };
-const readTonForwardReadinessReasons = (
-  manifest: Record<string, unknown> | null,
-): string[] => {
-  const reasons: string[] = [];
-  const capabilities = bridge.capabilities.value;
-  const loadFailure = bridge.routeLoadFailure.value;
-  if (!isTairaRoute.value) {
-    reasons.push("Switch to the TAIRA testnet profile.");
-  }
-  if (loadFailure) {
-    reasons.push(loadFailure.message);
-  }
-  if (!capabilities) {
-    if (!loadFailure) {
-      reasons.push("SCCP capabilities have not been loaded.");
-    }
-  } else if (
-    !readCapabilityString(
-      capabilities,
-      "proofSubmitPath",
-      "proof_submit_path",
-      "proofSubmitEndpoint",
-      "proof_submit_endpoint",
-    ) ||
-    !readCapabilityString(
-      capabilities,
-      "messageSubmitPath",
-      "message_submit_path",
-      "messageSubmitEndpoint",
-      "message_submit_endpoint",
-    )
-  ) {
-    reasons.push("This Torii endpoint is missing SCCP submit endpoints.");
-  }
-  if (!isRouteRecord(manifest)) {
-    if (!loadFailure) {
-      reasons.push("No TON SCCP manifest is advertised by this endpoint.");
-    }
-    return reasons;
-  }
-  const addressChecks: Array<[string, string]> = [
-    ["TON bridge deployment address", readSccpTonBridgeAddress(manifest)],
-    ["TON TairaXOR token address", readSccpTonTokenAddress(manifest)],
-    ["TON verifier address", readSccpTonVerifierAddress(manifest)],
-  ];
-  for (const [label, address] of addressChecks) {
-    if (!address) {
-      reasons.push(`${label} is missing.`);
-      continue;
-    }
-    try {
-      normalizeTonRawAddress(address, label);
-    } catch (error) {
-      reasons.push(
-        error instanceof Error
-          ? `${label} is invalid: ${error.message}`
-          : `${label} is invalid.`,
-      );
-    }
-  }
-  try {
-    if (!readSccpTonProofMaterial(manifest, SCCP_TON_NETWORK.key)) {
-      reasons.push(
-        "The TON SCCP verifier rollout proof material is incomplete.",
-      );
-    }
-  } catch (error) {
-    reasons.push(
-      error instanceof Error
-        ? error.message
-        : "The TON SCCP verifier rollout proof material is incomplete.",
-    );
-  }
-  try {
-    if (!readSccpTonFinalizeMessageValueNano(manifest)) {
-      reasons.push("The TON finalize message value is missing.");
-    }
-  } catch (error) {
-    reasons.push(
-      error instanceof Error
-        ? error.message
-        : "The TON finalize message value is invalid.",
-    );
-  }
-  try {
-    if (!readSccpTairaBurnRecordMaterial(manifest)) {
-      reasons.push("The TAIRA burn-record ZK contract material is missing.");
-    }
-  } catch (error) {
-    reasons.push(
-      error instanceof Error
-        ? error.message
-        : "The TAIRA burn-record ZK contract material is missing.",
-    );
-  }
-  return reasons;
+const routeReadyForDirection = (candidate: SccpBridgeDirection): boolean => {
+  void candidate;
+  return bridge.readiness.value.ready;
 };
-const tonForwardReadinessReasons = computed(() =>
-  isTonRoute.value && direction.value === "taira-to-ton"
-    ? readTonForwardReadinessReasons(bridge.readiness.value.tonManifest)
-    : [],
-);
-const routeReadyForDirection = (candidate: SccpBridgeDirection): boolean =>
-  isTonRoute.value && candidate === "taira-to-ton"
-    ? readTonForwardReadinessReasons(bridge.readiness.value.tonManifest)
-        .length === 0
-    : bridge.readiness.value.ready;
 const routeReadyForAction = computed(() =>
   routeReadyForDirection(direction.value),
 );
-const routeBlockingMessages = computed(() =>
-  isTonRoute.value && direction.value === "taira-to-ton"
-    ? tonForwardReadinessReasons.value
-    : bridge.readiness.value.reasons,
-);
+const routeBlockingMessages = computed(() => bridge.readiness.value.reasons);
 const tonConcreteSourceLaneReady = computed(() => {
   const manifest = bridge.readiness.value.tonManifest;
   if (!bridge.readiness.value.ready || !isRouteRecord(manifest)) {

@@ -1,11 +1,12 @@
 import {
-  existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyInstalledReleaseDependencies } from "./iroha-js-release-source.mjs";
 
@@ -23,9 +24,36 @@ const REQUIRED_ROOT_EXPORTS = [
   "computeValidationFeePolicyProposalFingerprintV1",
   "computeValidationFeePayoutLifecycleProposalFingerprintV1",
 ];
+const REQUIRED_SDK_MODULES = Object.freeze([
+  ["@iroha/iroha-js/crypto", "crypto.js", "crypto.d.ts"],
+  ["@iroha/iroha-js/address", "address.js", "address.d.ts"],
+  [
+    "@iroha/iroha-js/connect-browser",
+    "connect.browser.js",
+    "connect.browser.d.ts",
+  ],
+  ["@iroha/iroha-js/browser", "browser.js", "browser.d.ts"],
+  [
+    "@iroha/iroha-js/canonical-request",
+    "canonicalRequest.js",
+    "canonical-request.d.ts",
+  ],
+  [
+    "@iroha/iroha-js/instruction-builders",
+    "instructionBuilders.js",
+    "instruction-builders.d.ts",
+  ],
+  ["@iroha/iroha-js/normalizers", "normalizers.js", "normalizers.d.ts"],
+  [
+    "@iroha/iroha-js/transaction-codec",
+    "transactionCodec.js",
+    "transaction-codec.d.ts",
+  ],
+  ["@iroha/iroha-js", "index.js", "index.d.ts"],
+]);
 
 const containsExports = (path, exports) => {
-  if (!existsSync(path)) return false;
+  if (!isCanonicalRegularFile(path)) return false;
   const source = readFileSync(path, "utf8");
   return exports.every(
     (name) =>
@@ -36,41 +64,57 @@ const containsExports = (path, exports) => {
   );
 };
 
+const isCanonicalRegularFile = (path) => {
+  try {
+    const metadata = lstatSync(path);
+    return (
+      metadata.isFile() &&
+      !metadata.isSymbolicLink() &&
+      Number.isSafeInteger(metadata.size) &&
+      metadata.size > 0 &&
+      realpathSync.native(path) === path
+    );
+  } catch {
+    return false;
+  }
+};
+
+const requireCanonicalPhysicalDirectory = (path, label) => {
+  const resolvedPath = resolve(path);
+  let metadata;
+  try {
+    metadata = lstatSync(resolvedPath);
+  } catch (error) {
+    throw new Error(
+      `${label} is unavailable at ${resolvedPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (
+    !metadata.isDirectory() ||
+    metadata.isSymbolicLink() ||
+    realpathSync.native(resolvedPath) !== resolvedPath
+  ) {
+    throw new Error(`${label} must be a canonical physical directory.`);
+  }
+  return resolvedPath;
+};
+
 export const hasCurrentIrohaSdkApi = (sdkRoot) =>
   containsExports(join(sdkRoot, "dist", "index.js"), REQUIRED_ROOT_EXPORTS) &&
-  existsSync(join(sdkRoot, "index.d.ts")) &&
-  existsSync(join(sdkRoot, "dist", "canonicalRequest.js")) &&
-  existsSync(join(sdkRoot, "canonical-request.d.ts")) &&
-  existsSync(join(sdkRoot, "dist", "sccp.js"));
+  REQUIRED_SDK_MODULES.every(
+    ([, runtimeFilename, declarationFilename]) =>
+      isCanonicalRegularFile(join(sdkRoot, "dist", runtimeFilename)) &&
+      isCanonicalRegularFile(join(sdkRoot, declarationFilename)),
+  );
 
 export const buildIrohaSdkAliases = (sdkRoot) => {
   const dist = resolve(sdkRoot, "dist");
-  return [
-    {
-      find: "@iroha/iroha-js/crypto",
-      replacement: resolve(dist, "crypto.js"),
-    },
-    {
-      find: "@iroha/iroha-js/address",
-      replacement: resolve(dist, "address.js"),
-    },
-    {
-      find: "@iroha/iroha-js/connect-browser",
-      replacement: resolve(dist, "connect.browser.js"),
-    },
-    {
-      find: "@iroha/iroha-js/canonical-request",
-      replacement: resolve(dist, "canonicalRequest.js"),
-    },
-    {
-      find: "@iroha/iroha-js/sccp",
-      replacement: resolve(dist, "sccp.js"),
-    },
-    {
-      find: "@iroha/iroha-js",
-      replacement: resolve(dist, "index.js"),
-    },
-  ];
+  return REQUIRED_SDK_MODULES.map(([find, runtimeFilename]) => ({
+    find,
+    replacement: resolve(dist, runtimeFilename),
+  }));
 };
 
 const activateSdkRoot = (projectRoot, sdkRoot) => {
@@ -82,7 +126,24 @@ const activateSdkRoot = (projectRoot, sdkRoot) => {
     "active",
   );
   mkdirSync(dirname(activeRoot), { recursive: true });
-  rmSync(activeRoot, { recursive: true, force: true });
+  try {
+    const activeMetadata = lstatSync(activeRoot);
+    if (!activeMetadata.isSymbolicLink()) {
+      throw new Error(
+        `Refusing to replace non-symlink SDK activation path ${activeRoot}.`,
+      );
+    }
+    rmSync(activeRoot);
+  } catch (error) {
+    if (
+      !error ||
+      typeof error !== "object" ||
+      !("code" in error) ||
+      error.code !== "ENOENT"
+    ) {
+      throw error;
+    }
+  }
   symlinkSync(
     sdkRoot,
     activeRoot,
@@ -96,6 +157,10 @@ export const resolveCompatibleIrohaSdkRoot = ({
   env = process.env,
   log = console.info,
 } = {}) => {
+  projectRoot = requireCanonicalPhysicalDirectory(
+    projectRoot,
+    "Wallet project root",
+  );
   const releaseRoot = env.IROHA_ROOT;
   const configuredRoot = String(env.IROHA_JS_SDK_ROOT ?? "").trim();
   if (typeof releaseRoot === "string" && releaseRoot.length > 0) {
@@ -105,11 +170,9 @@ export const resolveCompatibleIrohaSdkRoot = ({
       );
     }
     const marker = verifyInstalledReleaseDependencies(projectRoot, releaseRoot);
-    const installedRoot = resolve(
-      projectRoot,
-      "node_modules",
-      "@iroha",
-      "iroha-js",
+    const installedRoot = requireCanonicalPhysicalDirectory(
+      resolve(projectRoot, "node_modules", "@iroha", "iroha-js"),
+      "Reviewed installed @iroha/iroha-js SDK",
     );
     if (!hasCurrentIrohaSdkApi(installedRoot)) {
       throw new Error(
@@ -121,9 +184,17 @@ export const resolveCompatibleIrohaSdkRoot = ({
     );
     return activateSdkRoot(projectRoot, installedRoot);
   }
-  const sdkRoot = configuredRoot
-    ? resolve(configuredRoot)
-    : resolve(projectRoot, "../iroha/javascript/iroha_js");
+  if (configuredRoot && !isAbsolute(configuredRoot)) {
+    throw new Error(
+      "IROHA_JS_SDK_ROOT must be an explicit absolute path so every build consumer selects the same SDK root.",
+    );
+  }
+  const sdkRoot = requireCanonicalPhysicalDirectory(
+    configuredRoot
+      ? resolve(configuredRoot)
+      : resolve(projectRoot, "../iroha/javascript/iroha_js"),
+    "Current @iroha/iroha-js SDK",
+  );
   if (!hasCurrentIrohaSdkApi(sdkRoot)) {
     throw new Error(
       `The current linked @iroha/iroha-js API is unavailable at ${sdkRoot}. ` +

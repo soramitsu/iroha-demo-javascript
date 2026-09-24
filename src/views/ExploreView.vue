@@ -142,11 +142,8 @@ const explorerUrl = computed(
         preset.connection.networkPrefix === session.connection.networkPrefix,
     )?.explorerUrl ?? "",
 );
-const requestAccountId = computed(
-  () =>
-    getPublicAccountId(activeAccount.value, session.connection.networkPrefix) ||
-    activeAccount.value?.accountId ||
-    "",
+const requestAccountId = computed(() =>
+  getPublicAccountId(activeAccount.value, session.connection.networkPrefix),
 );
 const { localeStore, t } = useAppI18n();
 const metrics = ref<ExplorerMetricsResponse | null>(null);
@@ -238,6 +235,7 @@ const refresh = async () => {
             getExplorerAccountQr({
               toriiUrl,
               accountId,
+              networkPrefix: session.connection.networkPrefix,
             }),
           )
         : Promise.resolve(null),

@@ -1,4 +1,5 @@
 import type { Session, Streams } from "electron";
+import { isTrustedRendererNavigationUrl } from "./rendererProtocol";
 
 type MediaPermissionDetails = {
   isMainFrame?: boolean;
@@ -35,7 +36,9 @@ type DisplayMediaRequest = {
     url?: string;
   } | null;
   securityOrigin?: string;
-  requestingUrl?: string;
+  videoRequested?: boolean;
+  audioRequested?: boolean;
+  userGesture?: boolean;
 };
 
 type DisplayMediaRequestHandlerSession = Pick<
@@ -44,19 +47,34 @@ type DisplayMediaRequestHandlerSession = Pick<
 >;
 type DisplayMediaSource = NonNullable<Streams["video"]>;
 
-const isAllowedMediaType = (value: string | undefined): boolean =>
-  value === undefined || value === "video" || value === "audio";
+type TrustedPermissionOwner = {
+  getURL(): string;
+  isDestroyed(): boolean;
+};
+
+type MediaPermissionHandlerOptions = {
+  getRendererUrl(): string | undefined;
+  getTrustedWebContents(): TrustedPermissionOwner | null;
+  requestSystemMediaAccess?: RequestSystemMediaAccess;
+  getSystemMediaAccessStatus?: GetSystemMediaAccessStatus;
+};
+
+type DisplayMediaRequestHandlerOptions = {
+  getSources(): Promise<DisplayMediaSource[]>;
+  getRendererUrl(): string | undefined;
+  getTrustedMainFrame(): object | null;
+};
+
+const isAllowedMediaType = (value: string): boolean =>
+  value === "video" || value === "audio";
 
 const unique = <T>(values: T[]) => [...new Set(values)];
 
 export const getSystemMediaAccessKinds = (
   details?: MediaPermissionDetails,
 ): SystemMediaAccessKind[] => {
-  const mediaTypes = details?.mediaTypes?.length
-    ? details.mediaTypes
-    : details?.mediaType
-      ? [details.mediaType]
-      : ["video", "audio"];
+  const mediaTypes =
+    details?.mediaTypes ?? (details?.mediaType ? [details.mediaType] : []);
   return unique(
     mediaTypes.flatMap((mediaType) => {
       if (mediaType === "video") {
@@ -70,17 +88,23 @@ export const getSystemMediaAccessKinds = (
   );
 };
 
-const isTrustedAppUrl = (value: string | undefined, rendererUrl?: string) => {
-  const raw = String(value ?? "").trim();
-  if (!raw) {
+const isTrustedAppOrigin = (
+  value: string | undefined,
+  rendererUrl?: string,
+): boolean => {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    value.trim() !== value ||
+    typeof rendererUrl !== "string" ||
+    !rendererUrl
+  ) {
     return false;
   }
   try {
-    const parsed = new URL(raw);
-    if (!rendererUrl) {
-      return false;
-    }
+    const parsed = new URL(value);
     const trusted = new URL(rendererUrl);
+    const trustedOrigin = `${trusted.protocol}//${trusted.host}`;
     return (
       !parsed.username &&
       !parsed.password &&
@@ -88,24 +112,49 @@ const isTrustedAppUrl = (value: string | undefined, rendererUrl?: string) => {
       !trusted.password &&
       parsed.protocol === trusted.protocol &&
       parsed.hostname === trusted.hostname &&
-      parsed.port === trusted.port
+      parsed.port === trusted.port &&
+      value === trustedOrigin
     );
-  } catch (_error) {
+  } catch {
     return false;
   }
 };
 
-const hasOnlyTrustedAppUrls = (
-  values: Array<string | undefined>,
+const hasExactMediaTypeRequest = (details: MediaPermissionDetails): boolean => {
+  if (details.mediaTypes !== undefined) {
+    return (
+      Array.isArray(details.mediaTypes) &&
+      details.mediaType === undefined &&
+      details.mediaTypes.length > 0 &&
+      details.mediaTypes.length <= 2 &&
+      new Set(details.mediaTypes).size === details.mediaTypes.length &&
+      details.mediaTypes.every(isAllowedMediaType)
+    );
+  }
+  return (
+    details.mediaType !== undefined && isAllowedMediaType(details.mediaType)
+  );
+};
+
+const hasTrustedPermissionProvenance = (
+  details: MediaPermissionDetails,
+  requestingOrigin: string | undefined,
   rendererUrl?: string,
 ): boolean => {
-  const supplied = values.filter(
-    (value): value is string =>
-      typeof value === "string" && value.trim() !== "",
+  if (
+    typeof details.requestingUrl !== "string" ||
+    typeof rendererUrl !== "string" ||
+    !isTrustedRendererNavigationUrl(details.requestingUrl, rendererUrl)
+  ) {
+    return false;
+  }
+  const suppliedOrigins = [details.securityOrigin, requestingOrigin].filter(
+    (value) => value !== undefined,
   );
-  return (
-    supplied.length > 0 &&
-    supplied.every((candidate) => isTrustedAppUrl(candidate, rendererUrl))
+  return suppliedOrigins.every(
+    (candidate) =>
+      typeof candidate === "string" &&
+      isTrustedAppOrigin(candidate, rendererUrl),
   );
 };
 
@@ -120,33 +169,58 @@ export const shouldGrantMediaPermission = ({
   if (!isMediaPermission && !isDisplayCapturePermission) {
     return false;
   }
-  if (details?.isMainFrame === false) {
+  if (!details || details.isMainFrame !== true) {
     return false;
   }
-  if (isMediaPermission && !isAllowedMediaType(details?.mediaType)) {
+  if (isMediaPermission && !hasExactMediaTypeRequest(details)) {
     return false;
   }
-  if (
-    isMediaPermission &&
-    details?.mediaTypes &&
-    !details.mediaTypes.every((mediaType) => isAllowedMediaType(mediaType))
-  ) {
-    return false;
-  }
-  return hasOnlyTrustedAppUrls(
-    [details?.securityOrigin, details?.requestingUrl, requestingOrigin],
-    rendererUrl,
-  );
+  return hasTrustedPermissionProvenance(details, requestingOrigin, rendererUrl);
 };
 
 export const shouldGrantDisplayCaptureRequest = (
   request: DisplayMediaRequest,
   rendererUrl?: string,
-): boolean =>
-  hasOnlyTrustedAppUrls(
-    [request.frame?.url, request.securityOrigin, request.requestingUrl],
-    rendererUrl,
-  );
+  trustedMainFrame?: object | null,
+): boolean => {
+  try {
+    if (
+      !request.frame ||
+      request.frame !== trustedMainFrame ||
+      request.videoRequested !== true ||
+      request.audioRequested !== false ||
+      request.userGesture !== true ||
+      !isTrustedRendererNavigationUrl(
+        request.frame.url ?? "",
+        rendererUrl ?? "",
+      ) ||
+      !isTrustedAppOrigin(request.securityOrigin, rendererUrl)
+    ) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  return true;
+};
+
+const isTrustedPermissionOwner = (
+  candidate: unknown,
+  trusted: TrustedPermissionOwner | null,
+  rendererUrl: string | undefined,
+): candidate is TrustedPermissionOwner => {
+  if (!candidate || candidate !== trusted || !trusted) {
+    return false;
+  }
+  try {
+    return (
+      !trusted.isDestroyed() &&
+      isTrustedRendererNavigationUrl(trusted.getURL(), rendererUrl ?? "")
+    );
+  } catch {
+    return false;
+  }
+};
 
 export const resolveSystemMediaPermission = async (
   permission: string,
@@ -197,44 +271,67 @@ export const registerMediaPermissionHandlers = (
     Session,
     "setPermissionRequestHandler" | "setPermissionCheckHandler"
   >,
-  getRendererUrl: () => string | undefined = () =>
-    process.env["ELECTRON_RENDERER_URL"],
-  requestSystemMediaAccess?: RequestSystemMediaAccess,
-  getSystemMediaAccessStatus?: GetSystemMediaAccessStatus,
+  options: MediaPermissionHandlerOptions,
 ) => {
   electronSession.setPermissionRequestHandler(
-    (_webContents, permission, callback, details) => {
+    (webContents, permission, callback, details) => {
+      const rendererUrl = options.getRendererUrl();
       const rendererPermissionGranted = shouldGrantMediaPermission({
         permission,
         details,
-        rendererUrl: getRendererUrl(),
+        rendererUrl,
       });
-      if (!rendererPermissionGranted) {
+      if (
+        !rendererPermissionGranted ||
+        !isTrustedPermissionOwner(
+          webContents,
+          options.getTrustedWebContents(),
+          rendererUrl,
+        )
+      ) {
         callback(false);
         return;
       }
       void resolveSystemMediaPermission(
         permission,
         details,
-        requestSystemMediaAccess,
-        getSystemMediaAccessStatus,
-      ).then(callback, () => callback(false));
+        options.requestSystemMediaAccess,
+        options.getSystemMediaAccessStatus,
+      ).then(
+        (systemPermissionGranted) => {
+          callback(
+            systemPermissionGranted &&
+              isTrustedPermissionOwner(
+                webContents,
+                options.getTrustedWebContents(),
+                options.getRendererUrl(),
+              ),
+          );
+        },
+        () => callback(false),
+      );
     },
   );
   electronSession.setPermissionCheckHandler(
-    (_webContents, permission, requestingOrigin, details) => {
+    (webContents, permission, requestingOrigin, details) => {
+      const rendererUrl = options.getRendererUrl();
       const rendererPermissionGranted = shouldGrantMediaPermission({
         permission,
         requestingOrigin,
         details,
-        rendererUrl: getRendererUrl(),
+        rendererUrl,
       });
       return (
         rendererPermissionGranted &&
+        isTrustedPermissionOwner(
+          webContents,
+          options.getTrustedWebContents(),
+          rendererUrl,
+        ) &&
         shouldReportSystemMediaPermissionGranted(
           permission,
           details,
-          getSystemMediaAccessStatus,
+          options.getSystemMediaAccessStatus,
         )
       );
     },
@@ -243,19 +340,29 @@ export const registerMediaPermissionHandlers = (
 
 export const registerDisplayMediaRequestHandler = (
   electronSession: DisplayMediaRequestHandlerSession,
-  getSources: () => Promise<DisplayMediaSource[]>,
-  getRendererUrl: () => string | undefined = () =>
-    process.env["ELECTRON_RENDERER_URL"],
+  options: DisplayMediaRequestHandlerOptions,
 ) => {
   electronSession.setDisplayMediaRequestHandler(
     (request, callback) => {
-      if (!shouldGrantDisplayCaptureRequest(request, getRendererUrl())) {
+      if (
+        !shouldGrantDisplayCaptureRequest(
+          request,
+          options.getRendererUrl(),
+          options.getTrustedMainFrame(),
+        )
+      ) {
         callback({});
         return;
       }
-      void getSources()
+      void options
+        .getSources()
         .then((sources) => {
-          callback(sources[0] ? { video: sources[0] } : {});
+          const stillTrusted = shouldGrantDisplayCaptureRequest(
+            request,
+            options.getRendererUrl(),
+            options.getTrustedMainFrame(),
+          );
+          callback(stillTrusted && sources[0] ? { video: sources[0] } : {});
         })
         .catch(() => {
           callback({});

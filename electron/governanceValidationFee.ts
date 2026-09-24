@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import { parseJsonWithoutDuplicateObjectKeys } from "../src/utils/json";
+import { TAIRA_NETWORK_ID } from "../src/utils/firstReleaseNetworkIdentity";
+import type { ValidationFeePolicyPayload } from "../src/governance/model";
+import type { GovernanceValidationFeePolicyView } from "./governanceValidationFeePolicyView";
 
 export const GOVERNANCE_VALIDATION_FEE_CONFIG_ENV =
   "GOVERNANCE_VALIDATION_FEE_CONFIG_JSON";
@@ -20,6 +24,8 @@ const CHARGING_MODE = "PER_QUALIFYING_TRANSFER_INSTRUCTION";
 const PAYOUT_ENTRYPOINT = "autonomous_validation_fee_tick";
 const U128_MAX = (1n << 128n) - 1n;
 const U64_MAX = (1n << 64n) - 1n;
+const MAX_VALIDATION_FEE_CONFIG_BYTES = 1024 * 1024;
+const MAX_VALIDATION_FEE_CORE_RESPONSE_BYTES = 4 * 1024 * 1024;
 const NONZERO_LOWER_HASH_32 = /^[0-9a-f]{64}$/u;
 const CONTRACT_ADDRESS =
   /^(?:sorac|tairac|c[0-9a-f]+)1[023456789acdefghjklmnpqrstuvwxyz]{20,128}$/u;
@@ -191,30 +197,10 @@ type ValidationFeeProjection = {
   };
 };
 
-export type GovernanceValidationFeePolicyView = {
-  observedHeight: string;
-  effective: Record<string, unknown>;
-  latestEnacted: Record<string, unknown>;
-  scheduled: [];
-  registryHead: {
-    policyVersion: string;
-    policyHash: string;
-  };
-  verifiedProof: {
-    schema: typeof LEDGER_PROJECTION_SCHEMA;
-    authorizationModel: typeof AUTHORIZATION_MODEL;
-    registrySnapshotHash: string;
-    finalizedBlockHash: string;
-    finalizedContextId: string;
-    trustedCheckpointHeight: string;
-    trustedCheckpointContextId: string;
-  };
-};
-
 type CoreReadResponse = {
   ok: boolean;
   status: number;
-  json(): Promise<unknown>;
+  arrayBuffer(): Promise<ArrayBuffer>;
 };
 
 export type GovernanceValidationFeeCoreFetch = (
@@ -243,7 +229,13 @@ export type GovernanceValidationFeeFinalityPromoter = (
 export function readGovernanceValidationFeeConfig(
   serialized = process.env[GOVERNANCE_VALIDATION_FEE_CONFIG_ENV],
 ): GovernanceValidationFeeEnabledConfig {
-  const source = String(serialized ?? "").trim();
+  const rawSource = String(serialized ?? "");
+  if (Buffer.byteLength(rawSource, "utf8") > MAX_VALIDATION_FEE_CONFIG_BYTES) {
+    throw new Error(
+      `${GOVERNANCE_VALIDATION_FEE_CONFIG_ENV} exceeds ${MAX_VALIDATION_FEE_CONFIG_BYTES} bytes.`,
+    );
+  }
+  const source = rawSource.trim();
   if (!source) {
     throw new Error(
       `${GOVERNANCE_VALIDATION_FEE_CONFIG_ENV} must contain the generated enabled Taira validation-fee config.`,
@@ -251,7 +243,10 @@ export function readGovernanceValidationFeeConfig(
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(source);
+    parsed = parseJsonWithoutDuplicateObjectKeys(
+      source,
+      GOVERNANCE_VALIDATION_FEE_CONFIG_ENV,
+    );
   } catch {
     throw new Error(
       `${GOVERNANCE_VALIDATION_FEE_CONFIG_ENV} must be valid JSON.`,
@@ -292,15 +287,13 @@ export function readCbsiCoreApiBaseUrl(
 export async function fetchGovernanceValidationFeePolicy(input: {
   config?: GovernanceValidationFeeEnabledConfig;
   coreApiBaseUrl?: string;
-  fetcher?: GovernanceValidationFeeCoreFetch;
+  fetcher: GovernanceValidationFeeCoreFetch;
   signal?: AbortSignal;
   promoteFinality: GovernanceValidationFeeFinalityPromoter;
 }): Promise<GovernanceValidationFeePolicyView> {
   const config = input.config ?? readGovernanceValidationFeeConfig();
   const coreApiBaseUrl = readCbsiCoreApiBaseUrl(input.coreApiBaseUrl);
-  const fetcher =
-    input.fetcher ??
-    (globalThis.fetch as unknown as GovernanceValidationFeeCoreFetch);
+  const fetcher = input.fetcher;
   if (typeof fetcher !== "function") {
     throw new Error(
       "Validation-fee Core reads require a fetch implementation.",
@@ -363,9 +356,21 @@ async function fetchCoreJson(
     );
   }
   try {
-    return await response.json();
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > MAX_VALIDATION_FEE_CORE_RESPONSE_BYTES) {
+      throw new Error(
+        `response exceeds ${MAX_VALIDATION_FEE_CORE_RESPONSE_BYTES} bytes`,
+      );
+    }
+    const serialized = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return parseJsonWithoutDuplicateObjectKeys(
+      serialized,
+      "CBSI Core validation-fee response",
+    );
   } catch {
-    throw new Error("CBSI Core validation-fee response was not valid JSON.");
+    throw new Error(
+      "CBSI Core validation-fee response was not bounded, strict UTF-8 JSON.",
+    );
   }
 }
 
@@ -1440,16 +1445,15 @@ function projectPolicyView(
   projection: ValidationFeeProjection,
 ): GovernanceValidationFeePolicyView {
   const policy = projection.policy;
-  const effective = {
+  const binding = policy.treasury_payout_binding;
+  const effective: ValidationFeePolicyPayload = {
     schema_version: policy.schema_version,
-    chain_id: policy.network_id,
-    genesis_hash: policy.genesis_hash_hex,
+    network_id: TAIRA_NETWORK_ID,
     policy_version: String(policy.policy_version),
     previous_policy_hash: policy.previous_policy_hash_hex,
-    policy_hash: policy.policy_hash_hex,
-    ds_asset_id: policy.sbd_asset_id,
+    ds_asset_id: CBSI_SBD_ASSET_DEFINITION_ID,
     ds_scale: policy.sbd_scale,
-    fee: policy.fee,
+    fee: "0.1" as const,
     treasury_account_id: policy.treasury_account_id,
     charging_mode: {
       charging_mode: policy.charging_mode,
@@ -1458,8 +1462,19 @@ function projectPolicyView(
     effective_from_height: String(policy.effective_from_height),
     expires_after_height: null,
     exemption_classes: policy.exemption_classes,
-    treasury_payout_binding: policy.treasury_payout_binding,
-    parliament_authorization: projection.parliament_authorization,
+    treasury_payout_binding: {
+      contract_address: binding.contract_address,
+      code_hash: binding.code_hash_hex,
+      entrypoint: binding.entrypoint,
+      treasury_account_id: binding.treasury_account_id,
+      ds_asset_id: CBSI_SBD_ASSET_DEFINITION_ID,
+      xor_asset_id: binding.xor_asset_id,
+      pool_vault_account_id: binding.pool_vault_account_id,
+      batch_ds: binding.batch_sbd,
+      min_xor_out: binding.min_xor_out,
+      max_xor_out: binding.max_xor_out,
+      recipients: binding.recipients,
+    },
   };
   return deepFreeze({
     observedHeight: String(projection.ledger_finality.ledger_finalised_height),

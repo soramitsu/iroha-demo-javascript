@@ -1,20 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { AccountAddress } from "@iroha/iroha-js";
-import { generateKeyPair } from "@iroha/iroha-js/crypto";
+import { AccountAddress, NetworkId } from "@iroha/iroha-js";
 import {
-  buildWalletConfidentialMetadata,
+  deriveConfidentialNoteV2,
+  generateKeyPair,
+} from "@iroha/iroha-js/crypto";
+import {
+  CONFIDENTIAL_WALLET_METADATA_KEY,
+  CONFIDENTIAL_WALLET_METADATA_SCHEMA,
   CONFIDENTIAL_WALLET_NOTE_SCHEMA,
   collectWalletConfidentialLedger,
-  createWalletConfidentialNote,
   deriveWalletConfidentialOwnerTagHex,
   deriveWalletConfidentialNullifierHex,
   deriveWalletConfidentialReceiveAddress,
-  selectWalletConfidentialNotes,
-  selectWalletConfidentialNotesForExactAmount,
+  type WalletConfidentialNote,
+  type WalletConfidentialTransactionLike,
 } from "../electron/confidentialWallet";
+import {
+  encryptKaigiPayload,
+  generateKaigiX25519KeyPair,
+} from "../electron/kaigiCrypto";
+import type { ConfidentialReceiveKeyRecord } from "../electron/secureVault";
 
-const CHAIN_ID = "chain";
+const NETWORK_ID = NetworkId.parse(
+  "hash:77FB29D14745ADCCFDC14350E1A6FE6A10265798CC936A1DAFA7D2552AC3B9F7#EBDD",
+);
 const ASSET_ID = "61CtjvNd9T3THAR65GsMVHr82Bjc";
+const transactionHash = (byteHex: string) => byteHex.repeat(32);
+let receiveKeySequence = 0;
 
 const makeAccount = () => {
   const keyPair = generateKeyPair();
@@ -23,6 +35,7 @@ const makeAccount = () => {
       publicKey: keyPair.publicKey,
     }).toI105(369),
     privateKeyHex: keyPair.privateKey.toString("hex"),
+    receiveKeys: [] as ConfidentialReceiveKeyRecord[],
   };
 };
 
@@ -47,14 +60,96 @@ const noteFor = (
   seed: string,
 ) => {
   const receiveAddress = receiveAddressFor(account.privateKeyHex, seed);
-  return createWalletConfidentialNote({
+  const rhoHex = seed.repeat(32);
+  const { commitmentHex } = deriveConfidentialNoteV2({
     assetDefinitionId: ASSET_ID,
     amount,
+    rhoHex,
     ownerTagHex: receiveAddress.ownerTagHex,
-    diversifierHex: receiveAddress.diversifierHex,
-    createdAtMs,
   });
+  return {
+    schema: CONFIDENTIAL_WALLET_NOTE_SCHEMA,
+    note_id: commitmentHex,
+    asset_definition_id: ASSET_ID,
+    amount,
+    rho_hex: rhoHex,
+    owner_tag_hex: receiveAddress.ownerTagHex,
+    diversifier_hex: receiveAddress.diversifierHex,
+    commitment_hex: commitmentHex,
+    created_at_ms: createdAtMs,
+  } satisfies WalletConfidentialNote;
 };
+
+type TestAccount = ReturnType<typeof makeAccount>;
+
+const createReceiveKeyForNote = (
+  account: TestAccount,
+  note: WalletConfidentialNote,
+) => {
+  const keyPair = generateKaigiX25519KeyPair();
+  const keyIdBytes = Buffer.alloc(18);
+  keyIdBytes.writeUInt32BE(++receiveKeySequence, 14);
+  const record: ConfidentialReceiveKeyRecord = {
+    keyId: keyIdBytes.toString("base64url"),
+    accountId: account.accountId,
+    ownerTagHex: note.owner_tag_hex,
+    diversifierHex: note.diversifier_hex,
+    publicKeyBase64Url: keyPair.publicKeyBase64Url,
+    privateKeyBase64Url: keyPair.privateKeyBase64Url,
+    createdAtMs: note.created_at_ms,
+  };
+  account.receiveKeys.push(record);
+  return record;
+};
+
+const metadataFor = (
+  ...outputs: Array<{ note: WalletConfidentialNote; recipient: TestAccount }>
+) => ({
+  [CONFIDENTIAL_WALLET_METADATA_KEY]: {
+    schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA,
+    outputs: outputs.map(({ note, recipient }) => {
+      const receiveKey = createReceiveKeyForNote(recipient, note);
+      return {
+        commitment_hex: note.commitment_hex,
+        receive_key_id: receiveKey.keyId,
+        envelope: encryptKaigiPayload(note, receiveKey.publicKeyBase64Url),
+      };
+    }),
+  },
+});
+
+const collectShieldFor = (
+  account: TestAccount,
+  note: WalletConfidentialNote,
+  transactionFields: Record<string, unknown>,
+) =>
+  collectWalletConfidentialLedger(
+    [
+      {
+        entrypoint_hash: transactionHash("01"),
+        result_ok: true,
+        ...transactionFields,
+        instructions: [
+          {
+            zk: {
+              Shield: {
+                asset: ASSET_ID,
+                from: account.accountId,
+                amount: note.amount,
+                note_commitment: note.commitment_hex,
+              },
+            },
+          },
+        ],
+      } as WalletConfidentialTransactionLike,
+    ],
+    {
+      privateKeyHex: account.privateKeyHex,
+      networkId: NETWORK_ID,
+      assetDefinitionIds: [ASSET_ID],
+      receiveKeys: account.receiveKeys,
+    },
+  );
 
 describe("confidential wallet helpers", () => {
   it("derives a stable confidential owner tag from the wallet private key", () => {
@@ -84,19 +179,8 @@ describe("confidential wallet helpers", () => {
     expect(first.ownerTagHex).not.toBe(second.ownerTagHex);
   });
 
-  it("rejects new wallet notes without a diversifier", () => {
+  it("rejects owner-tag derivation without a diversifier", () => {
     const alice = makeAccount();
-    const receiveAddress = receiveAddressFor(alice.privateKeyHex, "01");
-
-    expect(() =>
-      createWalletConfidentialNote({
-        assetDefinitionId: ASSET_ID,
-        amount: "5",
-        ownerTagHex: receiveAddress.ownerTagHex,
-        diversifierHex: "",
-        createdAtMs: 1,
-      }),
-    ).toThrow(/diversifierHex must be a 32-byte hex string/u);
     expect(() =>
       deriveWalletConfidentialOwnerTagHex({
         privateKeyHex: alice.privateKeyHex,
@@ -105,7 +189,31 @@ describe("confidential wallet helpers", () => {
     ).toThrow(/diversifierHex must be a 32-byte hex string/u);
   });
 
-  it("does not treat legacy no-diversifier note envelopes as spendable", () => {
+  it("rejects normalized or noncanonical confidential key material", () => {
+    const alice = makeAccount();
+    expect(() =>
+      deriveWalletConfidentialOwnerTagHex({
+        privateKeyHex: ` ${alice.privateKeyHex}`,
+        diversifierHex: "01".repeat(32),
+      }),
+    ).toThrow(/privateKeyHex must be a 32-byte hex string/u);
+    expect(() =>
+      deriveWalletConfidentialReceiveAddress({
+        privateKeyHex: alice.privateKeyHex,
+        diversifierSeedHex: "AB".repeat(32),
+      }),
+    ).toThrow(/diversifierSeedHex must be a 32-byte hex string/u);
+    expect(() =>
+      deriveWalletConfidentialNullifierHex({
+        privateKeyHex: alice.privateKeyHex.toUpperCase(),
+        assetDefinitionId: ASSET_ID,
+        networkId: NETWORK_ID,
+        rhoHex: "02".repeat(32),
+      }),
+    ).toThrow(/privateKeyHex must be a 32-byte hex string/u);
+  });
+
+  it("fails closed for legacy no-diversifier note envelopes", () => {
     const alice = makeAccount();
     const receiveAddress = receiveAddressFor(alice.privateKeyHex, "01");
     const currentNote = noteFor(alice, "5", 1, "02");
@@ -115,48 +223,194 @@ describe("confidential wallet helpers", () => {
       schema: "iroha-demo-confidential-note/v2",
     };
     delete (legacyNote as Record<string, unknown>).diversifier_hex;
-    const ledger = collectWalletConfidentialLedger(
-      [
-        {
-          entrypoint_hash: "0xshield",
-          result_ok: true,
-          metadata: buildWalletConfidentialMetadata({
-            outputs: [
-              {
-                note: legacyNote as typeof currentNote,
-                recipientAccountId: alice.accountId,
-              },
-            ],
-          }),
-          instructions: [
-            {
-              zk: {
-                Shield: {
-                  asset: ASSET_ID,
-                  from: alice.accountId,
-                  amount: "5",
-                  note_commitment: currentNote.commitment_hex,
-                },
+    const legacyReceiveKey = createReceiveKeyForNote(alice, currentNote);
+    expect(() =>
+      collectWalletConfidentialLedger(
+        [
+          {
+            entrypoint_hash: transactionHash("02"),
+            result_ok: true,
+            metadata: {
+              [CONFIDENTIAL_WALLET_METADATA_KEY]: {
+                schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA,
+                outputs: [
+                  {
+                    commitment_hex: currentNote.commitment_hex,
+                    receive_key_id: legacyReceiveKey.keyId,
+                    envelope: encryptKaigiPayload(
+                      legacyNote,
+                      legacyReceiveKey.publicKeyBase64Url,
+                    ),
+                  },
+                ],
               },
             },
-          ],
+            instructions: [
+              {
+                zk: {
+                  Shield: {
+                    asset: ASSET_ID,
+                    from: alice.accountId,
+                    amount: "5",
+                    note_commitment: currentNote.commitment_hex,
+                  },
+                },
+              },
+            ],
+          },
+        ],
+        {
+          privateKeyHex: alice.privateKeyHex,
+          networkId: NETWORK_ID,
+          assetDefinitionIds: [ASSET_ID],
+          receiveKeys: alice.receiveKeys,
         },
-      ],
-      {
-        privateKeyHex: alice.privateKeyHex,
-        chainId: CHAIN_ID,
-        assetDefinitionIds: [ASSET_ID],
-      },
-    );
+      ),
+    ).toThrow(/exact current contract/u);
 
     expect(receiveAddress.diversifierHex).toMatch(/^[0-9a-f]{64}$/);
-    expect(ledger).toMatchObject({
-      exact: true,
-      spendableQuantity: "0",
-    });
-    expect(ledger.notes).toHaveLength(0);
-    expect(ledger.legacyQuantity).toBe("0");
-    expect(ledger.treeCommitmentsHex).toEqual([currentNote.commitment_hex]);
+  });
+
+  it("rejects v1 and v2 account-sealed wallet metadata", () => {
+    const alice = makeAccount();
+    const note = noteFor(alice, "5", 1, "11");
+
+    for (const schema of [
+      "iroha-demo-confidential-wallet/v1",
+      "iroha-demo-confidential-wallet/v2",
+    ]) {
+      expect(() =>
+        collectShieldFor(alice, note, {
+          metadata: {
+            [CONFIDENTIAL_WALLET_METADATA_KEY]: {
+              schema,
+              outputs: [
+                {
+                  commitment_hex: note.commitment_hex,
+                  envelope: { retired: true },
+                },
+              ],
+            },
+          },
+        }),
+      ).toThrow(/exact current contract/u);
+    }
+  });
+
+  it("rejects unknown fields, camelCase aliases, and duplicate v3 outputs", () => {
+    const alice = makeAccount();
+    const note = noteFor(alice, "5", 1, "11");
+    const validMetadata = metadataFor({ note, recipient: alice });
+    const validRecord = validMetadata[
+      CONFIDENTIAL_WALLET_METADATA_KEY
+    ] as Record<string, unknown>;
+    const validOutput = (
+      validRecord.outputs as Array<Record<string, unknown>>
+    )[0];
+    expect(validOutput).toBeDefined();
+    if (!validOutput) {
+      throw new Error("Expected one valid confidential metadata output.");
+    }
+    const envelope = validOutput.envelope as Record<string, unknown>;
+
+    const invalidRecords = [
+      { ...validRecord, unknown: true },
+      {
+        ...validRecord,
+        schema: "iroha-demo-confidential-wallet/v4",
+      },
+      {
+        ...validRecord,
+        outputs: [{ ...validOutput, unknown: true }],
+      },
+      {
+        ...validRecord,
+        outputs: [
+          {
+            commitmentHex: validOutput.commitment_hex,
+            receiveKeyId: validOutput.receive_key_id,
+            envelope,
+          },
+        ],
+      },
+      {
+        ...validRecord,
+        outputs: [
+          {
+            ...validOutput,
+            envelope: { ...envelope, unknown: true },
+          },
+        ],
+      },
+      { ...validRecord, outputs: [validOutput, validOutput] },
+    ];
+
+    for (const record of invalidRecords) {
+      expect(() =>
+        collectShieldFor(alice, note, {
+          metadata: { [CONFIDENTIAL_WALLET_METADATA_KEY]: record },
+        }),
+      ).toThrow(/exact current contract/u);
+    }
+  });
+
+  it("rejects camelCase aliases inside decrypted v3 notes", () => {
+    const alice = makeAccount();
+    const note = noteFor(alice, "5", 1, "11");
+    const receiveKey = createReceiveKeyForNote(alice, note);
+    const camelCaseNote = {
+      schema: note.schema,
+      noteId: note.note_id,
+      assetDefinitionId: note.asset_definition_id,
+      amount: note.amount,
+      rhoHex: note.rho_hex,
+      ownerTagHex: note.owner_tag_hex,
+      diversifierHex: note.diversifier_hex,
+      commitmentHex: note.commitment_hex,
+      createdAtMs: note.created_at_ms,
+    };
+    expect(() =>
+      collectShieldFor(alice, note, {
+        metadata: {
+          [CONFIDENTIAL_WALLET_METADATA_KEY]: {
+            schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA,
+            outputs: [
+              {
+                commitment_hex: note.commitment_hex,
+                receive_key_id: receiveKey.keyId,
+                envelope: encryptKaigiPayload(
+                  camelCaseNote,
+                  receiveKey.publicKeyBase64Url,
+                ),
+              },
+            ],
+          },
+        },
+      }),
+    ).toThrow(/exact current contract/u);
+  });
+
+  it("rejects string and nested metadata representations", () => {
+    const alice = makeAccount();
+    const note = noteFor(alice, "5", 1, "11");
+    const validMetadata = metadataFor({ note, recipient: alice });
+
+    for (const transactionFields of [
+      { metadata: JSON.stringify(validMetadata) },
+      {
+        metadata: {
+          [CONFIDENTIAL_WALLET_METADATA_KEY]: JSON.stringify(
+            validMetadata[CONFIDENTIAL_WALLET_METADATA_KEY],
+          ),
+        },
+      },
+      { transaction_metadata: validMetadata },
+      { tx_metadata: validMetadata },
+      { transaction: { metadata: validMetadata } },
+      { payload: { metadata: validMetadata } },
+    ]) {
+      expect(() => collectShieldFor(alice, note, transactionFields)).toThrow();
+    }
   });
 
   it("decrypts self-shield notes into spendable wallet balance", () => {
@@ -165,11 +419,9 @@ describe("confidential wallet helpers", () => {
     const ledger = collectWalletConfidentialLedger(
       [
         {
-          entrypoint_hash: "0xshield",
+          entrypoint_hash: transactionHash("03"),
           result_ok: true,
-          metadata: buildWalletConfidentialMetadata({
-            outputs: [{ note, recipientAccountId: alice.accountId }],
-          }),
+          metadata: metadataFor({ note, recipient: alice }),
           instructions: [
             {
               zk: {
@@ -186,8 +438,9 @@ describe("confidential wallet helpers", () => {
       ],
       {
         privateKeyHex: alice.privateKeyHex,
-        chainId: CHAIN_ID,
+        networkId: NETWORK_ID,
         assetDefinitionIds: [ASSET_ID],
+        receiveKeys: alice.receiveKeys,
       },
     );
 
@@ -199,44 +452,149 @@ describe("confidential wallet helpers", () => {
     expect(ledger.notes[0]?.commitment_hex).toBe(note.commitment_hex);
   });
 
+  it("recomputes each decrypted note commitment before counting its value", () => {
+    const alice = makeAccount();
+    const note = noteFor(alice, "5", 1, "12");
+    const receiveKey = createReceiveKeyForNote(alice, note);
+    const forgedAmountNote = { ...note, amount: "5000000" };
+
+    expect(() =>
+      collectShieldFor(alice, note, {
+        metadata: {
+          [CONFIDENTIAL_WALLET_METADATA_KEY]: {
+            schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA,
+            outputs: [
+              {
+                commitment_hex: note.commitment_hex,
+                receive_key_id: receiveKey.keyId,
+                envelope: encryptKaigiPayload(
+                  forgedAmountNote,
+                  receiveKey.publicKeyBase64Url,
+                ),
+              },
+            ],
+          },
+        },
+      }),
+    ).toThrow(/contents do not match the committed ledger output/u);
+  });
+
+  it("binds decrypted note ownership to both the receive key and wallet spend key", () => {
+    const alice = makeAccount();
+    const note = noteFor(alice, "5", 1, "13");
+    const receiveKey = createReceiveKeyForNote(alice, note);
+    const unrelatedAddress = receiveAddressFor(alice.privateKeyHex, "14");
+    const reboundNote = {
+      ...note,
+      owner_tag_hex: unrelatedAddress.ownerTagHex,
+      diversifier_hex: unrelatedAddress.diversifierHex,
+    };
+
+    expect(() =>
+      collectShieldFor(alice, note, {
+        metadata: {
+          [CONFIDENTIAL_WALLET_METADATA_KEY]: {
+            schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA,
+            outputs: [
+              {
+                commitment_hex: note.commitment_hex,
+                receive_key_id: receiveKey.keyId,
+                envelope: encryptKaigiPayload(
+                  reboundNote,
+                  receiveKey.publicKeyBase64Url,
+                ),
+              },
+            ],
+          },
+        },
+      }),
+    ).toThrow(/owner material is not bound/u);
+  });
+
+  it("rejects compatibility encodings and duplicate transaction identities", () => {
+    const alice = makeAccount();
+    const noncanonicalTransaction = {
+      entrypoint_hash: transactionHash("15"),
+      result_ok: true,
+      metadata: {},
+      instructions: [
+        {
+          zk: {
+            ZkTransfer: {
+              asset: ASSET_ID,
+              inputs: [Array.from({ length: 32 }, () => 1)],
+              outputs: ["22".repeat(32)],
+            },
+          },
+        },
+      ],
+    };
+    expect(() =>
+      collectWalletConfidentialLedger([noncanonicalTransaction], {
+        privateKeyHex: alice.privateKeyHex,
+        networkId: NETWORK_ID,
+        assetDefinitionIds: [ASSET_ID],
+      }),
+    ).toThrow(/exact bounded fixed-bytes array/u);
+
+    const canonicalTransaction = {
+      ...noncanonicalTransaction,
+      instructions: [
+        {
+          zk: {
+            ZkTransfer: {
+              asset: ASSET_ID,
+              inputs: ["11".repeat(32)],
+              outputs: ["22".repeat(32)],
+            },
+          },
+        },
+      ],
+    };
+    expect(() =>
+      collectWalletConfidentialLedger(
+        [canonicalTransaction, canonicalTransaction],
+        {
+          privateKeyHex: alice.privateKeyHex,
+          networkId: NETWORK_ID,
+          assetDefinitionIds: [ASSET_ID],
+        },
+      ),
+    ).toThrow(/unique canonical lowercase hex/u);
+  });
+
   it("does not merge case-variant Base58 asset definitions", () => {
     const alice = makeAccount();
     const note = noteFor(alice, "5", 1, "11");
-    const ledger = collectWalletConfidentialLedger(
-      [
-        {
-          entrypoint_hash: "0xcase-variant",
-          result_ok: true,
-          metadata: buildWalletConfidentialMetadata({
-            outputs: [{ note, recipientAccountId: alice.accountId }],
-          }),
-          instructions: [
-            {
-              zk: {
-                Shield: {
-                  asset: ASSET_ID.toLowerCase(),
-                  from: alice.accountId,
-                  amount: "5",
-                  note_commitment: note.commitment_hex,
+    expect(() =>
+      collectWalletConfidentialLedger(
+        [
+          {
+            entrypoint_hash: transactionHash("04"),
+            result_ok: true,
+            metadata: metadataFor({ note, recipient: alice }),
+            instructions: [
+              {
+                zk: {
+                  Shield: {
+                    asset: ASSET_ID.toLowerCase(),
+                    from: alice.accountId,
+                    amount: "5",
+                    note_commitment: note.commitment_hex,
+                  },
                 },
               },
-            },
-          ],
+            ],
+          },
+        ],
+        {
+          privateKeyHex: alice.privateKeyHex,
+          networkId: NETWORK_ID,
+          assetDefinitionIds: [ASSET_ID],
+          receiveKeys: alice.receiveKeys,
         },
-      ],
-      {
-        privateKeyHex: alice.privateKeyHex,
-        chainId: CHAIN_ID,
-        assetDefinitionIds: [ASSET_ID],
-      },
-    );
-
-    expect(ledger).toMatchObject({
-      exact: true,
-      spendableQuantity: "0",
-      treeCommitmentsHex: [],
-    });
-    expect(ledger.notes).toHaveLength(0);
+      ),
+    ).toThrow(/noncanonical asset definition/u);
   });
 
   it("tracks spent notes, recipient notes, and change notes across shielded sends", () => {
@@ -248,16 +606,14 @@ describe("confidential wallet helpers", () => {
     const inputNullifier = deriveWalletConfidentialNullifierHex({
       privateKeyHex: alice.privateKeyHex,
       assetDefinitionId: ASSET_ID,
-      chainId: CHAIN_ID,
+      networkId: NETWORK_ID,
       rhoHex: shieldNote.rho_hex,
     });
     const transactions = [
       {
-        entrypoint_hash: "0xshield",
+        entrypoint_hash: transactionHash("05"),
         result_ok: true,
-        metadata: buildWalletConfidentialMetadata({
-          outputs: [{ note: shieldNote, recipientAccountId: alice.accountId }],
-        }),
+        metadata: metadataFor({ note: shieldNote, recipient: alice }),
         instructions: [
           {
             zk: {
@@ -274,24 +630,19 @@ describe("confidential wallet helpers", () => {
         note_index_order: 0,
       },
       {
-        entrypoint_hash: "0xtransfer",
+        entrypoint_hash: transactionHash("06"),
         result_ok: true,
-        metadata: buildWalletConfidentialMetadata({
-          outputs: [
-            { note: bobNote, recipientAccountId: bob.accountId },
-            { note: changeNote, recipientAccountId: alice.accountId },
-          ],
-        }),
+        metadata: metadataFor(
+          { note: bobNote, recipient: bob },
+          { note: changeNote, recipient: alice },
+        ),
         instructions: [
           {
             zk: {
               ZkTransfer: {
                 asset: ASSET_ID,
-                inputs: [Array.from(Buffer.from(inputNullifier, "hex"))],
-                outputs: [
-                  Array.from(Buffer.from(bobNote.commitment_hex, "hex")),
-                  Array.from(Buffer.from(changeNote.commitment_hex, "hex")),
-                ],
+                inputs: [inputNullifier],
+                outputs: [bobNote.commitment_hex, changeNote.commitment_hex],
               },
             },
           },
@@ -303,13 +654,15 @@ describe("confidential wallet helpers", () => {
 
     const aliceLedger = collectWalletConfidentialLedger(transactions, {
       privateKeyHex: alice.privateKeyHex,
-      chainId: CHAIN_ID,
+      networkId: NETWORK_ID,
       assetDefinitionIds: [ASSET_ID],
+      receiveKeys: alice.receiveKeys,
     });
     const bobLedger = collectWalletConfidentialLedger(transactions, {
       privateKeyHex: bob.privateKeyHex,
-      chainId: CHAIN_ID,
+      networkId: NETWORK_ID,
       assetDefinitionIds: [ASSET_ID],
+      receiveKeys: bob.receiveKeys,
     });
 
     expect(aliceLedger).toMatchObject({
@@ -341,19 +694,15 @@ describe("confidential wallet helpers", () => {
     const inputNullifier = deriveWalletConfidentialNullifierHex({
       privateKeyHex: alice.privateKeyHex,
       assetDefinitionId: ASSET_ID,
-      chainId: CHAIN_ID,
+      networkId: NETWORK_ID,
       rhoHex: shieldNote.rho_hex,
     });
     const ledger = collectWalletConfidentialLedger(
       [
         {
-          entrypoint_hash: "0xshield",
+          entrypoint_hash: transactionHash("07"),
           result_ok: true,
-          metadata: buildWalletConfidentialMetadata({
-            outputs: [
-              { note: shieldNote, recipientAccountId: alice.accountId },
-            ],
-          }),
+          metadata: metadataFor({ note: shieldNote, recipient: alice }),
           instructions: [
             {
               zk: {
@@ -368,13 +717,9 @@ describe("confidential wallet helpers", () => {
           ],
         },
         {
-          entrypoint_hash: "0xunshield",
+          entrypoint_hash: transactionHash("08"),
           result_ok: true,
-          metadata: buildWalletConfidentialMetadata({
-            outputs: [
-              { note: changeNote, recipientAccountId: alice.accountId },
-            ],
-          }),
+          metadata: metadataFor({ note: changeNote, recipient: alice }),
           instructions: [
             {
               zk: {
@@ -382,10 +727,8 @@ describe("confidential wallet helpers", () => {
                   asset: ASSET_ID,
                   to: alice.accountId,
                   public_amount: "6",
-                  inputs: [Array.from(Buffer.from(inputNullifier, "hex"))],
-                  outputs: [
-                    Array.from(Buffer.from(changeNote.commitment_hex, "hex")),
-                  ],
+                  inputs: [inputNullifier],
+                  outputs: [changeNote.commitment_hex],
                 },
               },
             },
@@ -394,8 +737,9 @@ describe("confidential wallet helpers", () => {
       ],
       {
         privateKeyHex: alice.privateKeyHex,
-        chainId: CHAIN_ID,
+        networkId: NETWORK_ID,
         assetDefinitionIds: [ASSET_ID],
+        receiveKeys: alice.receiveKeys,
       },
     );
 
@@ -418,7 +762,7 @@ describe("confidential wallet helpers", () => {
     const ledger = collectWalletConfidentialLedger(
       [
         {
-          entrypoint_hash: "0xtransfer",
+          entrypoint_hash: transactionHash("09"),
           result_ok: true,
           metadata: {},
           instructions: [
@@ -426,11 +770,8 @@ describe("confidential wallet helpers", () => {
               zk: {
                 ZkTransfer: {
                   asset: ASSET_ID,
-                  inputs: [Array.from({ length: 32 }, () => 0xaa)],
-                  outputs: [
-                    Array.from(Buffer.from(highCommitmentHex, "hex")),
-                    Array.from(Buffer.from(lowCommitmentHex, "hex")),
-                  ],
+                  inputs: ["aa".repeat(32)],
+                  outputs: [highCommitmentHex, lowCommitmentHex],
                 },
               },
             },
@@ -439,7 +780,7 @@ describe("confidential wallet helpers", () => {
       ],
       {
         privateKeyHex: alice.privateKeyHex,
-        chainId: CHAIN_ID,
+        networkId: NETWORK_ID,
         assetDefinitionIds: [ASSET_ID],
         markUnrecognizedTransfersInexact: false,
       },
@@ -456,7 +797,7 @@ describe("confidential wallet helpers", () => {
     const ledger = collectWalletConfidentialLedger(
       [
         {
-          entrypoint_hash: "0xunknown",
+          entrypoint_hash: transactionHash("0a"),
           result_ok: true,
           metadata: {},
           instructions: [
@@ -465,10 +806,17 @@ describe("confidential wallet helpers", () => {
                 ZkTransfer: {
                   asset: ASSET_ID,
                   inputs: [
-                    Array.from({ length: 32 }, (_entry, index) => index),
+                    Buffer.from(
+                      Array.from({ length: 32 }, (_entry, index) => index),
+                    ).toString("hex"),
                   ],
                   outputs: [
-                    Array.from({ length: 32 }, (_entry, index) => 255 - index),
+                    Buffer.from(
+                      Array.from(
+                        { length: 32 },
+                        (_entry, index) => 255 - index,
+                      ),
+                    ).toString("hex"),
                   ],
                 },
               },
@@ -478,7 +826,7 @@ describe("confidential wallet helpers", () => {
       ],
       {
         privateKeyHex: alice.privateKeyHex,
-        chainId: CHAIN_ID,
+        networkId: NETWORK_ID,
         assetDefinitionIds: [ASSET_ID],
       },
     );
@@ -494,7 +842,7 @@ describe("confidential wallet helpers", () => {
     const ledger = collectWalletConfidentialLedger(
       [
         {
-          entrypoint_hash: "0xother",
+          entrypoint_hash: transactionHash("0b"),
           result_ok: true,
           metadata: {},
           instructions: [
@@ -503,10 +851,17 @@ describe("confidential wallet helpers", () => {
                 ZkTransfer: {
                   asset: ASSET_ID,
                   inputs: [
-                    Array.from({ length: 32 }, (_entry, index) => index),
+                    Buffer.from(
+                      Array.from({ length: 32 }, (_entry, index) => index),
+                    ).toString("hex"),
                   ],
                   outputs: [
-                    Array.from({ length: 32 }, (_entry, index) => 255 - index),
+                    Buffer.from(
+                      Array.from(
+                        { length: 32 },
+                        (_entry, index) => 255 - index,
+                      ),
+                    ).toString("hex"),
                   ],
                 },
               },
@@ -516,7 +871,7 @@ describe("confidential wallet helpers", () => {
       ],
       {
         privateKeyHex: alice.privateKeyHex,
-        chainId: CHAIN_ID,
+        networkId: NETWORK_ID,
         assetDefinitionIds: [ASSET_ID],
         markUnrecognizedTransfersInexact: false,
       },
@@ -526,92 +881,5 @@ describe("confidential wallet helpers", () => {
       exact: true,
       spendableQuantity: "0",
     });
-  });
-
-  it("selects enough notes and returns the expected change", () => {
-    const alice = makeAccount();
-    const firstNote = noteFor(alice, "4", 1, "11");
-    const secondNote = noteFor(alice, "6", 2, "22");
-    const selected = selectWalletConfidentialNotes(
-      [
-        {
-          ...firstNote,
-          nullifier_hex: deriveWalletConfidentialNullifierHex({
-            privateKeyHex: alice.privateKeyHex,
-            assetDefinitionId: ASSET_ID,
-            chainId: CHAIN_ID,
-            rhoHex: firstNote.rho_hex,
-          }),
-          source_tx_hash: "0x1",
-          leaf_index: 0,
-        },
-        {
-          ...secondNote,
-          nullifier_hex: deriveWalletConfidentialNullifierHex({
-            privateKeyHex: alice.privateKeyHex,
-            assetDefinitionId: ASSET_ID,
-            chainId: CHAIN_ID,
-            rhoHex: secondNote.rho_hex,
-          }),
-          source_tx_hash: "0x2",
-          leaf_index: 1,
-        },
-      ],
-      "5",
-    );
-
-    expect(selected.total).toBe("6");
-    expect(selected.change).toBe("1");
-    expect(selected.selected).toHaveLength(1);
-  });
-
-  it("finds an exact one- or two-note match for unshield amounts", () => {
-    const alice = makeAccount();
-    const firstNote = noteFor(alice, "4", 1, "11");
-    const secondNote = noteFor(alice, "6", 2, "22");
-    const thirdNote = noteFor(alice, "3", 3, "33");
-    const selected = selectWalletConfidentialNotesForExactAmount(
-      [
-        {
-          ...firstNote,
-          nullifier_hex: deriveWalletConfidentialNullifierHex({
-            privateKeyHex: alice.privateKeyHex,
-            assetDefinitionId: ASSET_ID,
-            chainId: CHAIN_ID,
-            rhoHex: firstNote.rho_hex,
-          }),
-          source_tx_hash: "0x1",
-          leaf_index: 0,
-        },
-        {
-          ...secondNote,
-          nullifier_hex: deriveWalletConfidentialNullifierHex({
-            privateKeyHex: alice.privateKeyHex,
-            assetDefinitionId: ASSET_ID,
-            chainId: CHAIN_ID,
-            rhoHex: secondNote.rho_hex,
-          }),
-          source_tx_hash: "0x2",
-          leaf_index: 1,
-        },
-        {
-          ...thirdNote,
-          nullifier_hex: deriveWalletConfidentialNullifierHex({
-            privateKeyHex: alice.privateKeyHex,
-            assetDefinitionId: ASSET_ID,
-            chainId: CHAIN_ID,
-            rhoHex: thirdNote.rho_hex,
-          }),
-          source_tx_hash: "0x3",
-          leaf_index: 2,
-        },
-      ],
-      "7",
-    );
-
-    expect(selected.total).toBe("7");
-    expect(selected.change).toBe("0");
-    expect(selected.selected).toHaveLength(2);
-    expect(selected.selected.map((note) => note.amount)).toEqual(["4", "3"]);
   });
 });

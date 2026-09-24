@@ -3,7 +3,6 @@
   "include": [
     "electron/**/*.ts",
     "src/**/*.d.ts",
-    "src/governance/enactBoundary.ts",
     "src/utils/accountId.ts",
     "src/utils/assetId.ts",
     "src/utils/chainMetadata.ts",
@@ -12,11 +11,11 @@
     "src/utils/endpoint.ts",
     "src/utils/endpointFeatures.ts",
     "src/utils/endpointScope.ts",
+    "src/utils/firstReleaseNetworkIdentity.ts",
     "src/utils/kaigiInvite.ts",
+    "src/utils/json.ts",
     "src/utils/mnemonic.ts",
     "src/utils/secretLike.ts",
-    "src/utils/sccpDataSnapshot.ts",
-    "src/utils/sccpProverUrl.ts",
     "src/utils/signingAlgorithms.ts",
     "src/utils/soracloud.ts",
     "src/utils/soraswapConnectWire.ts",
@@ -26,6 +25,8 @@
   ],
   "compilerOptions": {
     "composite": true,
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "moduleResolution": "bundler",
     "baseUrl": ".",
     "paths": {
@@ -34,19 +35,25 @@
         "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
       ],
       "@iroha/iroha-js/address": [
-        "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
+        "node_modules/.cache/iroha-sdk-compat/active/address.d.ts"
       ],
       "@iroha/iroha-js/connect-browser": [
         "node_modules/.cache/iroha-sdk-compat/active/connect.browser.d.ts"
+      ],
+      "@iroha/iroha-js/browser": [
+        "node_modules/.cache/iroha-sdk-compat/active/browser.d.ts"
       ],
       "@iroha/iroha-js/canonical-request": [
         "node_modules/.cache/iroha-sdk-compat/active/canonical-request.d.ts"
       ],
       "@iroha/iroha-js/crypto": [
-        "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
+        "node_modules/.cache/iroha-sdk-compat/active/crypto.d.ts"
       ],
-      "@iroha/iroha-js/sccp": [
-        "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
+      "@iroha/iroha-js/instruction-builders": [
+        "node_modules/.cache/iroha-sdk-compat/active/instruction-builders.d.ts"
+      ],
+      "@iroha/iroha-js/normalizers": [
+        "node_modules/.cache/iroha-sdk-compat/active/normalizers.d.ts"
       ],
       "@iroha/iroha-js/transaction-codec": [
         "node_modules/.cache/iroha-sdk-compat/active/transaction-codec.d.ts"

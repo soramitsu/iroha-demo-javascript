@@ -1,11 +1,65 @@
 import { describe, expect, it } from "vitest";
+import { AccountAddress } from "@iroha/iroha-js/address";
 import {
   extractGovernanceStats,
   extractRuntimeStatsFromStatusSnapshot,
   normalizeCurrentSumeragiTelemetry,
-  normalizeExplorerAssetDefinitionEconometricsPayload,
-  normalizeExplorerAssetDefinitionSnapshotPayload,
+  normalizeExplorerAssetDefinitionEconometricsPayload as decodeExplorerAssetDefinitionEconometricsPayload,
+  normalizeExplorerAssetDefinitionSnapshotPayload as decodeExplorerAssetDefinitionSnapshotPayload,
 } from "../electron/networkStats";
+
+const ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const OTHER_ASSET_DEFINITION_ID = "61CtjvNd9T3THAR65GsMVHr82Bjc";
+const ACCOUNT_ID = AccountAddress.fromAccount({
+  publicKey: Uint8Array.from(
+    "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
+      .match(/.{2}/gu)!
+      .map((byte) => Number.parseInt(byte, 16)),
+  ),
+}).toI105(369);
+const EXPLORER_CONTEXT = {
+  expectedDefinitionId: ASSET_DEFINITION_ID,
+  networkPrefix: 369,
+} as const;
+const normalizeExplorerAssetDefinitionSnapshotPayload = (payload: unknown) =>
+  decodeExplorerAssetDefinitionSnapshotPayload(payload, EXPLORER_CONTEXT);
+const normalizeExplorerAssetDefinitionEconometricsPayload = (
+  payload: unknown,
+) =>
+  decodeExplorerAssetDefinitionEconometricsPayload(payload, EXPLORER_CONTEXT);
+
+const exactSnapshotPayload = () => ({
+  definition_id: ASSET_DEFINITION_ID,
+  computed_at_ms: 1_710_000_000_000,
+  holders_total: 0,
+  total_supply: "0",
+  top_holders: [] as Array<Record<string, unknown>>,
+  distribution: {
+    gini: 0,
+    hhi: 0,
+    theil: 0,
+    entropy: 0,
+    entropy_normalized: 0,
+    nakamoto_33: 0,
+    nakamoto_51: 0,
+    nakamoto_67: 0,
+    top1: 0,
+    top5: 0,
+    top10: 0,
+    median: null,
+    p90: null,
+    p99: null,
+    lorenz: [],
+  },
+});
+
+const exactEconometricsPayload = () => ({
+  definition_id: ASSET_DEFINITION_ID,
+  computed_at_ms: 1_710_000_000_000,
+  velocity_windows: [],
+  issuance_windows: [],
+  issuance_series: [],
+});
 
 const currentSumeragiStatus = (
   overrides: Record<string, unknown> = {},
@@ -19,13 +73,13 @@ const currentSumeragiStatus = (
 describe("network stats helpers", () => {
   it("normalizes explorer asset definition snapshot payloads", () => {
     const snapshot = normalizeExplorerAssetDefinitionSnapshotPayload({
-      definition_id: "xor#universal",
+      definition_id: ASSET_DEFINITION_ID,
       computed_at_ms: 1710000000000,
       holders_total: 42,
       total_supply: "1234567.89",
       top_holders: [
         {
-          account_id: "alice@test",
+          account_id: ACCOUNT_ID,
           balance: "1000000",
         },
       ],
@@ -54,13 +108,13 @@ describe("network stats helpers", () => {
     });
 
     expect(snapshot).toEqual({
-      definitionId: "xor#universal",
+      definitionId: ASSET_DEFINITION_ID,
       computedAtMs: 1710000000000,
       holdersTotal: 42,
       totalSupply: "1234567.89",
       topHolders: [
         {
-          accountId: "alice@test",
+          accountId: ACCOUNT_ID,
           balance: "1000000",
         },
       ],
@@ -91,7 +145,7 @@ describe("network stats helpers", () => {
 
   it("normalizes explorer econometrics payloads", () => {
     const econometrics = normalizeExplorerAssetDefinitionEconometricsPayload({
-      definition_id: "xor#universal",
+      definition_id: ASSET_DEFINITION_ID,
       computed_at_ms: 1710000000000,
       velocity_windows: [
         {
@@ -127,7 +181,7 @@ describe("network stats helpers", () => {
     });
 
     expect(econometrics).toEqual({
-      definitionId: "xor#universal",
+      definitionId: ASSET_DEFINITION_ID,
       computedAtMs: 1710000000000,
       velocityWindows: [
         {
@@ -161,6 +215,63 @@ describe("network stats helpers", () => {
         },
       ],
     });
+  });
+
+  it("rejects explorer response aliases, coercions, foreign identities, and excess data", () => {
+    expect(() =>
+      normalizeExplorerAssetDefinitionSnapshotPayload({
+        ...exactSnapshotPayload(),
+        legacy_definition_alias: "xor#universal",
+      }),
+    ).toThrow("unexpected legacy_definition_alias");
+    expect(() =>
+      normalizeExplorerAssetDefinitionSnapshotPayload({
+        ...exactSnapshotPayload(),
+        computed_at_ms: "1710000000000",
+      }),
+    ).toThrow("computed_at_ms must be a non-negative safe integer");
+    expect(() =>
+      normalizeExplorerAssetDefinitionSnapshotPayload({
+        ...exactSnapshotPayload(),
+        holders_total: 1,
+        top_holders: [{ account_id: "alice@test", balance: "1" }],
+      }),
+    ).toThrow("must be a canonical I105 account ID");
+    expect(() =>
+      decodeExplorerAssetDefinitionSnapshotPayload(exactSnapshotPayload(), {
+        expectedDefinitionId: OTHER_ASSET_DEFINITION_ID,
+        networkPrefix: 369,
+      }),
+    ).toThrow("does not match the requested asset definition");
+    expect(() =>
+      normalizeExplorerAssetDefinitionSnapshotPayload({
+        ...exactSnapshotPayload(),
+        distribution: {
+          ...exactSnapshotPayload().distribution,
+          lorenz: Array.from({ length: 34 }, () => ({
+            population: 0,
+            share: 0,
+          })),
+        },
+      }),
+    ).toThrow("at most 33 items");
+    expect(() =>
+      normalizeExplorerAssetDefinitionEconometricsPayload({
+        ...exactEconometricsPayload(),
+        issuance_windows: [
+          {
+            key: "24h",
+            start_ms: 1,
+            end_ms: 2,
+            mint_count: 1,
+            burn_count: 2,
+            minted: "1",
+            burned: "2",
+            net: "legacy-negative-two",
+          },
+        ],
+      }),
+    ).toThrow("net must be a canonical Numeric string");
   });
 
   it("normalizes the current Sumeragi height, QC, validator, and ingress queue shape", () => {

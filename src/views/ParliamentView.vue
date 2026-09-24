@@ -145,7 +145,7 @@
     >
       <GovernanceProposalList
         v-model="governance.catalogFilter"
-        :proposals="governance.proposals"
+        :proposals="governance.visibleProposals"
         :selected-id="governance.selectedProposalId"
         :next-cursor="governance.nextCursor"
         :loading="governance.busy === 'list'"
@@ -163,14 +163,6 @@
           governance.busy === 'detail' || governance.busy === 'bootstrap'
         "
         :error="governance.detailError"
-        :plain-referendum-contract="governance.plainReferendumContract"
-        :plain-referendum-loading="governance.plainReferendumContractLoading"
-        :plain-referendum-binding-error="
-          governance.selectedPlainReferendumContractError
-        "
-        :plain-referendum-account-eligible="
-          governance.activeAccountEligibleForPlainReferendum
-        "
       />
 
       <GovernanceInspector />

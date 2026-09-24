@@ -3,8 +3,15 @@ import { x25519 } from "@noble/curves/ed25519";
 import { blake2b } from "@noble/hashes/blake2b";
 import { hkdf } from "@noble/hashes/hkdf";
 import { sha256 } from "@noble/hashes/sha256";
+import { NetworkId } from "@iroha/iroha-js/connect-browser";
 
 export type ConnectDirection = "app_to_wallet" | "wallet_to_app";
+
+// The first-release relay contract deliberately caps one complete frame above
+// Torii's default 256 KiB signed-transaction ceiling. This bounds attacker-
+// controlled WebSocket, base64, Norito, and approval-dialog work in both the
+// renderer and preload.
+export const IROHA_CONNECT_MAX_FRAME_BYTES = 512 * 1024;
 
 export interface ConnectPermissions {
   methods: string[];
@@ -121,7 +128,7 @@ export type ConnectControlPayload =
       type: "open";
       appPublicKeyHex: string;
       constraints: {
-        chainId: string;
+        networkId: string;
       };
       appMeta: {
         name: string;
@@ -198,6 +205,7 @@ const X25519_HKDF_SALT = encoder.encode("iroha:x25519:hkdf:v1");
 const X25519_HKDF_INFO = encoder.encode("iroha:x25519:session-key");
 const NORITO_MAGIC = encoder.encode("NRT0");
 const CONNECT_AAD_PREFIX = encoder.encode("connect:v1");
+const CONNECT_SID_PREFIX = encoder.encode("iroha-connect|sid|");
 const ENVELOPE_V1_SCHEMA = Uint8Array.from([
   0x69, 0x47, 0xaf, 0xe3, 0xe8, 0xa8, 0x54, 0x46, 0xd6, 0xa3, 0xee, 0x7b, 0xb1,
   0xa3, 0x7c, 0x0a,
@@ -293,11 +301,15 @@ const hexCharCode = (value: number) => (value < 10 ? 48 + value : 87 + value);
 
 export const bytesToHex = (bytes: Uint8Array) => {
   const chars = new Uint8Array(bytes.length * 2);
-  bytes.forEach((value, index) => {
-    chars[index * 2] = hexCharCode(value >> 4);
-    chars[index * 2 + 1] = hexCharCode(value & 0x0f);
-  });
-  return decoder.decode(chars);
+  try {
+    bytes.forEach((value, index) => {
+      chars[index * 2] = hexCharCode(value >> 4);
+      chars[index * 2 + 1] = hexCharCode(value & 0x0f);
+    });
+    return decoder.decode(chars);
+  } finally {
+    chars.fill(0);
+  }
 };
 
 export const hexToBytes = (hex: string) => {
@@ -351,6 +363,66 @@ export const base64ToBytes = (value: string) => {
     out[index] = binary.charCodeAt(index);
   }
   return out;
+};
+
+export const requireBoundedIrohaConnectFrame = (
+  bytes: Uint8Array,
+): Uint8Array => {
+  if (
+    bytes.byteLength < 1 ||
+    bytes.byteLength > IROHA_CONNECT_MAX_FRAME_BYTES
+  ) {
+    throw new Error(
+      `IrohaConnect relay frames must contain 1..${IROHA_CONNECT_MAX_FRAME_BYTES} bytes.`,
+    );
+  }
+  return bytes;
+};
+
+export const decodeIrohaConnectFrameBase64 = (value: unknown): Uint8Array => {
+  if (
+    typeof value !== "string" ||
+    value.length < 4 ||
+    value.length > Math.ceil(IROHA_CONNECT_MAX_FRAME_BYTES / 3) * 4 ||
+    value.trim() !== value
+  ) {
+    throw new Error("IrohaConnect frame base64 is invalid or oversized.");
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = requireBoundedIrohaConnectFrame(base64ToBytes(value));
+  } catch (error) {
+    throw new Error("IrohaConnect frame base64 is invalid or oversized.", {
+      cause: error,
+    });
+  }
+  if (bytesToBase64(bytes) !== value) {
+    throw new Error("IrohaConnect frame base64 is not canonical.");
+  }
+  return bytes;
+};
+
+export const readIrohaConnectRelayFrame = async (
+  data: unknown,
+): Promise<Uint8Array> => {
+  let bytes: Uint8Array;
+  if (data instanceof Uint8Array) {
+    bytes = data;
+  } else if (data instanceof ArrayBuffer) {
+    bytes = new Uint8Array(data);
+  } else if (ArrayBuffer.isView(data)) {
+    bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  } else if (typeof Blob !== "undefined" && data instanceof Blob) {
+    if (data.size < 1 || data.size > IROHA_CONNECT_MAX_FRAME_BYTES) {
+      throw new Error(
+        `IrohaConnect relay frames must contain 1..${IROHA_CONNECT_MAX_FRAME_BYTES} bytes.`,
+      );
+    }
+    bytes = new Uint8Array(await data.arrayBuffer());
+  } else {
+    throw new Error("IrohaConnect relay returned a non-binary frame.");
+  }
+  return requireBoundedIrohaConnectFrame(bytes);
 };
 
 const CRC64_XZ_TABLE = (() => {
@@ -446,8 +518,66 @@ const encodeAppMetaPayload = (
     encodeOption(iconHash, encodeString),
   ]);
 
-const encodeConstraintsPayload = (chainId: string) =>
-  encodeStruct([encodeString(chainId)]);
+const exactNetworkIdBytes = (networkId: string, label = "networkId") => {
+  if (
+    typeof networkId !== "string" ||
+    !networkId ||
+    networkId.trim() !== networkId
+  ) {
+    throw new Error(`${label} must be an exact canonical NetworkId literal`);
+  }
+  try {
+    return NetworkId.parse(networkId).toBytes();
+  } catch {
+    throw new Error(`${label} must be an exact canonical NetworkId literal`);
+  }
+};
+
+const encodeConstraintsPayload = (networkId: string) =>
+  encodeStruct([exactNetworkIdBytes(networkId, "open.constraints.network_id")]);
+
+export const assertConnectSessionCommitment = (input: {
+  sid: string;
+  networkId: string;
+  appPublicKeyHex: string;
+  nonceBase64Url: string;
+}): void => {
+  const sidBytes = requireByteLength(
+    base64UrlToBytes(input.sid),
+    32,
+    "Connect sid",
+  );
+  if (bytesToBase64Url(sidBytes) !== input.sid) {
+    throw new Error("Connect sid must be canonical 32-byte base64url");
+  }
+  const nonce = requireByteLength(
+    base64UrlToBytes(input.nonceBase64Url),
+    16,
+    "Connect nonce",
+  );
+  if (bytesToBase64Url(nonce) !== input.nonceBase64Url) {
+    throw new Error("Connect nonce must be canonical 16-byte base64url");
+  }
+  const appPublicKey = requireByteLength(
+    hexToBytes(input.appPublicKeyHex),
+    32,
+    "Connect app public key",
+  );
+  const expectedSid = blake2b(
+    concatBytes(
+      CONNECT_SID_PREFIX,
+      exactNetworkIdBytes(input.networkId, "Connect networkId"),
+      appPublicKey,
+      nonce,
+    ),
+    { dkLen: 32 },
+  );
+  if (bytesToBase64Url(expectedSid) !== input.sid) {
+    throw new Error(
+      "Connect sid does not bind the exact NetworkId, app public key, and nonce",
+    );
+  }
+};
 
 const encodeWalletSignaturePayload = (payload: {
   algorithmCode: number;
@@ -476,7 +606,7 @@ const encodeControlPayload = (payload: ConnectControlPayload) => {
         encodeOption(payload.appMeta, (appMeta) =>
           encodeAppMetaPayload(appMeta.name, appMeta.url, appMeta.iconHash),
         ),
-        encodeConstraintsPayload(payload.constraints.chainId),
+        encodeConstraintsPayload(payload.constraints.networkId),
         encodeOption(payload.permissions, encodePermissionsPayload),
       ]);
       return concatBytes(encodeU32(0), encodeU64(body.length), body);
@@ -580,7 +710,7 @@ export const encodeControlConnectFrame = (input: {
 export const encodeOpenConnectFrame = (
   preview: ConnectPreview,
   input: {
-    chainId: string;
+    networkId: string;
     appName: string;
     appUrl: string | null;
     permissions: ConnectPermissions;
@@ -594,7 +724,7 @@ export const encodeOpenConnectFrame = (
       type: "open",
       appPublicKeyHex: preview.publicKeyHex,
       constraints: {
-        chainId: input.chainId,
+        networkId: input.networkId,
       },
       appMeta: {
         name: input.appName,
@@ -926,10 +1056,17 @@ const decodeOpenControlBody = (bytes: Uint8Array): ConnectControlPayload => {
   );
   const constraintsPayload = readField(cursor, "open.constraints");
   const constraintsCursor = createCursor(constraintsPayload);
-  const chainId = decodeStringPayload(
-    readField(constraintsCursor, "open.constraints.chain_id"),
-    "open.constraints.chain_id",
+  const networkIdBytes = requireByteLength(
+    readField(constraintsCursor, "open.constraints.network_id"),
+    NetworkId.BYTE_LENGTH,
+    "open.constraints.network_id",
   );
+  let networkId: string;
+  try {
+    networkId = NetworkId.fromBytes(networkIdBytes).toString();
+  } catch {
+    throw new Error("open.constraints.network_id is not a canonical NetworkId");
+  }
   ensureExact(constraintsCursor, "open.constraints");
   const permissions = decodeOptionPayload(
     readField(cursor, "open.permissions"),
@@ -940,7 +1077,7 @@ const decodeOpenControlBody = (bytes: Uint8Array): ConnectControlPayload => {
   return {
     type: "open",
     appPublicKeyHex: bytesToHex(appPublicKey),
-    constraints: { chainId },
+    constraints: { networkId },
     appMeta,
     permissions,
   };
@@ -1548,6 +1685,7 @@ export const hashConnectSignInProof = (proof: ConnectSignInProof) =>
 
 export const buildApprovePreimage = (input: {
   sid: string;
+  networkId: string;
   appPublicKeyHex: string;
   walletPublicKeyHex: string;
   accountId: string;
@@ -1578,8 +1716,15 @@ export const buildApprovePreimage = (input: {
   if (!relayToken) {
     throw new Error("IrohaConnect approval requires the relay token");
   }
+  const networkIdBytes = exactNetworkIdBytes(
+    input.networkId,
+    "approval networkId",
+  );
+  const constraints = encodeConstraintsPayload(input.networkId);
   const fields = [
     taggedField("domain", APPROVE_DOMAIN),
+    taggedField("network_id", networkIdBytes),
+    taggedField("constraints", blake2b(constraints, { dkLen: 32 })),
     taggedField("sid", sidBytes),
     taggedField(
       "app_pk",
@@ -1614,56 +1759,85 @@ export const deriveConnectDirectionKeys = (
   preview: ConnectPreview,
   walletPublicKeyHex: string,
 ) => {
-  const sharedSecret = x25519.getSharedSecret(
-    hexToBytes(preview.privateKeyHex),
-    hexToBytes(walletPublicKeyHex),
-  );
-  const sessionKey = hkdf(
-    sha256,
-    sharedSecret,
-    X25519_HKDF_SALT,
-    X25519_HKDF_INFO,
-    32,
-  );
-  const salt = blake2b(
-    concatBytes(SALT_PREFIX, base64UrlToBytes(preview.sid)),
-    { dkLen: 32 },
-  );
-  return {
-    appKey: hkdf(sha256, sessionKey, salt, APP_INFO, 32),
-    walletKey: hkdf(sha256, sessionKey, salt, WALLET_INFO, 32),
-  };
+  const privateKey = hexToBytes(preview.privateKeyHex);
+  const walletPublicKey = hexToBytes(walletPublicKeyHex);
+  let sharedSecret: Uint8Array | null = null;
+  let sessionKey: Uint8Array | null = null;
+  try {
+    sharedSecret = x25519.getSharedSecret(privateKey, walletPublicKey);
+    sessionKey = hkdf(
+      sha256,
+      sharedSecret,
+      X25519_HKDF_SALT,
+      X25519_HKDF_INFO,
+      32,
+    );
+    const salt = blake2b(
+      concatBytes(SALT_PREFIX, base64UrlToBytes(preview.sid)),
+      { dkLen: 32 },
+    );
+    try {
+      return {
+        appKey: hkdf(sha256, sessionKey, salt, APP_INFO, 32),
+        walletKey: hkdf(sha256, sessionKey, salt, WALLET_INFO, 32),
+      };
+    } finally {
+      salt.fill(0);
+    }
+  } finally {
+    privateKey.fill(0);
+    walletPublicKey.fill(0);
+    sharedSecret?.fill(0);
+    sessionKey?.fill(0);
+  }
 };
 
-export const generateWalletConnectKeyPair = () => {
+export const generateConnectWalletKeyPair = () => {
   const privateKey = x25519.utils.randomPrivateKey();
-  return {
-    privateKeyHex: bytesToHex(privateKey),
-    publicKeyHex: bytesToHex(x25519.getPublicKey(privateKey)),
-  };
+  try {
+    return {
+      privateKeyHex: bytesToHex(privateKey),
+      publicKeyHex: bytesToHex(x25519.getPublicKey(privateKey)),
+    };
+  } finally {
+    privateKey.fill(0);
+  }
 };
 
-export const deriveWalletConnectDirectionKeys = (input: {
+export const deriveConnectWalletDirectionKeys = (input: {
   sid: string;
   appPublicKeyHex: string;
   walletPrivateKeyHex: string;
 }) => {
-  const sharedSecret = x25519.getSharedSecret(
-    hexToBytes(input.walletPrivateKeyHex),
-    hexToBytes(input.appPublicKeyHex),
-  );
-  const sessionKey = hkdf(
-    sha256,
-    sharedSecret,
-    X25519_HKDF_SALT,
-    X25519_HKDF_INFO,
-    32,
-  );
-  const salt = blake2b(concatBytes(SALT_PREFIX, base64UrlToBytes(input.sid)), {
-    dkLen: 32,
-  });
-  return {
-    appKey: hkdf(sha256, sessionKey, salt, APP_INFO, 32),
-    walletKey: hkdf(sha256, sessionKey, salt, WALLET_INFO, 32),
-  };
+  const privateKey = hexToBytes(input.walletPrivateKeyHex);
+  const appPublicKey = hexToBytes(input.appPublicKeyHex);
+  let sharedSecret: Uint8Array | null = null;
+  let sessionKey: Uint8Array | null = null;
+  try {
+    sharedSecret = x25519.getSharedSecret(privateKey, appPublicKey);
+    sessionKey = hkdf(
+      sha256,
+      sharedSecret,
+      X25519_HKDF_SALT,
+      X25519_HKDF_INFO,
+      32,
+    );
+    const salt = blake2b(
+      concatBytes(SALT_PREFIX, base64UrlToBytes(input.sid)),
+      { dkLen: 32 },
+    );
+    try {
+      return {
+        appKey: hkdf(sha256, sessionKey, salt, APP_INFO, 32),
+        walletKey: hkdf(sha256, sessionKey, salt, WALLET_INFO, 32),
+      };
+    } finally {
+      salt.fill(0);
+    }
+  } finally {
+    privateKey.fill(0);
+    appPublicKey.fill(0);
+    sharedSecret?.fill(0);
+    sessionKey?.fill(0);
+  }
 };

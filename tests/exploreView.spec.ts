@@ -62,7 +62,6 @@ describe("ExploreView", () => {
       i105AccountId: string;
       i105DefaultAccountId: string;
       publicKeyHex: string;
-      privateKeyHex: string;
     }>;
     connection?: Partial<{
       toriiUrl: string;
@@ -78,8 +77,8 @@ describe("ExploreView", () => {
       displayName: "Alice",
       domain: "wonderland",
       accountId: "alice@wonderland",
+      i105AccountId: "testuAliceRealI105AccountId",
       publicKeyHex: "ab".repeat(32),
-      privateKeyHex: "cd".repeat(32),
       ...options?.account,
     };
     session.$patch({
@@ -135,12 +134,11 @@ describe("ExploreView", () => {
         {
           displayName: "Bob",
           domain: "wonderland",
-          accountId: "bob@wonderland",
+          accountId: "testuBobRealI105AccountId",
           publicKeyHex: "ef".repeat(32),
-          privateKeyHex: "12".repeat(32),
         },
       ],
-      activeAccountId: "bob@wonderland",
+      activeAccountId: "testuBobRealI105AccountId",
     });
     await flushPromises();
   };
@@ -212,7 +210,6 @@ describe("ExploreView", () => {
           domain: "wonderland",
           accountId: "alice@wonderland",
           publicKeyHex: "ab".repeat(32),
-          privateKeyHex: "cd".repeat(32),
         },
       ],
       activeAccountId: "alice@wonderland",
@@ -272,17 +269,7 @@ describe("ExploreView", () => {
     );
   });
 
-  it("uses the TAIRA i105 literal for explorer qr requests when stored ids are stale", async () => {
-    getExplorerAccountQrMock.mockResolvedValueOnce({
-      canonicalId: "URpZvAliceCompat",
-      literal: "testuLegacyVisibleAccount1234567890",
-      networkPrefix: 369,
-      errorCorrection: "M",
-      modules: 29,
-      qrVersion: 1,
-      svg: "<svg />",
-    });
-
+  it("does not retarget a stored account from another network", async () => {
     const wrapper = mountView({
       account: {
         accountId: "sorauLegacyVisibleAccount1234567890",
@@ -292,11 +279,10 @@ describe("ExploreView", () => {
     });
     await flushPromises();
 
-    expect(getExplorerAccountQrMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-      accountId: "testuLegacyVisibleAccount1234567890",
-    });
-    expect(wrapper.text()).toContain("testuLegacyVisibleAccount1234567890");
+    expect(getExplorerAccountQrMock).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain(
+      "No QR yet. Connect to Torii and choose a wallet.",
+    );
     expect(wrapper.text()).toContain("Block Height");
   });
 });

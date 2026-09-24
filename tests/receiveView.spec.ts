@@ -10,14 +10,13 @@ import {
 
 const ALICE_I105_ACCOUNT_ID = "testuAliceRealI105AccountId";
 const BOB_I105_ACCOUNT_ID = "testuBobRealI105AccountId";
-const qrToStringMock = vi.fn();
+const ALICE_RECEIVE_KEY_ID = "AQEBAQEBAQEBAQEBAQEBAQEB";
+const BOB_RECEIVE_KEY_ID = "AgICAgICAgICAgICAgICAgIC";
 const qrToDataUrlMock = vi.fn();
 const createConfidentialPaymentAddressMock = vi.fn();
 
 vi.mock("qrcode", () => ({
   default: {
-    toString: (payload: string, options: unknown) =>
-      qrToStringMock(payload, options),
     toDataURL: (payload: string, options: unknown) =>
       qrToDataUrlMock(payload, options),
   },
@@ -30,7 +29,6 @@ vi.mock("@/services/iroha", () => ({
 
 describe("ReceiveView", () => {
   beforeEach(() => {
-    qrToStringMock.mockReset();
     qrToDataUrlMock.mockReset();
     createConfidentialPaymentAddressMock.mockReset();
     qrToDataUrlMock.mockResolvedValue("data:image/png;base64,cXI=");
@@ -56,7 +54,7 @@ describe("ReceiveView", () => {
       connection: {
         toriiUrl: "http://localhost:8080",
         chainId: "chain",
-        assetDefinitionId: "norito:abcdef0123456789",
+        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
         networkPrefix: 369,
       },
       accounts: [
@@ -67,7 +65,6 @@ describe("ReceiveView", () => {
           i105AccountId: ALICE_I105_ACCOUNT_ID,
           i105DefaultAccountId: ALICE_I105_ACCOUNT_ID,
           publicKeyHex: "ab".repeat(32),
-          privateKeyHex: "cd".repeat(32),
           hasStoredSecret: true,
           localOnly: false,
         },
@@ -93,7 +90,6 @@ describe("ReceiveView", () => {
           i105AccountId: BOB_I105_ACCOUNT_ID,
           i105DefaultAccountId: BOB_I105_ACCOUNT_ID,
           publicKeyHex: "ef".repeat(32),
-          privateKeyHex: "12".repeat(32),
           hasStoredSecret: true,
           localOnly: false,
         },
@@ -105,23 +101,20 @@ describe("ReceiveView", () => {
 
   it("ignores stale qr render after active account switch", async () => {
     let resolveAliceAddress: (value: unknown) => void = () => {};
+    const bobAddress: ConfidentialPaymentAddressPayload = {
+      schema: "iroha-confidential-payment-address/v3",
+      receiveKeyId: BOB_RECEIVE_KEY_ID,
+      receivePublicKeyBase64Url: "A".repeat(43),
+      shieldedOwnerTagHex: "22".repeat(32),
+      shieldedDiversifierHex: "44".repeat(32),
+      recoveryHint: "one-time-receive-key",
+    };
     createConfidentialPaymentAddressMock.mockReturnValueOnce(
       new Promise((resolve) => {
         resolveAliceAddress = resolve;
       }),
     );
-    createConfidentialPaymentAddressMock.mockResolvedValueOnce({
-      schema: "iroha-confidential-payment-address/v3",
-      receiveKeyId: "bob-key",
-      receivePublicKeyBase64Url: "bobPublicKey",
-      shieldedOwnerTagHex: "22".repeat(32),
-      shieldedDiversifierHex: "44".repeat(32),
-      recoveryHint: "one-time-receive-key",
-    });
-    qrToStringMock.mockImplementation((payload: string) =>
-      Promise.resolve(`<svg><text>${payload}</text></svg>`),
-    );
-
+    createConfidentialPaymentAddressMock.mockResolvedValueOnce(bobAddress);
     const wrapper = mountView();
 
     await flushPromises();
@@ -131,14 +124,19 @@ describe("ReceiveView", () => {
 
     expect(createConfidentialPaymentAddressMock).toHaveBeenLastCalledWith({
       accountId: BOB_I105_ACCOUNT_ID,
-      privateKeyHex: "12".repeat(32),
+      networkPrefix: 369,
     });
-    expect(wrapper.text()).toContain('"receiveKeyId":"bob-key"');
+    expect(
+      createConfidentialPaymentAddressMock.mock.calls.at(-1)?.[0],
+    ).not.toHaveProperty("privateKeyHex");
+    expect((wrapper.get("textarea").element as HTMLTextAreaElement).value).toBe(
+      encodeConfidentialPaymentAddress(bobAddress),
+    );
 
     resolveAliceAddress({
       schema: "iroha-confidential-payment-address/v3",
-      receiveKeyId: "alice-key",
-      receivePublicKeyBase64Url: "alicePublicKey",
+      receiveKeyId: ALICE_RECEIVE_KEY_ID,
+      receivePublicKeyBase64Url: "E".repeat(43),
       shieldedOwnerTagHex: "11".repeat(32),
       shieldedDiversifierHex: "33".repeat(32),
       recoveryHint: "one-time-receive-key",
@@ -146,49 +144,30 @@ describe("ReceiveView", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.text()).toContain('"receiveKeyId":"bob-key"');
-    expect(wrapper.text()).not.toContain('"receiveKeyId":"alice-key"');
+    expect((wrapper.get("textarea").element as HTMLTextAreaElement).value).toBe(
+      encodeConfidentialPaymentAddress(bobAddress),
+    );
   });
 
   it("renders the receive qr with scan-friendly contrast colors", async () => {
     const paymentAddress: ConfidentialPaymentAddressPayload = {
       schema: "iroha-confidential-payment-address/v3",
-      receiveKeyId: "alice-key",
-      receivePublicKeyBase64Url: "alicePublicKey",
+      receiveKeyId: ALICE_RECEIVE_KEY_ID,
+      receivePublicKeyBase64Url: "E".repeat(43),
       shieldedOwnerTagHex: "11".repeat(32),
       shieldedDiversifierHex: "33".repeat(32),
       recoveryHint: "one-time-receive-key",
     };
     createConfidentialPaymentAddressMock.mockResolvedValueOnce(paymentAddress);
-    qrToStringMock.mockResolvedValueOnce("<svg></svg>");
-
     const wrapper = mountView();
 
     await flushPromises();
 
-    expect(qrToStringMock).toHaveBeenCalledWith(
-      JSON.stringify({
-        schema: "iroha-confidential-payment-address/v3",
-        receiveKeyId: "alice-key",
-        receivePublicKeyBase64Url: "alicePublicKey",
-        shieldedOwnerTagHex: "11".repeat(32),
-        shieldedDiversifierHex: "33".repeat(32),
-        recoveryHint: "one-time-receive-key",
-      }),
-      expect.objectContaining({
-        type: "svg",
-        width: 240,
-        color: {
-          dark: "#14202b",
-          light: "#ffffff",
-        },
-      }),
-    );
     expect(qrToDataUrlMock).toHaveBeenCalledWith(
       JSON.stringify({
         schema: "iroha-confidential-payment-address/v3",
-        receiveKeyId: "alice-key",
-        receivePublicKeyBase64Url: "alicePublicKey",
+        receiveKeyId: ALICE_RECEIVE_KEY_ID,
+        receivePublicKeyBase64Url: "E".repeat(43),
         shieldedOwnerTagHex: "11".repeat(32),
         shieldedDiversifierHex: "33".repeat(32),
         recoveryHint: "one-time-receive-key",
@@ -205,19 +184,20 @@ describe("ReceiveView", () => {
     expect((wrapper.get("textarea").element as HTMLTextAreaElement).value).toBe(
       encodeConfidentialPaymentAddress(paymentAddress),
     );
+    expect(wrapper.get(".qr img").attributes("src")).toBe(
+      "data:image/png;base64,cXI=",
+    );
   });
 
   it("keeps the QR and its actions primary while details stay disclosed", async () => {
     createConfidentialPaymentAddressMock.mockResolvedValue({
       schema: "iroha-confidential-payment-address/v3",
-      receiveKeyId: "alice-key",
-      receivePublicKeyBase64Url: "alicePublicKey",
+      receiveKeyId: ALICE_RECEIVE_KEY_ID,
+      receivePublicKeyBase64Url: "E".repeat(43),
       shieldedOwnerTagHex: "11".repeat(32),
       shieldedDiversifierHex: "33".repeat(32),
       recoveryHint: "one-time-receive-key",
     });
-    qrToStringMock.mockResolvedValue("<svg></svg>");
-
     const wrapper = mountView();
     await flushPromises();
 
@@ -235,22 +215,23 @@ describe("ReceiveView", () => {
   it("requests a fresh confidential payment address for the active account", async () => {
     createConfidentialPaymentAddressMock.mockResolvedValue({
       schema: "iroha-confidential-payment-address/v3",
-      receiveKeyId: "alice-key",
-      receivePublicKeyBase64Url: "alicePublicKey",
+      receiveKeyId: ALICE_RECEIVE_KEY_ID,
+      receivePublicKeyBase64Url: "E".repeat(43),
       shieldedOwnerTagHex: "11".repeat(32),
       shieldedDiversifierHex: "33".repeat(32),
       recoveryHint: "one-time-receive-key",
     });
-    qrToStringMock.mockResolvedValue("<svg></svg>");
-
     mountView();
 
     await flushPromises();
 
     expect(createConfidentialPaymentAddressMock).toHaveBeenCalledWith({
       accountId: ALICE_I105_ACCOUNT_ID,
-      privateKeyHex: "cd".repeat(32),
+      networkPrefix: 369,
     });
+    expect(
+      createConfidentialPaymentAddressMock.mock.calls[0]?.[0],
+    ).not.toHaveProperty("privateKeyHex");
   });
 
   it("shares the rendered QR image when native sharing supports files", async () => {
@@ -268,14 +249,12 @@ describe("ReceiveView", () => {
     });
     createConfidentialPaymentAddressMock.mockResolvedValue({
       schema: "iroha-confidential-payment-address/v3",
-      receiveKeyId: "alice-key",
-      receivePublicKeyBase64Url: "alicePublicKey",
+      receiveKeyId: ALICE_RECEIVE_KEY_ID,
+      receivePublicKeyBase64Url: "E".repeat(43),
       shieldedOwnerTagHex: "11".repeat(32),
       shieldedDiversifierHex: "33".repeat(32),
       recoveryHint: "one-time-receive-key",
     });
-    qrToStringMock.mockResolvedValue("<svg></svg>");
-
     const wrapper = mountView();
     await flushPromises();
 
@@ -305,15 +284,13 @@ describe("ReceiveView", () => {
     });
     const paymentAddress: ConfidentialPaymentAddressPayload = {
       schema: "iroha-confidential-payment-address/v3",
-      receiveKeyId: "alice-key",
-      receivePublicKeyBase64Url: "alicePublicKey",
+      receiveKeyId: ALICE_RECEIVE_KEY_ID,
+      receivePublicKeyBase64Url: "E".repeat(43),
       shieldedOwnerTagHex: "11".repeat(32),
       shieldedDiversifierHex: "33".repeat(32),
       recoveryHint: "one-time-receive-key",
     };
     createConfidentialPaymentAddressMock.mockResolvedValue(paymentAddress);
-    qrToStringMock.mockResolvedValue("<svg></svg>");
-
     const wrapper = mountView();
     await flushPromises();
 

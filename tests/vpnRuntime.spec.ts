@@ -12,35 +12,72 @@ import type {
   VpnLocalController,
   VpnControllerStatus,
 } from "../electron/vpnController";
+import { AccountAddress } from "@iroha/iroha-js/browser";
 
 const getVpnProfileMock = vi.fn();
 const createVpnQuoteMock = vi.fn();
 const createVpnSessionMock = vi.fn();
 const getVpnSessionMock = vi.fn();
-const deleteVpnSessionMock = vi.fn();
 const listVpnReceiptsMock = vi.fn();
 const submitTransactionMock = vi.fn();
 const getTransactionStatusMock = vi.fn();
 const quoteAndSignTransactionMock = vi.fn();
+const quoteAuthorityTransactionMock = vi.fn();
+const buildTransactionDraftMock = vi.fn();
 const dnsLookupMock = vi.fn();
 const nodeFetchMock = vi.fn();
+const networkIdParseMock = vi.fn();
 
-vi.mock("@iroha/iroha-js", () => ({
-  quoteAndSignTransaction: (...args: unknown[]) =>
-    quoteAndSignTransactionMock(...args),
-  ToriiClient: vi.fn(function MockToriiClient() {
+vi.mock("@iroha/iroha-js/canonical-request", () => ({
+  NetworkId: class MockNetworkId {
+    static readonly BYTE_LENGTH = 32;
+    readonly literal: string;
+
+    constructor(literal: string) {
+      this.literal = literal;
+    }
+
+    static parse(literal: string) {
+      networkIdParseMock(literal);
+      return new this(literal);
+    }
+
+    toBytes() {
+      return Uint8Array.from({ length: 32 }, (_, index) =>
+        index === 31 ? 1 : 0,
+      );
+    }
+  },
+}));
+
+vi.mock("../electron/firstReleaseVpnTransport", () => ({
+  FirstReleaseVpnTransport: vi.fn(function MockVpnTransport() {
     return {
       getVpnProfile: (...args: unknown[]) => getVpnProfileMock(...args),
       createVpnQuote: (...args: unknown[]) => createVpnQuoteMock(...args),
       createVpnSession: (...args: unknown[]) => createVpnSessionMock(...args),
-      submitTransaction: (...args: unknown[]) => submitTransactionMock(...args),
+      quoteAuthorityTransaction: (...args: unknown[]) =>
+        quoteAuthorityTransactionMock(...args),
       getTransactionStatus: (...args: unknown[]) =>
         getTransactionStatusMock(...args),
       getVpnSession: (...args: unknown[]) => getVpnSessionMock(...args),
-      deleteVpnSession: (...args: unknown[]) => deleteVpnSessionMock(...args),
       listVpnReceipts: (...args: unknown[]) => listVpnReceiptsMock(...args),
     };
   }),
+}));
+
+vi.mock("../electron/firstReleaseTransaction", () => ({
+  buildFirstReleaseAuthorityTransactionDraft: (...args: unknown[]) =>
+    buildTransactionDraftMock(...args),
+  signFirstReleaseAuthorityTransaction: (...args: unknown[]) =>
+    quoteAndSignTransactionMock(...args),
+  submitFirstReleaseTransaction: (...args: unknown[]) =>
+    submitTransactionMock(...args),
+}));
+
+vi.mock("../src/utils/firstReleaseNetworkIdentity", () => ({
+  resolveFirstReleaseNetworkIdLiteral: (input: { chainId: string }) =>
+    `network:${input.chainId}`,
 }));
 
 vi.mock("../electron/nodeFetch", () => ({
@@ -100,9 +137,131 @@ const createControllerMock = (initial?: Partial<VpnControllerStatus>) => {
   return controller;
 };
 
+const accountIdForNetwork = (publicKeyHex: string, networkPrefix: number) =>
+  AccountAddress.fromAccount({
+    publicKey: Buffer.from(publicKeyHex, "hex"),
+    algorithm: "ed25519",
+  }).toI105(networkPrefix);
+const VPN_ALICE_PUBLIC_KEY_HEX =
+  "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737";
+const VPN_BOB_PUBLIC_KEY_HEX =
+  "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0";
+const VPN_ACCOUNT_ID = accountIdForNetwork(VPN_ALICE_PUBLIC_KEY_HEX, 369);
+const VPN_WRONG_NETWORK_ACCOUNT_ID = accountIdForNetwork(
+  VPN_ALICE_PUBLIC_KEY_HEX,
+  753,
+);
+const VPN_SECOND_ACCOUNT_ID = accountIdForNetwork(VPN_BOB_PUBLIC_KEY_HEX, 753);
+const VPN_SESSION_ID = "55".repeat(16);
+const VPN_QUOTE_ID = "11".repeat(32);
+const VPN_LEASE_ID = "22".repeat(32);
+const VPN_HELPER_TICKET_HEX = "ab".repeat(788);
+const VPN_RELAY_MLDSA65_PUBLIC_KEY_HEX = "55".repeat(1_952);
+
+const vpnTrust = () => ({
+  relayIdHex: "33".repeat(32),
+  relayMldsa65PublicKeyHex: VPN_RELAY_MLDSA65_PUBLIC_KEY_HEX,
+  descriptorCommitHex: "44".repeat(32),
+  tlsServerName: "relay.example",
+  relayTlsSpkiSha256Hex: "66".repeat(32),
+  relayCertificateSha256Hex: "77".repeat(32),
+  directorySnapshotDigestHex: "88".repeat(32),
+});
+
+const vpnProfile = (overrides: Record<string, unknown> = {}) => ({
+  available: true,
+  relayEndpoint: "/dns/torii.exit.example/udp/9443/quic",
+  supportedExitClasses: ["standard", "low-latency", "high-security"],
+  defaultExitClass: "standard",
+  leaseSecs: 600,
+  dnsPushIntervalSecs: 90,
+  meterFamily: "soranet.vpn.standard",
+  routePushes: ["0.0.0.0/0"],
+  excludedRoutes: ["127.0.0.0/8"],
+  dnsServers: ["1.1.1.1"],
+  tunnelAddresses: ["10.208.0.2/32"],
+  mtuBytes: 1280,
+  displayBillingLabel: "standard · soranet.vpn.standard",
+  operatorAccountId: "operator@wonderland",
+  leaseFee: "25",
+  settlementGraceSecs: 120,
+  flowLabelBits: 24,
+  paddingBudgetMs: 80,
+  ...vpnTrust(),
+  ...overrides,
+});
+
+const vpnQuote = (
+  currentMs: number,
+  overrides: Record<string, unknown> = {},
+) => ({
+  quoteId: VPN_QUOTE_ID,
+  leaseIdHex: VPN_LEASE_ID,
+  sessionIdHex: VPN_SESSION_ID,
+  paymentReference: VPN_QUOTE_ID,
+  accountId: VPN_ACCOUNT_ID,
+  exitClass: "standard",
+  relayEndpoint: "/dns/torii.exit.example/udp/9443/quic",
+  leaseSecs: 600,
+  quoteExpiresAtMs: currentMs + 60_000,
+  feeAssetId: "xor#universal.universal",
+  escrowAccountId: "vpn-escrow@wonderland",
+  operatorAccountId: "operator@wonderland",
+  leaseFee: "25",
+  routePushes: ["0.0.0.0/0"],
+  excludedRoutes: ["127.0.0.0/8"],
+  dnsServers: ["1.1.1.1"],
+  tunnelAddresses: ["10.208.0.2/32"],
+  mtuBytes: 1280,
+  meterFamily: "soranet.vpn.standard",
+  flowLabelBits: 24,
+  paddingBudgetMs: 80,
+  ...vpnTrust(),
+  meteringPublicKeyHex: "99".repeat(32),
+  openLeaseInstruction: {
+    wireId: "OpenVpnLeaseEscrow",
+    payloadHex: "abcd",
+  },
+  ...overrides,
+});
+
+const vpnSession = (
+  currentMs: number,
+  overrides: Record<string, unknown> = {},
+) => ({
+  sessionId: VPN_SESSION_ID,
+  accountId: VPN_ACCOUNT_ID,
+  exitClass: "standard",
+  relayEndpoint: "/dns/torii.exit.example/udp/9443/quic",
+  leaseSecs: 600,
+  expiresAtMs: currentMs + 600_000,
+  connectedAtMs: currentMs,
+  meterFamily: "soranet.vpn.standard",
+  quoteId: VPN_QUOTE_ID,
+  paymentReference: VPN_QUOTE_ID,
+  paymentTxHash: "cd".repeat(32),
+  feeAssetId: "xor#universal.universal",
+  escrowAccountId: "vpn-escrow@wonderland",
+  operatorAccountId: "operator@wonderland",
+  leaseFee: "25",
+  flowLabelBits: 24,
+  paddingBudgetMs: 80,
+  ...vpnTrust(),
+  routePushes: ["0.0.0.0/0"],
+  excludedRoutes: ["127.0.0.0/8"],
+  dnsServers: ["1.1.1.1"],
+  tunnelAddresses: ["10.208.0.2/32"],
+  mtuBytes: 1280,
+  helperTicketHex: VPN_HELPER_TICKET_HEX,
+  bytesIn: 123,
+  bytesOut: 456,
+  status: "active",
+  ...overrides,
+});
+
 const canonicalReceipt = {
-  sessionId: "sess_1",
-  accountId: "alice@wonderland",
+  sessionId: VPN_SESSION_ID,
+  accountId: VPN_ACCOUNT_ID,
   exitClass: "standard",
   relayEndpoint: "/dns/torii.exit.example/udp/9443/quic",
   meterFamily: "soranet.vpn.standard",
@@ -113,11 +272,61 @@ const canonicalReceipt = {
   bytesOut: 456,
   status: "disconnected",
   receiptSource: "torii" as const,
+  quoteId: VPN_QUOTE_ID,
+  paymentTxHash: "cd".repeat(32),
+  feeAssetId: "xor#universal.universal",
+  escrowAccountId: "vpn-escrow@wonderland",
+  operatorAccountId: "operator@wonderland",
+  leaseFee: "25",
+  earnedFee: "10",
+  refundedFee: "15",
+  leaseIdHex: VPN_LEASE_ID,
+  settleLeaseInstruction: null,
 };
 
 const VPN_PAYMENT_HASH = "cd".repeat(32);
 const VPN_PAYMENT_BLOCK_HASH = "ef".repeat(32);
 const VPN_PAYMENT_BLOCK_HEIGHT = 17;
+
+const explorerPaymentTransaction = (overrides = {}) => ({
+  authority: VPN_ACCOUNT_ID,
+  hash: VPN_PAYMENT_HASH,
+  block: VPN_PAYMENT_BLOCK_HEIGHT,
+  created_at: "2026-07-27T01:02:03Z",
+  executable: "Instructions",
+  status: "Committed",
+  rejection_reason: null,
+  executable_payload: { instruction_count: 1 },
+  metadata: {},
+  nonce: null,
+  signature: "11".repeat(64),
+  time_to_live: null,
+  ...overrides,
+});
+
+const explorerPaymentBlock = () => ({
+  hash: VPN_PAYMENT_BLOCK_HASH,
+  height: VPN_PAYMENT_BLOCK_HEIGHT,
+  created_at: "2026-07-27T01:02:04Z",
+  prev_block_hash: "ab".repeat(32),
+  transactions_hash: VPN_PAYMENT_HASH,
+  transactions_rejected: 0,
+  transactions_total: 1,
+});
+
+const explorerPaymentMetrics = (finalizedBlockHeight: number) => ({
+  peers: 4,
+  domains: 7,
+  accounts: 360,
+  assets: 169,
+  transactions_accepted: 359,
+  transactions_rejected: 16,
+  block: VPN_PAYMENT_BLOCK_HEIGHT,
+  block_created_at: "2026-07-27T01:02:04Z",
+  finalized_block: finalizedBlockHeight,
+  avg_commit_time: { ms: 500 },
+  avg_block_time: { ms: 1_000 },
+});
 
 const appliedPaymentStatus = () => ({
   hash: VPN_PAYMENT_HASH,
@@ -151,31 +360,28 @@ describe("VpnRuntime", () => {
   beforeEach(() => {
     const currentMs = Date.now();
     userDataPath = mkdtempSync(join(tmpdir(), "vpn-runtime-"));
-    getVpnProfileMock.mockReset().mockResolvedValue({
-      available: true,
-      relayEndpoint: "/dns/torii.exit.example/udp/9443/quic",
-      supportedExitClasses: ["standard", "low-latency", "high-security"],
-      defaultExitClass: "standard",
-      leaseSecs: 600,
-      dnsPushIntervalSecs: 90,
-      meterFamily: "soranet.vpn.standard",
-      routePushes: ["0.0.0.0/0"],
-      excludedRoutes: ["127.0.0.0/8"],
-      dnsServers: ["1.1.1.1"],
-      tunnelAddresses: ["10.208.0.2/32"],
-      mtuBytes: 1280,
-      displayBillingLabel: "standard · soranet.vpn.standard",
+    getVpnProfileMock.mockReset().mockResolvedValue(vpnProfile());
+    createVpnQuoteMock
+      .mockReset()
+      .mockImplementation(async (request: { meteringPublicKeyHex: string }) =>
+        vpnQuote(currentMs, {
+          meteringPublicKeyHex: request.meteringPublicKeyHex,
+        }),
+      );
+    buildTransactionDraftMock
+      .mockReset()
+      .mockImplementation((input: { authority: string }) => ({
+        authority: input.authority,
+        payload: { authority: input.authority },
+        payloadJson: JSON.stringify({ authority: input.authority }),
+        payloadBytes: Buffer.from("draft"),
+        payloadHash: Buffer.alloc(32, 1),
+      }));
+    quoteAuthorityTransactionMock.mockReset().mockResolvedValue({
+      intent: { payer: "authority" },
+      decision: { status: "accepted" },
     });
-    createVpnQuoteMock.mockReset().mockResolvedValue({
-      quoteId: "11".repeat(32),
-      txInstructions: [
-        {
-          wireId: "OpenVpnLeaseEscrow",
-          payloadHex: "abcd",
-        },
-      ],
-    });
-    quoteAndSignTransactionMock.mockReset().mockResolvedValue({
+    quoteAndSignTransactionMock.mockReset().mockReturnValue({
       signedTransaction: Buffer.from("signed-vpn-payment"),
       hash: Buffer.from(VPN_PAYMENT_HASH, "hex"),
     });
@@ -188,70 +394,23 @@ describe("VpnRuntime", () => {
     nodeFetchMock.mockReset().mockImplementation(async (input: unknown) => {
       const url = new URL(String(input));
       if (url.pathname === `/v1/explorer/transactions/${VPN_PAYMENT_HASH}`) {
-        return finalityResponse({
-          hash: VPN_PAYMENT_HASH,
-          block: VPN_PAYMENT_BLOCK_HEIGHT,
-          status: "Committed",
-        });
+        return finalityResponse(explorerPaymentTransaction());
       }
       if (url.pathname === `/v1/explorer/blocks/${VPN_PAYMENT_BLOCK_HEIGHT}`) {
-        return finalityResponse({
-          hash: VPN_PAYMENT_BLOCK_HASH,
-          height: VPN_PAYMENT_BLOCK_HEIGHT,
-          transactions_hash: VPN_PAYMENT_HASH,
-          transactions_total: 1,
-        });
+        return finalityResponse(explorerPaymentBlock());
       }
       if (url.pathname === "/v1/explorer/metrics") {
-        return finalityResponse({
-          block: VPN_PAYMENT_BLOCK_HEIGHT,
-          finalized_block: VPN_PAYMENT_BLOCK_HEIGHT,
-        });
+        return finalityResponse(
+          explorerPaymentMetrics(VPN_PAYMENT_BLOCK_HEIGHT),
+        );
       }
       throw new Error(`Unexpected VPN finality request: ${url.pathname}`);
     });
-    createVpnSessionMock.mockReset().mockResolvedValue({
-      sessionId: "sess_1",
-      accountId: "alice@wonderland",
-      exitClass: "standard",
-      relayEndpoint: "/dns/torii.exit.example/udp/9443/quic",
-      leaseSecs: 600,
-      expiresAtMs: currentMs + 600_000,
-      connectedAtMs: currentMs,
-      meterFamily: "soranet.vpn.standard",
-      routePushes: ["0.0.0.0/0"],
-      excludedRoutes: ["127.0.0.0/8"],
-      dnsServers: ["1.1.1.1"],
-      tunnelAddresses: ["10.208.0.2/32"],
-      mtuBytes: 1280,
-      helperTicketHex: "ab".repeat(32),
-      bytesIn: 123,
-      bytesOut: 456,
-      status: "active",
-    });
-    getVpnSessionMock.mockReset().mockResolvedValue({
-      sessionId: "sess_1",
-      accountId: "alice@wonderland",
-      exitClass: "standard",
-      relayEndpoint: "/dns/torii.exit.example/udp/9443/quic",
-      leaseSecs: 600,
-      expiresAtMs: currentMs + 600_000,
-      connectedAtMs: currentMs,
-      meterFamily: "soranet.vpn.standard",
-      routePushes: ["0.0.0.0/0"],
-      excludedRoutes: ["127.0.0.0/8"],
-      dnsServers: ["1.1.1.1"],
-      tunnelAddresses: ["10.208.0.2/32"],
-      mtuBytes: 1280,
-      helperTicketHex: "ab".repeat(32),
-      bytesIn: 123,
-      bytesOut: 456,
-      status: "active",
-    });
-    deleteVpnSessionMock.mockReset().mockResolvedValue(canonicalReceipt);
+    createVpnSessionMock.mockReset().mockResolvedValue(vpnSession(currentMs));
+    getVpnSessionMock.mockReset().mockResolvedValue(vpnSession(currentMs));
     listVpnReceiptsMock
       .mockReset()
-      .mockResolvedValue({ items: [canonicalReceipt] });
+      .mockResolvedValue({ items: [canonicalReceipt], total: 1 });
     dnsLookupMock.mockReset().mockImplementation(async (hostname: string) => {
       if (hostname === "taira.sora.org") {
         return { address: "208.83.1.62", family: 4 };
@@ -304,25 +463,16 @@ describe("VpnRuntime", () => {
     ).toBe("/ip4/127.0.0.1/udp/9443/quic");
   });
 
-  it("synthesizes full-tunnel controller routes when torii omits route pushes", () => {
-    expect(
-      resolveVpnRoutePushesForController(
-        [],
-        ["10.221.36.170/30", "fd53:7261:6574:0:2134:f68e:bd1e:3332/126"],
-      ),
-    ).toEqual(["0.0.0.0/0", "::/0"]);
-    expect(
-      resolveVpnRoutePushesForController([], ["10.221.36.170/30"]),
-    ).toEqual(["0.0.0.0/0"]);
-    expect(
-      resolveVpnRoutePushesForController(
-        ["10.0.0.0/8"],
-        ["10.221.36.170/30", "fd53:7261:6574:0:2134:f68e:bd1e:3332/126"],
-      ),
-    ).toEqual(["10.0.0.0/8"]);
+  it("refuses to invent controller routes when Torii omits them", () => {
+    expect(() => resolveVpnRoutePushesForController([])).toThrow(
+      /will not invent full-tunnel routes/u,
+    );
+    expect(resolveVpnRoutePushesForController(["10.0.0.0/8"])).toEqual([
+      "10.0.0.0/8",
+    ]);
   });
 
-  it("excludes the relay endpoint from synthesized full-tunnel controller routes", () => {
+  it("excludes the relay endpoint from exact full-tunnel controller routes", () => {
     expect(
       resolveVpnExcludedRoutesForController(
         [],
@@ -354,21 +504,11 @@ describe("VpnRuntime", () => {
   });
 
   it("normalizes vpn profile relay endpoints onto the active torii host", async () => {
-    getVpnProfileMock.mockResolvedValueOnce({
-      available: true,
-      relayEndpoint: "/dns/torii/udp/9443/quic",
-      supportedExitClasses: ["standard"],
-      defaultExitClass: "standard",
-      leaseSecs: 600,
-      dnsPushIntervalSecs: 90,
-      meterFamily: "soranet.vpn.standard",
-      routePushes: [],
-      excludedRoutes: [],
-      dnsServers: [],
-      tunnelAddresses: ["10.208.0.2/32"],
-      mtuBytes: 1280,
-      displayBillingLabel: "standard · soranet.vpn.standard",
-    });
+    getVpnProfileMock.mockResolvedValueOnce(
+      vpnProfile({
+        relayEndpoint: "/dns/torii/udp/9443/quic",
+      }),
+    );
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
       userDataPath,
@@ -384,21 +524,12 @@ describe("VpnRuntime", () => {
   });
 
   it("rejects malformed VPN profiles instead of inventing a service class", async () => {
-    getVpnProfileMock.mockResolvedValueOnce({
-      available: true,
-      relayEndpoint: "/dns/torii/udp/9443/quic",
-      supportedExitClasses: [],
-      defaultExitClass: "unknown",
-      leaseSecs: 600,
-      dnsPushIntervalSecs: 90,
-      meterFamily: "soranet.vpn.standard",
-      routePushes: [],
-      excludedRoutes: [],
-      dnsServers: [],
-      tunnelAddresses: ["10.208.0.2/32"],
-      mtuBytes: 1280,
-      displayBillingLabel: "standard · soranet.vpn.standard",
-    });
+    getVpnProfileMock.mockResolvedValueOnce(
+      vpnProfile({
+        supportedExitClasses: [],
+        defaultExitClass: "unknown",
+      }),
+    );
     const runtime = new VpnRuntime({
       userDataPath,
       helperVersion: "embedded-1.0.0",
@@ -410,22 +541,137 @@ describe("VpnRuntime", () => {
     ).rejects.toThrow(/supportedExitClasses/u);
   });
 
-  it("rejects an unsupported requested service class before quoting", async () => {
-    getVpnProfileMock.mockResolvedValueOnce({
-      available: true,
-      relayEndpoint: "/dns/torii/udp/9443/quic",
-      supportedExitClasses: ["standard"],
-      defaultExitClass: "standard",
-      leaseSecs: 600,
-      dnsPushIntervalSecs: 90,
-      meterFamily: "soranet.vpn.standard",
-      routePushes: [],
-      excludedRoutes: [],
-      dnsServers: [],
-      tunnelAddresses: ["10.208.0.2/32"],
-      mtuBytes: 1280,
-      displayBillingLabel: "standard · soranet.vpn.standard",
+  it("rejects malformed public VPN read inputs before controller or transport access", async () => {
+    const controller = createControllerMock();
+    const runtime = new VpnRuntime({
+      userDataPath,
+      helperVersion: "embedded-1.0.0",
+      controller,
     });
+    const malformedInputs: unknown[] = [
+      null,
+      [],
+      {},
+      { toriiUrl: 7 },
+      { toriiUrl: "https://taira.sora.org/" },
+      { toriiUrl: "https://taira.sora.org/v1/vpn/profile" },
+      { toriiUrl: "http://127.0.0.1:8080" },
+      { toriiUrl: "https://taira.sora.org", compatibility: true },
+    ];
+
+    for (const malformedInput of malformedInputs) {
+      await expect(runtime.getAvailability(malformedInput)).rejects.toThrow();
+      await expect(runtime.getProfile(malformedInput)).rejects.toThrow();
+    }
+    expect(controller.refreshCapability).not.toHaveBeenCalled();
+    expect(getVpnProfileMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed authenticated VPN read contexts instead of treating them as local state", async () => {
+    const controller = createControllerMock();
+    const runtime = new VpnRuntime({
+      userDataPath,
+      helperVersion: "embedded-1.0.0",
+      controller,
+    });
+    const base = {
+      toriiUrl: "https://taira.sora.org",
+      chainId: "chain",
+      networkPrefix: 369,
+      accountId: VPN_ACCOUNT_ID,
+    };
+    const malformedInputs: unknown[] = [
+      null,
+      [],
+      {},
+      { toriiUrl: base.toriiUrl },
+      { ...base, networkPrefix: "369" },
+      { ...base, chainId: " chain" },
+      { ...base, accountId: ` ${VPN_ACCOUNT_ID}` },
+      { ...base, privateKeyHex: "AB".repeat(32) },
+      { ...base, signingAlgorithm: "ed25519" },
+      { ...base, compatibility: true },
+    ];
+
+    for (const malformedInput of malformedInputs) {
+      await expect(runtime.getStatus(malformedInput)).rejects.toThrow();
+      await expect(runtime.listReceipts(malformedInput)).rejects.toThrow();
+    }
+    expect(controller.getStatus).not.toHaveBeenCalled();
+    expect(getVpnSessionMock).not.toHaveBeenCalled();
+    expect(listVpnReceiptsMock).not.toHaveBeenCalled();
+
+    await expect(runtime.getStatus()).resolves.toMatchObject({ state: "idle" });
+    await expect(runtime.listReceipts()).resolves.toEqual([]);
+  });
+
+  it("rejects inexact VPN connect DTOs before controller or Torii access", async () => {
+    const controller = createControllerMock();
+    const runtime = new VpnRuntime({
+      userDataPath,
+      helperVersion: "embedded-1.0.0",
+      controller,
+    });
+    const valid = {
+      toriiUrl: "https://taira.sora.org",
+      chainId: "chain",
+      networkPrefix: 369,
+      accountId: VPN_ACCOUNT_ID,
+      privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
+      exitClass: "standard" as const,
+    };
+    const malformedInputs: unknown[] = [
+      { ...valid, signingAlgorithm: undefined },
+      { ...valid, compatibility: true },
+      { ...valid, toriiUrl: "https://taira.sora.org/" },
+      { ...valid, signingAlgorithm: "Ed25519" },
+      { ...valid, privateKeyHex: "AB".repeat(32) },
+    ];
+
+    for (const malformedInput of malformedInputs) {
+      await expect(runtime.connect(malformedInput as never)).rejects.toThrow();
+    }
+    expect(controller.refreshCapability).not.toHaveBeenCalled();
+    expect(getVpnProfileMock).not.toHaveBeenCalled();
+    expect(createVpnQuoteMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects compatibility profile fields and unavailable profiles that leak partial trust", async () => {
+    const runtime = new VpnRuntime({
+      userDataPath,
+      helperVersion: "embedded-1.0.0",
+      controller: createControllerMock(),
+    });
+    getVpnProfileMock.mockResolvedValueOnce({
+      ...vpnProfile(),
+      lease_secs: 600,
+    });
+    await expect(
+      runtime.getProfile({ toriiUrl: "https://taira.sora.org" }),
+    ).rejects.toThrow(/must contain exactly/u);
+
+    getVpnProfileMock.mockResolvedValueOnce(
+      vpnProfile({
+        available: false,
+        relayEndpoint: "",
+        relayIdHex: "33".repeat(32),
+        relayMldsa65PublicKeyHex: "",
+        descriptorCommitHex: "",
+        tlsServerName: "",
+        relayTlsSpkiSha256Hex: "",
+        relayCertificateSha256Hex: "",
+        directorySnapshotDigestHex: "",
+      }),
+    );
+    await expect(
+      runtime.getProfile({ toriiUrl: "https://taira.sora.org" }),
+    ).rejects.toThrow(
+      /must not expose a relay endpoint or partial trust tuple/u,
+    );
+  });
+
+  it("rejects an unknown requested service class before quoting", async () => {
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
       userDataPath,
@@ -438,9 +684,10 @@ describe("VpnRuntime", () => {
         toriiUrl: "https://taira.sora.org",
         chainId: "chain",
         networkPrefix: 369,
-        accountId: "alice@wonderland",
+        accountId: VPN_ACCOUNT_ID,
         privateKeyHex: "ab".repeat(32),
-        exitClass: "low-latency",
+        signingAlgorithm: "ed25519",
+        exitClass: "premium" as never,
       }),
     ).rejects.toThrow(/is not supported by this endpoint/u);
     expect(createVpnQuoteMock).not.toHaveBeenCalled();
@@ -448,25 +695,12 @@ describe("VpnRuntime", () => {
   });
 
   it("rejects a session returned for a different service class", async () => {
-    createVpnSessionMock.mockResolvedValueOnce({
-      sessionId: "sess_wrong_class",
-      accountId: "alice@wonderland",
-      exitClass: "high-security",
-      relayEndpoint: "/dns/torii.exit.example/udp/9443/quic",
-      leaseSecs: 600,
-      expiresAtMs: Date.now() + 600_000,
-      connectedAtMs: Date.now(),
-      meterFamily: "soranet.vpn.high-security",
-      routePushes: ["0.0.0.0/0"],
-      excludedRoutes: [],
-      dnsServers: ["1.1.1.1"],
-      tunnelAddresses: ["10.208.0.2/32"],
-      mtuBytes: 1280,
-      helperTicketHex: "ab".repeat(32),
-      bytesIn: 0,
-      bytesOut: 0,
-      status: "active",
-    });
+    createVpnSessionMock.mockResolvedValueOnce(
+      vpnSession(Date.now(), {
+        exitClass: "high-security",
+        meterFamily: "soranet.vpn.high-security",
+      }),
+    );
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
       userDataPath,
@@ -479,15 +713,54 @@ describe("VpnRuntime", () => {
         toriiUrl: "https://taira.sora.org",
         chainId: "chain",
         networkPrefix: 369,
-        accountId: "alice@wonderland",
+        accountId: VPN_ACCOUNT_ID,
         privateKeyHex: "ab".repeat(32),
+        signingAlgorithm: "ed25519",
         exitClass: "standard",
       }),
     ).rejects.toThrow(/service class mismatch/u);
     expect(controller.connect).not.toHaveBeenCalled();
-    expect(deleteVpnSessionMock).toHaveBeenCalledWith(
-      "sess_wrong_class",
-      expect.any(Object),
+  });
+
+  it("binds the signed payment quote and returned session to the reviewed profile trust tuple", async () => {
+    createVpnQuoteMock.mockImplementationOnce(
+      async (request: { meteringPublicKeyHex: string }) =>
+        vpnQuote(Date.now(), {
+          leaseFee: "26",
+          meteringPublicKeyHex: request.meteringPublicKeyHex,
+        }),
+    );
+    const runtime = new VpnRuntime({
+      userDataPath,
+      helperVersion: "embedded-1.0.0",
+      controller: createControllerMock(),
+    });
+    const input = {
+      toriiUrl: "https://taira.sora.org",
+      chainId: "chain",
+      networkPrefix: 369,
+      accountId: VPN_ACCOUNT_ID,
+      privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
+      exitClass: "standard" as const,
+    };
+
+    await expect(runtime.connect(input)).rejects.toThrow(
+      /VPN quote leaseFee does not match/u,
+    );
+    expect(quoteAndSignTransactionMock).not.toHaveBeenCalled();
+
+    createVpnQuoteMock.mockImplementationOnce(
+      async (request: { meteringPublicKeyHex: string }) =>
+        vpnQuote(Date.now(), {
+          meteringPublicKeyHex: request.meteringPublicKeyHex,
+        }),
+    );
+    createVpnSessionMock.mockResolvedValueOnce(
+      vpnSession(Date.now(), { descriptorCommitHex: "aa".repeat(32) }),
+    );
+    await expect(runtime.connect(input)).rejects.toThrow(
+      /VPN session descriptorCommitHex does not match/u,
     );
   });
 
@@ -519,8 +792,9 @@ describe("VpnRuntime", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
       exitClass: "standard",
     });
     expect(existsSync(activeSessionPath)).toBe(false);
@@ -529,8 +803,9 @@ describe("VpnRuntime", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
     });
     expect(existsSync(receiptsPath)).toBe(false);
   });
@@ -547,8 +822,9 @@ describe("VpnRuntime", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
       exitClass: "standard",
     });
     expect(connected.state).toBe("connected");
@@ -559,7 +835,7 @@ describe("VpnRuntime", () => {
     expect(connected.controllerInstalled).toBe(true);
     expect(controller.connect).toHaveBeenCalledWith(
       expect.objectContaining({
-        sessionId: "sess_1",
+        sessionId: VPN_SESSION_ID,
         relayEndpoint: "/ip4/198.51.100.7/udp/9443/quic",
         mtuBytes: 1280,
       }),
@@ -569,8 +845,9 @@ describe("VpnRuntime", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
     });
     expect(refreshed.remoteSessionActive).toBe(true);
     expect(getVpnSessionMock).toHaveBeenCalled();
@@ -579,26 +856,30 @@ describe("VpnRuntime", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
     });
-    expect(disconnected.state).toBe("idle");
+    expect(disconnected.state).toBe("remote-expiry-pending");
     expect(controller.disconnect).toHaveBeenCalled();
-    expect(deleteVpnSessionMock).toHaveBeenCalled();
 
     const receipts = await runtime.listReceipts({
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
     });
     expect(receipts[0]?.receiptSource).toBe("torii");
     expect(listVpnReceiptsMock).toHaveBeenCalled();
   });
 
-  it("never returns receipts from a previous endpoint/account context when the new live sync fails", async () => {
-    listVpnReceiptsMock.mockResolvedValueOnce({ items: [canonicalReceipt] });
+  it("fails closed without returning receipts from a previous endpoint/account context when live sync fails", async () => {
+    listVpnReceiptsMock.mockResolvedValueOnce({
+      items: [canonicalReceipt],
+      total: 1,
+    });
     const runtime = new VpnRuntime({
       userDataPath,
       helperVersion: "embedded-1.0.0",
@@ -608,21 +889,61 @@ describe("VpnRuntime", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "chain-a",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
     });
     expect(aliceReceipts).toHaveLength(1);
 
     listVpnReceiptsMock.mockRejectedValueOnce(new Error("endpoint B offline"));
-    const bobReceipts = await runtime.listReceipts({
-      toriiUrl: "https://minamoto.sora.org",
-      chainId: "chain-b",
-      networkPrefix: 753,
-      accountId: "bob@wonderland",
-      privateKeyHex: "bc".repeat(32),
-    });
+    await expect(
+      runtime.listReceipts({
+        toriiUrl: "https://minamoto.sora.org",
+        chainId: "chain-b",
+        networkPrefix: 753,
+        accountId: VPN_SECOND_ACCOUNT_ID,
+        privateKeyHex: "bc".repeat(32),
+        signingAlgorithm: "ed25519",
+      }),
+    ).rejects.toThrow("endpoint B offline");
+  });
 
-    expect(bobReceipts).toEqual([]);
+  it("rejects noncanonical receipt sources and exact-list schema drift", async () => {
+    const runtime = new VpnRuntime({
+      userDataPath,
+      helperVersion: "embedded-1.0.0",
+      controller: createControllerMock(),
+    });
+    const auth = {
+      toriiUrl: "https://taira.sora.org",
+      chainId: "chain",
+      networkPrefix: 369,
+      accountId: VPN_ACCOUNT_ID,
+      privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
+    };
+    listVpnReceiptsMock.mockResolvedValueOnce({
+      items: [{ ...canonicalReceipt, receiptSource: "cache" }],
+      total: 1,
+    });
+    await expect(runtime.listReceipts(auth)).rejects.toThrow(/receiptSource/u);
+
+    listVpnReceiptsMock.mockResolvedValueOnce({
+      items: [canonicalReceipt],
+      total: 1,
+      next_cursor: null,
+    });
+    await expect(runtime.listReceipts(auth)).rejects.toThrow(
+      /must contain exactly/u,
+    );
+
+    listVpnReceiptsMock.mockResolvedValueOnce({
+      items: Array.from({ length: 25 }, () => canonicalReceipt),
+      total: 25,
+    });
+    await expect(runtime.listReceipts(auth)).rejects.toThrow(
+      /at most 24 receipts/u,
+    );
   });
 
   it("never exposes active-session receipts without an explicit wallet context", async () => {
@@ -635,8 +956,9 @@ describe("VpnRuntime", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "chain-a",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
       exitClass: "standard",
     });
     listVpnReceiptsMock.mockClear();
@@ -648,21 +970,26 @@ describe("VpnRuntime", () => {
   it("discards late receipt sync completions after the exact endpoint/account context changes", async () => {
     const bobReceipt = {
       ...canonicalReceipt,
-      sessionId: "sess_bob",
-      accountId: "bob@wonderland",
+      sessionId: "bb".repeat(16),
+      accountId: VPN_SECOND_ACCOUNT_ID,
     };
-    let resolveAlice!: (value: { items: [typeof canonicalReceipt] }) => void;
-    let resolveBob!: (value: { items: [typeof bobReceipt] }) => void;
-    const aliceResponse = new Promise<{ items: [typeof canonicalReceipt] }>(
-      (resolve) => {
-        resolveAlice = resolve;
-      },
-    );
-    const bobResponse = new Promise<{ items: [typeof bobReceipt] }>(
-      (resolve) => {
-        resolveBob = resolve;
-      },
-    );
+    let resolveAlice!: (value: {
+      items: [typeof canonicalReceipt];
+      total: 1;
+    }) => void;
+    let resolveBob!: (value: { items: [typeof bobReceipt]; total: 1 }) => void;
+    const aliceResponse = new Promise<{
+      items: [typeof canonicalReceipt];
+      total: 1;
+    }>((resolve) => {
+      resolveAlice = resolve;
+    });
+    const bobResponse = new Promise<{
+      items: [typeof bobReceipt];
+      total: 1;
+    }>((resolve) => {
+      resolveBob = resolve;
+    });
     listVpnReceiptsMock
       .mockReturnValueOnce(aliceResponse)
       .mockReturnValueOnce(bobResponse);
@@ -675,15 +1002,17 @@ describe("VpnRuntime", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "chain-a",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
     };
     const bob = {
       toriiUrl: "https://minamoto.sora.org",
       chainId: "chain-b",
       networkPrefix: 753,
-      accountId: "bob@wonderland",
+      accountId: VPN_SECOND_ACCOUNT_ID,
       privateKeyHex: "bc".repeat(32),
+      signingAlgorithm: "ed25519",
     };
 
     const aliceReceipts = runtime.listReceipts(alice);
@@ -695,19 +1024,16 @@ describe("VpnRuntime", () => {
       expect(listVpnReceiptsMock).toHaveBeenCalledTimes(2);
     });
 
-    resolveBob({ items: [bobReceipt] });
+    resolveBob({ items: [bobReceipt], total: 1 });
     await expect(bobReceipts).resolves.toEqual([
-      expect.objectContaining({ sessionId: "sess_bob" }),
+      expect.objectContaining({ sessionId: "bb".repeat(16) }),
     ]);
 
-    resolveAlice({ items: [canonicalReceipt] });
+    resolveAlice({ items: [canonicalReceipt], total: 1 });
     await expect(aliceReceipts).resolves.toEqual([]);
 
     listVpnReceiptsMock.mockRejectedValueOnce(new Error("refresh offline"));
-    const retainedBobReceipts = await runtime.listReceipts(bob);
-    expect(retainedBobReceipts.map((receipt) => receipt.sessionId)).toEqual([
-      "sess_bob",
-    ]);
+    await expect(runtime.listReceipts(bob)).rejects.toThrow("refresh offline");
   });
 
   it("hides an active session after an endpoint/account switch and refuses mismatched reconciliation or disconnect", async () => {
@@ -721,20 +1047,21 @@ describe("VpnRuntime", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "chain-a",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
     };
     const bob = {
       toriiUrl: "https://minamoto.sora.org",
       chainId: "chain-b",
       networkPrefix: 753,
-      accountId: "bob@wonderland",
+      accountId: VPN_SECOND_ACCOUNT_ID,
       privateKeyHex: "bc".repeat(32),
+      signingAlgorithm: "ed25519",
     };
 
     await runtime.connect({ ...alice, exitClass: "standard" });
     getVpnSessionMock.mockClear();
-    deleteVpnSessionMock.mockClear();
 
     const hidden = await runtime.getStatus(bob);
     expect(hidden).toMatchObject({
@@ -753,16 +1080,15 @@ describe("VpnRuntime", () => {
 
     await runtime.disconnect(bob);
     expect(controller.disconnect).not.toHaveBeenCalled();
-    expect(deleteVpnSessionMock).not.toHaveBeenCalled();
 
     const ownerStatus = await runtime.getStatus(alice);
     expect(ownerStatus).toMatchObject({
       state: "connected",
-      sessionId: "sess_1",
+      sessionId: VPN_SESSION_ID,
       remoteSessionActive: true,
     });
     expect(getVpnSessionMock).toHaveBeenCalledWith(
-      "sess_1",
+      VPN_SESSION_ID,
       expect.any(Object),
     );
   });
@@ -778,8 +1104,9 @@ describe("VpnRuntime", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "chain-a",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
     };
 
     await runtime.connect({ ...owner, exitClass: "standard" });
@@ -814,7 +1141,7 @@ describe("VpnRuntime", () => {
         toriiUrl: "https://taira.sora.org",
         chainId: "chain",
         networkPrefix: 369,
-        accountId: "alice@wonderland",
+        accountId: VPN_ACCOUNT_ID,
         privateKeyHex: "ab".repeat(32),
         signingAlgorithm: "secp256k1",
         exitClass: "standard",
@@ -840,25 +1167,13 @@ describe("VpnRuntime", () => {
     nodeFetchMock.mockImplementation(async (input: unknown) => {
       const url = new URL(String(input));
       if (url.pathname === `/v1/explorer/transactions/${VPN_PAYMENT_HASH}`) {
-        return finalityResponse({
-          hash: VPN_PAYMENT_HASH,
-          block: VPN_PAYMENT_BLOCK_HEIGHT,
-          status: "Committed",
-        });
+        return finalityResponse(explorerPaymentTransaction());
       }
       if (url.pathname === `/v1/explorer/blocks/${VPN_PAYMENT_BLOCK_HEIGHT}`) {
-        return finalityResponse({
-          hash: VPN_PAYMENT_BLOCK_HASH,
-          height: VPN_PAYMENT_BLOCK_HEIGHT,
-          transactions_hash: VPN_PAYMENT_HASH,
-          transactions_total: 1,
-        });
+        return finalityResponse(explorerPaymentBlock());
       }
       if (url.pathname === "/v1/explorer/metrics") {
-        return finalityResponse({
-          block: VPN_PAYMENT_BLOCK_HEIGHT,
-          finalized_block: finalizedBlockHeight,
-        });
+        return finalityResponse(explorerPaymentMetrics(finalizedBlockHeight));
       }
       throw new Error(`Unexpected VPN finality request: ${url.pathname}`);
     });
@@ -873,18 +1188,18 @@ describe("VpnRuntime", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
       exitClass: "standard",
     });
 
     await vi.advanceTimersByTimeAsync(0);
-    expect(submitTransactionMock).toHaveBeenCalledWith(
-      Buffer.from("signed-vpn-payment"),
-    );
-    expect(getTransactionStatusMock).toHaveBeenCalledWith(VPN_PAYMENT_HASH, {
-      scope: "global",
+    expect(submitTransactionMock).toHaveBeenCalledWith({
+      toriiUrl: "https://taira.sora.org",
+      signedTransaction: Buffer.from("signed-vpn-payment"),
     });
+    expect(getTransactionStatusMock).toHaveBeenCalledWith(VPN_PAYMENT_HASH);
     expect(createVpnSessionMock).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(2_000);
@@ -914,25 +1229,17 @@ describe("VpnRuntime", () => {
     nodeFetchMock.mockImplementation(async (input: unknown) => {
       const url = new URL(String(input));
       if (url.pathname === `/v1/explorer/transactions/${VPN_PAYMENT_HASH}`) {
-        return finalityResponse({
-          hash: "aa".repeat(32),
-          block: VPN_PAYMENT_BLOCK_HEIGHT,
-          status: "Committed",
-        });
+        return finalityResponse(
+          explorerPaymentTransaction({ hash: "ab".repeat(32) }),
+        );
       }
       if (url.pathname === `/v1/explorer/blocks/${VPN_PAYMENT_BLOCK_HEIGHT}`) {
-        return finalityResponse({
-          hash: VPN_PAYMENT_BLOCK_HASH,
-          height: VPN_PAYMENT_BLOCK_HEIGHT,
-          transactions_hash: VPN_PAYMENT_HASH,
-          transactions_total: 1,
-        });
+        return finalityResponse(explorerPaymentBlock());
       }
       if (url.pathname === "/v1/explorer/metrics") {
-        return finalityResponse({
-          block: VPN_PAYMENT_BLOCK_HEIGHT,
-          finalized_block: VPN_PAYMENT_BLOCK_HEIGHT,
-        });
+        return finalityResponse(
+          explorerPaymentMetrics(VPN_PAYMENT_BLOCK_HEIGHT),
+        );
       }
       throw new Error(`Unexpected VPN finality request: ${url.pathname}`);
     });
@@ -948,8 +1255,9 @@ describe("VpnRuntime", () => {
         toriiUrl: "https://taira.sora.org",
         chainId: "chain",
         networkPrefix: 369,
-        accountId: "alice@wonderland",
+        accountId: VPN_ACCOUNT_ID,
         privateKeyHex: "ab".repeat(32),
+        signingAlgorithm: "ed25519",
         exitClass: "standard",
       }),
     ).rejects.toThrow(
@@ -961,44 +1269,19 @@ describe("VpnRuntime", () => {
   });
 
   it("rewrites torii relay host markers before handing them to the controller", async () => {
-    createVpnSessionMock.mockResolvedValueOnce({
-      sessionId: "sess_torii_marker",
-      accountId: "alice@wonderland",
-      exitClass: "standard",
-      relayEndpoint: "/dns/torii/udp/9443/quic",
-      leaseSecs: 600,
-      expiresAtMs: Date.now() + 600_000,
-      connectedAtMs: Date.now(),
-      meterFamily: "soranet.vpn.standard",
-      routePushes: ["0.0.0.0/0"],
-      excludedRoutes: [],
-      dnsServers: [],
-      tunnelAddresses: ["10.208.0.2/32"],
-      mtuBytes: 1280,
-      helperTicketHex: "ab".repeat(32),
-      bytesIn: 0,
-      bytesOut: 0,
-      status: "active",
-    });
-    getVpnSessionMock.mockResolvedValueOnce({
-      sessionId: "sess_torii_marker",
-      accountId: "alice@wonderland",
-      exitClass: "standard",
-      relayEndpoint: "/dns/torii/udp/9443/quic",
-      leaseSecs: 600,
-      expiresAtMs: Date.now() + 600_000,
-      connectedAtMs: Date.now(),
-      meterFamily: "soranet.vpn.standard",
-      routePushes: ["0.0.0.0/0"],
-      excludedRoutes: [],
-      dnsServers: [],
-      tunnelAddresses: ["10.208.0.2/32"],
-      mtuBytes: 1280,
-      helperTicketHex: "ab".repeat(32),
-      bytesIn: 0,
-      bytesOut: 0,
-      status: "active",
-    });
+    const currentMs = Date.now();
+    const relayEndpoint = "/dns/torii/udp/9443/quic";
+    getVpnProfileMock.mockResolvedValueOnce(vpnProfile({ relayEndpoint }));
+    createVpnQuoteMock.mockImplementationOnce(
+      async (request: { meteringPublicKeyHex: string }) =>
+        vpnQuote(currentMs, {
+          relayEndpoint,
+          meteringPublicKeyHex: request.meteringPublicKeyHex,
+        }),
+    );
+    const session = vpnSession(currentMs, { relayEndpoint });
+    createVpnSessionMock.mockResolvedValueOnce(session);
+    getVpnSessionMock.mockResolvedValueOnce(session);
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
       userDataPath,
@@ -1010,65 +1293,38 @@ describe("VpnRuntime", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
       exitClass: "standard",
     });
 
     expect(connected.relayEndpoint).toBe("/dns/taira.sora.org/udp/9443/quic");
     expect(controller.connect).toHaveBeenCalledWith(
       expect.objectContaining({
-        sessionId: "sess_torii_marker",
+        sessionId: VPN_SESSION_ID,
         relayEndpoint: "/ip4/208.83.1.62/udp/9443/quic",
       }),
     );
   });
 
-  it("synthesizes controller default routes for live-style empty torii route pushes", async () => {
-    createVpnSessionMock.mockResolvedValueOnce({
-      sessionId: "sess_default_routes",
-      accountId: "alice@wonderland",
-      exitClass: "standard",
-      relayEndpoint: "/dns/torii/udp/9443/quic",
-      leaseSecs: 600,
-      expiresAtMs: Date.now() + 600_000,
-      connectedAtMs: Date.now(),
-      meterFamily: "soranet.vpn.standard",
-      routePushes: [],
-      excludedRoutes: [],
-      dnsServers: [],
-      tunnelAddresses: [
-        "10.221.36.170/30",
-        "fd53:7261:6574:0:2134:f68e:bd1e:3332/126",
-      ],
-      mtuBytes: 1280,
-      helperTicketHex: "ab".repeat(32),
-      bytesIn: 0,
-      bytesOut: 0,
-      status: "active",
-    });
-    getVpnSessionMock.mockResolvedValueOnce({
-      sessionId: "sess_default_routes",
-      accountId: "alice@wonderland",
-      exitClass: "standard",
-      relayEndpoint: "/dns/torii/udp/9443/quic",
-      leaseSecs: 600,
-      expiresAtMs: Date.now() + 600_000,
-      connectedAtMs: Date.now(),
-      meterFamily: "soranet.vpn.standard",
-      routePushes: [],
-      excludedRoutes: [],
-      dnsServers: [],
-      tunnelAddresses: [
-        "10.221.36.170/30",
-        "fd53:7261:6574:0:2134:f68e:bd1e:3332/126",
-      ],
-      mtuBytes: 1280,
-      helperTicketHex: "ab".repeat(32),
-      bytesIn: 0,
-      bytesOut: 0,
-      status: "active",
-    });
+  it("rejects empty route and DNS projections before invoking the controller", async () => {
+    const relayEndpoint = "/dns/torii/udp/9443/quic";
+    const routePushes: string[] = [];
+    const excludedRoutes: string[] = [];
+    const dnsServers: string[] = [];
+    const tunnelAddresses = [
+      "10.221.36.170/30",
+      "fd53:7261:6574:0:2134:f68e:bd1e:3332/126",
+    ];
+    const networkOverrides = {
+      relayEndpoint,
+      routePushes,
+      excludedRoutes,
+      dnsServers,
+      tunnelAddresses,
+    };
+    getVpnProfileMock.mockResolvedValueOnce(vpnProfile(networkOverrides));
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
       userDataPath,
@@ -1076,40 +1332,118 @@ describe("VpnRuntime", () => {
       controller,
     });
 
-    await runtime.connect({
-      toriiUrl: "https://taira.sora.org",
-      chainId: "chain",
-      networkPrefix: 369,
-      accountId: "alice@wonderland",
-      privateKeyHex: "ab".repeat(32),
-      exitClass: "standard",
-    });
-
-    expect(controller.connect).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: "sess_default_routes",
-        relayEndpoint: "/ip4/208.83.1.62/udp/9443/quic",
-        excludedRoutes: ["208.83.1.62/32"],
-        routePushes: ["0.0.0.0/0", "::/0"],
+    await expect(
+      runtime.connect({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "chain",
+        networkPrefix: 369,
+        accountId: VPN_ACCOUNT_ID,
+        privateKeyHex: "ab".repeat(32),
+        signingAlgorithm: "ed25519",
+        exitClass: "standard",
       }),
-    );
+    ).rejects.toThrow(/routePushes must contain from 1 through 64 entries/u);
+    expect(createVpnQuoteMock).not.toHaveBeenCalled();
+    expect(controller.connect).not.toHaveBeenCalled();
   });
 
-  it("normalizes stale SORA-prefixed account ids for vpn auth calls", async () => {
+  it("rejects a stale wrong-network account id before helper or Torii access", async () => {
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
     });
-    const privateKey = Buffer.from("ab".repeat(32), "hex");
 
+    await expect(
+      runtime.connect({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "chain",
+        accountId: VPN_WRONG_NETWORK_ACCOUNT_ID,
+        networkPrefix: 369,
+        privateKeyHex: "ab".repeat(32),
+        signingAlgorithm: "ed25519",
+        exitClass: "standard",
+      }),
+    ).rejects.toThrow(/canonical I105 account ID/u);
+    expect(controller.refreshCapability).not.toHaveBeenCalled();
+    expect(createVpnQuoteMock).not.toHaveBeenCalled();
+  });
+
+  it("uses an already network-scoped account id without compatibility rewriting", async () => {
+    const normalizedAccountId = VPN_ACCOUNT_ID;
+    const currentMs = Date.now();
+    const expectedPrivateKey = Buffer.from("ab".repeat(32), "hex");
+    const privateKeySnapshots: Buffer[] = [];
+    const observePrivateKey = (value: unknown) => {
+      expect(Buffer.isBuffer(value)).toBe(true);
+      privateKeySnapshots.push(Buffer.from(value as Buffer));
+    };
+    createVpnQuoteMock.mockImplementationOnce(
+      async (
+        request: { meteringPublicKeyHex: string },
+        auth: { privateKey: Buffer },
+      ) => {
+        observePrivateKey(auth.privateKey);
+        return vpnQuote(currentMs, {
+          accountId: normalizedAccountId,
+          meteringPublicKeyHex: request.meteringPublicKeyHex,
+        });
+      },
+    );
+    const session = vpnSession(currentMs, { accountId: normalizedAccountId });
+    quoteAuthorityTransactionMock.mockImplementationOnce(
+      async (_draft: unknown, auth: { privateKey: Buffer }) => {
+        observePrivateKey(auth.privateKey);
+        return {
+          intent: { payer: "authority" },
+          decision: { status: "accepted" },
+        };
+      },
+    );
+    quoteAndSignTransactionMock.mockImplementationOnce(
+      (input: { privateKey: Buffer }) => {
+        observePrivateKey(input.privateKey);
+        return {
+          signedTransaction: Buffer.from("signed-vpn-payment"),
+          hash: Buffer.from(VPN_PAYMENT_HASH, "hex"),
+        };
+      },
+    );
+    createVpnSessionMock.mockImplementationOnce(
+      async (_request: unknown, auth: { privateKey: Buffer }) => {
+        observePrivateKey(auth.privateKey);
+        return session;
+      },
+    );
+    getVpnSessionMock.mockImplementation(
+      async (_sessionId: string, auth: { privateKey: Buffer }) => {
+        observePrivateKey(auth.privateKey);
+        return session;
+      },
+    );
+    listVpnReceiptsMock.mockImplementation(
+      async (auth: { privateKey: Buffer }) => {
+        observePrivateKey(auth.privateKey);
+        return {
+          items: [{ ...canonicalReceipt, accountId: normalizedAccountId }],
+          total: 1,
+        };
+      },
+    );
+    const controller = createControllerMock();
+    const runtime = new VpnRuntime({
+      userDataPath,
+      helperVersion: "embedded-1.0.0",
+      controller,
+    });
     await runtime.connect({
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
-      accountId: "sorauLegacyVisibleAccount1234567890",
+      accountId: normalizedAccountId,
       networkPrefix: 369,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
       exitClass: "standard",
     });
     expect(createVpnQuoteMock).toHaveBeenCalledWith(
@@ -1117,42 +1451,49 @@ describe("VpnRuntime", () => {
         exitClass: "standard",
         meteringPublicKeyHex: expect.stringMatching(/^[\da-f]{64}$/),
       },
-      {
-        canonicalAuth: {
-          accountId: "testuLegacyVisibleAccount1234567890",
-          privateKey,
+      expect.objectContaining({
+        accountId: normalizedAccountId,
+        networkId: expect.objectContaining({ literal: "network:chain" }),
+        networkPrefix: 369,
+        privateKey: expect.any(Buffer),
+      }),
+    );
+    expect(buildTransactionDraftMock).toHaveBeenCalledWith({
+      networkId: expect.objectContaining({ literal: "network:chain" }),
+      networkPrefix: 369,
+      authority: normalizedAccountId,
+      instructions: [
+        {
+          wire_id: "OpenVpnLeaseEscrow",
+          payload_hex: "abcd",
         },
-      },
+      ],
+    });
+    expect(quoteAuthorityTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ authority: normalizedAccountId }),
+      expect.objectContaining({
+        accountId: normalizedAccountId,
+        networkId: expect.objectContaining({ literal: "network:chain" }),
+        networkPrefix: 369,
+        privateKey: expect.any(Buffer),
+      }),
     );
     expect(quoteAndSignTransactionMock).toHaveBeenCalledWith(
-      expect.anything(),
       expect.objectContaining({
-        chainId: "chain",
-        authority: "testuLegacyVisibleAccount1234567890",
-        instructions: [
-          {
-            wire_id: "OpenVpnLeaseEscrow",
-            payload_hex: "abcd",
-          },
-        ],
-        feePayment: {
-          payer: "authority",
-          chargeLimits: [],
-          gasLimit: null,
-        },
-        privateKey,
+        networkId: expect.objectContaining({ literal: "network:chain" }),
+        draft: expect.objectContaining({ authority: normalizedAccountId }),
+        quote: expect.objectContaining({
+          intent: { payer: "authority" },
+          decision: { status: "accepted" },
+        }),
+        privateKey: expect.any(Buffer),
         privateKeyAlgorithm: "ed25519",
       }),
-      {
-        canonicalAuth: {
-          accountId: "testuLegacyVisibleAccount1234567890",
-          privateKey,
-        },
-      },
     );
-    expect(submitTransactionMock).toHaveBeenCalledWith(
-      Buffer.from("signed-vpn-payment"),
-    );
+    expect(submitTransactionMock).toHaveBeenCalledWith({
+      toriiUrl: "https://taira.sora.org",
+      signedTransaction: Buffer.from("signed-vpn-payment"),
+    });
     expect(createVpnSessionMock).toHaveBeenCalledWith(
       {
         exitClass: "standard",
@@ -1160,55 +1501,111 @@ describe("VpnRuntime", () => {
         paymentTxHash: "cd".repeat(32),
         meteringPublicKeyHex: expect.stringMatching(/^[\da-f]{64}$/),
       },
-      {
-        canonicalAuth: {
-          accountId: "testuLegacyVisibleAccount1234567890",
-          privateKey,
-        },
-      },
+      expect.objectContaining({
+        accountId: normalizedAccountId,
+        networkId: expect.objectContaining({ literal: "network:chain" }),
+        networkPrefix: 369,
+        privateKey: expect.any(Buffer),
+      }),
     );
 
     await runtime.getStatus({
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
-      accountId: "sorauLegacyVisibleAccount1234567890",
+      accountId: normalizedAccountId,
       networkPrefix: 369,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
     });
-    expect(getVpnSessionMock).toHaveBeenCalledWith("sess_1", {
-      canonicalAuth: {
-        accountId: "testuLegacyVisibleAccount1234567890",
-        privateKey,
-      },
-    });
+    expect(getVpnSessionMock).toHaveBeenCalledWith(
+      VPN_SESSION_ID,
+      expect.objectContaining({
+        accountId: normalizedAccountId,
+        networkId: expect.objectContaining({ literal: "network:chain" }),
+        networkPrefix: 369,
+        privateKey: expect.any(Buffer),
+      }),
+    );
 
     await runtime.disconnect({
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
-      accountId: "sorauLegacyVisibleAccount1234567890",
+      accountId: normalizedAccountId,
       networkPrefix: 369,
       privateKeyHex: "ab".repeat(32),
-    });
-    expect(deleteVpnSessionMock).toHaveBeenCalledWith("sess_1", {
-      canonicalAuth: {
-        accountId: "testuLegacyVisibleAccount1234567890",
-        privateKey,
-      },
+      signingAlgorithm: "ed25519",
     });
 
     await runtime.listReceipts({
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
-      accountId: "sorauLegacyVisibleAccount1234567890",
+      accountId: normalizedAccountId,
       networkPrefix: 369,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
     });
-    expect(listVpnReceiptsMock).toHaveBeenCalledWith({
-      canonicalAuth: {
-        accountId: "testuLegacyVisibleAccount1234567890",
-        privateKey,
+    expect(listVpnReceiptsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: normalizedAccountId,
+        networkId: expect.objectContaining({ literal: "network:chain" }),
+        networkPrefix: 369,
+        privateKey: expect.any(Buffer),
+      }),
+    );
+    expect(privateKeySnapshots.length).toBeGreaterThanOrEqual(7);
+    for (const snapshot of privateKeySnapshots) {
+      expect(snapshot).toEqual(expectedPrivateKey);
+    }
+    const retainedPrivateKeyReferences = [
+      ...createVpnQuoteMock.mock.calls.map((call) => call[1]?.privateKey),
+      ...quoteAuthorityTransactionMock.mock.calls.map(
+        (call) => call[1]?.privateKey,
+      ),
+      ...quoteAndSignTransactionMock.mock.calls.map(
+        (call) => call[0]?.privateKey,
+      ),
+      ...createVpnSessionMock.mock.calls.map((call) => call[1]?.privateKey),
+      ...getVpnSessionMock.mock.calls.map((call) => call[1]?.privateKey),
+      ...listVpnReceiptsMock.mock.calls.map((call) => call[0]?.privateKey),
+    ];
+    expect(retainedPrivateKeyReferences.length).toBe(
+      privateKeySnapshots.length,
+    );
+    for (const retained of retainedPrivateKeyReferences) {
+      expect(retained).toEqual(Buffer.alloc(32));
+    }
+  });
+
+  it("zeroes canonical-auth private keys when a signed VPN request fails", async () => {
+    let retainedPrivateKey: Buffer | undefined;
+    let observedPrivateKey: Buffer | undefined;
+    createVpnQuoteMock.mockImplementationOnce(
+      async (_request: unknown, auth: { privateKey: Buffer }) => {
+        retainedPrivateKey = auth.privateKey;
+        observedPrivateKey = Buffer.from(auth.privateKey);
+        throw new Error("VPN quote failed");
       },
+    );
+    const runtime = new VpnRuntime({
+      userDataPath,
+      helperVersion: "embedded-1.0.0",
+      controller: createControllerMock(),
     });
+
+    await expect(
+      runtime.connect({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "chain",
+        accountId: VPN_ACCOUNT_ID,
+        networkPrefix: 369,
+        privateKeyHex: "ab".repeat(32),
+        signingAlgorithm: "ed25519",
+        exitClass: "standard",
+      }),
+    ).rejects.toThrow("VPN quote failed");
+
+    expect(observedPrivateKey).toEqual(Buffer.from("ab".repeat(32), "hex"));
+    expect(retainedPrivateKey).toEqual(Buffer.alloc(32));
   });
 
   it("reports unavailable availability when the profile endpoint is missing", async () => {
@@ -1273,14 +1670,10 @@ describe("VpnRuntime", () => {
     });
     expect(getVpnProfileMock).not.toHaveBeenCalled();
     expect(getVpnSessionMock).not.toHaveBeenCalled();
-    expect(deleteVpnSessionMock).not.toHaveBeenCalled();
     expect(listVpnReceiptsMock).not.toHaveBeenCalled();
   });
 
-  it("marks remote cleanup pending when the local disconnect succeeds but the remote delete fails", async () => {
-    deleteVpnSessionMock.mockRejectedValueOnce(
-      new Error("remote delete failed"),
-    );
+  it("marks remote lease expiry pending when the local tunnel disconnects", async () => {
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
       userDataPath,
@@ -1292,8 +1685,9 @@ describe("VpnRuntime", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
       exitClass: "standard",
     });
 
@@ -1301,12 +1695,13 @@ describe("VpnRuntime", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
     });
 
-    expect(disconnected.state).toBe("remote-delete-pending");
-    expect(disconnected.lastReceipt?.receiptSource).toBe("local-fallback");
+    expect(disconnected.state).toBe("remote-expiry-pending");
+    expect(disconnected.lastReceipt).toBeNull();
     expect(controller.disconnect).toHaveBeenCalled();
   });
 
@@ -1321,19 +1716,18 @@ describe("VpnRuntime", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "chain-a",
       networkPrefix: 369,
-      accountId: "alice@wonderland",
+      accountId: VPN_ACCOUNT_ID,
       privateKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
     };
 
     await runtime.connect({ ...owner, exitClass: "standard" });
-    deleteVpnSessionMock.mockClear();
 
     const disconnected = await runtime.disconnectLocal();
 
     expect(controller.disconnect).toHaveBeenCalled();
-    expect(deleteVpnSessionMock).not.toHaveBeenCalled();
     expect(disconnected).toMatchObject({
-      state: "remote-delete-pending",
+      state: "remote-expiry-pending",
       systemTunnelActive: false,
       remoteSessionActive: true,
     });

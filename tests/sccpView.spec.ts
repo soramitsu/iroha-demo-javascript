@@ -37,6 +37,7 @@ import {
   tairaXorBscBurnToTairaAccountCallData,
   tairaXorBurnToTairaCallData,
   SCCP_BSC_DOMAIN,
+  SCCP_BSC_NETWORK,
   SCCP_BSC_TAIRA_XOR_BURN_STARTED_TOPIC,
   SCCP_EVM_SOURCE_EVENT_TOPIC,
   SCCP_SOLANA_DOMAIN,
@@ -1005,12 +1006,11 @@ const mountView = (
       accountOnboarding: feature(),
       assetTransfers: feature(),
       faucetClaim: feature(),
-      confidentialTransfers: feature(),
       kaigiMeetings: feature(),
       governanceWrites: feature(),
       stakingWrites: feature(),
       subscriptionWrites: feature(),
-      soraCloudDeploy: feature(),
+      soraCloudHfSharedLease: feature(),
       vpnSessions: feature(),
       irohaConnectSessions: feature(),
       zkProofJobs: feature(zkProofJobsSupported),
@@ -1923,8 +1923,9 @@ const storeConnectedBscWallet = (
   if (options.projectConfigured !== false) {
     vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-walletconnect-project");
   }
+  const storageKey = `iroha-demo:sccp:bsc-walletconnect:${SCCP_BSC_NETWORK.caipChainId.replace(/[^a-z0-9_-]/giu, "-")}`;
   localStorage.setItem(
-    "iroha-demo:sccp:bsc-walletconnect",
+    storageKey,
     JSON.stringify({
       topic: "topic-bsc",
       address: VALID_BSC_ADDRESS,

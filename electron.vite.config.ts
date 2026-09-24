@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "electron-vite";
 import vue from "@vitejs/plugin-vue";
 import {
@@ -6,7 +7,7 @@ import {
   resolveCompatibleIrohaSdkRoot,
 } from "./scripts/iroha-sdk-compat.mjs";
 
-const projectRoot = process.cwd();
+const projectRoot = dirname(fileURLToPath(import.meta.url));
 const resolveFromRoot = (...segments: string[]) =>
   resolve(projectRoot, ...segments);
 const irohaSdkRoot = resolveCompatibleIrohaSdkRoot({ projectRoot });
@@ -14,10 +15,6 @@ const sharedAliases = [
   {
     find: /^@\//u,
     replacement: `${resolveFromRoot("src")}/`,
-  },
-  {
-    find: /^@noble\/ciphers\/chacha$/u,
-    replacement: resolveFromRoot("node_modules/@noble/ciphers/chacha.js"),
   },
   {
     find: /^@noble\/hashes\/webcrypto\.js$/u,
@@ -72,9 +69,10 @@ export default defineConfig({
   },
   renderer: {
     root: resolveFromRoot("src"),
-    publicDir: resolveFromRoot("public"),
+    publicDir: false,
     build: {
       outDir: resolveFromRoot("dist/renderer"),
+      emptyOutDir: true,
       rollupOptions: {
         input: resolveFromRoot("src/index.html"),
       },

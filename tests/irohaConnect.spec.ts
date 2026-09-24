@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { NetworkId } from "@iroha/iroha-js/browser";
+import { createConnectSessionPreview } from "@iroha/iroha-js/connect-browser";
 import type { EndpointInspection } from "@/types/endpointInspection";
 import {
   assertIrohaConnectEndpointCanPair,
@@ -9,42 +11,60 @@ import {
   parseIrohaConnectUri,
   validateIrohaConnectNetworkClaim,
 } from "@/utils/irohaConnect";
+import { TAIRA_NETWORK_ID } from "@/utils/firstReleaseNetworkIdentity";
 
-const VALID_SID = Buffer.from(new Uint8Array(32).fill(0xce)).toString(
-  "base64url",
-);
+const NETWORK_ID = NetworkId.parse(TAIRA_NETWORK_ID);
+const APP_PUBLIC_KEY = new Uint8Array(32).fill(0x31);
+const APP_PRIVATE_KEY = new Uint8Array(32).fill(0x32);
+const NONCE = new Uint8Array(16).fill(0x42);
+const PREVIEW = createConnectSessionPreview({
+  networkId: NETWORK_ID,
+  node: "https://taira.sora.org",
+  nonce: NONCE,
+  appKeyPair: {
+    publicKey: APP_PUBLIC_KEY,
+    privateKey: APP_PRIVATE_KEY,
+  },
+});
+const VALID_SID = PREVIEW.sidBase64Url;
+const VALID_WALLET_TOKEN = Buffer.alloc(32, 0xa1).toString("base64url");
+const VALID_RELAY_TOKEN = Buffer.alloc(32, 0xa2).toString("base64url");
+const WALLET_URI = `${PREVIEW.walletUri}&token=${VALID_WALLET_TOKEN}&relay=${VALID_RELAY_TOKEN}`;
 
 describe("irohaConnect URI parsing", () => {
-  it("parses canonical wallet session URIs", () => {
-    const parsed = parseIrohaConnectUri(
-      `iroha://connect?sid=${VALID_SID}&chain_id=chain-a&node=https%3A%2F%2Ftaira.sora.org&network_prefix=369&v=1&role=wallet&token=wallet-token&relay=relay-token`,
-    );
+  it("parses the exact current wallet session URI", () => {
+    const parsed = parseIrohaConnectUri(WALLET_URI);
 
     expect(parsed.sid).toBe(VALID_SID);
-    expect(parsed.chainId).toBe("chain-a");
+    expect(parsed.networkId).toBe(TAIRA_NETWORK_ID);
+    expect(parsed.appPublicKeyBase64Url).toBe(
+      Buffer.from(APP_PUBLIC_KEY).toString("base64url"),
+    );
+    expect(parsed.nonceBase64Url).toBe(
+      Buffer.from(NONCE).toString("base64url"),
+    );
     expect(parsed.node).toBe("https://taira.sora.org");
-    expect(parsed.networkPrefix).toBe(369);
     expect(parsed.role).toBe("wallet");
-    expect(parsed.token).toBe("wallet-token");
-    expect(parsed.relayToken).toBe("relay-token");
+    expect(parsed.token).toBe(VALID_WALLET_TOKEN);
+    expect(parsed.relayToken).toBe(VALID_RELAY_TOKEN);
     expect(parsed.version).toBe("1");
     expect(parsed.canonicalUri.startsWith("iroha://connect?")).toBe(true);
     expect(parsed.launchUri.startsWith("irohaconnect://connect?")).toBe(true);
   });
 
-  it("accepts launch protocol URIs and normalizes them", () => {
+  it("accepts the launch protocol only for an exact wallet session", () => {
     const parsed = parseIrohaConnectUri(
-      `irohaconnect://connect?sid=${VALID_SID}&v=1&role=app`,
+      WALLET_URI.replace("iroha://", "irohaconnect://"),
     );
 
     expect(parsed.sid).toBe(VALID_SID);
-    expect(parsed.role).toBe("app");
+    expect(parsed.role).toBe("wallet");
     expect(parsed.canonicalUri).toBe(
-      `iroha://connect?sid=${VALID_SID}&v=1&role=app`,
+      parseIrohaConnectUri(WALLET_URI).canonicalUri,
     );
   });
 
-  it("rejects unrelated QR payloads", () => {
+  it("rejects unrelated and app-role QR payloads", () => {
     expect(isIrohaConnectUri("iroha://kaigi/join?call=abc")).toBe(false);
     expect(() => parseIrohaConnectUri("https://example.com")).toThrow(
       "QR is not an IrohaConnect session.",
@@ -52,51 +72,88 @@ describe("irohaConnect URI parsing", () => {
     expect(() => parseIrohaConnectUri("iroha://connect?role=wallet")).toThrow(
       "IrohaConnect URI is missing sid.",
     );
+    expect(() =>
+      parseIrohaConnectUri(WALLET_URI.replace("role=wallet", "role=app")),
+    ).toThrow("must use role=wallet");
   });
 
-  it.each(["0369", "-1", "16384", "not-a-number"])(
-    "rejects invalid network_prefix value %s",
-    (networkPrefix) => {
-      expect(() =>
-        parseIrohaConnectUri(
-          `iroha://connect?sid=${VALID_SID}&v=1&role=wallet&network_prefix=${networkPrefix}`,
-        ),
-      ).toThrow("network_prefix must be an integer between 0 and 16383");
-    },
-  );
-
   it("builds wallet WebSocket URLs and token subprotocols", () => {
-    const parsed = parseIrohaConnectUri(
-      `iroha://connect?sid=${VALID_SID}&node=https%3A%2F%2Ftaira.sora.org&v=1&role=wallet&token=wallet-token&relay=relay-token`,
-    );
+    const parsed = parseIrohaConnectUri(WALLET_URI);
 
-    expect(buildIrohaConnectWebSocketUrl(parsed, "https://fallback.test")).toBe(
+    expect(buildIrohaConnectWebSocketUrl(parsed)).toBe(
       `wss://taira.sora.org/v1/connect/ws?sid=${VALID_SID}&role=wallet`,
     );
-    expect(buildIrohaConnectTokenProtocol("wallet-token")).toMatch(
+    expect(buildIrohaConnectTokenProtocol(VALID_WALLET_TOKEN)).toMatch(
       /^iroha-connect\.token\.v1\.[A-Za-z0-9_-]+$/u,
     );
+    expect(() =>
+      buildIrohaConnectWebSocketUrl({
+        ...parsed,
+        node: "https://taira.sora.org/relay",
+      }),
+    ).toThrow("exact canonical Torii origin");
   });
 
   it("builds wallet approval socket requests from scanned sessions", () => {
-    const sid = Buffer.from(new Uint8Array(32).fill(0xce)).toString(
-      "base64url",
-    );
-    const parsed = parseIrohaConnectUri(
-      `iroha://connect?sid=${sid}&node=https%3A%2F%2Ftaira.sora.org&v=1&role=wallet&token=wallet-token&relay=relay-token`,
-    );
+    const parsed = parseIrohaConnectUri(WALLET_URI);
     const request = buildIrohaConnectApprovalRequest({
       session: parsed,
-      accountId: " testu1connected ",
-      fallbackToriiUrl: "https://fallback.test",
+      accountId: "testu1connected",
     });
 
     expect(request.url).toBe(
-      `wss://taira.sora.org/v1/connect/ws?sid=${sid}&role=wallet`,
+      `wss://taira.sora.org/v1/connect/ws?sid=${VALID_SID}&role=wallet`,
     );
     expect(request.protocols[0]).toMatch(
       /^iroha-connect\.token\.v1\.[A-Za-z0-9_-]+$/u,
     );
+    expect(() =>
+      buildIrohaConnectApprovalRequest({
+        session: parsed,
+        accountId: " testu1connected ",
+      }),
+    ).toThrow("Choose an active wallet");
+  });
+
+  it("rejects duplicate, unknown, incomplete, and noncanonical parameters", () => {
+    expect(() =>
+      parseIrohaConnectUri(`${WALLET_URI}&sid=${VALID_SID}`),
+    ).toThrow("duplicate parameter sid");
+    expect(() => parseIrohaConnectUri(`${WALLET_URI}&compat=true`)).toThrow(
+      "unsupported parameter compat",
+    );
+    expect(() =>
+      parseIrohaConnectUri(
+        WALLET_URI.replace(
+          `network_id=${encodeURIComponent(TAIRA_NETWORK_ID)}&`,
+          "",
+        ),
+      ),
+    ).toThrow("missing network_id");
+    expect(() =>
+      parseIrohaConnectUri(WALLET_URI.replace(VALID_SID, `${VALID_SID}=`)),
+    ).toThrow("canonical 32-byte base64url");
+    expect(() =>
+      parseIrohaConnectUri(WALLET_URI.replace(VALID_WALLET_TOKEN, "short")),
+    ).toThrow("wallet token must be canonical 32-byte base64url");
+
+    const pathNode = new URL(WALLET_URI);
+    pathNode.searchParams.set("node", "https://taira.sora.org/relay");
+    expect(() => parseIrohaConnectUri(pathNode.toString())).toThrow(
+      "exact canonical Torii origin",
+    );
+  });
+
+  it("rejects a URI whose SID does not bind its app key and nonce", () => {
+    const foreignKey = Buffer.alloc(32, 0x77).toString("base64url");
+    expect(() =>
+      parseIrohaConnectUri(
+        WALLET_URI.replace(
+          Buffer.from(APP_PUBLIC_KEY).toString("base64url"),
+          foreignKey,
+        ),
+      ),
+    ).toThrow("does not bind the exact NetworkId");
   });
 });
 
@@ -107,17 +164,16 @@ describe("IrohaConnect network authorization", () => {
     networkPrefix: 369,
   };
 
-  it("binds an equivalent endpoint-origin claim to the normalized active context", () => {
+  it("binds the exact NetworkId and canonical endpoint origin to the active context", () => {
     expect(
       validateIrohaConnectNetworkClaim(
         {
-          node: "https://TAIRA.SORA.ORG/untrusted/path?ignored=yes",
-          chainId: activeNetwork.chainId,
-          networkPrefix: "369",
+          node: "https://taira.sora.org",
+          networkId: TAIRA_NETWORK_ID,
         },
         activeNetwork,
         {
-          requireChainId: true,
+          requireNetworkId: true,
           requireNode: true,
         },
       ),
@@ -125,34 +181,66 @@ describe("IrohaConnect network authorization", () => {
   });
 
   it.each([
+    "https://TAIRA.SORA.ORG",
+    "https://taira.sora.org/",
+    "https://taira.sora.org/untrusted",
+  ])("rejects noncanonical endpoint claim %s", (node) => {
+    expect(() =>
+      validateIrohaConnectNetworkClaim(
+        { node, networkId: TAIRA_NETWORK_ID },
+        activeNetwork,
+        { requireNetworkId: true, requireNode: true },
+      ),
+    ).toThrow("exact canonical Torii origin");
+  });
+
+  it("rejects noncanonical NetworkId and active-profile coercion", () => {
+    expect(() =>
+      validateIrohaConnectNetworkClaim(
+        {
+          node: activeNetwork.toriiUrl,
+          networkId: TAIRA_NETWORK_ID.toLowerCase(),
+        },
+        activeNetwork,
+        { requireNetworkId: true, requireNode: true },
+      ),
+    ).toThrow("invalid NetworkId");
+
+    expect(() =>
+      validateIrohaConnectNetworkClaim(
+        {
+          node: activeNetwork.toriiUrl,
+          networkId: TAIRA_NETWORK_ID,
+        },
+        { ...activeNetwork, networkPrefix: "369" as unknown as number },
+        { requireNetworkId: true, requireNode: true },
+      ),
+    ).toThrow("integer between 0 and 16383");
+  });
+
+  it.each([
     {
-      label: "chain",
+      label: "NetworkId",
       claim: {
         node: activeNetwork.toriiUrl,
-        chainId: "different-chain",
-        networkPrefix: activeNetwork.networkPrefix,
+        networkId: NetworkId.fromBytes(
+          Uint8Array.from({ length: 32 }, (_, index) =>
+            index === 31 ? 0x13 : 0x11,
+          ),
+        ).toString(),
       },
     },
     {
       label: "endpoint",
       claim: {
         node: "https://other.example",
-        chainId: activeNetwork.chainId,
-        networkPrefix: activeNetwork.networkPrefix,
-      },
-    },
-    {
-      label: "network prefix",
-      claim: {
-        node: activeNetwork.toriiUrl,
-        chainId: activeNetwork.chainId,
-        networkPrefix: 753,
+        networkId: TAIRA_NETWORK_ID,
       },
     },
   ])("rejects a different $label", ({ claim, label }) => {
     expect(() =>
       validateIrohaConnectNetworkClaim(claim, activeNetwork, {
-        requireChainId: true,
+        requireNetworkId: true,
         requireNode: true,
       }),
     ).toThrow(`different ${label}`);
@@ -161,19 +249,36 @@ describe("IrohaConnect network authorization", () => {
   it.each([
     {
       claim: { node: activeNetwork.toriiUrl },
-      expected: "missing its chain ID",
+      expected: "missing its NetworkId",
     },
     {
-      claim: { chainId: activeNetwork.chainId },
+      claim: { networkId: TAIRA_NETWORK_ID },
       expected: "missing its endpoint",
     },
   ])("rejects a missing required network claim", ({ claim, expected }) => {
     expect(() =>
       validateIrohaConnectNetworkClaim(claim, activeNetwork, {
-        requireChainId: true,
+        requireNetworkId: true,
         requireNode: true,
       }),
     ).toThrow(expected);
+  });
+
+  it("fails closed when the selected profile has no pinned NetworkId", () => {
+    expect(() =>
+      validateIrohaConnectNetworkClaim(
+        {
+          node: "https://minamoto.sora.org",
+          networkId: TAIRA_NETWORK_ID,
+        },
+        {
+          toriiUrl: "https://minamoto.sora.org",
+          chainId: "00000000-0000-0000-0000-000000000000",
+          networkPrefix: 753,
+        },
+        { requireNetworkId: true, requireNode: true },
+      ),
+    ).toThrow("no exact genesis-derived NetworkId pinned");
   });
 
   it("allows pairing only when the inspected endpoint is write-authorized and advertises Connect", () => {
