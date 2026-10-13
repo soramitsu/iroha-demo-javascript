@@ -15,7 +15,7 @@ import {
   VALIDATION_FEE_POLICY_DRAFT_WIRE_ID,
   type ValidationFeePolicyDraftRequest,
 } from "../electron/governanceValidationFeeDraft";
-import { TAIRA_NETWORK_ID } from "../src/utils/firstReleaseNetworkIdentity";
+import { TEST_TAIRA_NETWORK_ID as TAIRA_NETWORK_ID } from "./helpers/networkIdentityFixture";
 
 const proposalOperator = "testuCanonicalProposalOperator";
 const dsAssetDefinitionId = "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";

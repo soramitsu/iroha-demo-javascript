@@ -11,6 +11,7 @@ import type {
   EndpointFeatureMap,
   EndpointInspection,
 } from "@/types/endpointInspection";
+import { unpinnedNetworkIdentity } from "./helpers/networkIdentityFixture";
 
 const inspectEndpointMock = vi.fn();
 
@@ -71,6 +72,7 @@ const matchingInspection = (
   accessMode: "read-write",
   checkedAtMs: 1,
   evidence: [],
+  networkIdentity: unpinnedNetworkIdentity(),
   features: endpointFeatures(true),
   diagnostic: {
     code: "endpoint_identity_matched",
@@ -276,13 +278,21 @@ describe("SettingsView", () => {
           networkPrefix: input.networkPrefix,
         },
         observed: {
-          chainId: "archived-chain",
-          networkPrefix: input.networkPrefix,
+          chainId: input.chainId,
+          networkPrefix: 753,
+          networkId:
+            "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94",
         },
         identityStatus: "mismatched",
         accessMode: "read-only",
         checkedAtMs: 1,
         evidence: [],
+        networkIdentity: {
+          state: "unpinned",
+          pinned: null,
+          observedNetworkId:
+            "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94",
+        },
         features: endpointFeatures(false),
         diagnostic: {
           code: "endpoint_identity_mismatch",
@@ -308,7 +318,7 @@ describe("SettingsView", () => {
     );
     expect(
       wrapper.get('[data-testid="endpoint-diagnostics"]').text(),
-    ).toContain("archived-chain");
+    ).toContain("82531CE8EAE8BFF6");
   });
 
   it("does not save a draft endpoint when the check fails", async () => {

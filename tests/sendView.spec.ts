@@ -10,6 +10,7 @@ import type {
   EndpointInspection,
 } from "@/types/endpointInspection";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
+import { unpinnedNetworkIdentity } from "./helpers/networkIdentityFixture";
 
 const ALICE_I105_ACCOUNT_ID = "testuAliceRealI105AccountId";
 const BOB_I105_ACCOUNT_ID = "testuBobRealI105AccountId";
@@ -119,6 +120,7 @@ describe("SendView", () => {
         accessMode: writeAllowed ? "read-write" : "read-only",
         checkedAtMs: 1,
         evidence: [],
+        networkIdentity: unpinnedNetworkIdentity(),
         features: {
           accountRegistration: feature(),
           accountOnboarding: feature(),

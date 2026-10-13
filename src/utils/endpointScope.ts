@@ -91,38 +91,29 @@ export const buildEndpointDerivedStorageKey = (
 export const getTrustedEndpointIdentityScopeInput = (
   inspection: EndpointInspection,
 ): EndpointIdentityScopeInput | null => {
+  const observed = inspection.observed;
   if (
-    !inspection.observed ||
-    inspection.identityStatus === "conflicting" ||
-    !inspection.observed.genesisHash
+    !observed?.networkId ||
+    !observed.genesisHash ||
+    inspection.identityStatus === "conflicting"
   ) {
     return null;
   }
-  const hasMatchingChainIdentityEvidence = inspection.evidence.some(
-    (entry) =>
-      (entry.source === "governance-capabilities-v1" ||
-        entry.source === "chain-metadata" ||
-        entry.source === "blocked-deployment-fingerprint") &&
-      entry.identity.chainId === inspection.observed?.chainId &&
-      entry.identity.networkPrefix === inspection.observed?.networkPrefix,
-  );
-  const hasMatchingGenesisEvidence = inspection.evidence.some(
-    (entry) =>
-      (entry.source === "governance-capabilities-v1" ||
-        entry.source === "genesis-fingerprint" ||
-        entry.source === "blocked-deployment-fingerprint") &&
-      entry.identity.chainId === inspection.observed?.chainId &&
-      entry.identity.networkPrefix === inspection.observed?.networkPrefix &&
-      entry.identity.genesisHash === inspection.observed?.genesisHash,
-  );
-  if (!hasMatchingChainIdentityEvidence || !hasMatchingGenesisEvidence) {
+  // Both independent public sources must have attested the same NetworkId.
+  const attestedBy = (source: "account-capabilities" | "genesis-block") =>
+    inspection.evidence.some(
+      (entry) =>
+        entry.source === source &&
+        entry.identity.networkId === observed.networkId,
+    );
+  if (!attestedBy("account-capabilities") || !attestedBy("genesis-block")) {
     return null;
   }
   return {
     toriiUrl: inspection.toriiUrl,
-    observedChainId: inspection.observed.chainId,
-    observedNetworkPrefix: inspection.observed.networkPrefix,
-    observedGenesisHash: inspection.observed.genesisHash,
+    observedChainId: observed.chainId,
+    observedNetworkPrefix: observed.networkPrefix,
+    observedGenesisHash: observed.genesisHash,
   };
 };
 

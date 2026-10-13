@@ -36,7 +36,11 @@ import {
   hexToBytes,
   type ConnectPermissions,
 } from "@/utils/soraswapConnectWire";
-import { TAIRA_NETWORK_ID } from "@/utils/firstReleaseNetworkIdentity";
+import {
+  TEST_TAIRA_NETWORK_ID as TAIRA_NETWORK_ID,
+  matchedNetworkIdentity,
+  unpinnedNetworkIdentity,
+} from "./helpers/networkIdentityFixture";
 
 const ALICE_PUBLIC_KEY_HEX =
   "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737";
@@ -294,6 +298,9 @@ describe("AccountSetupView", () => {
           networkPrefix: number;
         }) => ({
           accessMode: "read-write",
+          identityStatus: "matched",
+          observed: { networkId: TAIRA_NETWORK_ID },
+          networkIdentity: matchedNetworkIdentity(),
           features: {
             irohaConnectSessions: {
               supported: true,
@@ -446,6 +453,9 @@ describe("AccountSetupView", () => {
         accessMode: endpointWriteAllowed ? "read-write" : "read-only",
         checkedAtMs: 1,
         evidence: [],
+        networkIdentity: endpointWriteAllowed
+          ? matchedNetworkIdentity()
+          : unpinnedNetworkIdentity(),
         features: {
           accountRegistration: feature(),
           accountOnboarding: feature(),
@@ -1151,21 +1161,36 @@ describe("AccountSetupView", () => {
       error: "different endpoint",
     },
     {
-      label: "unpinned profile",
+      label: "network prefix",
       uri: VALID_CONNECT_WALLET_URI,
       connection: { networkPrefix: 753 },
-      error: "no exact genesis-derived NetworkId pinned",
+      error: "differs from the configured network prefix",
     },
   ])(
     "rejects a scanned pairing for a different $label before opening the relay",
     async ({ uri, connection, error }) => {
       const wrapper = mountView({ withSavedAccount: true, connection });
+      if (connection.networkPrefix === 753) {
+        inspectEndpointMock.mockResolvedValueOnce({
+          accessMode: "read-only",
+          identityStatus: "mismatched",
+          observed: { networkId: TAIRA_NETWORK_ID, networkPrefix: 369 },
+          networkIdentity: matchedNetworkIdentity(),
+          features: { irohaConnectSessions: { supported: true } },
+          diagnostic: {
+            message:
+              "Endpoint network prefix 369 differs from the configured network prefix 753.",
+          },
+        });
+      }
 
       await scanConnectQr(uri);
       getDialogButtonByText(t("Approve connection")).click();
       await flushPromises();
 
-      expect(inspectEndpointMock).not.toHaveBeenCalled();
+      // The pinned NetworkId comes from a fresh inspection, so the claim is
+      // checked against it before any relay socket is opened.
+      expect(inspectEndpointMock).toHaveBeenCalledTimes(1);
       expect(FakeWebSocket.instances).toHaveLength(0);
       expect(wrapper.text()).toContain(error);
     },

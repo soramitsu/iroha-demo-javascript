@@ -28,6 +28,10 @@ const buildTransactionDraftMock = vi.fn();
 const dnsLookupMock = vi.fn();
 const nodeFetchMock = vi.fn();
 const networkIdParseMock = vi.fn();
+const resolveVpnNetworkIdMock = vi.fn(async () => {
+  const { NetworkId } = await import("@iroha/iroha-js/canonical-request");
+  return NetworkId.parse("network:chain");
+});
 
 vi.mock("@iroha/iroha-js/canonical-request", () => ({
   NetworkId: class MockNetworkId {
@@ -74,11 +78,6 @@ vi.mock("../electron/firstReleaseTransaction", () => ({
     quoteAndSignTransactionMock(...args),
   submitFirstReleaseTransaction: (...args: unknown[]) =>
     submitTransactionMock(...args),
-}));
-
-vi.mock("../src/utils/firstReleaseNetworkIdentity", () => ({
-  resolveFirstReleaseNetworkIdLiteral: (input: { chainId: string }) =>
-    `network:${input.chainId}`,
 }));
 
 vi.mock("../electron/nodeFetch", () => ({
@@ -512,6 +511,7 @@ describe("VpnRuntime", () => {
     );
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -532,6 +532,7 @@ describe("VpnRuntime", () => {
       }),
     );
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller: createControllerMock(),
@@ -545,6 +546,7 @@ describe("VpnRuntime", () => {
   it("rejects malformed public VPN read inputs before controller or transport access", async () => {
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -571,6 +573,7 @@ describe("VpnRuntime", () => {
   it("rejects malformed authenticated VPN read contexts instead of treating them as local state", async () => {
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -609,6 +612,7 @@ describe("VpnRuntime", () => {
   it("rejects inexact VPN connect DTOs before controller or Torii access", async () => {
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -640,6 +644,7 @@ describe("VpnRuntime", () => {
 
   it("rejects compatibility profile fields and unavailable profiles that leak partial trust", async () => {
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller: createControllerMock(),
@@ -675,6 +680,7 @@ describe("VpnRuntime", () => {
   it("rejects an unknown requested service class before quoting", async () => {
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -704,6 +710,7 @@ describe("VpnRuntime", () => {
     );
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -732,6 +739,7 @@ describe("VpnRuntime", () => {
         }),
     );
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller: createControllerMock(),
@@ -782,6 +790,7 @@ describe("VpnRuntime", () => {
     writeFileSync(receiptsPath, JSON.stringify([canonicalReceipt]));
 
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller: createControllerMock(),
@@ -814,6 +823,7 @@ describe("VpnRuntime", () => {
   it("connects, reconciles with the authenticated session, and stores canonical receipts", async () => {
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -882,6 +892,7 @@ describe("VpnRuntime", () => {
       total: 1,
     });
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller: createControllerMock(),
@@ -911,6 +922,7 @@ describe("VpnRuntime", () => {
 
   it("rejects noncanonical receipt sources and exact-list schema drift", async () => {
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller: createControllerMock(),
@@ -949,6 +961,7 @@ describe("VpnRuntime", () => {
 
   it("never exposes active-session receipts without an explicit wallet context", async () => {
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller: createControllerMock(),
@@ -995,6 +1008,7 @@ describe("VpnRuntime", () => {
       .mockReturnValueOnce(aliceResponse)
       .mockReturnValueOnce(bobResponse);
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller: createControllerMock(),
@@ -1040,6 +1054,7 @@ describe("VpnRuntime", () => {
   it("hides an active session after an endpoint/account switch and refuses mismatched reconciliation or disconnect", async () => {
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -1097,6 +1112,7 @@ describe("VpnRuntime", () => {
   it("reports controller-only status without exposing or querying an active remote session when context is absent", async () => {
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -1132,6 +1148,7 @@ describe("VpnRuntime", () => {
   it("rejects non-Ed25519 wallets before VPN canonical auth signing", async () => {
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -1180,6 +1197,7 @@ describe("VpnRuntime", () => {
     });
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -1246,6 +1264,7 @@ describe("VpnRuntime", () => {
     });
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -1285,6 +1304,7 @@ describe("VpnRuntime", () => {
     getVpnSessionMock.mockResolvedValueOnce(session);
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -1328,6 +1348,7 @@ describe("VpnRuntime", () => {
     getVpnProfileMock.mockResolvedValueOnce(vpnProfile(networkOverrides));
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -1351,6 +1372,7 @@ describe("VpnRuntime", () => {
   it("rejects a stale wrong-network account id before helper or Torii access", async () => {
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -1434,6 +1456,7 @@ describe("VpnRuntime", () => {
     );
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -1588,6 +1611,7 @@ describe("VpnRuntime", () => {
       },
     );
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller: createControllerMock(),
@@ -1613,6 +1637,7 @@ describe("VpnRuntime", () => {
     getVpnProfileMock.mockResolvedValueOnce(null);
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -1630,6 +1655,7 @@ describe("VpnRuntime", () => {
     getVpnProfileMock.mockRejectedValueOnce(new Error("profile unavailable"));
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -1657,6 +1683,7 @@ describe("VpnRuntime", () => {
       message: "repair required",
     });
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -1677,6 +1704,7 @@ describe("VpnRuntime", () => {
   it("marks remote lease expiry pending when the local tunnel disconnects", async () => {
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -1709,6 +1737,7 @@ describe("VpnRuntime", () => {
   it("disconnects the local tunnel without attempting a remote mutation", async () => {
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,
@@ -1740,6 +1769,7 @@ describe("VpnRuntime", () => {
       message: "repair me",
     });
     const runtime = new VpnRuntime({
+      resolveNetworkId: resolveVpnNetworkIdMock,
       userDataPath,
       helperVersion: "embedded-1.0.0",
       controller,

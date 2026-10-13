@@ -116,7 +116,7 @@ describe("Kaigi preload mutation boundary", () => {
     );
     expect(source).toContain("fetchFirstReleaseKaigiSignals({");
     expect(source).toContain("resolveSigningMaterial({");
-    expect(source).toContain("resolveFirstReleaseTransactionNetworkId({");
+    expect(source).toContain("resolveTrustedEndpointNetworkId({");
     expect(source).toContain("chainId,");
     expect(source).toContain("afterTimestampMs:");
     expect(source).toContain(

@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { inspectEndpoint } from "@/services/iroha";
 import { useEndpointStore } from "@/stores/endpoint";
 import type { EndpointInspection } from "@/types/endpointInspection";
+import { unpinnedNetworkIdentity } from "./helpers/networkIdentityFixture";
 
 vi.mock("@/services/iroha", () => ({
   inspectEndpoint: vi.fn(),
@@ -31,6 +32,7 @@ const inspection = (
   accessMode,
   checkedAtMs: 1,
   evidence: [],
+  networkIdentity: unpinnedNetworkIdentity(),
   features: {} as EndpointInspection["features"],
   diagnostic: {
     code:

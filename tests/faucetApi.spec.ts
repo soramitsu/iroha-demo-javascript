@@ -9,7 +9,8 @@ import {
   shouldRetryFaucetPuzzle,
 } from "../electron/faucetApi";
 import type { FaucetPowPuzzle } from "../electron/faucetPow";
-import { TAIRA_NETWORK_ID } from "../src/utils/firstReleaseNetworkIdentity";
+import { NetworkId } from "@iroha/iroha-js/canonical-request";
+import { TEST_TAIRA_NETWORK_ID as TAIRA_NETWORK_ID } from "./helpers/networkIdentityFixture";
 
 const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 const MINAMOTO_CHAIN_ID = "00000000-0000-0000-0000-000000000000";
@@ -99,6 +100,7 @@ describe("faucetApi", () => {
     });
 
     const result = await requestFaucetFundsWithPuzzle({
+      networkId: NetworkId.parse(TAIRA_NETWORK_ID),
       baseUrl: "https://taira.sora.org",
       accountId: testnetAccountId,
       chainId: TAIRA_CHAIN_ID,
@@ -232,6 +234,7 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
+        networkId: NetworkId.parse(TAIRA_NETWORK_ID),
         baseUrl: "https://taira.sora.org",
         accountId: testnetAccountId,
         chainId: TAIRA_CHAIN_ID,
@@ -264,6 +267,7 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
+        networkId: NetworkId.parse(TAIRA_NETWORK_ID),
         baseUrl: "https://taira.sora.org",
         accountId: testnetAccountId,
         chainId: TAIRA_CHAIN_ID,
@@ -294,6 +298,7 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
+        networkId: NetworkId.parse(TAIRA_NETWORK_ID),
         baseUrl: "https://custom-torii.example",
         accountId: testnetAccountId,
         chainId: TAIRA_CHAIN_ID,
@@ -329,6 +334,7 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
+        networkId: NetworkId.parse(TAIRA_NETWORK_ID),
         baseUrl: "https://taira.sora.org",
         accountId: testnetAccountId,
         chainId: TAIRA_CHAIN_ID,
@@ -358,6 +364,7 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
+        networkId: NetworkId.parse(TAIRA_NETWORK_ID),
         ...input,
         fetchImpl: vi.fn<typeof fetch>().mockResolvedValueOnce(
           new Response(duplicateJson, {
@@ -370,6 +377,7 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
+        networkId: NetworkId.parse(TAIRA_NETWORK_ID),
         ...input,
         fetchImpl: vi.fn<typeof fetch>().mockResolvedValueOnce(
           new Response(
@@ -390,6 +398,7 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
+        networkId: NetworkId.parse(TAIRA_NETWORK_ID),
         baseUrl: "https://custom-torii.example",
         accountId: testnetAccountId,
         chainId: TAIRA_CHAIN_ID,
@@ -426,6 +435,7 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
+        networkId: NetworkId.parse(TAIRA_NETWORK_ID),
         baseUrl: "https://custom-mainnet.example",
         accountId: soraAccountId,
         chainId: MINAMOTO_CHAIN_ID,
@@ -443,6 +453,7 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
+        networkId: NetworkId.parse(TAIRA_NETWORK_ID),
         baseUrl: "https://minamoto.sora.org",
         accountId: testnetAccountId,
         chainId: TAIRA_CHAIN_ID,
@@ -495,6 +506,7 @@ describe("faucetApi", () => {
       vi.fn<(progress: FaucetRequestProgress) => void | Promise<void>>();
 
     await requestFaucetFundsWithPuzzle({
+      networkId: NetworkId.parse(TAIRA_NETWORK_ID),
       baseUrl: "https://taira.sora.org",
       accountId: testnetAccountId,
       chainId: TAIRA_CHAIN_ID,
@@ -533,6 +545,7 @@ describe("faucetApi", () => {
     );
 
     const requestPromise = requestFaucetFundsWithPuzzle({
+      networkId: NetworkId.parse(TAIRA_NETWORK_ID),
       baseUrl: "https://taira.sora.org",
       accountId: testnetAccountId,
       chainId: TAIRA_CHAIN_ID,
@@ -579,6 +592,7 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
+        networkId: NetworkId.parse(TAIRA_NETWORK_ID),
         baseUrl: "https://faucet.example",
         accountId: testnetAccountId,
         chainId: TAIRA_CHAIN_ID,
@@ -652,6 +666,7 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
+        networkId: NetworkId.parse(TAIRA_NETWORK_ID),
         baseUrl: "https://taira.sora.org",
         accountId: testnetAccountId,
         chainId: TAIRA_CHAIN_ID,
@@ -738,6 +753,7 @@ describe("faucetApi", () => {
       vi.fn<(progress: FaucetRequestProgress) => void | Promise<void>>();
 
     const result = await requestFaucetFundsWithPuzzle({
+      networkId: NetworkId.parse(TAIRA_NETWORK_ID),
       baseUrl: "https://faucet.example",
       accountId: testnetAccountId,
       chainId: TAIRA_CHAIN_ID,
@@ -814,6 +830,7 @@ describe("faucetApi", () => {
       );
 
     const result = await requestFaucetFundsWithPuzzle({
+      networkId: NetworkId.parse(TAIRA_NETWORK_ID),
       baseUrl: "https://taira.sora.org",
       accountId: testnetAccountId,
       chainId: TAIRA_CHAIN_ID,
@@ -851,6 +868,7 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
+        networkId: NetworkId.parse(TAIRA_NETWORK_ID),
         baseUrl: "https://taira.sora.org",
         accountId: testnetAccountId,
         chainId: TAIRA_CHAIN_ID,
@@ -890,6 +908,7 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
+        networkId: NetworkId.parse(TAIRA_NETWORK_ID),
         baseUrl: "https://minamoto.sora.org",
         accountId: soraAccountId,
         chainId: MINAMOTO_CHAIN_ID,
@@ -923,6 +942,7 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
+        networkId: NetworkId.parse(TAIRA_NETWORK_ID),
         baseUrl: "https://taira.sora.org",
         accountId: testnetAccountId,
         chainId: TAIRA_CHAIN_ID,

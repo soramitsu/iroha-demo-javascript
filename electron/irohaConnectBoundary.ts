@@ -22,7 +22,7 @@ import {
   type ConnectPermissions,
   type ConnectWalletSignature,
 } from "../src/utils/soraswapConnectWire";
-import { resolveFirstReleaseNetworkIdLiteral } from "../src/utils/firstReleaseNetworkIdentity";
+import { parseNetworkIdLiteral } from "../src/utils/networkIdentity";
 import { normalizeEndpointUrl } from "../src/utils/endpoint";
 import { normalizeCanonicalAccountIdLiteral } from "./accountAddress";
 
@@ -33,6 +33,8 @@ export type IrohaConnectWalletContext = {
   toriiUrl: string;
   chainId: string;
   networkPrefix: number;
+  /** Endpoint-derived, pinned NetworkId (verified again by `assertContext`). */
+  networkId: string;
   accountId: string;
 };
 
@@ -402,10 +404,15 @@ const normalizeContext = (
     "accountId",
     context.networkPrefix,
   );
+  const networkId = normalizeText(context.networkId, "networkId", 128);
+  if (parseNetworkIdLiteral(networkId, "networkId") !== networkId) {
+    throw new Error("networkId must be a canonical NetworkId literal.");
+  }
   return {
     toriiUrl,
     chainId,
     networkPrefix: context.networkPrefix,
+    networkId,
     accountId,
   };
 };
@@ -417,6 +424,7 @@ const contextKey = (context: IrohaConnectWalletContext) =>
         context.toriiUrl,
         context.chainId,
         context.networkPrefix,
+        context.networkId,
         context.accountId,
       ]),
     )
@@ -483,10 +491,7 @@ export class IrohaConnectBoundary {
     this.#requireCurrentContext(requestedContext);
     const generation = this.#generation;
     this.#requireSessionSlotAvailable();
-    const expectedNetworkId = resolveFirstReleaseNetworkIdLiteral({
-      chainId: requestedContext.chainId,
-      networkPrefix: requestedContext.networkPrefix,
-    });
+    const expectedNetworkId = requestedContext.networkId;
     if (
       normalizeText(input.requestedNetworkId, "requestedNetworkId", 128) !==
       expectedNetworkId
@@ -519,11 +524,7 @@ export class IrohaConnectBoundary {
     this.#requireGeneration(generation);
     this.#requireCurrentContext(verifiedContext);
     this.#requireSessionSlotAvailable();
-    const verifiedNetworkId = resolveFirstReleaseNetworkIdLiteral({
-      chainId: verifiedContext.chainId,
-      networkPrefix: verifiedContext.networkPrefix,
-    });
-    if (verifiedNetworkId !== expectedNetworkId) {
+    if (verifiedContext.networkId !== expectedNetworkId) {
       throw new Error(
         "The verified IrohaConnect context changed the requested NetworkId.",
       );

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { parseJsonWithoutDuplicateObjectKeys } from "../src/utils/json";
-import { TAIRA_NETWORK_ID } from "../src/utils/firstReleaseNetworkIdentity";
+import { parseNetworkIdLiteral } from "../src/utils/networkIdentity";
 import type { ValidationFeePolicyPayload } from "../src/governance/model";
 import type { GovernanceValidationFeePolicyView } from "./governanceValidationFeePolicyView";
 
@@ -1462,7 +1462,11 @@ function projectPolicyView(
   const binding = policy.treasury_payout_binding;
   const effective: ValidationFeePolicyPayload = {
     schema_version: policy.schema_version,
-    network_id: TAIRA_NETWORK_ID,
+    // The ledger binding's genesis hash is the policy's NetworkId.
+    network_id: parseNetworkIdLiteral(
+      policy.genesis_hash_hex,
+      "validation-fee policy genesis hash",
+    ),
     policy_version: String(policy.policy_version),
     previous_policy_hash: policy.previous_policy_hash_hex,
     ds_asset_id: CBSI_SBD_ASSET_DEFINITION_ID,

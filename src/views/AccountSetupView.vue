@@ -811,6 +811,7 @@ import {
   buildIrohaConnectTokenProtocol,
   buildIrohaConnectWebSocketUrl,
   parseIrohaConnectUri,
+  type IrohaConnectNetworkContext,
   type ParsedIrohaConnectUri,
   validateIrohaConnectNetworkClaim,
 } from "@/utils/irohaConnect";
@@ -1498,11 +1499,7 @@ let scannedConnectOpenApprovalInFlight = false;
 let scannedConnectBoundaryInitialized = false;
 let scannedConnectBoundarySessionToken = "";
 let scannedConnectApprovedAccountId = "";
-let scannedConnectNetworkContext: {
-  toriiUrl: string;
-  chainId: string;
-  networkPrefix: number;
-} | null = null;
+let scannedConnectNetworkContext: IrohaConnectNetworkContext | null = null;
 let scannedConnectContextKey = "";
 const pendingConnectRequest = shallowRef<{
   socket: WebSocket;
@@ -1746,6 +1743,7 @@ const approveOpenConnectFrame = async (
       toriiUrl: network.toriiUrl,
       chainId: network.chainId,
       networkPrefix: network.networkPrefix,
+      networkId: network.networkId,
       accountId,
     },
     sid: parsed.sid,
@@ -1903,9 +1901,20 @@ const approveScannedConnectSession = async (parsed: ParsedIrohaConnectUri) => {
     if (!activeAccount) {
       throw new Error("Choose an active wallet before approving IrohaConnect.");
     }
+    const inspection = await inspectEndpoint({
+      toriiUrl: session.connection.toriiUrl,
+      chainId: session.connection.chainId,
+      networkPrefix: session.connection.networkPrefix,
+    });
+    if (!isCurrentApproval()) {
+      return;
+    }
     const network = validateIrohaConnectNetworkClaim(
       parsed,
-      session.connection,
+      {
+        ...session.connection,
+        networkId: assertIrohaConnectEndpointCanPair(inspection),
+      },
       {
         requireNetworkId: true,
         requireNode: true,
@@ -1916,11 +1925,6 @@ const approveScannedConnectSession = async (parsed: ParsedIrohaConnectUri) => {
     if (!accountId) {
       throw new Error("Choose an active wallet before approving IrohaConnect.");
     }
-    const inspection = await inspectEndpoint(network);
-    if (!isCurrentApproval()) {
-      return;
-    }
-    assertIrohaConnectEndpointCanPair(inspection);
     const validatedSession: ParsedIrohaConnectUri = {
       ...parsed,
       node: network.toriiUrl,
@@ -1929,6 +1933,7 @@ const approveScannedConnectSession = async (parsed: ParsedIrohaConnectUri) => {
       toriiUrl: network.toriiUrl,
       chainId: network.chainId,
       networkPrefix: network.networkPrefix,
+      networkId: network.networkId,
       accountId,
     });
     scannedConnectBoundaryInitialized = true;

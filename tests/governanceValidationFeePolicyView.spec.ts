@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseGovernanceValidationFeePolicyView } from "../electron/governanceValidationFeePolicyView";
-import { TAIRA_NETWORK_ID } from "../src/utils/firstReleaseNetworkIdentity";
+import { TEST_TAIRA_NETWORK_ID as TAIRA_NETWORK_ID } from "./helpers/networkIdentityFixture";
 
 const hash = (byte: string) => byte.repeat(64);
 

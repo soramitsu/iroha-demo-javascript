@@ -2,12 +2,10 @@ import { createHash } from "node:crypto";
 import { normalizeCanonicalAccountIdLiteral } from "./accountAddress";
 import {
   TAIRA_CHAIN_ID,
-  TAIRA_NETWORK_ID,
   TAIRA_NETWORK_PREFIX,
 } from "../src/utils/firstReleaseNetworkIdentity";
 
 export const TAIRA_GOVERNANCE_CHAIN_ID = TAIRA_CHAIN_ID;
-export const TAIRA_GOVERNANCE_NETWORK_ID = TAIRA_NETWORK_ID;
 export const TAIRA_GOVERNANCE_NETWORK_PREFIX = TAIRA_NETWORK_PREFIX;
 export const TAIRA_GOVERNANCE_ABI_VERSION = 1;
 export const TAIRA_GOVERNANCE_DATA_MODEL_VERSION = 4;
@@ -89,7 +87,8 @@ export const GOVERNANCE_REQUIRED_ROUTES = [
 export interface GovernanceCapabilitiesV1 {
   schema: "iroha.governance.capabilities.v1";
   version: 1;
-  networkId: typeof TAIRA_GOVERNANCE_NETWORK_ID;
+  /** Endpoint-derived, pinned NetworkId the capabilities were checked against. */
+  networkId: string;
   currentHeight: string;
   networkPrefix: typeof TAIRA_GOVERNANCE_NETWORK_PREFIX;
   abiVersion: typeof TAIRA_GOVERNANCE_ABI_VERSION;
@@ -387,6 +386,7 @@ const targetBodySizes = (value: unknown): Record<GovernanceBodyKey, number> => {
  */
 export function parseGovernanceCapabilitiesV1(
   value: unknown,
+  expectedNetworkId: string,
 ): GovernanceCapabilitiesV1 {
   const capabilities = record(value, "governance capabilities");
   exactKeys(capabilities, CAPABILITY_KEYS, "governance capabilities");
@@ -406,10 +406,10 @@ export function parseGovernanceCapabilitiesV1(
   );
   if (
     !/^hash:[0-9A-F]{64}#[0-9A-F]{4}$/u.test(networkId) ||
-    networkId !== TAIRA_GOVERNANCE_NETWORK_ID
+    networkId !== expectedNetworkId
   ) {
     throw new TypeError(
-      "governance capabilities.network_id differs from the reviewed Taira NetworkId.",
+      "governance capabilities.network_id differs from the endpoint's pinned NetworkId.",
     );
   }
   if (
@@ -454,7 +454,7 @@ export function parseGovernanceCapabilitiesV1(
   const parsed = {
     schema: "iroha.governance.capabilities.v1" as const,
     version: 1 as const,
-    networkId: networkId as typeof TAIRA_GOVERNANCE_NETWORK_ID,
+    networkId,
     currentHeight: exactU64Text(
       capabilities.current_height,
       "governance capabilities.current_height",

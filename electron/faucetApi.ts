@@ -12,7 +12,7 @@ import {
   readApiErrorDetail,
 } from "./preload-utils";
 import type { TransactionFinalityProof } from "./transactionFinality";
-import { resolveFirstReleaseNetworkIdForConfiguredIdentity } from "./transactionFeeQuote";
+import type { NetworkId } from "@iroha/iroha-js/canonical-request";
 import { readBoundedJsonResponse } from "./boundedJsonResponse";
 
 export type AccountFaucetResponseDto = {
@@ -65,6 +65,8 @@ type RequestFaucetFundsWithPowInput = {
   accountId: string;
   chainId: string;
   networkPrefix: number;
+  /** Endpoint NetworkId attested by both public identity sources. */
+  networkId: NetworkId;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
   sleep?: (delayMs: number, signal?: AbortSignal) => Promise<void>;
@@ -381,6 +383,7 @@ const buildFaucetDisabledMessage = (baseUrl: string): string =>
 const normalizeExpectedFaucetIdentity = (
   chainId: string,
   networkPrefix: number,
+  networkId: NetworkId,
 ) => {
   if (
     typeof chainId !== "string" ||
@@ -410,10 +413,7 @@ const normalizeExpectedFaucetIdentity = (
   return {
     chainId,
     networkPrefix,
-    networkId: resolveFirstReleaseNetworkIdForConfiguredIdentity({
-      chainId,
-      networkPrefix,
-    }),
+    networkId,
   };
 };
 
@@ -509,6 +509,7 @@ export const requestFaucetFundsWithPuzzle = async ({
   accountId,
   chainId,
   networkPrefix,
+  networkId,
   fetchImpl = fetch,
   signal,
   sleep = sleepFor,
@@ -524,6 +525,7 @@ export const requestFaucetFundsWithPuzzle = async ({
   const expectedIdentity = normalizeExpectedFaucetIdentity(
     chainId,
     networkPrefix,
+    networkId,
   );
   const retryAttempts = Math.max(1, Math.trunc(puzzleRetryAttempts));
   const retryDelayMs = Math.max(0, Math.trunc(puzzleRetryDelayMs));

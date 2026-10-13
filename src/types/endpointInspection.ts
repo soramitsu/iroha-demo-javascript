@@ -1,7 +1,7 @@
 export type EndpointIdentityStatus =
   | "matched"
   | "mismatched"
-  | "blocked"
+  | "changed"
   | "conflicting"
   | "unverified"
   | "unreachable";
@@ -34,11 +34,8 @@ export type EndpointFeatureMap = Record<
 >;
 
 export type EndpointIdentityEvidenceSource =
-  | "governance-capabilities-v1"
-  | "chain-metadata"
-  | "response-headers"
-  | "genesis-fingerprint"
-  | "blocked-deployment-fingerprint";
+  | "account-capabilities"
+  | "genesis-block";
 
 export interface EndpointNetworkContext {
   toriiUrl: string;
@@ -47,9 +44,37 @@ export interface EndpointNetworkContext {
 }
 
 export interface EndpointChainIdentity {
+  /**
+   * Wallet profile label. Current Torii does not publish a chain ID, so an
+   * observed identity carries the configured label unchanged.
+   */
   chainId: string;
   networkPrefix: number;
+  /** Canonical checksummed `NetworkId` literal (the genesis block hash). */
+  networkId?: string;
+  /** Lowercase hex of the genesis hash bytes committed by `networkId`. */
   genesisHash?: string;
+}
+
+export type EndpointNetworkIdentityState =
+  | "pinned-now"
+  | "matches-pin"
+  | "changed"
+  | "unpinned";
+
+export interface EndpointNetworkIdentityPinView {
+  networkId: string;
+  networkPrefix: number;
+  confirmedAtMs: number;
+  confirmation: "first-use" | "user-confirmed";
+}
+
+export interface EndpointNetworkIdentity {
+  state: EndpointNetworkIdentityState;
+  /** Identity persisted for this endpoint (after any first-use pin). */
+  pinned: EndpointNetworkIdentityPinView | null;
+  /** Identity both public sources currently agree on. */
+  observedNetworkId: string | null;
 }
 
 export interface EndpointIdentityEvidence {
@@ -62,7 +87,7 @@ export interface EndpointDiagnostic {
   code:
     | "endpoint_identity_matched"
     | "endpoint_identity_mismatch"
-    | "endpoint_deployment_blocked"
+    | "endpoint_identity_changed"
     | "endpoint_identity_conflict"
     | "endpoint_identity_unverified"
     | "endpoint_unreachable";
@@ -78,6 +103,7 @@ export interface EndpointInspection {
   accessMode: EndpointAccessMode;
   checkedAtMs: number;
   evidence: EndpointIdentityEvidence[];
+  networkIdentity: EndpointNetworkIdentity;
   features: EndpointFeatureMap;
   diagnostic: EndpointDiagnostic;
 }

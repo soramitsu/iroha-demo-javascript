@@ -93,6 +93,10 @@ export const FIRST_RELEASE_IPC_INPUT_SCHEMAS = {
     label: "Endpoint inspection input",
     required: ["toriiUrl", "chainId", "networkPrefix"],
   },
+  endpointNetworkIdentityConfirm: {
+    label: "Endpoint network identity confirmation input",
+    required: ["toriiUrl", "networkId"],
+  },
   generateKeyPair: {
     label: "Generate key pair input",
     required: ["signingAlgorithm"],
@@ -218,7 +222,13 @@ export const FIRST_RELEASE_IPC_INPUT_SCHEMAS = {
   },
   irohaConnectContext: {
     label: "IrohaConnect wallet context",
-    required: ["toriiUrl", "chainId", "networkPrefix", "accountId"],
+    required: [
+      "toriiUrl",
+      "chainId",
+      "networkPrefix",
+      "networkId",
+      "accountId",
+    ],
   },
   irohaConnectPrepareSession: {
     label: "Prepare IrohaConnect session input",

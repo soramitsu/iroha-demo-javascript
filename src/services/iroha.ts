@@ -71,6 +71,12 @@ export const inspectEndpoint = (
   input: EndpointNetworkContext,
 ): Promise<EndpointInspection> => bridge().inspectEndpoint(input);
 
+export const confirmEndpointNetworkIdentity = (input: {
+  toriiUrl: string;
+  networkId: string;
+}): Promise<{ confirmed: boolean }> =>
+  bridge().confirmEndpointNetworkIdentity(input);
+
 export const getSigningAlgorithms = (
   toriiUrl: string,
 ): Promise<SigningAlgorithmOption[]> =>

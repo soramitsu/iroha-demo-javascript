@@ -1,4 +1,4 @@
-import { TAIRA_NETWORK_ID } from "../utils/firstReleaseNetworkIdentity";
+import { parseNetworkIdLiteral } from "../utils/networkIdentity";
 
 export type GovernanceProposalStatus =
   | "Proposed"
@@ -47,7 +47,8 @@ export interface ValidationFeePayoutBindingPayload {
 
 export interface ValidationFeePolicyPayload {
   schema_version: 1;
-  network_id: typeof TAIRA_NETWORK_ID;
+  /** Canonical endpoint-derived NetworkId literal. */
+  network_id: string;
   policy_version: string;
   previous_policy_hash: string | null;
   ds_asset_id: "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
@@ -397,14 +398,24 @@ export const normalizeValidationFeePolicy = (
     ],
     "Validation-fee policy",
   );
+  let networkId: string;
+  try {
+    networkId = parseNetworkIdLiteral(
+      policy.network_id,
+      "Validation-fee policy.network_id",
+    );
+  } catch {
+    networkId = "";
+  }
   if (
     policy.schema_version !== 1 ||
-    policy.network_id !== TAIRA_NETWORK_ID ||
+    !networkId ||
+    networkId !== policy.network_id ||
     policy.ds_asset_id !== NATIVE_SBD_ASSET_DEFINITION_ID ||
     policy.ds_scale !== 2
   ) {
     throw new TypeError(
-      "Validation-fee policy must use the exact reviewed Taira NetworkId, schema version, DS asset, and scale.",
+      "Validation-fee policy must use a canonical NetworkId, the exact schema version, DS asset, and scale.",
     );
   }
   const policyVersion = canonicalU64(
@@ -489,7 +500,7 @@ export const normalizeValidationFeePolicy = (
   }
   return {
     schema_version: 1,
-    network_id: TAIRA_NETWORK_ID,
+    network_id: networkId,
     policy_version: policyVersion,
     previous_policy_hash: previousPolicyHash,
     ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,

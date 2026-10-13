@@ -31,7 +31,7 @@ import {
   deriveGovernanceValidationFeeImmutableLedgerScope,
   fetchGovernanceValidationFeePolicyInMain,
 } from "../electron/governanceValidationFeeFinality";
-import { TAIRA_NETWORK_ID } from "../src/utils/firstReleaseNetworkIdentity";
+import { parseNetworkIdLiteral } from "../src/utils/networkIdentity";
 
 const irohaHash = (byte: string): string => byte.repeat(32);
 const plainHash = (byte: string): string => byte.repeat(32);
@@ -708,7 +708,8 @@ describe("governance validation-fee Core projection", () => {
     expect(view).toMatchObject({
       observedHeight: "126000",
       effective: {
-        network_id: TAIRA_NETWORK_ID,
+        // The effective policy NetworkId is the bound ledger genesis hash.
+        network_id: parseNetworkIdLiteral(genesisHash),
         policy_version: "1",
         ds_asset_id: CBSI_SBD_ASSET_DEFINITION_ID,
         fee: "0.1",

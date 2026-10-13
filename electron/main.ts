@@ -55,6 +55,20 @@ import { assertTrustedMainFrameIpcSender } from "./ipcTrustedMainFrame";
 import { requireFirstReleaseIpcInputObject } from "./firstReleaseIpcInput";
 import { requireFirstReleaseInputArray } from "./firstReleaseReadInput";
 import { nodeFetch } from "./nodeFetch";
+import { NetworkId } from "@iroha/iroha-js/canonical-request";
+import { discoverEndpointNetworkIdentity } from "./networkIdentityDiscovery";
+import {
+  NETWORK_IDENTITY_CONFIRM_CHANGE_CHANNEL,
+  NETWORK_IDENTITY_PIN_FIRST_USE_CHANNEL,
+  NETWORK_IDENTITY_PIN_READ_CHANNEL,
+  NetworkIdentityPinStore,
+  resolvePinnedNetworkIdInMain,
+} from "./networkIdentityPinStore";
+import { normalizeEndpointUrl } from "../src/utils/endpoint";
+import {
+  normalizeNetworkPrefixValue,
+  parseNetworkIdLiteral,
+} from "../src/utils/networkIdentity";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -259,8 +273,20 @@ const createWindow = () => {
   return window;
 };
 
+const networkIdentityPins = new NetworkIdentityPinStore(
+  app.getPath("userData"),
+);
+
 const vpnRuntime = new VpnRuntime({
   userDataPath: app.getPath("userData"),
+  resolveNetworkId: async (input) =>
+    NetworkId.parse(
+      await resolvePinnedNetworkIdInMain(
+        networkIdentityPins,
+        input,
+        (toriiUrl) => discoverEndpointNetworkIdentity(toriiUrl),
+      ),
+    ),
   helperVersion: `embedded-${app.getVersion()}`,
   isPackaged: app.isPackaged,
   resourcesPath: process.resourcesPath,
@@ -444,6 +470,102 @@ const confirmationText = (value: unknown, maxLength = 512) =>
     .trim()
     .slice(0, maxLength);
 
+const registerNetworkIdentityHandlers = () => {
+  ipcMain.handle(NETWORK_IDENTITY_PIN_READ_CHANNEL, (event, input) => {
+    assertTrustedMainFrameIpcEvent(event);
+    const { toriiUrl } = requireFirstReleaseIpcInputObject<{
+      toriiUrl: string;
+    }>(input, {
+      label: "Network identity pin read input",
+      required: ["toriiUrl"],
+    });
+    return networkIdentityPins.read(normalizeEndpointUrl(toriiUrl));
+  });
+  ipcMain.handle(
+    NETWORK_IDENTITY_PIN_FIRST_USE_CHANNEL,
+    async (event, input) => {
+      assertTrustedMainFrameIpcEvent(event);
+      const exact = requireFirstReleaseIpcInputObject<{
+        toriiUrl: string;
+        networkId: string;
+        networkPrefix: number;
+      }>(input, {
+        label: "Network identity first-use pin input",
+        required: ["toriiUrl", "networkId", "networkPrefix"],
+      });
+      const toriiUrl = normalizeEndpointUrl(exact.toriiUrl);
+      const networkId = parseNetworkIdLiteral(exact.networkId);
+      const networkPrefix = normalizeNetworkPrefixValue(exact.networkPrefix);
+      // Re-derive independently: the main process pins only what the endpoint
+      // itself reports through both public identity sources.
+      const discovery = await discoverEndpointNetworkIdentity(toriiUrl);
+      if (
+        discovery.status !== "verified" ||
+        discovery.identity.networkId !== networkId ||
+        discovery.identity.networkPrefix !== networkPrefix
+      ) {
+        throw new Error(
+          "The endpoint network identity changed while it was being pinned. Check the endpoint again.",
+        );
+      }
+      return networkIdentityPins.pinFirstUse(toriiUrl, discovery.identity);
+    },
+  );
+  ipcMain.handle(
+    NETWORK_IDENTITY_CONFIRM_CHANGE_CHANNEL,
+    async (event, input) => {
+      assertTrustedMainFrameIpcEvent(event);
+      const owner = BrowserWindow.fromWebContents(event.sender);
+      const exact = requireFirstReleaseIpcInputObject<{
+        toriiUrl: string;
+        networkId: string;
+      }>(input, {
+        label: "Network identity confirmation input",
+        required: ["toriiUrl", "networkId"],
+      });
+      if (!owner) {
+        return null;
+      }
+      const toriiUrl = normalizeEndpointUrl(exact.toriiUrl);
+      const networkId = parseNetworkIdLiteral(exact.networkId);
+      const discovery = await discoverEndpointNetworkIdentity(toriiUrl);
+      if (
+        discovery.status !== "verified" ||
+        discovery.identity.networkId !== networkId
+      ) {
+        throw new Error(
+          "The endpoint does not currently report this network identity through both public sources.",
+        );
+      }
+      const current = networkIdentityPins.read(toriiUrl);
+      if (current?.networkId === networkId) {
+        return current;
+      }
+      const result = await dialog.showMessageBox(owner, {
+        type: "warning",
+        title: "Network identity changed",
+        message: "Trust the new network identity for this endpoint?",
+        detail: [
+          `Endpoint: ${confirmationText(toriiUrl)}`,
+          `Previously trusted: ${confirmationText(current?.networkId ?? "none")}`,
+          `Now reported: ${confirmationText(networkId)}`,
+          `Network prefix: ${discovery.identity.networkPrefix}`,
+          "",
+          "Both /v1/accounts/capabilities and the genesis block report the new identity. Approve only if you expect this network to have been reset. Approving re-enables signing for the new network; balances and history from the old network will not carry over.",
+        ].join("\n"),
+        buttons: ["Keep blocked", "Trust new identity"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (result.response !== 1) {
+        return null;
+      }
+      return networkIdentityPins.replaceConfirmed(toriiUrl, discovery.identity);
+    },
+  );
+};
+
 const registerIrohaConnectConfirmationHandler = () => {
   ipcMain.handle(
     IROHA_CONNECT_CONFIRMATION_CHANNEL,
@@ -499,6 +621,7 @@ app.whenReady().then(() => {
   registerVaultHandlers();
   registerGovernanceRuntimeConfigHandler();
   registerGovernanceValidationFeePolicyHandler();
+  registerNetworkIdentityHandlers();
   registerIrohaConnectConfirmationHandler();
   registerMediaPermissionHandlers(session.defaultSession, {
     getRendererUrl: () => mainWindowTrustedRendererUrl ?? undefined,

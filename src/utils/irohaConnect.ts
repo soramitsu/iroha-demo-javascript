@@ -8,7 +8,7 @@ import type {
   EndpointNetworkContext,
 } from "@/types/endpointInspection";
 import { normalizeEndpointUrl } from "@/utils/endpoint";
-import { resolveFirstReleaseNetworkIdLiteral } from "@/utils/firstReleaseNetworkIdentity";
+import { trustedNetworkIdFromInspection } from "@/utils/networkIdentity";
 import {
   assertConnectSessionCommitment,
   bytesToHex,
@@ -31,6 +31,11 @@ export interface ParsedIrohaConnectUri {
   relayToken: string;
   version: "1";
 }
+
+/** Active wallet connection plus its endpoint-derived, pinned NetworkId. */
+export type IrohaConnectNetworkContext = EndpointNetworkContext & {
+  networkId: string;
+};
 
 export interface IrohaConnectNetworkClaim {
   node?: string | null;
@@ -190,13 +195,13 @@ const requireCanonicalEndpointOrigin = (
 
 export const validateIrohaConnectNetworkClaim = (
   claim: IrohaConnectNetworkClaim,
-  active: EndpointNetworkContext,
+  active: IrohaConnectNetworkContext,
   options: {
     label?: string;
     requireNetworkId?: boolean;
     requireNode?: boolean;
   } = {},
-): EndpointNetworkContext => {
+): IrohaConnectNetworkContext => {
   const label = options.label?.trim() || "IrohaConnect pairing QR";
   if (
     typeof active.chainId !== "string" ||
@@ -214,10 +219,19 @@ export const validateIrohaConnectNetworkClaim = (
     active.toriiUrl,
     "Active wallet endpoint",
   );
-  const activeNetworkId = resolveFirstReleaseNetworkIdLiteral({
-    chainId: activeChainId,
-    networkPrefix: activeNetworkPrefix,
-  });
+  let activeNetworkId: string;
+  try {
+    activeNetworkId = NetworkId.parse(active.networkId).toString();
+  } catch {
+    throw new Error(
+      "The active wallet connection has no verified endpoint NetworkId.",
+    );
+  }
+  if (activeNetworkId !== active.networkId) {
+    throw new Error(
+      "The active wallet connection has no verified endpoint NetworkId.",
+    );
+  }
 
   const claimedNetworkId = claim.networkId;
   if (options.requireNetworkId && !claimedNetworkId) {
@@ -261,12 +275,17 @@ export const validateIrohaConnectNetworkClaim = (
     toriiUrl: activeToriiUrl,
     chainId: activeChainId,
     networkPrefix: activeNetworkPrefix,
+    networkId: activeNetworkId,
   };
 };
 
+/**
+ * Require a write-authorized endpoint that advertises Connect sessions and
+ * return its pinned NetworkId.
+ */
 export const assertIrohaConnectEndpointCanPair = (
   inspection: EndpointInspection,
-): void => {
+): string => {
   if (inspection.accessMode !== "read-write") {
     throw new Error(inspection.diagnostic.message);
   }
@@ -275,6 +294,13 @@ export const assertIrohaConnectEndpointCanPair = (
       "The active endpoint does not advertise IrohaConnect session writes.",
     );
   }
+  const networkId = trustedNetworkIdFromInspection(inspection);
+  if (!networkId) {
+    throw new Error(
+      "The active endpoint has no pinned network identity for IrohaConnect.",
+    );
+  }
+  return networkId;
 };
 
 export const parseIrohaConnectUri = (input: string): ParsedIrohaConnectUri => {

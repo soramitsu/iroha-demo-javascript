@@ -22,7 +22,6 @@ import type {
   VpnStatus,
 } from "../src/types/iroha";
 import { normalizeEndpointUrl } from "../src/utils/endpoint";
-import { resolveFirstReleaseNetworkIdLiteral } from "../src/utils/firstReleaseNetworkIdentity";
 import { sanitizeErrorMessage } from "../src/utils/errorMessage";
 import {
   DEFAULT_SIGNING_ALGORITHM,
@@ -240,7 +239,7 @@ const buildVpnCanonicalAuth = (
     | "signingAlgorithm"
   >,
   operationLabel: string,
-  exactNetworkId?: NetworkId,
+  networkId: NetworkId,
 ) => {
   const signingAlgorithm = normalizeVpnSigningAlgorithm(auth.signingAlgorithm);
   if (signingAlgorithm !== DEFAULT_SIGNING_ALGORITHM) {
@@ -248,14 +247,6 @@ const buildVpnCanonicalAuth = (
       `${operationLabel} currently requires an Ed25519 wallet because VPN canonical authentication is Ed25519-only. This wallet uses ${signingAlgorithmLabel(signingAlgorithm)}.`,
     );
   }
-  const networkId =
-    exactNetworkId ??
-    NetworkId.parse(
-      resolveFirstReleaseNetworkIdLiteral({
-        chainId: normalizeChainId(auth.chainId),
-        networkPrefix: auth.networkPrefix,
-      }),
-    );
   return {
     accountId: auth.accountId,
     networkId,
@@ -278,13 +269,9 @@ const runWithVpnCanonicalAuth = async <T>(
   operation: (
     canonicalAuth: ReturnType<typeof buildVpnCanonicalAuth>,
   ) => Promise<T>,
-  exactNetworkId?: NetworkId,
+  networkId: NetworkId,
 ): Promise<T> => {
-  const canonicalAuth = buildVpnCanonicalAuth(
-    auth,
-    operationLabel,
-    exactNetworkId,
-  );
+  const canonicalAuth = buildVpnCanonicalAuth(auth, operationLabel, networkId);
   try {
     return await operation(canonicalAuth);
   } finally {
@@ -836,6 +823,11 @@ const VPN_STABLE_SESSION_FIELDS = [
   "status",
 ] as const satisfies ReadonlyArray<keyof ToriiVpnSession>;
 
+export type VpnNetworkIdResolver = (input: {
+  toriiUrl: string;
+  networkPrefix: number;
+}) => Promise<NetworkId>;
+
 export class VpnRuntime {
   private readonly receiptsPath: string;
 
@@ -867,15 +859,20 @@ export class VpnRuntime {
 
   private remoteSessionActive = false;
 
+  private readonly resolveNetworkId: VpnNetworkIdResolver;
+
   constructor(options: {
     userDataPath: string;
     helperVersion: string;
+    /** Endpoint-derived, pinned transaction NetworkId for canonical auth. */
+    resolveNetworkId: VpnNetworkIdResolver;
     controller?: VpnLocalController;
     isPackaged?: boolean;
     resourcesPath?: string | null;
   }) {
     this.platform = process.platform;
     this.helperVersion = options.helperVersion;
+    this.resolveNetworkId = options.resolveNetworkId;
     this.receiptsPath = join(options.userDataPath, "vpn", "receipts.json");
     this.activeSessionPath = join(
       options.userDataPath,
@@ -1075,12 +1072,10 @@ export class VpnRuntime {
 
     const exitClass = normalizeProfileExitClass(profile, input.exitClass);
     const chainId = normalizeChainId(input.chainId);
-    const networkId = NetworkId.parse(
-      resolveFirstReleaseNetworkIdLiteral({
-        chainId,
-        networkPrefix: input.networkPrefix,
-      }),
-    );
+    const networkId = await this.resolveNetworkId({
+      toriiUrl: input.toriiUrl,
+      networkPrefix: input.networkPrefix,
+    });
     const accountId = normalizeVpnAccountId(
       input.accountId,
       "accountId",
@@ -1567,6 +1562,10 @@ export class VpnRuntime {
         parseExactVpnReceiptList(
           await this.getClient(auth.toriiUrl).listVpnReceipts(canonicalAuth),
         ),
+      await this.resolveNetworkId({
+        toriiUrl: auth.toriiUrl,
+        networkPrefix: auth.networkPrefix,
+      }),
     );
     const normalizedReceipts = receipts.items.map((item) =>
       normalizeReceipt(item, auth.toriiUrl, auth.accountId),
@@ -1685,6 +1684,10 @@ export class VpnRuntime {
           activeSessionId,
           canonicalAuth,
         ),
+      await this.resolveNetworkId({
+        toriiUrl: auth.toriiUrl,
+        networkPrefix: auth.networkPrefix,
+      }),
     );
 
     if (remote) {

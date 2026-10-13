@@ -25,7 +25,10 @@ import {
   hexToBytes,
   type ConnectPermissions,
 } from "@/utils/soraswapConnectWire";
-import { TAIRA_NETWORK_ID } from "@/utils/firstReleaseNetworkIdentity";
+import {
+  TEST_TAIRA_NETWORK_ID as TAIRA_NETWORK_ID,
+  matchedNetworkIdentity,
+} from "./helpers/networkIdentityFixture";
 
 const CONTRACT_CALL_SIGN_SCHEMA =
   "uranai.irohaconnect.contract-call-signature.v1";
@@ -248,11 +251,13 @@ describe("HeaderIrohaConnectButton", () => {
           observed: {
             chainId: input.chainId,
             networkPrefix: input.networkPrefix,
+            networkId: TAIRA_NETWORK_ID,
           },
           identityStatus: "matched",
           accessMode: "read-write",
           checkedAtMs: 1,
           evidence: [],
+          networkIdentity: matchedNetworkIdentity(),
           features: {
             irohaConnectSessions: {
               supported: true,
@@ -742,6 +747,7 @@ describe("HeaderIrohaConnectButton", () => {
       toriiUrl: "https://taira.sora.org",
       chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
       networkPrefix: 369,
+      networkId: TAIRA_NETWORK_ID,
       accountId: EXAMPLE_ACCOUNT_ID,
       signingMessageB64,
     });

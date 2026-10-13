@@ -439,6 +439,8 @@ export interface IrohaConnectWalletContext {
   toriiUrl: string;
   chainId: string;
   networkPrefix: number;
+  /** Endpoint-derived, pinned NetworkId. */
+  networkId: string;
   accountId: string;
 }
 
@@ -946,6 +948,10 @@ export interface IrohaBridge {
     toriiUrl: string;
   }): Promise<ChainMetadataResponse>;
   inspectEndpoint(config: EndpointNetworkContext): Promise<EndpointInspection>;
+  confirmEndpointNetworkIdentity(input: {
+    toriiUrl: string;
+    networkId: string;
+  }): Promise<{ confirmed: boolean }>;
   getSigningAlgorithms(config: {
     toriiUrl: string;
   }): Promise<SigningAlgorithmOption[]>;

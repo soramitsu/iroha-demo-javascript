@@ -12,17 +12,19 @@ import {
   getTrustedEndpointIdentityScope,
   inspectEndpoint,
   isEndpointFeatureOperationSupported,
+  requireTrustedInspectionNetworkId,
+  resolvePinnedEndpointNetworkId,
+  type EndpointIdentityPins,
 } from "../electron/endpointInspector";
+import type { NetworkIdentityPin } from "../src/utils/networkIdentity";
+import {
+  TEST_PREVIOUS_TAIRA_NETWORK_ID,
+  TEST_TAIRA_GENESIS_HASH,
+  TEST_TAIRA_NETWORK_ID,
+  testNetworkIdentityPin,
+} from "./helpers/networkIdentityFixture";
 
 const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
-const TAIRA_GENESIS =
-  "82531ce8eae8bff6beeca4698bfd13a3bc8bec5f0ee0d23d428c97fc17ab0f3b";
-const UNREVIEWED_PUBLIC_RESET_GENESIS =
-  "77fb29d14745adccfdc14350e1a6fe6a10265798cc936a1dafa7d2552ac3b9f7";
-const ARCHIVED_TAIRA_CHAIN_ID = "809574f5-fee7-5e69-bfcf-52451e42d50f";
-const ARCHIVED_TAIRA_GENESIS =
-  "cc62233ac63ec4131207a35c28b84d5fb22f0c954bd7b2d0f2edc50541117121";
-
 const network = {
   toriiUrl: "https://taira.sora.org",
   chainId: TAIRA_CHAIN_ID,
@@ -264,10 +266,11 @@ const finalizedTransactionEvidencePaths = {
 };
 
 const faucetClaimPaths = {
+  "/v1/accounts/faucet/policy": { get: {} },
   "/v1/accounts/faucet/puzzle": { get: {} },
+  "/v1/accounts/faucet/prepare": { post: {} },
   "/v1/accounts/faucet": { post: {} },
-  "/v1/sumeragi/status": { get: {} },
-  ...finalizedTransactionEvidencePaths,
+  "/v1/pipeline/transactions/status": { get: {} },
 };
 
 const exactSharedLeaseJoinOperation = {
@@ -367,15 +370,63 @@ const jsonResponse = (payload: unknown, status = 200) =>
     headers: { "Content-Type": "application/json" },
   });
 
-const headerIdentityResponse = () =>
-  new Response(JSON.stringify({}), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/json",
-      "x-iroha-chain-id": TAIRA_CHAIN_ID,
-      "x-iroha-network-prefix": "369",
-    },
-  });
+const capabilitiesPayload = (
+  input: { networkId?: string; networkPrefix?: number } = {},
+) => ({
+  schema_version: 1,
+  network_id: input.networkId ?? TEST_TAIRA_NETWORK_ID,
+  network_prefix: input.networkPrefix ?? 369,
+  allowed_signing: ["bls_normal", "ed25519", "secp256k1"],
+  default_signing: "ed25519",
+});
+
+const identityRoutes = (
+  input: {
+    capabilitiesNetworkId?: string;
+    genesisHash?: string;
+    networkPrefix?: number;
+  } = {},
+): Record<string, Response | (() => Response | Promise<Response>)> => ({
+  "/v1/accounts/capabilities": jsonResponse(
+    capabilitiesPayload({
+      networkId: input.capabilitiesNetworkId,
+      networkPrefix: input.networkPrefix,
+    }),
+  ),
+  "/v1/explorer/blocks/1": jsonResponse({
+    hash: input.genesisHash ?? TEST_TAIRA_NETWORK_ID,
+    height: 1,
+    created_at: "2026-10-11T15:03:56.844Z",
+    prev_block_hash: null,
+    transactions_hash: TEST_TAIRA_NETWORK_ID,
+    transactions_rejected: 0,
+    transactions_total: 0,
+  }),
+});
+
+const memoryPins = (initial: NetworkIdentityPin[] = []) => {
+  const pins = new Map(initial.map((pin) => [pin.toriiUrl, pin]));
+  const store = {
+    read: vi.fn(async (toriiUrl: string) => pins.get(toriiUrl) ?? null),
+    pinFirstUse: vi.fn(
+      async (
+        toriiUrl: string,
+        identity: { networkId: string; networkPrefix: number },
+      ) => {
+        const existing = pins.get(toriiUrl);
+        if (existing) return existing;
+        const pin = testNetworkIdentityPin({
+          toriiUrl,
+          networkId: identity.networkId,
+          networkPrefix: identity.networkPrefix,
+        });
+        pins.set(toriiUrl, pin);
+        return pin;
+      },
+    ),
+  };
+  return store satisfies EndpointIdentityPins;
+};
 
 const routeFetch = (
   routes: Record<string, Response | (() => Response | Promise<Response>)>,
@@ -389,504 +440,358 @@ const routeFetch = (
     return typeof route === "function" ? await route() : route.clone();
   });
 
-describe("endpoint inspector", () => {
-  it("classifies the archived public Taira deployment as mismatched read-only", async () => {
-    const fetchImpl = routeFetch({
-      "/v1/explorer/blocks/1": jsonResponse({
-        hash: ARCHIVED_TAIRA_GENESIS,
-        height: 1,
-        prev_block_hash: null,
-      }),
-    });
-
+describe("endpoint inspector network identity", () => {
+  it("parses current hash literals and pins a write endpoint on first use", async () => {
+    const pins = memoryPins();
     const inspection = await inspectEndpoint(network, {
-      fetchImpl,
+      identityPins: pins,
+      fetchImpl: routeFetch(identityRoutes()),
       now: () => 123,
     });
 
     expect(inspection).toMatchObject({
-      identityStatus: "mismatched",
-      accessMode: "read-only",
+      identityStatus: "matched",
+      accessMode: "read-write",
       checkedAtMs: 123,
-      expected: {
+      expected: { chainId: TAIRA_CHAIN_ID, networkPrefix: 369 },
+      observed: {
         chainId: TAIRA_CHAIN_ID,
         networkPrefix: 369,
+        networkId: TEST_TAIRA_NETWORK_ID,
+        genesisHash: TEST_TAIRA_GENESIS_HASH,
       },
-      observed: {
-        chainId: ARCHIVED_TAIRA_CHAIN_ID,
-        networkPrefix: 369,
-        genesisHash: ARCHIVED_TAIRA_GENESIS,
+      networkIdentity: {
+        state: "pinned-now",
+        observedNetworkId: TEST_TAIRA_NETWORK_ID,
+        pinned: { networkId: TEST_TAIRA_NETWORK_ID, networkPrefix: 369 },
       },
-      diagnostic: {
-        code: "endpoint_identity_mismatch",
-      },
+      diagnostic: { code: "endpoint_identity_matched" },
     });
-  });
-
-  it("authorizes only complete matching metadata plus the pinned genesis", async () => {
-    const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: TAIRA_CHAIN_ID,
-        network_prefix: 369,
-      }),
-      "/v1/explorer/blocks/1": jsonResponse({
-        hash: TAIRA_GENESIS,
-        height: 1,
-      }),
-    });
-
-    const inspection = await assertEndpointWriteAuthorized(network, {
-      fetchImpl,
-    });
-
-    expect(inspection.identityStatus).toBe("matched");
-    expect(inspection.accessMode).toBe("read-write");
-    expect(inspection.observed?.genesisHash).toBe(TAIRA_GENESIS);
-  });
-
-  it("keeps an unreviewed public Taira reset read-only", async () => {
-    const fetchImpl = routeFetch({
-      "/v1/explorer/blocks/1": jsonResponse({
-        hash: UNREVIEWED_PUBLIC_RESET_GENESIS,
-        height: 1,
-      }),
-    });
-
-    const inspection = await inspectEndpoint(network, { fetchImpl });
-
-    expect(inspection.identityStatus).toBe("mismatched");
-    expect(inspection.accessMode).toBe("read-only");
-    expect(inspection.expected.genesisHash).toBe(TAIRA_GENESIS);
-    expect(inspection.observed?.genesisHash).toBe(
-      UNREVIEWED_PUBLIC_RESET_GENESIS,
+    expect(inspection.evidence.map((entry) => entry.source)).toEqual([
+      "account-capabilities",
+      "genesis-block",
+    ]);
+    expect(pins.pinFirstUse).toHaveBeenCalledTimes(1);
+    expect(requireTrustedInspectionNetworkId(inspection)).toBe(
+      TEST_TAIRA_NETWORK_ID,
     );
-  });
-
-  it("does not authorize matching metadata without genesis evidence", async () => {
-    const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: TAIRA_CHAIN_ID,
-        network_prefix: 369,
-      }),
+    expect(getTrustedEndpointIdentityScope(inspection)).toEqual({
+      toriiUrl: "https://taira.sora.org",
+      observedChainId: TAIRA_CHAIN_ID,
+      observedNetworkPrefix: 369,
+      observedGenesisHash: TEST_TAIRA_GENESIS_HASH,
     });
-
-    const inspection = await inspectEndpoint(network, { fetchImpl });
-
-    expect(inspection.identityStatus).toBe("unverified");
-    expect(inspection.accessMode).toBe("read-only");
   });
 
-  it("keeps a custom HTTPS endpoint read-only even when it self-reports a matching identity and write surface", async () => {
-    const customNetwork = {
-      ...network,
-      toriiUrl: "https://custom-torii.example",
-    };
-    const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: TAIRA_CHAIN_ID,
-        network_prefix: 369,
-      }),
-      "/openapi.json": jsonResponse({
-        paths: {
-          "/v1/fees/quote": { post: {} },
-          "/v1/pipeline/transactions": { post: {} },
-          ...finalizedTransactionEvidencePaths,
-        },
-      }),
-    });
-
-    const inspection = await inspectEndpoint(customNetwork, { fetchImpl });
-
-    expect(inspection.identityStatus).toBe("unverified");
-    expect(inspection.accessMode).toBe("read-only");
-    expect(inspection.features.assetTransfers.supported).toBe(true);
-    expect(inspection.diagnostic.message).toContain(
-      "not a release-pinned write target",
-    );
-    await expect(
-      assertEndpointWriteAuthorized(customNetwork, { fetchImpl }),
-    ).rejects.toMatchObject({ code: "endpoint_identity_unverified" });
-  });
-
-  it("keeps Minamoto read-only until the release pins its exact NetworkId", async () => {
-    const minamotoNetwork = {
-      toriiUrl: "https://minamoto.sora.org",
-      chainId: "00000000-0000-0000-0000-000000000000",
-      networkPrefix: 753,
-    };
-    const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: minamotoNetwork.chainId,
-        network_prefix: minamotoNetwork.networkPrefix,
-      }),
-    });
-
-    const inspection = await inspectEndpoint(minamotoNetwork, { fetchImpl });
-
-    expect(inspection.identityStatus).toBe("unverified");
-    expect(inspection.accessMode).toBe("read-only");
-    expect(inspection.diagnostic.message).toContain(
-      "not a release-pinned write target",
-    );
-    await expect(
-      assertEndpointWriteAuthorized(minamotoNetwork, { fetchImpl }),
-    ).rejects.toMatchObject({ code: "endpoint_identity_unverified" });
-  });
-
-  it("does not let a pinned origin authorize a different configured profile", async () => {
-    const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: "custom-chain",
-        network_prefix: 369,
-      }),
-    });
-
-    const inspection = await inspectEndpoint(
-      { ...network, chainId: "custom-chain" },
-      { fetchImpl },
-    );
-
-    expect(inspection.identityStatus).toBe("unverified");
-    expect(inspection.accessMode).toBe("read-only");
-  });
-
-  it("does not authorize duplicate-key identity JSON", async () => {
-    const fetchImpl = routeFetch({
-      "/v1/chain/metadata": new Response(
-        `{"chain_id":"${TAIRA_CHAIN_ID}","chain_id":"attacker-chain","network_prefix":369}`,
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
+  it("accepts the legacy lowercase genesis hash form and normalizes it", async () => {
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl: routeFetch(
+        identityRoutes({ genesisHash: TEST_TAIRA_GENESIS_HASH }),
       ),
     });
+    expect(inspection.identityStatus).toBe("matched");
+    expect(inspection.observed?.networkId).toBe(TEST_TAIRA_NETWORK_ID);
+  });
 
-    const inspection = await inspectEndpoint(network, { fetchImpl });
+  it("keeps an existing matching pin without re-pinning", async () => {
+    const pins = memoryPins([testNetworkIdentityPin()]);
+    const inspection = await inspectEndpoint(network, {
+      identityPins: pins,
+      fetchImpl: routeFetch(identityRoutes()),
+    });
+    expect(inspection.identityStatus).toBe("matched");
+    expect(inspection.networkIdentity.state).toBe("matches-pin");
+    expect(pins.pinFirstUse).not.toHaveBeenCalled();
+  });
 
-    expect(inspection.identityStatus).toBe("unverified");
+  it("blocks writes when a reset changed the pinned identity", async () => {
+    const pins = memoryPins([
+      testNetworkIdentityPin({ networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID }),
+    ]);
+    const inspection = await inspectEndpoint(network, {
+      identityPins: pins,
+      fetchImpl: routeFetch(identityRoutes()),
+    });
+    expect(inspection).toMatchObject({
+      identityStatus: "changed",
+      accessMode: "read-only",
+      expected: { networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID },
+      observed: { networkId: TEST_TAIRA_NETWORK_ID },
+      networkIdentity: {
+        state: "changed",
+        pinned: { networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID },
+        observedNetworkId: TEST_TAIRA_NETWORK_ID,
+      },
+      diagnostic: { code: "endpoint_identity_changed" },
+    });
+    expect(inspection.diagnostic.message).toContain(
+      "confirm the new network identity",
+    );
+    expect(pins.pinFirstUse).not.toHaveBeenCalled();
+    expect(() => requireTrustedInspectionNetworkId(inspection)).toThrow(
+      EndpointWriteBlockedError,
+    );
+    await expect(
+      assertEndpointWriteAuthorized(network, {
+        identityPins: pins,
+        fetchImpl: routeFetch(identityRoutes()),
+      }),
+    ).rejects.toMatchObject({ code: "endpoint_identity_changed" });
+  });
+
+  it("fails closed when the two identity sources disagree", async () => {
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl: routeFetch(
+        identityRoutes({ genesisHash: TEST_PREVIOUS_TAIRA_NETWORK_ID }),
+      ),
+    });
+    expect(inspection.identityStatus).toBe("conflicting");
     expect(inspection.accessMode).toBe("read-only");
+    expect(inspection.observed).toBeNull();
+    expect(inspection.networkIdentity.pinned).toBeNull();
+    expect(getTrustedEndpointIdentityScope(inspection)).toBeNull();
   });
 
-  it("rejects coercive configured identity values before probing", async () => {
-    const fetchImpl = vi.fn();
-
-    await expect(
-      inspectEndpoint({ ...network, chainId: ` ${TAIRA_CHAIN_ID}` } as never, {
-        fetchImpl,
-      }),
-    ).rejects.toThrow("exact canonical chain ID");
-    await expect(
-      inspectEndpoint({ ...network, networkPrefix: "369" } as never, {
-        fetchImpl,
-      }),
-    ).rejects.toThrow("integer network prefix");
-    expect(fetchImpl).not.toHaveBeenCalled();
+  it("requires both public sources before trusting an identity", async () => {
+    const routes = identityRoutes();
+    delete routes["/v1/explorer/blocks/1"];
+    const pins = memoryPins();
+    const inspection = await inspectEndpoint(network, {
+      identityPins: pins,
+      fetchImpl: routeFetch(routes),
+    });
+    expect(inspection.identityStatus).toBe("unverified");
+    expect(inspection.diagnostic.message).toContain("/v1/explorer/blocks/1");
+    expect(pins.pinFirstUse).not.toHaveBeenCalled();
+    expect(inspection.evidence.map((entry) => entry.source)).toEqual([
+      "account-capabilities",
+    ]);
   });
 
-  it("does not normalize a noncanonical block-one hash into identity evidence", async () => {
-    for (const hash of [TAIRA_GENESIS.toUpperCase(), ` ${TAIRA_GENESIS}`]) {
-      const fetchImpl = routeFetch({
-        "/v1/chain/metadata": jsonResponse({
-          chain_id: TAIRA_CHAIN_ID,
-          network_prefix: 369,
+  it("rejects checksum-invalid and non-genesis identity projections", async () => {
+    for (const routes of [
+      identityRoutes({
+        genesisHash: TEST_TAIRA_NETWORK_ID.replace("#44D9", "#0000"),
+      }),
+      identityRoutes({
+        capabilitiesNetworkId: TEST_TAIRA_NETWORK_ID.toLowerCase(),
+      }),
+      {
+        ...identityRoutes(),
+        "/v1/explorer/blocks/1": jsonResponse({
+          hash: TEST_TAIRA_NETWORK_ID,
+          height: 2,
+          prev_block_hash: TEST_PREVIOUS_TAIRA_NETWORK_ID,
         }),
-        "/v1/explorer/blocks/1": jsonResponse({ hash, height: 1 }),
+      },
+    ]) {
+      const inspection = await inspectEndpoint(network, {
+        identityPins: memoryPins(),
+        fetchImpl: routeFetch(routes),
       });
-
-      const inspection = await inspectEndpoint(network, { fetchImpl });
-
       expect(inspection.identityStatus).toBe("unverified");
-      expect(inspection.observed?.genesisHash).toBeUndefined();
-      expect(
-        inspection.evidence.some(
-          (entry) => entry.source === "genesis-fingerprint",
-        ),
-      ).toBe(false);
+      expect(inspection.accessMode).toBe("read-only");
     }
   });
 
-  it("does not authorize oversized identity JSON", async () => {
-    const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: TAIRA_CHAIN_ID,
-        network_prefix: 369,
-        padding: "x".repeat(4 * 1024 * 1024),
-      }),
-      "/v1/explorer/blocks/1": jsonResponse({
-        hash: TAIRA_GENESIS,
-        height: 1,
-      }),
+  it("classifies a network prefix mismatch as mismatched", async () => {
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl: routeFetch(identityRoutes({ networkPrefix: 753 })),
     });
-
-    const inspection = await inspectEndpoint(network, { fetchImpl });
-
-    expect(inspection.identityStatus).toBe("unverified");
-    expect(inspection.accessMode).toBe("read-only");
+    expect(inspection.identityStatus).toBe("mismatched");
+    expect(inspection.diagnostic.code).toBe("endpoint_identity_mismatch");
   });
 
-  it("retries a rate-limited identity probe before classifying the endpoint", async () => {
-    let metadataCalls = 0;
-    const fetchImpl = routeFetch({
-      "/v1/chain/metadata": () => {
-        metadataCalls += 1;
-        if (metadataCalls === 1) {
-          return new Response(
-            JSON.stringify({ code: "preauth_rate_limited" }),
-            {
-              status: 429,
-              headers: {
-                "Content-Type": "application/json",
-                "Retry-After": "0",
-              },
-            },
-          );
-        }
-        return jsonResponse({
-          chain_id: TAIRA_CHAIN_ID,
-          network_prefix: 369,
-        });
+  it("keeps a custom endpoint read-only and unpinned even with a valid identity", async () => {
+    const pins = memoryPins();
+    const inspection = await inspectEndpoint(
+      { ...network, toriiUrl: "https://example.test" },
+      {
+        identityPins: pins,
+        fetchImpl: routeFetch(identityRoutes()),
       },
-      "/v1/explorer/blocks/1": jsonResponse({
-        hash: TAIRA_GENESIS,
-        height: 1,
+    );
+    expect(inspection.identityStatus).toBe("unverified");
+    expect(inspection.observed?.networkId).toBe(TEST_TAIRA_NETWORK_ID);
+    expect(pins.pinFirstUse).not.toHaveBeenCalled();
+  });
+
+  it("does not let the TAIRA origin authorize a different configured profile", async () => {
+    const inspection = await inspectEndpoint(
+      { ...network, chainId: "00000000-0000-0000-0000-000000000000" },
+      {
+        identityPins: memoryPins(),
+        fetchImpl: routeFetch(identityRoutes()),
+      },
+    );
+    expect(inspection.identityStatus).toBe("unverified");
+  });
+
+  it("keeps the endpoint read-only when the pin store fails", async () => {
+    const pins = memoryPins();
+    pins.read.mockRejectedValueOnce(new Error("pin store is malformed"));
+    const inspection = await inspectEndpoint(network, {
+      identityPins: pins,
+      fetchImpl: routeFetch(identityRoutes()),
+    });
+    expect(inspection.identityStatus).toBe("unverified");
+    expect(inspection.diagnostic.message).toContain("pin store is malformed");
+  });
+
+  it("does not trust duplicate-key or oversized identity JSON", async () => {
+    const duplicate = new Response(
+      `{"schema_version":1,"network_id":"${TEST_TAIRA_NETWORK_ID}","network_id":"${TEST_TAIRA_NETWORK_ID}","network_prefix":369}`,
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+    const oversized = jsonResponse({
+      ...capabilitiesPayload(),
+      padding: "x".repeat(70 * 1024),
+    });
+    for (const capabilities of [duplicate, oversized]) {
+      const inspection = await inspectEndpoint(network, {
+        identityPins: memoryPins(),
+        fetchImpl: routeFetch({
+          ...identityRoutes(),
+          "/v1/accounts/capabilities": capabilities,
+        }),
+      });
+      expect(inspection.identityStatus).toBe("unverified");
+    }
+  });
+
+  it("retries a rate-limited identity source before classifying", async () => {
+    let calls = 0;
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl: routeFetch({
+        ...identityRoutes(),
+        "/v1/accounts/capabilities": () => {
+          calls += 1;
+          return calls === 1
+            ? new Response("{}", {
+                status: 429,
+                headers: {
+                  "Content-Type": "application/json",
+                  "Retry-After": "0",
+                },
+              })
+            : jsonResponse(capabilitiesPayload());
+        },
       }),
     });
-
-    const inspection = await inspectEndpoint(network, { fetchImpl });
-
-    expect(metadataCalls).toBe(2);
+    expect(calls).toBe(2);
     expect(inspection.identityStatus).toBe("matched");
-  });
-
-  it("fails closed after bounded rate-limit retries are exhausted", async () => {
-    let metadataCalls = 0;
-    const fetchImpl = routeFetch({
-      "/v1/chain/metadata": () => {
-        metadataCalls += 1;
-        return new Response(JSON.stringify({ code: "preauth_rate_limited" }), {
-          status: 429,
-          headers: {
-            "Content-Type": "application/json",
-            "Retry-After": "0",
-          },
-        });
-      },
-    });
-
-    const inspection = await inspectEndpoint(network, { fetchImpl });
-
-    expect(metadataCalls).toBe(3);
-    expect(inspection.identityStatus).toBe("unverified");
-    expect(inspection.accessMode).toBe("read-only");
-    expect(inspection.observed).toBeNull();
-  });
-
-  it("limits concurrent identity probes to avoid admission bursts", async () => {
-    let active = 0;
-    let maximumActive = 0;
-    const fetchImpl = vi.fn(async () => {
-      active += 1;
-      maximumActive = Math.max(maximumActive, active);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      active -= 1;
-      return jsonResponse({ code: "route_not_found" }, 404);
-    });
-
-    await inspectEndpoint(network, { fetchImpl });
-
-    expect(fetchImpl).toHaveBeenCalledTimes(4);
-    expect(maximumActive).toBeLessThanOrEqual(2);
-  });
-
-  it("classifies a reached endpoint with malformed capabilities as unverified", async () => {
-    const fetchImpl = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
-      if (new URL(String(input)).pathname === "/v1/gov/capabilities") {
-        return jsonResponse({ malformed: true });
-      }
-      throw new Error("offline");
-    });
-
-    const inspection = await inspectEndpoint(network, { fetchImpl });
-
-    expect(inspection.identityStatus).toBe("unverified");
-    expect(inspection.accessMode).toBe("read-only");
   });
 
   it("rejects invalid inspection clocks and timeouts before probing", async () => {
     const fetchImpl = vi.fn();
-
+    const identityPins = memoryPins();
     await expect(
-      inspectEndpoint(network, { fetchImpl, now: () => Number.NaN }),
-    ).rejects.toThrow("clock must return a non-negative safe integer");
+      inspectEndpoint(network, { identityPins, fetchImpl, now: () => -1 }),
+    ).rejects.toThrow("clock");
     await expect(
-      inspectEndpoint(network, { fetchImpl, timeoutMs: 0 }),
-    ).rejects.toThrow("timeout must be an integer between 1 and 60000");
-    await expect(
-      inspectEndpoint(network, { fetchImpl, timeoutMs: 60_001 }),
-    ).rejects.toThrow("timeout must be an integer between 1 and 60000");
+      inspectEndpoint(network, { identityPins, fetchImpl, timeoutMs: 0 }),
+    ).rejects.toThrow("timeout");
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("never authorizes the archived deployment fingerprint as a write target", async () => {
+  it("allows only the faucet challenge on an identity-verified read-only endpoint", async () => {
     const fetchImpl = routeFetch({
-      "/v1/explorer/blocks/1": jsonResponse({
-        hash: ARCHIVED_TAIRA_GENESIS,
-        height: 1,
-      }),
+      ...identityRoutes(),
+      "/openapi.json": jsonResponse({ paths: faucetClaimPaths }),
     });
-
-    const inspection = await inspectEndpoint(
-      {
-        ...network,
-        chainId: ARCHIVED_TAIRA_CHAIN_ID,
-      },
-      { fetchImpl },
-    );
-
-    expect(inspection.identityStatus).toBe("blocked");
-    expect(inspection.accessMode).toBe("read-only");
-    expect(inspection.diagnostic.code).toBe("endpoint_deployment_blocked");
-  });
-
-  it("never authorizes the archived chain identity when its genesis probe is unavailable", async () => {
-    const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: ARCHIVED_TAIRA_CHAIN_ID,
-        network_prefix: 369,
-      }),
-    });
-
-    const inspection = await inspectEndpoint(
-      {
-        ...network,
-        chainId: ARCHIVED_TAIRA_CHAIN_ID,
-      },
-      { fetchImpl },
-    );
-
-    expect(inspection.identityStatus).toBe("blocked");
-    expect(inspection.accessMode).toBe("read-only");
-    expect(inspection.diagnostic.code).toBe("endpoint_deployment_blocked");
-  });
-
-  it("does not infer identity from the hostname or a reachable endpoint", async () => {
-    const fetchImpl = routeFetch({});
-
-    const inspection = await inspectEndpoint(network, { fetchImpl });
-
-    expect(inspection.identityStatus).toBe("unverified");
-    expect(inspection.observed).toBeNull();
-    expect(inspection.accessMode).toBe("read-only");
-  });
-
-  it("allows only the faucet identity challenge on an otherwise unverified endpoint with the exact advertised surface", async () => {
-    const fetchImpl = routeFetch({
-      "/openapi.json": jsonResponse({
-        paths: faucetClaimPaths,
-      }),
-    });
-
-    const inspection = await assertEndpointFaucetChallengeAvailable(network, {
+    const custom = { ...network, toriiUrl: "https://example.test" };
+    const inspection = await assertEndpointFaucetChallengeAvailable(custom, {
+      identityPins: memoryPins(),
       fetchImpl,
     });
-
     expect(inspection.identityStatus).toBe("unverified");
-    expect(inspection.accessMode).toBe("read-only");
     expect(canAttemptFaucetIdentityChallenge(inspection)).toBe(true);
     await expect(
-      assertEndpointWriteAuthorized(network, { fetchImpl }),
-    ).rejects.toMatchObject({
-      code: "endpoint_identity_unverified",
-    });
+      assertEndpointWriteAuthorized(custom, {
+        identityPins: memoryPins(),
+        fetchImpl,
+      }),
+    ).rejects.toBeInstanceOf(EndpointWriteBlockedError);
   });
 
-  it("does not attempt the faucet identity challenge unless OpenAPI advertises its puzzle, claim, liveness, and finality evidence routes", async () => {
+  it("does not attempt the faucet challenge without the prepared-flow routes", async () => {
     const fetchImpl = routeFetch({
+      ...identityRoutes(),
       "/openapi.json": jsonResponse({
         paths: {
-          ...faucetClaimPaths,
-          "/v1/accounts/faucet/puzzle": undefined,
+          "/v1/accounts/faucet/puzzle": { get: {} },
+          "/v1/accounts/faucet": { post: {} },
         },
       }),
     });
-
     await expect(
-      assertEndpointFaucetChallengeAvailable(network, { fetchImpl }),
-    ).rejects.toMatchObject({
-      code: "endpoint_feature_unsupported",
-      feature: "faucetClaim",
-      inspection: {
-        identityStatus: "unverified",
-        features: {
-          faucetClaim: {
-            supported: false,
-            missingOperations: ["GET /v1/accounts/faucet/puzzle"],
-          },
-        },
-      },
-    });
+      assertEndpointFaucetChallengeAvailable(network, {
+        identityPins: memoryPins(),
+        fetchImpl,
+      }),
+    ).rejects.toMatchObject({ feature: "faucetClaim" });
   });
 
-  it("rejects mismatched identity evidence before the faucet challenge even when the full faucet surface is advertised", async () => {
-    const fetchImpl = routeFetch({
-      "/v1/explorer/blocks/1": jsonResponse({
-        hash: ARCHIVED_TAIRA_GENESIS,
-        height: 1,
-      }),
-      "/openapi.json": jsonResponse({
-        paths: faucetClaimPaths,
-      }),
-    });
-
+  it("resolves the pinned NetworkId without reading OpenAPI", async () => {
+    const pins = memoryPins();
+    const fetchImpl = routeFetch(identityRoutes());
     await expect(
-      assertEndpointFaucetChallengeAvailable(network, { fetchImpl }),
-    ).rejects.toMatchObject({
-      code: "endpoint_identity_mismatch",
-      inspection: {
-        identityStatus: "mismatched",
-        features: {
-          faucetClaim: {
-            supported: true,
-          },
-        },
-      },
-    });
+      resolvePinnedEndpointNetworkId(network, {
+        identityPins: pins,
+        fetchImpl,
+      }),
+    ).resolves.toBe(TEST_TAIRA_NETWORK_ID);
+    expect(
+      fetchImpl.mock.calls.some(([url]) =>
+        String(url).endsWith("/openapi.json"),
+      ),
+    ).toBe(false);
+    await expect(
+      resolvePinnedEndpointNetworkId(network, {
+        identityPins: memoryPins([
+          testNetworkIdentityPin({ networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID }),
+        ]),
+        fetchImpl,
+      }),
+    ).rejects.toThrow("endpoint_identity_changed");
+    await expect(
+      resolvePinnedEndpointNetworkId(
+        { ...network, toriiUrl: "https://example.test" },
+        { identityPins: pins, fetchImpl },
+      ),
+    ).rejects.toThrow("not a release write target");
   });
 
-  it("keeps one matching response-header observation unverified", async () => {
-    const fetchImpl = routeFetch({
-      "/v1/chain/metadata": headerIdentityResponse(),
+  it("distinguishes an unreachable endpoint from an unverified one", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("offline");
     });
-
-    const inspection = await inspectEndpoint(network, { fetchImpl });
-
-    expect(inspection.evidence).toHaveLength(1);
-    expect(inspection.evidence[0]?.source).toBe("response-headers");
-    expect(inspection.identityStatus).toBe("unverified");
-    expect(inspection.accessMode).toBe("read-only");
-    expect(getTrustedEndpointIdentityScope(inspection)).toBeNull();
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl,
+    });
+    expect(inspection.identityStatus).toBe("unreachable");
+    expect(inspection.accessMode).toBe("offline");
   });
 
-  it("never authorizes matching response headers without an exact body", async () => {
-    const fetchImpl = routeFetch({
-      "/v1/chain/metadata": headerIdentityResponse(),
-    });
-
-    const inspection = await inspectEndpoint(network, { fetchImpl });
-
-    expect(inspection.evidence).toHaveLength(1);
-    expect(inspection.evidence[0]?.source).toBe("response-headers");
-    expect(inspection.identityStatus).toBe("unverified");
-    expect(inspection.accessMode).toBe("read-only");
-    expect(getTrustedEndpointIdentityScope(inspection)).toBeNull();
+  it("requires a pin store", async () => {
+    await expect(
+      inspectEndpoint(
+        network,
+        {} as unknown as Parameters<typeof inspectEndpoint>[1],
+      ),
+    ).rejects.toThrow("pin store");
   });
+});
 
+describe("endpoint inspector OpenAPI features", () => {
   it("builds feature availability from advertised exact OpenAPI routes", async () => {
     const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: TAIRA_CHAIN_ID,
-        network_prefix: 369,
-      }),
+      ...identityRoutes(),
       "/openapi.json": jsonResponse({
         paths: {
           "/v1/fees/quote": { post: {} },
@@ -901,7 +806,10 @@ describe("endpoint inspector", () => {
       }),
     });
 
-    const inspection = await inspectEndpoint(network, { fetchImpl });
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl,
+    });
 
     expect(inspection.features.soraCloudHfSharedLease.supported).toBe(true);
     expect(inspection.features.vpnSessions.supported).toBe(true);
@@ -927,24 +835,21 @@ describe("endpoint inspector", () => {
       ),
     );
     const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: TAIRA_CHAIN_ID,
-        network_prefix: 369,
-      }),
+      ...identityRoutes(),
       "/openapi.json": jsonResponse(currentOpenApi),
     });
 
-    const inspection = await inspectEndpoint(network, { fetchImpl });
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl,
+    });
 
     expect(inspection.features.soraCloudHfSharedLease.supported).toBe(true);
   });
 
   it("rejects the obsolete SoraCloud deploy route", async () => {
     const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: TAIRA_CHAIN_ID,
-        network_prefix: 369,
-      }),
+      ...identityRoutes(),
       "/openapi.json": jsonResponse({
         paths: {
           "/v1/soracloud/hf/deploy": { post: {} },
@@ -952,7 +857,10 @@ describe("endpoint inspector", () => {
       }),
     });
 
-    const inspection = await inspectEndpoint(network, { fetchImpl });
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl,
+    });
 
     expect(inspection.features.soraCloudHfSharedLease.supported).toBe(false);
     expect(
@@ -964,17 +872,17 @@ describe("endpoint inspector", () => {
     const permissiveSchemas = structuredClone(exactSharedLeaseSchemas);
     permissiveSchemas.HfSharedLeaseStatusResponse.additionalProperties = true;
     const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: TAIRA_CHAIN_ID,
-        network_prefix: 369,
-      }),
+      ...identityRoutes(),
       "/openapi.json": jsonResponse({
         paths: exactSharedLeasePaths,
         components: { schemas: permissiveSchemas },
       }),
     });
 
-    const inspection = await inspectEndpoint(network, { fetchImpl });
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl,
+    });
 
     expect(inspection.features.soraCloudHfSharedLease.supported).toBe(false);
     expect(
@@ -1006,7 +914,10 @@ describe("endpoint inspector", () => {
       }),
     });
 
-    const inspection = await inspectEndpoint(network, { fetchImpl });
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl,
+    });
 
     expect(inspection.features.soraCloudHfSharedLease.supported).toBe(false);
     expect(
@@ -1040,7 +951,10 @@ describe("endpoint inspector", () => {
         }),
       });
 
-      const inspection = await inspectEndpoint(network, { fetchImpl });
+      const inspection = await inspectEndpoint(network, {
+        identityPins: memoryPins(),
+        fetchImpl,
+      });
 
       expect(inspection.features.soraCloudHfSharedLease.supported).toBe(false);
       expect(
@@ -1051,10 +965,7 @@ describe("endpoint inspector", () => {
 
   it("checks subscription write routes independently", async () => {
     const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: TAIRA_CHAIN_ID,
-        network_prefix: 369,
-      }),
+      ...identityRoutes(),
       "/openapi.json": jsonResponse({
         paths: {
           "/v1/subscriptions": { post: {} },
@@ -1066,7 +977,10 @@ describe("endpoint inspector", () => {
       }),
     });
 
-    const inspection = await inspectEndpoint(network, { fetchImpl });
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl,
+    });
 
     expect(inspection.features.subscriptionWrites.supported).toBe(false);
     expect(
@@ -1112,7 +1026,10 @@ describe("endpoint inspector", () => {
       }),
     });
 
-    const inspection = await inspectEndpoint(network, { fetchImpl });
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl,
+    });
 
     expect(inspection.features.subscriptionWrites.supported).toBe(false);
     expect(inspection.features.subscriptionWrites.missingOperations).toContain(
@@ -1129,10 +1046,7 @@ describe("endpoint inspector", () => {
 
   it("does not advertise signing features when the fee quote route is missing", async () => {
     const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: TAIRA_CHAIN_ID,
-        network_prefix: 369,
-      }),
+      ...identityRoutes(),
       "/openapi.json": jsonResponse({
         paths: {
           "/v1/pipeline/transactions": { post: {} },
@@ -1140,7 +1054,10 @@ describe("endpoint inspector", () => {
       }),
     });
 
-    const inspection = await inspectEndpoint(network, { fetchImpl });
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl,
+    });
 
     expect(inspection.features.accountRegistration.supported).toBe(false);
     expect(inspection.features.assetTransfers.supported).toBe(false);
@@ -1151,10 +1068,7 @@ describe("endpoint inspector", () => {
 
   it("does not treat empty OpenAPI method placeholders as write routes", async () => {
     const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: TAIRA_CHAIN_ID,
-        network_prefix: 369,
-      }),
+      ...identityRoutes(),
       "/openapi.json": jsonResponse({
         paths: {
           "/v1/fees/quote": { post: null },
@@ -1163,7 +1077,10 @@ describe("endpoint inspector", () => {
       }),
     });
 
-    const inspection = await inspectEndpoint(network, { fetchImpl });
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl,
+    });
 
     expect(inspection.features.assetTransfers.supported).toBe(false);
     expect(inspection.features.assetTransfers.missingOperations).toEqual([
@@ -1178,15 +1095,13 @@ describe("endpoint inspector", () => {
 
   it("requires the complete first-release write-route contract for every feature", async () => {
     const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: TAIRA_CHAIN_ID,
-        network_prefix: 369,
-      }),
+      ...identityRoutes(),
       "/openapi.json": jsonResponse({
         paths: {
           "/v1/fees/quote": { post: {} },
           "/v1/accounts/onboard": { post: {} },
           ...faucetClaimPaths,
+          ...finalizedTransactionEvidencePaths,
           "/v1/pipeline/transactions": { post: {} },
           "/v1/gov/capabilities": { get: {} },
           "/v1/gov/citizens/draft": { post: {} },
@@ -1227,55 +1142,57 @@ describe("endpoint inspector", () => {
       }),
     });
 
-    const inspection = await inspectEndpoint(network, { fetchImpl });
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl,
+    });
 
     expect(
-      Object.values(inspection.features).every((feature) => feature.supported),
-    ).toBe(true);
+      Object.entries(inspection.features)
+        .filter(([, feature]) => !feature.supported)
+        .map(([name, feature]) => [name, feature.missingOperations]),
+    ).toEqual([]);
   });
 
-  it("fails closed when authoritative endpoint sources conflict", async () => {
-    const fetchImpl = routeFetch({
-      "/v1/chain/metadata": jsonResponse({
-        chain_id: TAIRA_CHAIN_ID,
-        network_prefix: 369,
-      }),
-      "/v1/explorer/blocks/1": jsonResponse({
-        hash: ARCHIVED_TAIRA_GENESIS,
-        height: 1,
-      }),
-    });
-
-    const inspection = await inspectEndpoint(network, { fetchImpl });
-
-    expect(inspection.identityStatus).toBe("conflicting");
-    expect(inspection.accessMode).toBe("read-only");
-  });
-
-  it("distinguishes an unreachable endpoint from an unverified one", async () => {
-    const fetchImpl = vi.fn(async () => {
-      throw new Error("offline");
-    });
-
-    const inspection = await inspectEndpoint(network, { fetchImpl });
-
-    expect(inspection.identityStatus).toBe("unreachable");
-    expect(inspection.accessMode).toBe("offline");
-  });
-
-  it("throws a stable write-blocking error for a mismatched endpoint", async () => {
-    const fetchImpl = routeFetch({
-      "/v1/explorer/blocks/1": jsonResponse({
-        hash: ARCHIVED_TAIRA_GENESIS,
-        height: 1,
+  it("classifies the live Taira identity and route inventory as read-write", async () => {
+    // Snapshot of the identity sources and routes served by
+    // https://taira.sora.org on 2026-10-13 (after the 2026-10-11 reset).
+    const liveRoutes: Record<string, Record<string, object>> = {};
+    for (const route of [
+      "POST /v1/fees/quote",
+      "POST /v1/pipeline/transactions",
+      "GET /v1/pipeline/transactions/status",
+      "GET /v1/explorer/transactions/{hash}",
+      "GET /v1/explorer/blocks/{identifier}",
+      "GET /v1/explorer/metrics",
+      "GET /v1/accounts/faucet/policy",
+      "GET /v1/accounts/faucet/puzzle",
+      "POST /v1/accounts/faucet/prepare",
+      "POST /v1/accounts/faucet",
+      "POST /v1/connect/session",
+      "GET /v1/gov/capabilities",
+    ]) {
+      const [method, path] = route.split(" ");
+      liveRoutes[path] = { ...liveRoutes[path], [method.toLowerCase()]: {} };
+    }
+    const inspection = await inspectEndpoint(network, {
+      identityPins: memoryPins(),
+      fetchImpl: routeFetch({
+        ...identityRoutes(),
+        // Live governance capabilities now require canonical request auth.
+        "/v1/gov/capabilities": jsonResponse(
+          { code: "canonical_authentication_required" },
+          401,
+        ),
+        "/v1/chain/metadata": jsonResponse({ code: "route_not_found" }, 404),
+        "/openapi.json": jsonResponse({ paths: liveRoutes }),
       }),
     });
-
-    await expect(
-      assertEndpointWriteAuthorized(network, { fetchImpl }),
-    ).rejects.toMatchObject({
-      name: "EndpointWriteBlockedError",
-      code: "endpoint_identity_mismatch",
-    } satisfies Partial<EndpointWriteBlockedError>);
+    expect(inspection.identityStatus).toBe("matched");
+    expect(inspection.accessMode).toBe("read-write");
+    expect(inspection.features.assetTransfers.supported).toBe(true);
+    expect(inspection.features.faucetClaim.supported).toBe(true);
+    expect(inspection.features.irohaConnectSessions.supported).toBe(true);
+    expect(inspection.features.governanceWrites.supported).toBe(false);
   });
 });

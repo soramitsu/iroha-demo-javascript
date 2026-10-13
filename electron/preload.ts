@@ -127,8 +127,20 @@ import {
   assertEndpointFeatureSupported,
   assertEndpointWriteAuthorized,
   getTrustedEndpointIdentityScope,
-  inspectEndpoint as inspectEndpointIdentity,
+  inspectEndpoint,
+  requireTrustedInspectionNetworkId,
+  resolvePinnedEndpointNetworkId,
+  type EndpointIdentityPins,
 } from "./endpointInspector";
+import {
+  NETWORK_IDENTITY_CONFIRM_CHANGE_CHANNEL,
+  NETWORK_IDENTITY_PIN_FIRST_USE_CHANNEL,
+  NETWORK_IDENTITY_PIN_READ_CHANNEL,
+} from "./networkIdentityPinStore";
+import {
+  isNetworkIdentityPin,
+  type NetworkIdentityPin,
+} from "../src/utils/networkIdentity";
 import type {
   EndpointFeature,
   EndpointInspection,
@@ -163,8 +175,6 @@ import {
 } from "./accountAddress";
 import {
   buildCanonicalInstructionFeeQuoteRequest,
-  resolveFirstReleaseNetworkIdForConfiguredIdentity,
-  resolveFirstReleaseTransactionNetworkId,
   resolveCanonicalInstructionWireInput,
   transactionFeeQuoteView,
 } from "./transactionFeeQuote";
@@ -237,7 +247,6 @@ import {
   governanceCapabilitiesContractFingerprintV1,
   parseGovernanceCapabilitiesV1,
   TAIRA_GOVERNANCE_CHAIN_ID,
-  TAIRA_GOVERNANCE_NETWORK_ID,
   TAIRA_GOVERNANCE_NETWORK_PREFIX,
   type GovernanceCapabilitiesV1,
 } from "./governanceCapabilities";
@@ -1275,6 +1284,10 @@ type IrohaBridge = {
   ping(config: ToriiConfig): Promise<HealthResponse>;
   getChainMetadata(config: ToriiConfig): Promise<ChainMetadataResponse>;
   inspectEndpoint(config: EndpointNetworkContext): Promise<EndpointInspection>;
+  confirmEndpointNetworkIdentity(input: {
+    toriiUrl: string;
+    networkId: string;
+  }): Promise<{ confirmed: boolean }>;
   getSigningAlgorithms(config: ToriiConfig): Promise<SigningAlgorithmOption[]>;
   generateKeyPair(input: { signingAlgorithm: string; seedHex?: string }): {
     publicKeyHex: string;
@@ -4203,6 +4216,73 @@ const normalizeRequiredChainId = (value: unknown): string => {
   return value;
 };
 
+const readNetworkIdentityPinResponse = (
+  value: unknown,
+): NetworkIdentityPin | null => {
+  if (value === null) {
+    return null;
+  }
+  if (!isNetworkIdentityPin(value)) {
+    throw new Error("The network identity pin store returned a malformed pin.");
+  }
+  return value;
+};
+
+/** Trust-on-first-use pins persisted by the main process. */
+const preloadIdentityPins: EndpointIdentityPins = {
+  async read(toriiUrl) {
+    return readNetworkIdentityPinResponse(
+      await ipcRenderer.invoke(NETWORK_IDENTITY_PIN_READ_CHANNEL, {
+        toriiUrl,
+      }),
+    );
+  },
+  async pinFirstUse(toriiUrl, identity) {
+    const pin = readNetworkIdentityPinResponse(
+      await ipcRenderer.invoke(NETWORK_IDENTITY_PIN_FIRST_USE_CHANNEL, {
+        toriiUrl,
+        networkId: identity.networkId,
+        networkPrefix: identity.networkPrefix,
+      }),
+    );
+    if (!pin) {
+      throw new Error(
+        "The endpoint network identity could not be pinned on first use.",
+      );
+    }
+    return pin;
+  },
+};
+
+const inspectEndpointIdentity = (input: EndpointNetworkContext) =>
+  inspectEndpoint(input, { identityPins: preloadIdentityPins });
+
+/** Pinned, two-source-verified transaction NetworkId for a write endpoint. */
+const resolveTrustedEndpointNetworkId = async (
+  input: EndpointNetworkContext,
+): Promise<NetworkId> =>
+  NetworkId.parse(
+    await resolvePinnedEndpointNetworkId(
+      {
+        toriiUrl: normalizeBaseUrl(input.toriiUrl),
+        chainId: input.chainId,
+        networkPrefix: input.networkPrefix,
+      },
+      { identityPins: preloadIdentityPins },
+    ),
+  );
+
+const confirmEndpointNetworkIdentityChange = async (input: {
+  toriiUrl: string;
+  networkId: string;
+}): Promise<NetworkIdentityPin | null> =>
+  readNetworkIdentityPinResponse(
+    await ipcRenderer.invoke(NETWORK_IDENTITY_CONFIRM_CHANGE_CHANNEL, {
+      toriiUrl: normalizeBaseUrl(input.toriiUrl),
+      networkId: input.networkId,
+    }),
+  );
+
 const assertWriteConnectionMatchesEndpoint = async (input: {
   toriiUrl: string;
   chainId: string;
@@ -4217,11 +4297,14 @@ const assertWriteConnectionMatchesEndpoint = async (input: {
   if (configuredNetworkPrefix === undefined) {
     throw new Error("networkPrefix is required before writing.");
   }
-  const inspection = await assertEndpointWriteAuthorized({
-    toriiUrl: input.toriiUrl,
-    chainId: configuredChainId,
-    networkPrefix: configuredNetworkPrefix,
-  });
+  const inspection = await assertEndpointWriteAuthorized(
+    {
+      toriiUrl: input.toriiUrl,
+      chainId: configuredChainId,
+      networkPrefix: configuredNetworkPrefix,
+    },
+    { identityPins: preloadIdentityPins },
+  );
   if (input.feature && input.operation) {
     assertEndpointFeatureOperationSupported(
       inspection,
@@ -4243,6 +4326,7 @@ const assertWriteConnectionMatchesEndpoint = async (input: {
   return {
     chainId: inspection.expected.chainId,
     networkPrefix: inspection.expected.networkPrefix,
+    networkId: NetworkId.parse(requireTrustedInspectionNetworkId(inspection)),
     endpointScope,
   };
 };
@@ -4261,14 +4345,24 @@ const assertFaucetChallengeConnectionAvailable = async (input: {
       "networkPrefix is required before requesting faucet funds.",
     );
   }
-  const inspection = await assertEndpointFaucetChallengeAvailable({
-    toriiUrl: input.toriiUrl,
-    chainId: configuredChainId,
-    networkPrefix: configuredNetworkPrefix,
-  });
+  const inspection = await assertEndpointFaucetChallengeAvailable(
+    {
+      toriiUrl: input.toriiUrl,
+      chainId: configuredChainId,
+      networkPrefix: configuredNetworkPrefix,
+    },
+    { identityPins: preloadIdentityPins },
+  );
+  const observedNetworkId = inspection.observed?.networkId;
+  if (!observedNetworkId) {
+    throw new Error(
+      "The faucet challenge requires an endpoint NetworkId attested by both public identity sources.",
+    );
+  }
   return {
     chainId: inspection.expected.chainId,
     networkPrefix: inspection.expected.networkPrefix,
+    networkId: NetworkId.parse(observedNetworkId),
   };
 };
 
@@ -6077,7 +6171,8 @@ const resolveConfidentialAssetBalance = async (input: {
   assetDefinitionId: string;
   endpointScope?: EndpointIdentityScopeInput | null;
 }): Promise<ConfidentialAssetBalanceResponse> => {
-  const networkId = resolveFirstReleaseNetworkIdForConfiguredIdentity({
+  const networkId = await resolveTrustedEndpointNetworkId({
+    toriiUrl: input.toriiUrl,
     chainId: input.chainId,
     networkPrefix: input.networkPrefix,
   });
@@ -6178,8 +6273,8 @@ const quoteAndSignInstructionTransaction = async (input: {
   nonce?: number;
 }) => {
   try {
-    const networkId = resolveFirstReleaseTransactionNetworkId({
-      toriiUrl: normalizeBaseUrl(input.toriiUrl),
+    const networkId = await resolveTrustedEndpointNetworkId({
+      toriiUrl: input.toriiUrl,
       chainId: input.chainId,
       networkPrefix: input.networkPrefix,
     });
@@ -6342,6 +6437,12 @@ const governanceRequestJson = async (
 const fetchGovernanceCapabilities = async (
   toriiUrl: string,
 ): Promise<GovernanceCapabilitiesV1> => {
+  const pin = await preloadIdentityPins.read(normalizeBaseUrl(toriiUrl));
+  if (!pin) {
+    throw new Error(
+      "Governance capabilities require a pinned endpoint network identity. Check the endpoint in Settings first.",
+    );
+  }
   const payload = await governanceRequestJson(
     toriiUrl,
     GOVERNANCE_CAPABILITIES_PATH,
@@ -6349,7 +6450,7 @@ const fetchGovernanceCapabilities = async (
   if (!payload) {
     throw new Error("Governance capabilities endpoint returned no contract.");
   }
-  return parseGovernanceCapabilitiesV1(payload);
+  return parseGovernanceCapabilitiesV1(payload, pin.networkId);
 };
 
 const assertGovernanceWriteCapabilities = async (
@@ -6366,7 +6467,6 @@ const assertGovernanceWriteCapabilities = async (
     context.chainId.trim() !== TAIRA_GOVERNANCE_CHAIN_ID ||
     (context.networkPrefix !== undefined &&
       context.networkPrefix !== capabilities.networkPrefix) ||
-    capabilities.networkId !== TAIRA_GOVERNANCE_NETWORK_ID ||
     capabilities.networkPrefix !== TAIRA_GOVERNANCE_NETWORK_PREFIX
   ) {
     throw new Error(
@@ -6532,10 +6632,7 @@ const fetchGovernanceValidationFeePolicy = async (input: {
     );
   }
   const capabilities = await fetchGovernanceCapabilities(endpoint);
-  if (
-    capabilities.networkId !== TAIRA_GOVERNANCE_NETWORK_ID ||
-    capabilities.networkPrefix !== networkPrefix
-  ) {
+  if (capabilities.networkPrefix !== networkPrefix) {
     throw new Error(
       "Validation-fee policy proof does not match the active endpoint governance identity.",
     );
@@ -6730,11 +6827,7 @@ const prepareGovernanceDecodedAction = async (input: {
     input.expectedVariant,
   );
   input.validate(decoded);
-  const networkId = resolveFirstReleaseTransactionNetworkId({
-    toriiUrl: normalizeBaseUrl(input.context.toriiUrl),
-    chainId,
-    networkPrefix: writeConnection.networkPrefix,
-  });
+  const networkId = writeConnection.networkId;
   const authentication = input.authentication;
   if (
     authentication &&
@@ -6886,11 +6979,8 @@ const prepareGovernanceProposalAction = async (
     "accountId",
     capabilities.networkPrefix,
   );
-  const networkId = resolveFirstReleaseTransactionNetworkId({
-    toriiUrl: normalizeBaseUrl(input.toriiUrl),
-    chainId: TAIRA_GOVERNANCE_CHAIN_ID,
-    networkPrefix: capabilities.networkPrefix,
-  });
+  // Capabilities were parsed against the endpoint's pinned NetworkId.
+  const networkId = NetworkId.parse(capabilities.networkId);
   if (!isPlainRecord(input.payload)) {
     throw new Error("Governance proposal payload must be an object.");
   }
@@ -7107,6 +7197,7 @@ const assertIrohaConnectWalletContext = async (
     toriiUrl: normalizeBaseUrl(context.toriiUrl),
     chainId: writeConnection.chainId,
     networkPrefix: writeConnection.networkPrefix,
+    networkId: writeConnection.networkId.toString(),
     accountId: normalizeCanonicalAccountIdLiteral(
       context.accountId,
       "accountId",
@@ -7178,6 +7269,17 @@ const api: IrohaBridge = {
     return inspectEndpointIdentity(
       requireFirstReleaseIpcInput(config, "endpointInspection"),
     );
+  },
+  async confirmEndpointNetworkIdentity(input) {
+    const { toriiUrl, networkId } = requireFirstReleaseIpcInput(
+      input,
+      "endpointNetworkIdentityConfirm",
+    );
+    const pin = await confirmEndpointNetworkIdentityChange({
+      toriiUrl,
+      networkId,
+    });
+    return { confirmed: pin !== null && pin.networkId === networkId };
   },
   async getSigningAlgorithms(config) {
     return resolveSigningAlgorithmOptions(
@@ -7849,8 +7951,8 @@ const api: IrohaBridge = {
   async getGovernanceUnlockStats(input) {
     const { toriiUrl, chainId, networkPrefix, accountId } =
       requireFirstReleaseIpcInput(input, "governanceUnlockStats");
-    const networkId = resolveFirstReleaseTransactionNetworkId({
-      toriiUrl: normalizeBaseUrl(toriiUrl),
+    const networkId = await resolveTrustedEndpointNetworkId({
+      toriiUrl,
       chainId,
       networkPrefix,
     });
@@ -8295,6 +8397,7 @@ const api: IrohaBridge = {
         accountId: normalizedAccountId,
         chainId: faucetConnection.chainId,
         networkPrefix: faucetConnection.networkPrefix,
+        networkId: faucetConnection.networkId,
         fetchImpl: nodeFetch,
         signal,
         onStatus,
@@ -8699,6 +8802,11 @@ const api: IrohaBridge = {
       "accountId",
       networkPrefix,
     );
+    const networkId = await resolveTrustedEndpointNetworkId({
+      toriiUrl,
+      chainId,
+      networkPrefix,
+    });
     const signingMaterial = await resolveSigningMaterial({
       accountId: authority,
       networkPrefix,
@@ -8713,11 +8821,7 @@ const api: IrohaBridge = {
           callId: normalizedCallId,
           auth: {
             accountId: authority,
-            networkId: resolveFirstReleaseTransactionNetworkId({
-              toriiUrl: normalizeBaseUrl(toriiUrl),
-              chainId,
-              networkPrefix,
-            }),
+            networkId,
             privateKey,
           },
           ...(afterTimestampMs === undefined

@@ -37,6 +37,7 @@ const EXPECTED_INPUT_KINDS = {
   ping: "toriiConfig",
   getChainMetadata: "toriiConfig",
   inspectEndpoint: "endpointInspection",
+  confirmEndpointNetworkIdentity: "endpointNetworkIdentityConfirm",
   getSigningAlgorithms: "toriiConfig",
   generateKeyPair: "generateKeyPair",
   storeAccountSecret: "storeAccountSecret",

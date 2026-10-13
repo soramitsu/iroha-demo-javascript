@@ -11,7 +11,7 @@ import {
   validationFeePolicyEnactmentTargetHeight,
   type GovernanceProposalIdResolver,
 } from "@/governance/model";
-import { TAIRA_NETWORK_ID } from "@/utils/firstReleaseNetworkIdentity";
+import { TEST_TAIRA_NETWORK_ID as TAIRA_NETWORK_ID } from "./helpers/networkIdentityFixture";
 
 const id = (digit: string) => digit.repeat(64);
 const OPERATOR = "testuGovernanceOperator";
@@ -153,7 +153,7 @@ describe("current governance proposal model", () => {
         ...policy(),
         network_id: `hash:${id("0").toUpperCase()}#0000`,
       }),
-    ).toThrow(/reviewed Taira NetworkId/);
+    ).toThrow(/canonical NetworkId/);
     expect(() =>
       normalizeValidationFeePolicy({
         ...policy(),

@@ -28,8 +28,12 @@ const E2E_PRIVATE_KEY_HEX =
   "1111111111111111111111111111111111111111111111111111111111111111";
 const TAIRA_TORII_URL = "https://taira.sora.org";
 const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
+// Deterministic fixture identity; the wallet derives the real NetworkId from
+// the endpoint and pins it on first use.
 const TAIRA_NETWORK_ID =
-  "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94";
+  "hash:5C3E66C94E079079FF4FC46F59810B9C4EC7B2646DD45CE937831C0FDCE20C9B#44D9";
+const TAIRA_GENESIS_HASH =
+  "5c3e66c94e079079ff4fc46f59810b9c4ec7b2646dd45ce937831c0fdce20c9b";
 const TAIRA_GOVERNANCE_ESCROW_ACCOUNT =
   "testuﾛ1NfｷgﾉﾓﾉBｦKﾌﾘﾒoﾇﾂﾛrG81ﾋjWﾎﾕVncwﾌSｱ3pﾘﾋﾉhUS9Q76";
 const XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
@@ -227,6 +231,8 @@ function buildInitScript() {
     const privateKeyHex = ${JSON.stringify(E2E_PRIVATE_KEY_HEX)};
     const toriiUrl = ${JSON.stringify(TAIRA_TORII_URL)};
     const chainId = ${JSON.stringify(TAIRA_CHAIN_ID)};
+    const tairaNetworkId = ${JSON.stringify(TAIRA_NETWORK_ID)};
+    const tairaGenesisHash = ${JSON.stringify(TAIRA_GENESIS_HASH)};
     const xorAssetDefinitionId = ${JSON.stringify(XOR_ASSET_DEFINITION_ID)};
     const xorAssetId = ${JSON.stringify(XOR_ASSET_ID)};
     const governanceFixtureAccounts = ${JSON.stringify(GOVERNANCE_FIXTURE_ACCOUNTS)};
@@ -748,20 +754,33 @@ function buildInitScript() {
           observed: {
             chainId: input.chainId,
             networkPrefix: input.networkPrefix,
+            networkId: tairaNetworkId,
+            genesisHash: tairaGenesisHash,
           },
           identityStatus: "matched",
           accessMode: "read-write",
           checkedAtMs: now(),
-          evidence: [
-            {
-              source: "chain-metadata",
+          evidence: ["account-capabilities", "genesis-block"].map(
+            (source) => ({
+              source,
               identity: {
                 chainId: input.chainId,
                 networkPrefix: input.networkPrefix,
+                networkId: tairaNetworkId,
               },
               observedAtMs: now(),
+            }),
+          ),
+          networkIdentity: {
+            state: "matches-pin",
+            pinned: {
+              networkId: tairaNetworkId,
+              networkPrefix: input.networkPrefix,
+              confirmedAtMs: now(),
+              confirmation: "first-use",
             },
-          ],
+            observedNetworkId: tairaNetworkId,
+          },
           diagnostic: {
             code: "endpoint_identity_matched",
             message: "Endpoint identity matches the deterministic fixture.",

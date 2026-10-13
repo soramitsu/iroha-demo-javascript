@@ -15,6 +15,7 @@
     "src/utils/kaigiInvite.ts",
     "src/utils/json.ts",
     "src/utils/mnemonic.ts",
+    "src/utils/networkIdentity.ts",
     "src/utils/secretLike.ts",
     "src/utils/signingAlgorithms.ts",
     "src/utils/soracloud.ts",

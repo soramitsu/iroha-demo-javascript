@@ -22,7 +22,7 @@ import {
   type ConnectPermissions,
   type ConnectPreview,
 } from "@/utils/soraswapConnectWire";
-import { TAIRA_NETWORK_ID } from "@/utils/firstReleaseNetworkIdentity";
+import { TEST_TAIRA_NETWORK_ID as TAIRA_NETWORK_ID } from "./helpers/networkIdentityFixture";
 import { deriveAccountAddressView } from "../electron/accountAddress";
 
 const ACCOUNT_A = deriveAccountAddressView({
@@ -42,6 +42,7 @@ const CONTEXT_A: IrohaConnectWalletContext = {
   toriiUrl: "https://taira.sora.org",
   chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
   networkPrefix: 369,
+  networkId: TAIRA_NETWORK_ID,
   accountId: ACCOUNT_A,
 };
 

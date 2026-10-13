@@ -130,10 +130,11 @@ describe("endpoint write boundary", () => {
       "const inspectEndpointDerivedScope",
     );
     expect(challengeConnection).toContain(
-      "assertEndpointFaucetChallengeAvailable({",
+      "assertEndpointFaucetChallengeAvailable(",
     );
+    expect(challengeConnection).toContain("identityPins: preloadIdentityPins");
     expect(challengeConnection).not.toContain(
-      "assertEndpointWriteAuthorized({",
+      "assertEndpointWriteAuthorized(",
     );
     expect(challengeConnection).not.toContain(
       "getTrustedEndpointIdentityScope(",

@@ -11,7 +11,11 @@ import {
   parseIrohaConnectUri,
   validateIrohaConnectNetworkClaim,
 } from "@/utils/irohaConnect";
-import { TAIRA_NETWORK_ID } from "@/utils/firstReleaseNetworkIdentity";
+import {
+  TEST_PREVIOUS_TAIRA_NETWORK_ID,
+  TEST_TAIRA_NETWORK_ID as TAIRA_NETWORK_ID,
+  matchedNetworkIdentity,
+} from "./helpers/networkIdentityFixture";
 
 const NETWORK_ID = NetworkId.parse(TAIRA_NETWORK_ID);
 const APP_PUBLIC_KEY = new Uint8Array(32).fill(0x31);
@@ -162,6 +166,7 @@ describe("IrohaConnect network authorization", () => {
     toriiUrl: "https://taira.sora.org",
     chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
     networkPrefix: 369,
+    networkId: TAIRA_NETWORK_ID,
   };
 
   it("binds the exact NetworkId and canonical endpoint origin to the active context", () => {
@@ -264,7 +269,7 @@ describe("IrohaConnect network authorization", () => {
     ).toThrow(expected);
   });
 
-  it("fails closed when the selected profile has no pinned NetworkId", () => {
+  it("fails closed when the active connection has no verified NetworkId", () => {
     expect(() =>
       validateIrohaConnectNetworkClaim(
         {
@@ -275,15 +280,32 @@ describe("IrohaConnect network authorization", () => {
           toriiUrl: "https://minamoto.sora.org",
           chainId: "00000000-0000-0000-0000-000000000000",
           networkPrefix: 753,
+          networkId: "",
         },
         { requireNetworkId: true, requireNode: true },
       ),
-    ).toThrow("no exact genesis-derived NetworkId pinned");
+    ).toThrow("no verified endpoint NetworkId");
+  });
+
+  it("rejects a claim for the identity the endpoint had before a reset", () => {
+    expect(() =>
+      validateIrohaConnectNetworkClaim(
+        {
+          node: activeNetwork.toriiUrl,
+          networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID,
+        },
+        activeNetwork,
+        { requireNetworkId: true, requireNode: true },
+      ),
+    ).toThrow("different NetworkId");
   });
 
   it("allows pairing only when the inspected endpoint is write-authorized and advertises Connect", () => {
     const inspection = {
       accessMode: "read-write",
+      identityStatus: "matched",
+      observed: { networkId: TAIRA_NETWORK_ID },
+      networkIdentity: matchedNetworkIdentity(),
       features: {
         irohaConnectSessions: {
           supported: true,
@@ -294,7 +316,15 @@ describe("IrohaConnect network authorization", () => {
       },
     } as unknown as EndpointInspection;
 
-    expect(() => assertIrohaConnectEndpointCanPair(inspection)).not.toThrow();
+    expect(assertIrohaConnectEndpointCanPair(inspection)).toBe(
+      TAIRA_NETWORK_ID,
+    );
+    expect(() =>
+      assertIrohaConnectEndpointCanPair({
+        ...inspection,
+        networkIdentity: matchedNetworkIdentity(TEST_PREVIOUS_TAIRA_NETWORK_ID),
+      }),
+    ).toThrow("no pinned network identity");
     expect(() =>
       assertIrohaConnectEndpointCanPair({
         ...inspection,

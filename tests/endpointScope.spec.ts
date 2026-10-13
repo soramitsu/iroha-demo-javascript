@@ -5,9 +5,14 @@ import {
   buildTrustedEndpointIdentityScope,
 } from "@/utils/endpointScope";
 import type { EndpointInspection } from "@/types/endpointInspection";
+import {
+  TEST_PREVIOUS_TAIRA_NETWORK_ID,
+  TEST_TAIRA_GENESIS_HASH,
+  TEST_TAIRA_NETWORK_ID,
+  matchedNetworkIdentity,
+} from "./helpers/networkIdentityFixture";
 
-const TAIRA_GENESIS =
-  "77fb29d14745adccfdc14350e1a6fe6a10265798cc936a1dafa7d2552ac3b9f7";
+const TAIRA_GENESIS = TEST_TAIRA_GENESIS_HASH;
 const endpoint = {
   toriiUrl: "https://TAIRA.sora.org/v1/status",
   observedChainId: "FC56984B-2BE7-431D-840E-21514D1883F0",
@@ -19,17 +24,19 @@ describe("endpoint-derived storage scope", () => {
   const inspection = (
     evidenceSources: EndpointInspection["evidence"][number]["source"][],
     identityStatus: EndpointInspection["identityStatus"] = "matched",
+    evidenceNetworkIds: string[] = [],
   ): EndpointInspection => ({
     schema: "iroha.wallet.endpoint-inspection.v1",
     toriiUrl: endpoint.toriiUrl,
     expected: {
       chainId: endpoint.observedChainId,
       networkPrefix: endpoint.observedNetworkPrefix,
-      genesisHash: endpoint.observedGenesisHash,
+      networkId: TEST_TAIRA_NETWORK_ID,
     },
     observed: {
       chainId: endpoint.observedChainId,
       networkPrefix: endpoint.observedNetworkPrefix,
+      networkId: TEST_TAIRA_NETWORK_ID,
       genesisHash: endpoint.observedGenesisHash,
     },
     identityStatus,
@@ -40,10 +47,11 @@ describe("endpoint-derived storage scope", () => {
       identity: {
         chainId: endpoint.observedChainId,
         networkPrefix: endpoint.observedNetworkPrefix,
-        genesisHash: endpoint.observedGenesisHash,
+        networkId: evidenceNetworkIds[index] ?? TEST_TAIRA_NETWORK_ID,
       },
       observedAtMs: index + 1,
     })),
+    networkIdentity: matchedNetworkIdentity(),
     features: {} as EndpointInspection["features"],
     diagnostic: {
       code:
@@ -139,10 +147,10 @@ describe("endpoint-derived storage scope", () => {
     ).toThrow("64 lowercase hexadecimal characters");
   });
 
-  it("trusts only authoritative identity plus genesis evidence", () => {
+  it("trusts only agreeing capabilities plus genesis-block evidence", () => {
     expect(
       buildTrustedEndpointIdentityScope(
-        inspection(["chain-metadata", "genesis-fingerprint"]),
+        inspection(["account-capabilities", "genesis-block"]),
       ),
     ).toMatchObject({
       chainId: endpoint.observedChainId,
@@ -150,22 +158,30 @@ describe("endpoint-derived storage scope", () => {
       genesisHash: TAIRA_GENESIS,
     });
     expect(
-      buildTrustedEndpointIdentityScope(inspection(["chain-metadata"])),
+      buildTrustedEndpointIdentityScope(inspection(["account-capabilities"])),
     ).toBeNull();
     expect(
       buildTrustedEndpointIdentityScope(
-        inspection(["response-headers", "response-headers"]),
+        inspection(["account-capabilities", "account-capabilities"]),
       ),
     ).toBeNull();
   });
 
-  it("refuses a single header observation and conflicting identity evidence", () => {
+  it("refuses a single source, disagreeing sources, and conflicting evidence", () => {
     expect(
-      buildTrustedEndpointIdentityScope(inspection(["response-headers"])),
+      buildTrustedEndpointIdentityScope(inspection(["genesis-block"])),
     ).toBeNull();
     expect(
       buildTrustedEndpointIdentityScope(
-        inspection(["chain-metadata"], "conflicting"),
+        inspection(["account-capabilities", "genesis-block"], "matched", [
+          TEST_TAIRA_NETWORK_ID,
+          TEST_PREVIOUS_TAIRA_NETWORK_ID,
+        ]),
+      ),
+    ).toBeNull();
+    expect(
+      buildTrustedEndpointIdentityScope(
+        inspection(["account-capabilities", "genesis-block"], "conflicting"),
       ),
     ).toBeNull();
   });

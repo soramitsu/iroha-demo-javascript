@@ -6,16 +6,19 @@ import {
   governanceCapabilitiesContractFingerprintV1,
   parseGovernanceCapabilitiesV1,
   TAIRA_GOVERNANCE_ESCROW_ACCOUNT,
-  TAIRA_GOVERNANCE_NETWORK_ID,
   TAIRA_GOVERNANCE_PRIVATE_BALLOT_BOUNDS,
   TAIRA_GOVERNANCE_TARGET_BODY_SIZES,
   TAIRA_GOVERNANCE_XOR_ASSET_ID,
 } from "../electron/governanceCapabilities";
+import {
+  TEST_PREVIOUS_TAIRA_NETWORK_ID,
+  TEST_TAIRA_NETWORK_ID,
+} from "./helpers/networkIdentityFixture";
 
 const capabilities = () => ({
   schema: "iroha.governance.capabilities.v1",
   version: 1,
-  network_id: TAIRA_GOVERNANCE_NETWORK_ID,
+  network_id: TEST_TAIRA_NETWORK_ID,
   current_height: "42000",
   network_prefix: "369",
   abi_version: "1",
@@ -53,8 +56,10 @@ const capabilities = () => ({
 
 describe("current Taira governance capabilities", () => {
   it("accepts the exact NetworkId, private Parliament protocol, and resource contract", () => {
-    expect(parseGovernanceCapabilitiesV1(capabilities())).toMatchObject({
-      networkId: TAIRA_GOVERNANCE_NETWORK_ID,
+    expect(
+      parseGovernanceCapabilitiesV1(capabilities(), TEST_TAIRA_NETWORK_ID),
+    ).toMatchObject({
+      networkId: TEST_TAIRA_NETWORK_ID,
       currentHeight: "42000",
       networkPrefix: 369,
       abiVersion: 1,
@@ -73,31 +78,35 @@ describe("current Taira governance capabilities", () => {
 
   it("rejects unknown fields, aliases, accessors, and non-plain objects", () => {
     expect(() =>
-      parseGovernanceCapabilitiesV1({
-        ...capabilities(),
-        chain_id: "retired",
-      }),
+      parseGovernanceCapabilitiesV1(
+        {
+          ...capabilities(),
+          chain_id: "retired",
+        },
+        TEST_TAIRA_NETWORK_ID,
+      ),
     ).toThrow(/missing or unknown fields/);
 
     const aliased = capabilities() as Record<string, unknown>;
     aliased.networkId = aliased.network_id;
     delete aliased.network_id;
-    expect(() => parseGovernanceCapabilitiesV1(aliased)).toThrow(
-      /missing or unknown fields/,
-    );
+    expect(() =>
+      parseGovernanceCapabilitiesV1(aliased, TEST_TAIRA_NETWORK_ID),
+    ).toThrow(/missing or unknown fields/);
 
     const accessor = capabilities();
     Object.defineProperty(accessor, "current_height", {
       enumerable: true,
       get: () => "42000",
     });
-    expect(() => parseGovernanceCapabilitiesV1(accessor)).toThrow(
-      /JSON data fields/,
-    );
+    expect(() =>
+      parseGovernanceCapabilitiesV1(accessor, TEST_TAIRA_NETWORK_ID),
+    ).toThrow(/JSON data fields/);
 
     expect(() =>
       parseGovernanceCapabilitiesV1(
         Object.assign(Object.create({ inherited: true }), capabilities()),
+        TEST_TAIRA_NETWORK_ID,
       ),
     ).toThrow(/plain object/);
   });
@@ -120,10 +129,13 @@ describe("current Taira governance capabilities", () => {
       "parliament_quorum_bps",
     ]) {
       expect(() =>
-        parseGovernanceCapabilitiesV1({
-          ...capabilities(),
-          [field]: null,
-        }),
+        parseGovernanceCapabilitiesV1(
+          {
+            ...capabilities(),
+            [field]: null,
+          },
+          TEST_TAIRA_NETWORK_ID,
+        ),
       ).toThrow(/missing or unknown fields/);
     }
   });
@@ -179,7 +191,9 @@ describe("current Taira governance capabilities", () => {
     ];
 
     for (const candidate of candidates) {
-      expect(() => parseGovernanceCapabilitiesV1(candidate)).toThrow();
+      expect(() =>
+        parseGovernanceCapabilitiesV1(candidate, TEST_TAIRA_NETWORK_ID),
+      ).toThrow();
     }
   });
 
@@ -216,18 +230,27 @@ describe("current Taira governance capabilities", () => {
   });
 
   it("fingerprints all immutable fields without binding moving height or set order", () => {
-    const reviewed = parseGovernanceCapabilitiesV1(capabilities());
-    const nextHeight = parseGovernanceCapabilitiesV1({
-      ...capabilities(),
-      current_height: "42001",
-    });
-    const reorderedSets = parseGovernanceCapabilitiesV1({
-      ...capabilities(),
-      supported_proposal_kinds: [
-        ...GOVERNANCE_REQUIRED_PROPOSAL_KINDS,
-      ].reverse(),
-      supported_routes: [...GOVERNANCE_REQUIRED_ROUTES].reverse(),
-    });
+    const reviewed = parseGovernanceCapabilitiesV1(
+      capabilities(),
+      TEST_TAIRA_NETWORK_ID,
+    );
+    const nextHeight = parseGovernanceCapabilitiesV1(
+      {
+        ...capabilities(),
+        current_height: "42001",
+      },
+      TEST_TAIRA_NETWORK_ID,
+    );
+    const reorderedSets = parseGovernanceCapabilitiesV1(
+      {
+        ...capabilities(),
+        supported_proposal_kinds: [
+          ...GOVERNANCE_REQUIRED_PROPOSAL_KINDS,
+        ].reverse(),
+        supported_routes: [...GOVERNANCE_REQUIRED_ROUTES].reverse(),
+      },
+      TEST_TAIRA_NETWORK_ID,
+    );
     const driftedContract = {
       ...reviewed,
       privateBallotProtocol: "DIFFERENT_PRIVATE_PROTOCOL",
@@ -251,5 +274,13 @@ describe("current Taira governance capabilities", () => {
     expect(governanceCapabilitiesContractFingerprintV1(driftedBounds)).not.toBe(
       fingerprint,
     );
+  });
+  it("binds capabilities to the endpoint's pinned NetworkId", () => {
+    expect(() =>
+      parseGovernanceCapabilitiesV1(
+        capabilities(),
+        TEST_PREVIOUS_TAIRA_NETWORK_ID,
+      ),
+    ).toThrow("pinned NetworkId");
   });
 });

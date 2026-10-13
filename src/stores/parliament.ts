@@ -47,10 +47,8 @@ import { parseJsonWithoutDuplicateObjectKeys } from "@/utils/json";
 import { resolveGovernanceBondBalance } from "@/utils/parliament";
 import { compareDecimalStrings } from "@/utils/staking";
 import { assertFinalizedSubmissionResult } from "@/utils/transactionFinality";
-import {
-  TAIRA_CHAIN_ID,
-  TAIRA_NETWORK_ID,
-} from "@/utils/firstReleaseNetworkIdentity";
+import { TAIRA_CHAIN_ID } from "@/utils/firstReleaseNetworkIdentity";
+import { trustedNetworkIdFromInspection } from "@/utils/networkIdentity";
 
 export type GovernanceCatalogFilter = "open" | "all" | "mine";
 export type GovernanceBusyAction =
@@ -78,7 +76,8 @@ const MAX_PAYOUT_BINDING_JSON_BYTES = 16 * 1024;
 
 const emptyValidationFeePolicy = (): ValidationFeePolicyPayload => ({
   schema_version: 1,
-  network_id: TAIRA_NETWORK_ID,
+  // Filled from the endpoint's pinned NetworkId once capabilities load.
+  network_id: "",
   policy_version: "1",
   previous_policy_hash: null,
   ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,
@@ -239,7 +238,9 @@ export const useParliamentStore = defineStore("parliament", () => {
       !endpointGovernanceWriteError.value &&
       capabilitiesContextKey.value === currentContextKey.value &&
       chainId.value === TAIRA_CHAIN_ID &&
-      capabilities.value?.networkId === TAIRA_NETWORK_ID &&
+      capabilities.value !== null &&
+      capabilities.value.networkId ===
+        trustedNetworkIdFromInspection(endpointStore.inspection) &&
       capabilities.value.networkPrefix === networkPrefix.value &&
       capabilities.value.mandatoryPrivateBallots === true &&
       capabilities.value.proposalBackedReferendumBallotsSupported === false &&
@@ -372,7 +373,7 @@ export const useParliamentStore = defineStore("parliament", () => {
       : null;
     return {
       ...validationFeeComposer.value,
-      network_id: TAIRA_NETWORK_ID,
+      network_id: capabilities.value?.networkId ?? "",
       ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,
       ds_scale: 2,
       exemption_classes: payoutBinding ? ["TREASURY_PAYOUT"] : [],
@@ -463,7 +464,8 @@ export const useParliamentStore = defineStore("parliament", () => {
         if (!isCurrent(key, generation)) return null;
         if (
           request.chainId !== TAIRA_CHAIN_ID ||
-          loaded.networkId !== TAIRA_NETWORK_ID ||
+          loaded.networkId !==
+            trustedNetworkIdFromInspection(endpointStore.inspection) ||
           loaded.networkPrefix !== request.networkPrefix ||
           !loaded.mandatoryPrivateBallots ||
           loaded.proposalBackedReferendumBallotsSupported
@@ -476,7 +478,7 @@ export const useParliamentStore = defineStore("parliament", () => {
         capabilitiesContextKey.value = key;
         validationFeeComposer.value = {
           ...validationFeeComposer.value,
-          network_id: TAIRA_NETWORK_ID,
+          network_id: capabilities.value?.networkId ?? "",
           ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,
           ds_scale: 2,
           fee: "0.1",
@@ -661,7 +663,7 @@ export const useParliamentStore = defineStore("parliament", () => {
     );
     validationFeeComposer.value = {
       ...validationFeeComposer.value,
-      network_id: TAIRA_NETWORK_ID,
+      network_id: capabilities.value?.networkId ?? "",
       policy_version: headVersion ? nextU64(headVersion) : "1",
       previous_policy_hash: headHash,
       ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,

@@ -5,7 +5,7 @@ import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import GovernanceProposalDetail from "@/components/governance/GovernanceProposalDetail.vue";
 import type { GovernanceProposalDetail as ProposalDetail } from "@/governance/model";
-import { TAIRA_NETWORK_ID } from "@/utils/firstReleaseNetworkIdentity";
+import { TEST_TAIRA_NETWORK_ID as TAIRA_NETWORK_ID } from "./helpers/networkIdentityFixture";
 
 const source = (path: string) =>
   readFileSync(resolve(process.cwd(), path), "utf8");

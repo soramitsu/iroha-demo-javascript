@@ -133,10 +133,28 @@
           <dd>{{ accessModeLabel }}</dd>
         </div>
         <div>
-          <dt>{{ t("Observed chain") }}</dt>
-          <dd class="mono" translate="no">
+          <dt>{{ t("Observed network ID") }}</dt>
+          <dd
+            class="mono"
+            translate="no"
+            data-testid="endpoint-observed-network-id"
+          >
             {{
-              endpointStore.inspection.observed?.chainId || t("Not observed")
+              endpointStore.inspection.networkIdentity.observedNetworkId ||
+              t("Not observed")
+            }}
+          </dd>
+        </div>
+        <div>
+          <dt>{{ t("Trusted network ID") }}</dt>
+          <dd
+            class="mono"
+            translate="no"
+            data-testid="endpoint-pinned-network-id"
+          >
+            {{
+              endpointStore.inspection.networkIdentity.pinned?.networkId ||
+              t("Not pinned")
             }}
           </dd>
         </div>
@@ -165,6 +183,24 @@
       >
         {{ endpointStore.inspection.diagnostic.message }}
       </p>
+      <div
+        v-if="networkIdentityChanged"
+        class="settings-identity-change"
+        data-testid="endpoint-identity-change"
+      >
+        <button
+          type="button"
+          :disabled="confirmingIdentity"
+          data-testid="endpoint-identity-confirm"
+          @click="handleConfirmNetworkIdentity"
+        >
+          {{
+            confirmingIdentity
+              ? t("Checking…")
+              : t("Trust new network identity")
+          }}
+        </button>
+      </div>
       <section
         v-if="endpointStore.inspection"
         class="settings-feature-inventory"
@@ -218,7 +254,10 @@
 import { computed, ref, watch } from "vue";
 import { CHAIN_PRESETS, DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import { useAppI18n } from "@/composables/useAppI18n";
-import { inspectEndpoint } from "@/services/iroha";
+import {
+  confirmEndpointNetworkIdentity,
+  inspectEndpoint,
+} from "@/services/iroha";
 import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
 import { normalizeEndpointUrl } from "@/utils/endpoint";
@@ -232,6 +271,7 @@ const defaultEndpoint = DEFAULT_CHAIN_PRESET.connection.toriiUrl;
 const endpointDraft = ref(session.connection.toriiUrl || defaultEndpoint);
 const endpointInputRef = ref<HTMLInputElement | null>(null);
 const checkingEndpoint = ref(false);
+const confirmingIdentity = ref(false);
 const statusMessage = ref("");
 const errorMessage = ref("");
 let candidateInspectionGeneration = 0;
@@ -257,6 +297,11 @@ const accessModeLabel = computed(() => {
       return t("Not observed");
   }
 });
+const networkIdentityChanged = computed(
+  () =>
+    endpointStore.inspection?.identityStatus === "changed" &&
+    Boolean(endpointStore.inspection.networkIdentity.observedNetworkId),
+);
 const lastCheckedLabel = computed(() => {
   const checkedAtMs = endpointStore.inspection?.checkedAtMs;
   return checkedAtMs
@@ -411,6 +456,37 @@ const handleResetEndpoint = () => {
   statusMessage.value = t("Default endpoint restored.");
 };
 
+const handleConfirmNetworkIdentity = async () => {
+  const inspection = endpointStore.inspection;
+  const networkId = inspection?.networkIdentity.observedNetworkId;
+  if (!inspection || !networkId || confirmingIdentity.value) {
+    return;
+  }
+  clearMessages();
+  confirmingIdentity.value = true;
+  try {
+    const result = await confirmEndpointNetworkIdentity({
+      toriiUrl: inspection.toriiUrl,
+      networkId,
+    });
+    await endpointStore.inspect({
+      toriiUrl: session.connection.toriiUrl,
+      chainId: session.connection.chainId,
+      networkPrefix: session.connection.networkPrefix,
+    });
+    statusMessage.value = result.confirmed
+      ? t("Network identity trusted.")
+      : t("Network identity left blocked.");
+  } catch (error) {
+    errorMessage.value = formatEndpointError(
+      error,
+      t("Unable to inspect endpoint identity."),
+    );
+  } finally {
+    confirmingIdentity.value = false;
+  }
+};
+
 const handleCheckAndSaveEndpoint = async () => {
   clearMessages();
   let endpoint: string;
@@ -466,6 +542,11 @@ const handleCheckAndSaveEndpoint = async () => {
 </script>
 
 <style scoped>
+.settings-identity-change {
+  display: flex;
+  justify-content: flex-start;
+}
+
 .settings-shell {
   position: relative;
   z-index: 1;

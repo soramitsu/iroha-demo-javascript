@@ -1,10 +1,6 @@
-import { parseGovernanceCapabilitiesV1 } from "./governanceCapabilities";
-import { parseRetryAfterMs, withBoundedHttpGetRetry } from "./httpReadRetry";
 import { nodeFetch } from "./nodeFetch";
-import {
-  normalizeChainMetadata,
-  parseFirstReleaseChainMetadataPayload,
-} from "../src/utils/chainMetadata";
+import { parseRetryAfterMs, withBoundedHttpGetRetry } from "./httpReadRetry";
+import { normalizeChainMetadata } from "../src/utils/chainMetadata";
 import { normalizeEndpointUrl } from "../src/utils/endpoint";
 import {
   canAttemptFaucetIdentityChallenge,
@@ -23,6 +19,7 @@ import type {
   EndpointIdentityEvidence,
   EndpointInspection,
   EndpointNetworkContext,
+  EndpointNetworkIdentity,
 } from "../src/types/endpointInspection";
 import {
   getTrustedEndpointIdentityScopeInput,
@@ -31,17 +28,38 @@ import {
 import { readBoundedJsonResponse } from "./boundedJsonResponse";
 import {
   TAIRA_CHAIN_ID,
-  TAIRA_GENESIS_HASH,
   TAIRA_NETWORK_PREFIX,
   TAIRA_TORII_URL,
 } from "../src/utils/firstReleaseNetworkIdentity";
+import {
+  pinMatchesIdentity,
+  type NetworkIdentityPin,
+  type ObservedNetworkIdentity,
+} from "../src/utils/networkIdentity";
+import {
+  discoverEndpointNetworkIdentity,
+  type NetworkIdentityDiscovery,
+} from "./networkIdentityDiscovery";
 
 type FetchLike = (
   input: Parameters<typeof fetch>[0],
   init?: RequestInit,
 ) => Promise<Response>;
 
-type EndpointInspectorOptions = {
+/**
+ * Persisted trust-on-first-use identities. The preload implementation is
+ * backed by the main process; tests use an in-memory map.
+ */
+export type EndpointIdentityPins = {
+  read(toriiUrl: string): Promise<NetworkIdentityPin | null>;
+  pinFirstUse(
+    toriiUrl: string,
+    identity: ObservedNetworkIdentity,
+  ): Promise<NetworkIdentityPin>;
+};
+
+export type EndpointInspectorOptions = {
+  identityPins: EndpointIdentityPins;
   fetchImpl?: FetchLike;
   now?: () => number;
   timeoutMs?: number;
@@ -49,14 +67,13 @@ type EndpointInspectorOptions = {
 
 type ProbeResult = {
   reachedEndpoint: boolean;
-  evidence: EndpointIdentityEvidence[];
   openApiOperations?: string[];
 };
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 const MAX_TIMEOUT_MS = 60_000;
-const ENDPOINT_PROBE_CONCURRENCY = 2;
-const MAX_ENDPOINT_INSPECTION_JSON_BYTES = 4 * 1024 * 1024;
+// The public Torii OpenAPI document is ~4 MiB and keeps growing.
+const MAX_ENDPOINT_INSPECTION_JSON_BYTES = 8 * 1024 * 1024;
 const HTTP_DISCOVERY_METHODS = [
   "get",
   "post",
@@ -73,25 +90,29 @@ const FINALIZED_TRANSACTION_EVIDENCE_OPERATIONS = [
   "GET /v1/explorer/metrics",
 ] as const;
 
+/**
+ * Only these exact HTTPS origin/profile pairs can become write-authorized.
+ * Their transaction-binding NetworkId is not pinned here: it is derived from
+ * the endpoint at connection time and pinned per endpoint on first use.
+ */
 const FIRST_RELEASE_WRITE_PROFILES = Object.freeze([
   Object.freeze({
     toriiUrl: TAIRA_TORII_URL,
     chainId: TAIRA_CHAIN_ID,
     networkPrefix: TAIRA_NETWORK_PREFIX,
-    genesisHash: TAIRA_GENESIS_HASH,
   }),
 ]);
 
-const getPinnedFirstReleaseWriteProfile = (
+const isFirstReleaseWriteProfile = (
   toriiUrl: string,
   expected: EndpointChainIdentity,
-): (typeof FIRST_RELEASE_WRITE_PROFILES)[number] | null =>
-  FIRST_RELEASE_WRITE_PROFILES.find(
+): boolean =>
+  FIRST_RELEASE_WRITE_PROFILES.some(
     (profile) =>
       toriiUrl === profile.toriiUrl &&
       expected.chainId === profile.chainId &&
       expected.networkPrefix === profile.networkPrefix,
-  ) ?? null;
+  );
 
 const FEATURE_OPERATION_REQUIREMENTS: Record<
   EndpointFeature,
@@ -109,10 +130,11 @@ const FEATURE_OPERATION_REQUIREMENTS: Record<
     ...FINALIZED_TRANSACTION_EVIDENCE_OPERATIONS,
   ],
   faucetClaim: [
+    "GET /v1/accounts/faucet/policy",
     "GET /v1/accounts/faucet/puzzle",
+    "POST /v1/accounts/faucet/prepare",
     "POST /v1/accounts/faucet",
-    "GET /v1/sumeragi/status",
-    ...FINALIZED_TRANSACTION_EVIDENCE_OPERATIONS,
+    "GET /v1/pipeline/transactions/status",
   ],
   kaigiMeetings: [
     "POST /v1/fees/quote",
@@ -170,59 +192,6 @@ const FEATURE_OPERATION_REQUIREMENTS: Record<
   irohaConnectSessions: ["POST /v1/connect/session"],
 };
 
-// This is a deny-only fingerprint for the archived deployment currently served
-// by the public Taira hostname. It must never be used to authorize a write.
-const BLOCKED_DEPLOYMENT_FINGERPRINTS: ReadonlyArray<{
-  genesisHash: string;
-  identity: EndpointChainIdentity;
-}> = [
-  {
-    genesisHash:
-      "cc62233ac63ec4131207a35c28b84d5fb22f0c954bd7b2d0f2edc50541117121",
-    identity: {
-      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
-      networkPrefix: 369,
-      genesisHash:
-        "cc62233ac63ec4131207a35c28b84d5fb22f0c954bd7b2d0f2edc50541117121",
-    },
-  },
-];
-
-const readCanonicalHash = (value: unknown): string | null =>
-  typeof value === "string" && /^[0-9a-f]{64}$/u.test(value) ? value : null;
-
-const readHeaderIdentity = (
-  response: Response,
-): EndpointChainIdentity | null => {
-  const chainId = response.headers.get("x-iroha-chain-id");
-  const networkPrefixLiteral = response.headers.get("x-iroha-network-prefix");
-  if (
-    chainId === null ||
-    networkPrefixLiteral === null ||
-    !/^(?:0|[1-9]\d{0,4})$/u.test(networkPrefixLiteral)
-  ) {
-    return null;
-  }
-  try {
-    return normalizeChainMetadata({
-      chainId,
-      networkPrefix: Number(networkPrefixLiteral),
-    });
-  } catch {
-    return null;
-  }
-};
-
-const evidenceFor = (
-  source: EndpointIdentityEvidence["source"],
-  identity: EndpointChainIdentity,
-  observedAtMs: number,
-): EndpointIdentityEvidence => ({
-  source,
-  identity,
-  observedAtMs,
-});
-
 const fetchWithTimeout = async (
   fetchImpl: FetchLike,
   endpoint: string,
@@ -265,27 +234,6 @@ const fetchWithTimeout = async (
   } finally {
     clearTimeout(timeout);
   }
-};
-
-const runEndpointProbes = async (
-  probes: Array<() => Promise<ProbeResult>>,
-): Promise<ProbeResult[]> => {
-  const results = new Array<ProbeResult>(probes.length);
-  let nextProbe = 0;
-  const worker = async () => {
-    while (nextProbe < probes.length) {
-      const index = nextProbe;
-      nextProbe += 1;
-      results[index] = await probes[index]();
-    }
-  };
-  await Promise.all(
-    Array.from(
-      { length: Math.min(ENDPOINT_PROBE_CONCURRENCY, probes.length) },
-      () => worker(),
-    ),
-  );
-  return results;
 };
 
 const parseJsonResponse = async (response: Response): Promise<unknown> => {
@@ -861,17 +809,16 @@ const probeOpenApi = async (
       timeoutMs,
     );
     if (!response.ok) {
-      return { reachedEndpoint: true, evidence: [] };
+      return { reachedEndpoint: true };
     }
     return {
       reachedEndpoint: true,
-      evidence: [],
       openApiOperations: readOpenApiOperations(
         await parseJsonResponse(response),
       ),
     };
   } catch {
-    return { reachedEndpoint: false, evidence: [] };
+    return { reachedEndpoint: false };
   }
 };
 
@@ -905,191 +852,54 @@ const featureMapFor = (
   ) as EndpointFeatureMap;
 };
 
-const probeGovernanceCapabilities = async (
-  baseUrl: string,
-  fetchImpl: FetchLike,
-  timeoutMs: number,
-  observedAtMs: number,
-): Promise<ProbeResult> => {
-  let response: Response;
-  try {
-    response = await fetchWithTimeout(
-      fetchImpl,
-      `${baseUrl}/v1/gov/capabilities`,
-      timeoutMs,
-    );
-  } catch {
-    return { reachedEndpoint: false, evidence: [] };
-  }
-  if (!response.ok) {
-    return { reachedEndpoint: true, evidence: [] };
-  }
-  try {
-    const payload = await parseJsonResponse(response);
-    const capabilities = parseGovernanceCapabilitiesV1(payload);
-    return {
-      reachedEndpoint: true,
-      evidence: [
-        evidenceFor(
-          "governance-capabilities-v1",
-          {
-            chainId: TAIRA_CHAIN_ID,
-            networkPrefix: capabilities.networkPrefix,
-            genesisHash: TAIRA_GENESIS_HASH,
-          },
-          observedAtMs,
-        ),
-      ],
-    };
-  } catch {
-    return { reachedEndpoint: true, evidence: [] };
-  }
-};
-
-const probeChainMetadata = async (
-  baseUrl: string,
-  fetchImpl: FetchLike,
-  timeoutMs: number,
-  observedAtMs: number,
-): Promise<ProbeResult> => {
-  try {
-    const response = await fetchWithTimeout(
-      fetchImpl,
-      `${baseUrl}/v1/chain/metadata`,
-      timeoutMs,
-    );
-    const evidence: EndpointIdentityEvidence[] = [];
-    const headerIdentity = readHeaderIdentity(response);
-    if (headerIdentity) {
-      evidence.push(
-        evidenceFor("response-headers", headerIdentity, observedAtMs),
-      );
-    }
-    if (response.ok) {
-      const payload = await parseJsonResponse(response);
-      try {
-        const payloadIdentity = parseFirstReleaseChainMetadataPayload(payload);
-        evidence.push(
-          evidenceFor("chain-metadata", payloadIdentity, observedAtMs),
-        );
-      } catch {
-        // Invalid or drifted metadata is not identity evidence.
-      }
-    }
-    return { reachedEndpoint: true, evidence };
-  } catch {
-    return { reachedEndpoint: false, evidence: [] };
-  }
-};
-
-const probeGenesisFingerprint = async (
-  baseUrl: string,
-  fetchImpl: FetchLike,
-  timeoutMs: number,
-  observedAtMs: number,
-  pinnedWriteProfile: (typeof FIRST_RELEASE_WRITE_PROFILES)[number] | null,
-): Promise<ProbeResult> => {
-  try {
-    const response = await fetchWithTimeout(
-      fetchImpl,
-      `${baseUrl}/v1/explorer/blocks/1`,
-      timeoutMs,
-    );
-    if (!response.ok) {
-      return { reachedEndpoint: true, evidence: [] };
-    }
-    const payload = await parseJsonResponse(response);
-    const record =
-      payload && typeof payload === "object" && !Array.isArray(payload)
-        ? (payload as Record<string, unknown>)
-        : null;
-    const genesisHash = readCanonicalHash(record?.hash);
-    const blocked = BLOCKED_DEPLOYMENT_FINGERPRINTS.find(
-      (entry) => entry.genesisHash === genesisHash,
-    );
-    const identity = blocked
-      ? blocked.identity
-      : genesisHash && pinnedWriteProfile
-        ? {
-            chainId: pinnedWriteProfile.chainId,
-            networkPrefix: pinnedWriteProfile.networkPrefix,
-            genesisHash,
-          }
-        : null;
-    return {
-      reachedEndpoint: true,
-      evidence: identity
-        ? [
-            evidenceFor(
-              blocked
-                ? "blocked-deployment-fingerprint"
-                : "genesis-fingerprint",
-              identity,
-              observedAtMs,
-            ),
-          ]
-        : [],
-    };
-  } catch {
-    return { reachedEndpoint: false, evidence: [] };
-  }
-};
-
-const identitiesConflict = (evidence: EndpointIdentityEvidence[]) => {
-  if (evidence.length < 2) {
-    return false;
-  }
-  const first = evidence[0].identity;
-  return evidence.slice(1).some(({ identity }) => {
-    if (
-      identity.chainId !== first.chainId ||
-      identity.networkPrefix !== first.networkPrefix
-    ) {
-      return true;
-    }
-    return Boolean(
-      identity.genesisHash &&
-        first.genesisHash &&
-        identity.genesisHash !== first.genesisHash,
-    );
-  });
-};
-
 const diagnosticFor = (input: {
   status: EndpointInspection["identityStatus"];
   expected: EndpointChainIdentity;
   observed: EndpointChainIdentity | null;
-  pinnedWriteProfile: boolean;
+  writeProfile: boolean;
+  discovery: NetworkIdentityDiscovery | null;
+  networkIdentity: EndpointNetworkIdentity;
+  pinError: string | null;
 }): EndpointDiagnostic => {
   switch (input.status) {
     case "matched":
       return {
         code: "endpoint_identity_matched",
-        message: "Endpoint identity matches the configured network.",
+        message:
+          input.networkIdentity.state === "pinned-now"
+            ? `Endpoint identity verified and pinned on first use: ${input.observed?.networkId ?? "unknown"}.`
+            : `Endpoint identity matches the pinned network ${input.observed?.networkId ?? "unknown"}.`,
       };
     case "mismatched":
       return {
         code: "endpoint_identity_mismatch",
-        message: `Endpoint reports chain "${input.observed?.chainId ?? "unknown"}" with network prefix "${input.observed?.networkPrefix ?? "unknown"}", but the wallet is configured for chain "${input.expected.chainId}" with network prefix "${input.expected.networkPrefix}". Reads remain available; writes are blocked.`,
+        message: `Endpoint reports network prefix "${input.observed?.networkPrefix ?? "unknown"}", but the wallet is configured for network prefix "${input.expected.networkPrefix}". Reads remain available; writes are blocked.`,
       };
-    case "blocked":
+    case "changed":
       return {
-        code: "endpoint_deployment_blocked",
-        message:
-          "This endpoint is a known archived deployment. Reads remain available; writes are blocked even when its archived identity is selected.",
+        code: "endpoint_identity_changed",
+        message: `This endpoint now reports network ${input.networkIdentity.observedNetworkId ?? "unknown"}, but this wallet trusted ${input.networkIdentity.pinned?.networkId ?? "unknown"} for it. The network was probably reset. Reads remain available; writes are blocked until you confirm the new network identity in Settings.`,
       };
     case "conflicting":
       return {
         code: "endpoint_identity_conflict",
         message:
-          "Endpoint identity sources disagree. Reads remain available; writes are blocked.",
+          `Endpoint network identity sources disagree. ${input.discovery?.status === "conflicting" ? input.discovery.detail : ""} Reads remain available; writes are blocked.`.replace(
+            /\s+/gu,
+            " ",
+          ),
       };
     case "unverified":
       return {
         code: "endpoint_identity_unverified",
-        message: input.pinnedWriteProfile
-          ? "Endpoint did not provide an exact matching chain identity projection. Reads remain available; writes are blocked."
-          : "This endpoint is not a release-pinned write target. Reads remain available; writes are blocked even if the endpoint self-reports the configured chain identity.",
+        message: input.pinError
+          ? `Endpoint network identity could not be pinned: ${input.pinError} Reads remain available; writes are blocked.`
+          : !input.writeProfile
+            ? "This endpoint is not a release write target. Reads remain available; writes are blocked even if the endpoint reports a valid network identity."
+            : `Endpoint did not provide an agreeing network identity. ${input.discovery && input.discovery.status !== "verified" ? input.discovery.detail : ""} Reads remain available; writes are blocked.`.replace(
+                /\s+/gu,
+                " ",
+              ),
       };
     case "unreachable":
       return {
@@ -1100,9 +910,56 @@ const diagnosticFor = (input: {
   }
 };
 
+const evidenceFromDiscovery = (
+  discovery: NetworkIdentityDiscovery,
+  expected: EndpointChainIdentity,
+  observedAtMs: number,
+): EndpointIdentityEvidence[] => {
+  const evidence: EndpointIdentityEvidence[] = [];
+  const capabilities = discovery.capabilities;
+  if (capabilities.reached && capabilities.identity) {
+    evidence.push({
+      source: "account-capabilities",
+      identity: {
+        chainId: expected.chainId,
+        networkPrefix:
+          capabilities.identity.networkPrefix ?? expected.networkPrefix,
+        networkId: capabilities.identity.networkId,
+      },
+      observedAtMs,
+    });
+  }
+  const genesis = discovery.genesis;
+  if (genesis.reached && genesis.identity) {
+    evidence.push({
+      // The genesis block attests only the NetworkId, not the I105 prefix.
+      source: "genesis-block",
+      identity: {
+        chainId: expected.chainId,
+        networkPrefix: expected.networkPrefix,
+        networkId: genesis.identity.networkId,
+      },
+      observedAtMs,
+    });
+  }
+  return evidence;
+};
+
+const pinView = (
+  pin: NetworkIdentityPin | null,
+): EndpointNetworkIdentity["pinned"] =>
+  pin
+    ? {
+        networkId: pin.networkId,
+        networkPrefix: pin.networkPrefix,
+        confirmedAtMs: pin.confirmedAtMs,
+        confirmation: pin.confirmation,
+      }
+    : null;
+
 export const inspectEndpoint = async (
   input: EndpointNetworkContext,
-  options: EndpointInspectorOptions = {},
+  options: EndpointInspectorOptions,
 ): Promise<EndpointInspection> => {
   const toriiUrl = normalizeEndpointUrl(input.toriiUrl);
   const configuredExpected = normalizeChainMetadata({
@@ -1113,6 +970,11 @@ export const inspectEndpoint = async (
   const observedAtMs = now();
   const fetchImpl = options.fetchImpl ?? nodeFetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  if (!options.identityPins) {
+    throw new TypeError(
+      "Endpoint inspection requires a network identity pin store.",
+    );
+  }
   if (!Number.isSafeInteger(observedAtMs) || observedAtMs < 0) {
     throw new TypeError(
       "Endpoint inspection clock must return a non-negative safe integer.",
@@ -1127,106 +989,88 @@ export const inspectEndpoint = async (
       `Endpoint inspection timeout must be an integer between 1 and ${MAX_TIMEOUT_MS} milliseconds.`,
     );
   }
-  const pinnedWriteProfile = getPinnedFirstReleaseWriteProfile(
-    toriiUrl,
-    configuredExpected,
-  );
-  const expected: EndpointChainIdentity = pinnedWriteProfile
-    ? {
-        ...configuredExpected,
-        genesisHash: pinnedWriteProfile.genesisHash,
-      }
-    : configuredExpected;
+  const writeProfile = isFirstReleaseWriteProfile(toriiUrl, configuredExpected);
 
-  const results = await runEndpointProbes([
-    () =>
-      probeGovernanceCapabilities(toriiUrl, fetchImpl, timeoutMs, observedAtMs),
-    () => probeChainMetadata(toriiUrl, fetchImpl, timeoutMs, observedAtMs),
-    () =>
-      probeGenesisFingerprint(
-        toriiUrl,
-        fetchImpl,
-        timeoutMs,
-        observedAtMs,
-        pinnedWriteProfile,
-      ),
-    () => probeOpenApi(toriiUrl, fetchImpl, timeoutMs),
+  const [discovery, openApi] = await Promise.all([
+    discoverEndpointNetworkIdentity(toriiUrl, { fetchImpl, timeoutMs }),
+    probeOpenApi(toriiUrl, fetchImpl, timeoutMs),
   ]);
 
-  const reachedEndpoint = results.some((result) => result.reachedEndpoint);
-  const evidence = results.flatMap((result) => result.evidence);
-  const hasBlockedDeploymentIdentity = evidence.some((entry) =>
-    BLOCKED_DEPLOYMENT_FINGERPRINTS.some(
-      (blocked) =>
-        blocked.identity.chainId === entry.identity.chainId &&
-        blocked.identity.networkPrefix === entry.identity.networkPrefix,
-    ),
-  );
-  const hasAuthoritativeIdentity = evidence.some(
-    (entry) =>
-      entry.source === "governance-capabilities-v1" ||
-      entry.source === "chain-metadata",
-  );
-  const openApiOperations =
-    results.find((result) => result.openApiOperations !== undefined)
-      ?.openApiOperations ?? null;
+  let pin: NetworkIdentityPin | null = null;
+  let pinError: string | null = null;
+  let identityState: EndpointNetworkIdentity["state"] = "unpinned";
+  const verified = discovery.status === "verified" ? discovery.identity : null;
+  const prefixMatches =
+    verified !== null &&
+    verified.networkPrefix === configuredExpected.networkPrefix;
+  try {
+    pin = await options.identityPins.read(toriiUrl);
+    if (verified && prefixMatches && writeProfile) {
+      if (!pin) {
+        pin = await options.identityPins.pinFirstUse(toriiUrl, verified);
+        identityState = pinMatchesIdentity(pin, verified)
+          ? "pinned-now"
+          : "changed";
+      } else {
+        identityState = pinMatchesIdentity(pin, verified)
+          ? "matches-pin"
+          : "changed";
+      }
+    } else if (pin) {
+      identityState =
+        verified && !pinMatchesIdentity(pin, verified) ? "changed" : "unpinned";
+      if (verified && pinMatchesIdentity(pin, verified)) {
+        identityState = "matches-pin";
+      }
+    }
+  } catch (error) {
+    pinError = error instanceof Error ? error.message : String(error);
+  }
 
-  const observedGenesisHash = evidence.find(
-    (entry) => entry.identity.genesisHash,
-  )?.identity.genesisHash;
-  let observed: EndpointChainIdentity | null = evidence[0]
+  const expected: EndpointChainIdentity = pin
+    ? { ...configuredExpected, networkId: pin.networkId }
+    : configuredExpected;
+  const observed: EndpointChainIdentity | null = verified
     ? {
-        ...evidence[0].identity,
-        ...(observedGenesisHash ? { genesisHash: observedGenesisHash } : {}),
+        chainId: configuredExpected.chainId,
+        networkPrefix: verified.networkPrefix,
+        networkId: verified.networkId,
+        genesisHash: verified.genesisHashHex,
       }
     : null;
+  const networkIdentity: EndpointNetworkIdentity = {
+    state: pinError ? "unpinned" : identityState,
+    pinned: pinView(pin),
+    observedNetworkId: verified?.networkId ?? null,
+  };
+
   let identityStatus: EndpointInspection["identityStatus"];
-  if (!reachedEndpoint) {
-    observed = null;
+  if (discovery.status === "unreachable" && !openApi.reachedEndpoint) {
     identityStatus = "unreachable";
-  } else if (identitiesConflict(evidence)) {
+  } else if (discovery.status === "conflicting") {
     identityStatus = "conflicting";
-  } else if (!observed) {
+  } else if (!verified) {
     identityStatus = "unverified";
+  } else if (!prefixMatches) {
+    identityStatus = "mismatched";
+  } else if (pinError || !writeProfile) {
+    identityStatus = "unverified";
+  } else if (networkIdentity.state === "changed") {
+    identityStatus = "changed";
+  } else if (
+    networkIdentity.state === "pinned-now" ||
+    networkIdentity.state === "matches-pin"
+  ) {
+    identityStatus = "matched";
   } else {
-    const chainIdentityMatches =
-      expected.chainId === observed.chainId &&
-      expected.networkPrefix === observed.networkPrefix;
-    const observedGenesisConflicts = Boolean(
-      expected.genesisHash &&
-        observed.genesisHash &&
-        expected.genesisHash !== observed.genesisHash,
-    );
-    // The governance NetworkId remains useful identity evidence, but release
-    // write authorization also requires a direct canonical block-one read.
-    const exactPinnedGenesisObserved = Boolean(
-      pinnedWriteProfile &&
-        evidence.some(
-          (entry) =>
-            entry.source === "genesis-fingerprint" &&
-            entry.identity.genesisHash === pinnedWriteProfile.genesisHash,
-        ),
-    );
-    if (!chainIdentityMatches || observedGenesisConflicts) {
-      identityStatus = "mismatched";
-    } else if (hasBlockedDeploymentIdentity) {
-      identityStatus = "blocked";
-    } else if (
-      hasAuthoritativeIdentity &&
-      pinnedWriteProfile &&
-      exactPinnedGenesisObserved
-    ) {
-      identityStatus = "matched";
-    } else {
-      identityStatus = "unverified";
-    }
+    identityStatus = "unverified";
   }
 
   return {
     schema: "iroha.wallet.endpoint-inspection.v1",
     toriiUrl,
     expected,
-    observed,
+    observed: identityStatus === "unreachable" ? null : observed,
     identityStatus,
     accessMode:
       identityStatus === "matched"
@@ -1235,15 +1079,86 @@ export const inspectEndpoint = async (
           ? "offline"
           : "read-only",
     checkedAtMs: observedAtMs,
-    evidence,
-    features: featureMapFor(openApiOperations),
+    evidence: evidenceFromDiscovery(
+      discovery,
+      configuredExpected,
+      observedAtMs,
+    ),
+    networkIdentity,
+    features: featureMapFor(openApi.openApiOperations ?? null),
     diagnostic: diagnosticFor({
       status: identityStatus,
       expected,
       observed,
-      pinnedWriteProfile: pinnedWriteProfile !== null,
+      writeProfile,
+      discovery,
+      networkIdentity,
+      pinError,
     }),
   };
+};
+
+/**
+ * Lightweight identity-only check (no OpenAPI read) for signing paths that
+ * need the transaction-binding NetworkId of a release write endpoint. It
+ * applies the same two-source agreement and trust-on-first-use pin as
+ * {@link inspectEndpoint}.
+ */
+export const resolvePinnedEndpointNetworkId = async (
+  input: EndpointNetworkContext,
+  options: Omit<EndpointInspectorOptions, "now">,
+): Promise<string> => {
+  const toriiUrl = normalizeEndpointUrl(input.toriiUrl);
+  const expected = normalizeChainMetadata({
+    chainId: input.chainId,
+    networkPrefix: input.networkPrefix,
+  });
+  if (!isFirstReleaseWriteProfile(toriiUrl, expected)) {
+    throw new Error(
+      "[endpoint_identity_unverified] This endpoint is not a release write target, so it has no trusted transaction NetworkId.",
+    );
+  }
+  const discovery = await discoverEndpointNetworkIdentity(toriiUrl, {
+    fetchImpl: options.fetchImpl,
+    timeoutMs: options.timeoutMs,
+  });
+  if (discovery.status !== "verified") {
+    throw new Error(
+      `[endpoint_identity_${discovery.status === "conflicting" ? "conflict" : "unverified"}] ${discovery.detail}`,
+    );
+  }
+  if (discovery.identity.networkPrefix !== expected.networkPrefix) {
+    throw new Error(
+      `[endpoint_identity_mismatch] Endpoint network prefix ${discovery.identity.networkPrefix} differs from the configured prefix ${expected.networkPrefix}.`,
+    );
+  }
+  const pin =
+    (await options.identityPins.read(toriiUrl)) ??
+    (await options.identityPins.pinFirstUse(toriiUrl, discovery.identity));
+  if (!pinMatchesIdentity(pin, discovery.identity)) {
+    throw new Error(
+      `[endpoint_identity_changed] This endpoint now reports network ${discovery.identity.networkId}, but this wallet trusted ${pin.networkId}. Confirm the new network identity in Settings before signing.`,
+    );
+  }
+  return discovery.identity.networkId;
+};
+
+/**
+ * Return the transaction-binding NetworkId only for a write-authorized,
+ * pinned endpoint identity.
+ */
+export const requireTrustedInspectionNetworkId = (
+  inspection: EndpointInspection,
+): string => {
+  const networkId = inspection.observed?.networkId;
+  if (
+    inspection.identityStatus !== "matched" ||
+    !networkId ||
+    inspection.networkIdentity.pinned?.networkId !== networkId
+  ) {
+    throw new EndpointWriteBlockedError(inspection);
+  }
+  return networkId;
 };
 
 export const getTrustedEndpointIdentityScope = (
@@ -1254,7 +1169,7 @@ export const getTrustedEndpointIdentityScope = (
 export class EndpointWriteBlockedError extends Error {
   readonly code:
     | "endpoint_identity_mismatch"
-    | "endpoint_deployment_blocked"
+    | "endpoint_identity_changed"
     | "endpoint_identity_conflict"
     | "endpoint_identity_unverified"
     | "endpoint_unreachable";
@@ -1336,7 +1251,7 @@ export const assertEndpointFeatureSupported = (
 
 export const assertEndpointWriteAuthorized = async (
   input: EndpointNetworkContext,
-  options: EndpointInspectorOptions = {},
+  options: EndpointInspectorOptions,
 ): Promise<EndpointInspection> => {
   const inspection = await inspectEndpoint(input, options);
   if (inspection.identityStatus !== "matched") {
@@ -1347,12 +1262,13 @@ export const assertEndpointWriteAuthorized = async (
 
 export const assertEndpointFaucetChallengeAvailable = async (
   input: EndpointNetworkContext,
-  options: EndpointInspectorOptions = {},
+  options: EndpointInspectorOptions,
 ): Promise<EndpointInspection> => {
   const inspection = await inspectEndpoint(input, options);
   if (
-    inspection.identityStatus !== "matched" &&
-    inspection.identityStatus !== "unverified"
+    (inspection.identityStatus !== "matched" &&
+      inspection.identityStatus !== "unverified") ||
+    !inspection.observed?.networkId
   ) {
     throw new EndpointWriteBlockedError(inspection);
   }
