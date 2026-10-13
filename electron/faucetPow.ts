@@ -3,7 +3,7 @@ import { availableParallelism } from "os";
 import { NetworkId } from "@iroha/iroha-js/canonical-request";
 
 export type FaucetPowPuzzle = {
-  algorithm: "scrypt-leading-zero-bits-v2";
+  algorithm: "scrypt-leading-zero-bits-v1";
   network_id: string;
   chain_discriminant: number;
   difficulty_bits: number;
@@ -43,8 +43,10 @@ type FaucetPowScryptOptions = {
   maxmem: number;
 };
 
-const DOMAIN_SEPARATOR = Buffer.from("iroha:accounts:faucet:pow:v2", "utf8");
-const SUPPORTED_ALGORITHM = "scrypt-leading-zero-bits-v2";
+// Must match Torii `FAUCET_POW_DOMAIN_SEPARATOR` / `FAUCET_POW_ALGORITHM`
+// (crates/iroha_torii/src/routing.rs) and iroha_wallet's faucet_pow.rs.
+const DOMAIN_SEPARATOR = Buffer.from("iroha:accounts:faucet:pow:v1", "utf8");
+const SUPPORTED_ALGORITHM = "scrypt-leading-zero-bits-v1";
 const DIGEST_LENGTH = 32;
 const DEFAULT_ATTEMPT_MULTIPLIER = 4;
 const MAX_DIFFICULTY_BITS = 20;
@@ -180,7 +182,7 @@ function createScryptOptions(
   };
 }
 
-function buildFaucetPowChallenge(
+export function buildFaucetPowChallenge(
   accountId: string,
   networkId: NetworkId,
   anchorHeight: number,
@@ -286,7 +288,7 @@ export const decodeFaucetPowPuzzle = (
   }
   if (!networkId.equals(expectedNetworkId)) {
     throw new Error(
-      "Faucet puzzle network_id does not match the release-pinned network.",
+      "Faucet puzzle network_id does not match the endpoint's attested NetworkId.",
     );
   }
   if (record.chain_discriminant !== expectedNetworkPrefix) {

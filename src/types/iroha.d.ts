@@ -381,8 +381,9 @@ export interface AccountFaucetResponse {
   asset_id: string;
   amount: string;
   tx_hash_hex: string;
-  status: string;
-  finality: TransactionFinalityProof;
+  /** Global pipeline status resolved from committed state. */
+  status: "APPLIED";
+  blockHeight: number;
 }
 
 export interface TransactionFeeQuoteView {

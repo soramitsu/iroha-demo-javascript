@@ -124,7 +124,7 @@ describe("endpoint write boundary", () => {
     }
   });
 
-  it("keeps the unverified-identity exception scoped to the faucet challenge and requires finality before the puzzle flow can submit", () => {
+  it("keeps the unverified-identity exception scoped to the faucet challenge", () => {
     const challengeConnection = between(
       "const assertFaucetChallengeConnectionAvailable",
       "const inspectEndpointDerivedScope",
@@ -133,9 +133,7 @@ describe("endpoint write boundary", () => {
       "assertEndpointFaucetChallengeAvailable(",
     );
     expect(challengeConnection).toContain("identityPins: preloadIdentityPins");
-    expect(challengeConnection).not.toContain(
-      "assertEndpointWriteAuthorized(",
-    );
+    expect(challengeConnection).not.toContain("assertEndpointWriteAuthorized(");
     expect(challengeConnection).not.toContain(
       "getTrustedEndpointIdentityScope(",
     );
@@ -147,17 +145,13 @@ describe("endpoint write boundary", () => {
     const challenge = faucet.indexOf(
       "assertFaucetChallengeConnectionAvailable({",
     );
-    const finality = faucet.indexOf(
-      "assertFaucetEndpointFinalizing(",
-      challenge,
-    );
     const puzzleFlow = faucet.indexOf(
       "requestFaucetFundsWithPuzzle({",
-      finality,
+      challenge,
     );
     expect(challenge).toBeGreaterThanOrEqual(0);
-    expect(finality).toBeGreaterThan(challenge);
-    expect(puzzleFlow).toBeGreaterThan(finality);
+    expect(puzzleFlow).toBeGreaterThan(challenge);
+    expect(faucet).not.toContain("assertFaucetEndpointFinalizing(");
     expect(faucet).not.toContain("assertWriteConnectionMatchesEndpoint({");
     expect(faucet).not.toContain("resolveSigningMaterial({");
   });

@@ -103,3 +103,29 @@ export const assertFinalizedTransactionResult = (
 export const assertFinalizedSubmissionResult = (
   value: TransactionSubmissionResult,
 ) => assertFinalizedTransactionResult(value, "hash");
+
+/**
+ * Renderer-side check for faucet claims, which complete when the global
+ * pipeline status is Applied (resolved from committed state) in a block.
+ */
+export const assertAppliedFaucetResult = (
+  value: unknown,
+): { hash: string; blockHeight: number } => {
+  const result = requireRecord(value, "Faucet result");
+  // Preload validates the exact hash format; the renderer only refuses a
+  // missing hash or a status that is not authoritative Applied.
+  const hash = String(result.tx_hash_hex ?? "").trim();
+  if (!hash) {
+    throw new Error("Faucet result.tx_hash_hex is required.");
+  }
+  if (result.status !== "APPLIED") {
+    throw new Error("Faucet result was not applied by the network.");
+  }
+  return {
+    hash,
+    blockHeight: requirePositiveSafeInteger(
+      result.blockHeight,
+      "Faucet result block height",
+    ),
+  };
+};

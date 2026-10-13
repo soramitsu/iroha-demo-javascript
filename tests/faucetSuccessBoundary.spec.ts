@@ -23,18 +23,14 @@ describe("faucet strict-success boundary", () => {
     expect(faucetRequest).not.toContain('status: "Funded"');
   });
 
-  it("returns success only after exact finalized-block proof", () => {
-    const finality = faucetRequest.indexOf(
-      "await waitForTransactionFinalizedInBlock(",
-    );
-    const finalizedStatus = faucetRequest.indexOf('status: "FINALIZED"');
-    const finalityReceipt = faucetRequest.indexOf(
-      "finality: finalized.finality",
-    );
-
-    expect(finality).toBeGreaterThanOrEqual(0);
-    expect(finalizedStatus).toBeGreaterThan(finality);
-    expect(finalityReceipt).toBeGreaterThan(finalizedStatus);
+  it("returns success only from the global Applied status of the prepared transaction", () => {
+    const flow = faucetRequest.indexOf("await requestFaucetFundsWithPuzzle({");
+    const globalStatus = faucetRequest.indexOf('scope: "global"', flow);
+    expect(flow).toBeGreaterThanOrEqual(0);
+    expect(globalStatus).toBeGreaterThan(flow);
+    expect(faucetRequest).toContain("return result;");
+    // Iroha produces no empty blocks; an idle chain must not block claims.
+    expect(faucetRequest).not.toContain("assertFaucetEndpointFinalizing");
     expect(faucetRequest).not.toContain("FAUCET_CLAIM_SUCCESS_STATUSES");
     expect(faucetRequest).not.toContain("faucetClaimFundedAssetIsVisible");
   });

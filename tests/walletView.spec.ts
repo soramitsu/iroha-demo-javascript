@@ -58,14 +58,6 @@ type FaucetResponseFixture = {
   status: string;
 };
 
-const finalityFor = (transactionHash: string) => ({
-  status: "finalized" as const,
-  transactionHash,
-  blockHeight: 17,
-  blockHash: "ef".repeat(32),
-  finalizedBlockHeight: 17,
-});
-
 vi.mock("@/services/iroha", () => ({
   fetchAccountAssets: (input: unknown) => fetchAccountAssetsMock(input),
   fetchAccountTransactions: (input: unknown) =>
@@ -80,10 +72,10 @@ vi.mock("@/services/iroha", () => ({
     onProgress?: (progress: unknown) => void,
   ) =>
     Promise.resolve(requestFaucetFundsMock(input, onProgress)).then(
-      (result: FaucetResponseFixture & { finality?: unknown }) => ({
+      (result: FaucetResponseFixture & { blockHeight?: unknown }) => ({
         ...result,
-        status: "FINALIZED",
-        finality: result.finality ?? finalityFor(result.tx_hash_hex),
+        status: "APPLIED",
+        blockHeight: result.blockHeight ?? 17,
       }),
     ),
   cancelFaucetRequest: (input: unknown) => cancelFaucetRequestMock(input),

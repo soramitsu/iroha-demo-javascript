@@ -367,7 +367,7 @@ import {
   appendTransactionFee,
   formatTransactionFeeInline,
 } from "@/utils/transactionFee";
-import { assertFinalizedTransactionResult } from "@/utils/transactionFinality";
+import { assertAppliedFaucetResult } from "@/utils/transactionFinality";
 import { normalizeEndpointUrl } from "@/utils/endpoint";
 import { canAttemptFaucetIdentityChallenge } from "@/utils/endpointFeatures";
 import { isRegisteredGovernanceCitizen } from "@/utils/parliament";
@@ -1153,7 +1153,7 @@ const requestStarterFunds = async () => {
     ) {
       return;
     }
-    assertFinalizedTransactionResult(result, "tx_hash_hex");
+    const applied = assertAppliedFaucetResult(result);
     const fundedAssetDefinitionId =
       result.asset_definition_id.trim() ||
       extractAssetDefinitionId(result.asset_id).trim() ||
@@ -1175,9 +1175,9 @@ const requestStarterFunds = async () => {
     faucetStatusPhase.value = "claimFinalized";
     faucetMessage.value = appendTransactionFee(
       `${t("XOR requested: {hash}", {
-        hash: result.tx_hash_hex,
+        hash: applied.hash,
       })} · ${t("Block {height}", {
-        height: result.finality.blockHeight,
+        height: applied.blockHeight,
       })}`,
       null,
       t,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { NetworkId } from "@iroha/iroha-js";
 
 import {
+  buildFaucetPowChallenge,
   buildFaucetPowDigest,
   decodeFaucetPowPuzzle,
   leadingZeroBits,
@@ -14,7 +15,7 @@ const NETWORK_ID = NetworkId.parse(
 );
 
 const basePuzzle: FaucetPowPuzzle = {
-  algorithm: "scrypt-leading-zero-bits-v2",
+  algorithm: "scrypt-leading-zero-bits-v1",
   network_id: NETWORK_ID.toString(),
   chain_discriminant: 369,
   difficulty_bits: 4,
@@ -30,7 +31,7 @@ const basePuzzle: FaucetPowPuzzle = {
 };
 
 describe("faucetPow", () => {
-  it("decodes only the exact bounded v2 puzzle contract", () => {
+  it("decodes only the exact bounded v1 puzzle contract", () => {
     expect(decodeFaucetPowPuzzle(basePuzzle, NETWORK_ID, 369)).toEqual(
       basePuzzle,
     );
@@ -44,9 +45,30 @@ describe("faucetPow", () => {
       { ...basePuzzle, max_anchor_age_blocks: 10_001 },
       { ...basePuzzle, anchor_block_hash_hex: "AA".repeat(32) },
       { ...basePuzzle, extra: true },
+      // The pre-release v2 label is not served by current Torii.
+      { ...basePuzzle, algorithm: "scrypt-leading-zero-bits-v2" },
     ]) {
       expect(() => decodeFaucetPowPuzzle(invalid, NETWORK_ID, 369)).toThrow();
     }
+  });
+
+  it("matches the Torii/iroha_wallet v1 challenge preimage vector", () => {
+    // crates/iroha_wallet/src/faucet_pow.rs faucet_challenge_matches_v1_preimage_vector
+    const challenge = buildFaucetPowChallenge(
+      "sorauﾛ1NｲﾘｳdPBeｼRoｸQ2ﾔgｼQqeｶﾍｽﾁhRW2ｺｿZ9ﾕｦUﾅRX5NJYH53",
+      NetworkId.fromBytes(
+        Buffer.from(
+          "32c903e5b3497e34c2b844ebfe8a39c19e6cf8f95d44c1ffb8ba9dcb42f91149",
+          "hex",
+        ),
+      ),
+      68,
+      "d5c0016a6345e8ea379da42aab1fdc16ba82756e19e0b63c48c14735e8caf7ef",
+      null,
+    );
+    expect(challenge.toString("hex")).toBe(
+      "21e547302359214b28f0d1e0b04b6aeaf62a0e597dbad018d93ab0ce6af81a05",
+    );
   });
 
   it("counts leading zero bits", () => {
@@ -70,7 +92,7 @@ describe("faucetPow", () => {
     );
     expect(digest).toHaveLength(32);
     expect(digest.toString("hex")).toBe(
-      "6481ebe9ad80954bd7629414f5a95123f52d6f14fbde40bc48a6bdac301fe9a4",
+      "651c3411aeadf70d44b6bffa97c40c667695c1e48b37c732e0c3f8e0db08a61b",
     );
   });
 
@@ -163,7 +185,7 @@ describe("faucetPow", () => {
     );
     expect(digest).toHaveLength(32);
     expect(digest.toString("hex")).not.toBe(
-      "6481ebe9ad80954bd7629414f5a95123f52d6f14fbde40bc48a6bdac301fe9a4",
+      "651c3411aeadf70d44b6bffa97c40c667695c1e48b37c732e0c3f8e0db08a61b",
     );
   });
 });

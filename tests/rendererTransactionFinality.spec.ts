@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { assertFinalizedTransactionResult } from "@/utils/transactionFinality";
+import {
+  assertAppliedFaucetResult,
+  assertFinalizedTransactionResult,
+} from "@/utils/transactionFinality";
 
 const HASH = "a".repeat(64);
 const proof = {
@@ -54,5 +57,31 @@ describe("renderer transaction finality boundary", () => {
         "tx_hash_hex",
       ),
     ).toThrow("above the finalized ledger height");
+  });
+  it("accepts only an authoritative Applied faucet result with a block height", () => {
+    expect(
+      assertAppliedFaucetResult({
+        tx_hash_hex: "ab".repeat(32),
+        status: "APPLIED",
+        blockHeight: 70,
+      }),
+    ).toEqual({ hash: "ab".repeat(32), blockHeight: 70 });
+    expect(() =>
+      assertAppliedFaucetResult({
+        tx_hash_hex: "ab".repeat(32),
+        status: "QUEUED",
+        blockHeight: 70,
+      }),
+    ).toThrow("not applied");
+    expect(() =>
+      assertAppliedFaucetResult({ status: "APPLIED", blockHeight: 70 }),
+    ).toThrow("tx_hash_hex");
+    expect(() =>
+      assertAppliedFaucetResult({
+        tx_hash_hex: "ab".repeat(32),
+        status: "APPLIED",
+        blockHeight: 0,
+      }),
+    ).toThrow("block height");
   });
 });

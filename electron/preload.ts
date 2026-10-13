@@ -151,16 +151,10 @@ import {
   type EndpointIdentityScopeInput,
 } from "../src/utils/endpointScope";
 import {
-  readKnownTairaFaucetFundingIssue,
   requestFaucetFundsWithPuzzle,
-  type AccountFaucetResponse,
+  type AccountFaucetResult,
   type FaucetRequestProgress,
 } from "./faucetApi";
-import {
-  assertFaucetCommittedHeightAdvances,
-  FaucetCommittedHeightStalledError,
-  readSumeragiCommittedHeight,
-} from "./faucetFinality";
 import { reviewConnectTransactionPayload } from "./connectTransactionReview";
 import { parseIrohaConnectDeepLink } from "./deepLink";
 import {
@@ -466,8 +460,6 @@ const withRequiredGasAssetMetadata = (
   };
 };
 const FAUCET_CLAIM_STATUS_TIMEOUT_MS = 240_000;
-const FAUCET_FINALITY_STALE_MS = 5 * 60_000;
-const FAUCET_FINALITY_PROGRESS_OBSERVATION_MS = 3_000;
 
 const isSecureVaultAvailable = async (): Promise<boolean> => {
   const result = await ipcRenderer.invoke("vault:isAvailable");
@@ -1491,7 +1483,7 @@ type IrohaBridge = {
       requestId: string;
     },
     onStatus?: FaucetStatusCallback,
-  ): Promise<AccountFaucetResponse>;
+  ): Promise<AccountFaucetResult>;
   cancelFaucetRequest(input: { requestId: string }): Promise<{
     canceled: boolean;
   }>;
@@ -1711,280 +1703,6 @@ const waitForMs = (delayMs: number, signal?: AbortSignal) =>
     }, delayMs);
     signal?.addEventListener("abort", onAbort, { once: true });
   });
-
-const formatDurationForError = (durationMs: number) => {
-  const seconds = Math.max(0, Math.round(durationMs / 1000));
-  if (seconds < 90) {
-    return `${seconds} seconds`;
-  }
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 90) {
-    return `${minutes} minutes`;
-  }
-  const hours = Math.round(minutes / 60);
-  return `${hours} hours`;
-};
-
-const buildFaucetFinalityUnavailableError = (
-  context: string,
-  status?: number,
-  statusText?: string,
-  detail?: string,
-) => {
-  const statusDetail =
-    status !== undefined
-      ? ` (${status}${statusText ? ` ${statusText}` : ""})`
-      : "";
-  const responseDetail =
-    detail &&
-    !(
-      status !== undefined &&
-      isRedundantHttpErrorDetail(detail, status, statusText)
-    )
-      ? ` Detail: ${detail.replace(/\.+$/, "")}.`
-      : "";
-  if (status !== undefined && isToriiUnavailableStatus(status)) {
-    return new Error(
-      `The active Torii endpoint could not verify faucet finality via ${context} because Torii is unavailable${statusDetail}.${responseDetail} Faucet requests are blocked before submission because the endpoint cannot prove claims will commit; retry after the endpoint recovers.`,
-    );
-  }
-  return new Error(
-    `The active Torii endpoint could not verify faucet finality via ${context}${statusDetail}.${responseDetail} Faucet requests are blocked before submission because the endpoint cannot prove claims will commit. This is a TAIRA/Torii health problem, not a wallet problem; retry after the operator restores finality.`,
-  );
-};
-
-const readFaucetLedgerFinalityState = async (
-  baseUrl: string,
-  signal?: AbortSignal,
-) => {
-  throwIfAborted(signal);
-  const endpoint = new URL(
-    "v1/ledger/headers?limit=1",
-    `${normalizeBaseUrl(baseUrl)}/`,
-  );
-  const response = await fetchGetResponse(
-    endpoint.toString(),
-    "Faucet ledger finality",
-    undefined,
-    signal,
-  );
-  throwIfAborted(signal);
-  if (!response.ok) {
-    if (response.status >= 500) {
-      throw buildFaucetFinalityUnavailableError(
-        "/v1/ledger/headers",
-        response.status,
-        response.statusText,
-        await readBoundedApiErrorDetail(response),
-      );
-    }
-    return null;
-  }
-  const payload = await readBoundedJsonResponse(response, {
-    label: "Faucet ledger finality",
-    maximumBytes: MAX_TORII_JSON_RESPONSE_BYTES,
-    requireApplicationJson: true,
-  });
-  if (!Array.isArray(payload) || payload.length === 0) {
-    return null;
-  }
-  if (payload.length !== 1) {
-    throw new Error(
-      "Faucet ledger finality returned more block headers than requested.",
-    );
-  }
-  const latestHeader = payload[0];
-  if (!isPlainRecord(latestHeader)) {
-    throw new Error("Faucet ledger finality returned an invalid block header.");
-  }
-  assertExactObjectKeys(
-    latestHeader,
-    [
-      "height",
-      "prev_block_hash",
-      "merkle_root",
-      "result_merkle_root",
-      "da_proof_policies_hash",
-      "da_commitments_hash",
-      "da_pin_intents_hash",
-      "npos_effects_hash",
-      "sccp_commitment_root",
-      "creation_time_ms",
-      "view_change_index",
-      "confidential_features",
-      "execution_context_hash",
-    ],
-    "Faucet ledger finality block header",
-  );
-  if (
-    typeof latestHeader.height !== "number" ||
-    !Number.isSafeInteger(latestHeader.height) ||
-    latestHeader.height < 1 ||
-    typeof latestHeader.creation_time_ms !== "number" ||
-    !Number.isSafeInteger(latestHeader.creation_time_ms) ||
-    latestHeader.creation_time_ms < 0
-  ) {
-    throw new Error(
-      "Faucet ledger finality returned noncanonical height metadata.",
-    );
-  }
-  const responseDateMs = Date.parse(trimString(response.headers.get("date")));
-  const nowMs = Number.isFinite(responseDateMs) ? responseDateMs : Date.now();
-  const ageMs = Math.max(0, nowMs - latestHeader.creation_time_ms);
-  return {
-    ageMs,
-    height: latestHeader.height,
-  };
-};
-
-const readFaucetSumeragiState = async (
-  baseUrl: string,
-  signal?: AbortSignal,
-) => {
-  throwIfAborted(signal);
-  const endpoint = new URL(
-    "v1/sumeragi/status",
-    `${normalizeBaseUrl(baseUrl)}/`,
-  );
-  const response = await fetchGetResponse(
-    endpoint.toString(),
-    "Faucet Sumeragi finality",
-    undefined,
-    signal,
-  );
-  throwIfAborted(signal);
-  if (!response.ok) {
-    if (response.status >= 500) {
-      throw buildFaucetFinalityUnavailableError(
-        "/v1/sumeragi/status",
-        response.status,
-        response.statusText,
-        await readBoundedApiErrorDetail(response),
-      );
-    }
-    return null;
-  }
-  const payload = await readBoundedJsonResponse(response, {
-    label: "Faucet Sumeragi finality",
-    maximumBytes: MAX_TORII_JSON_RESPONSE_BYTES,
-    requireApplicationJson: true,
-  });
-  const committedHeight = readSumeragiCommittedHeight(payload);
-  if (committedHeight === null) {
-    throw new Error(
-      "Faucet Sumeragi finality returned an unsupported protocol status.",
-    );
-  }
-  return {
-    committedHeight,
-    queuedHeight: null,
-    queueDepth: null,
-    queueSaturated: false,
-  };
-};
-
-const assertFaucetEndpointFinalizing = async (
-  baseUrl: string,
-  signal?: AbortSignal,
-) => {
-  let ledgerState: Awaited<
-    ReturnType<typeof readFaucetLedgerFinalityState>
-  > | null = null;
-  try {
-    ledgerState = await readFaucetLedgerFinalityState(baseUrl, signal);
-  } catch (error) {
-    throw error instanceof Error
-      ? error
-      : buildFaucetFinalityUnavailableError("/v1/ledger/headers");
-  }
-  if (!ledgerState) {
-    throw buildFaucetFinalityUnavailableError("/v1/ledger/headers");
-  }
-  if (ledgerState.ageMs <= FAUCET_FINALITY_STALE_MS) {
-    return;
-  }
-
-  let sumeragiState: Awaited<
-    ReturnType<typeof readFaucetSumeragiState>
-  > | null = null;
-  try {
-    sumeragiState = await readFaucetSumeragiState(baseUrl, signal);
-  } catch {
-    throwIfAborted(signal);
-    sumeragiState = null;
-  }
-
-  try {
-    await assertFaucetCommittedHeightAdvances({
-      initial: {
-        ledgerHeight: ledgerState.height,
-        sumeragiHeight: sumeragiState?.committedHeight ?? null,
-      },
-      observationWindowMs: FAUCET_FINALITY_PROGRESS_OBSERVATION_MS,
-      wait: waitForMs,
-      signal,
-      observe: async (observationSignal) => {
-        const nextLedgerState = await readFaucetLedgerFinalityState(
-          baseUrl,
-          observationSignal,
-        );
-        if (!nextLedgerState) {
-          throw buildFaucetFinalityUnavailableError("/v1/ledger/headers");
-        }
-        let nextSumeragiState: Awaited<
-          ReturnType<typeof readFaucetSumeragiState>
-        > | null = null;
-        try {
-          nextSumeragiState = await readFaucetSumeragiState(
-            baseUrl,
-            observationSignal,
-          );
-        } catch {
-          throwIfAborted(observationSignal);
-        }
-        ledgerState = nextLedgerState;
-        sumeragiState = nextSumeragiState;
-        return {
-          ledgerHeight: nextLedgerState.height,
-          sumeragiHeight: nextSumeragiState?.committedHeight ?? null,
-        };
-      },
-    });
-    return;
-  } catch (error) {
-    if (!(error instanceof FaucetCommittedHeightStalledError)) {
-      throw error;
-    }
-  }
-
-  const details = [
-    ledgerState.height !== null
-      ? `latest committed block ${ledgerState.height}`
-      : "latest committed block is stale",
-    `last block is ${formatDurationForError(ledgerState.ageMs)} old`,
-    sumeragiState?.queueDepth !== null &&
-    sumeragiState?.queueDepth !== undefined
-      ? `queue depth ${sumeragiState.queueDepth}`
-      : "",
-    sumeragiState?.queueSaturated ? "queue saturated" : "",
-    sumeragiState?.queuedHeight !== null &&
-    sumeragiState?.queuedHeight !== undefined
-      ? `pending block ${sumeragiState.queuedHeight}`
-      : "",
-  ].filter(Boolean);
-  const fundingIssue = await readKnownTairaFaucetFundingIssue(
-    baseUrl,
-    nodeFetch,
-    signal,
-  );
-  const fundingDetail = fundingIssue ? ` ${fundingIssue}` : "";
-
-  throw new Error(
-    `The active Torii endpoint is not finalizing new blocks right now (${details.join(
-      "; ",
-    )}). Faucet requests are blocked before submission because claims cannot commit until TAIRA finality resumes. This is a TAIRA/Torii health problem, not a wallet problem.${fundingDetail}`,
-  );
-};
 
 const toHex = (buffer: Buffer) => buffer.toString("hex");
 
@@ -8421,7 +8139,8 @@ const api: IrohaBridge = {
       );
       const signal = reservation.controller.signal;
       throwIfAborted(signal);
-      await assertFaucetEndpointFinalizing(baseUrl, signal);
+      // Prepared-transaction flow; success requires a global pipeline status
+      // of Applied resolved from committed state.
       const result = await requestFaucetFundsWithPuzzle({
         baseUrl,
         accountId: normalizedAccountId,
@@ -8429,47 +8148,17 @@ const api: IrohaBridge = {
         networkPrefix: faucetConnection.networkPrefix,
         networkId: faucetConnection.networkId,
         fetchImpl: nodeFetch,
+        getGlobalStatus: (hashHex, statusSignal) =>
+          fetchFirstReleaseTransactionStatus(baseUrl, hashHex, {
+            scope: "global",
+            signal: statusSignal,
+          }),
+        finalityTimeoutMs: FAUCET_CLAIM_STATUS_TIMEOUT_MS,
         signal,
         onStatus,
       });
       throwIfAborted(signal);
-      const txHashHex = trimString(result.tx_hash_hex);
-
-      try {
-        await onStatus?.({
-          phase: "waitingForFinality",
-          attempt: 1,
-          attempts: 1,
-          txHashHex,
-        });
-      } catch {
-        // Renderer-side status hooks must not break the faucet request itself.
-      }
-
-      const finalized = await waitForTransactionFinalizedInBlock(
-        baseUrl,
-        txHashHex,
-        {
-          timeoutMs: FAUCET_CLAIM_STATUS_TIMEOUT_MS,
-          signal,
-        },
-      );
-      throwIfAborted(signal);
-      try {
-        await onStatus?.({
-          phase: "claimFinalized",
-          attempt: 1,
-          attempts: 1,
-          txHashHex,
-        });
-      } catch {
-        // Renderer-side status hooks must not break the faucet request itself.
-      }
-      return {
-        ...result,
-        status: "FINALIZED",
-        finality: finalized.finality,
-      };
+      return result;
     } finally {
       reservation.release();
     }
