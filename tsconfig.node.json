@@ -13,6 +13,7 @@
     "src/utils/endpointFeatures.ts",
     "src/utils/endpointScope.ts",
     "src/utils/firstReleaseNetworkIdentity.ts",
+    "src/utils/irohaConnect.ts",
     "src/utils/kaigiInvite.ts",
     "src/utils/json.ts",
     "src/utils/mnemonic.ts",

@@ -135,6 +135,7 @@ const buildConnectWalletUri = (input: {
 };
 const signIrohaConnectMessageMock = vi.fn();
 const inspectEndpointMock = vi.fn();
+const takePendingDeepLinkMock = vi.fn(async (): Promise<string | null> => null);
 let testIrohaConnectBoundary: IrohaConnectBoundary;
 type QrDecodeHandler = (payload: string) => void;
 let connectQrDecodeHandler: QrDecodeHandler | null = null;
@@ -228,6 +229,8 @@ vi.mock("@/services/iroha", () => ({
   ) => testIrohaConnectBoundary.rejectRequest(input),
   closeIrohaConnectSession: (input: { sessionToken: string }) =>
     testIrohaConnectBoundary.closeSession(input.sessionToken),
+  takePendingIrohaConnectDeepLink: () => takePendingDeepLinkMock(),
+  IROHA_CONNECT_DEEP_LINK_EVENT: "iroha-connect-deep-link",
 }));
 
 vi.mock("@/composables/useQrScanner", async () => {
@@ -256,6 +259,7 @@ describe("HeaderIrohaConnectButton", () => {
 
   beforeEach(() => {
     connectQrDecodeHandler = null;
+    takePendingDeepLinkMock.mockReset().mockResolvedValue(null);
     FakeWebSocket.instances = [];
     vi.stubGlobal("WebSocket", FakeWebSocket);
     signIrohaConnectMessageMock.mockReset().mockResolvedValue({
@@ -740,6 +744,41 @@ describe("HeaderIrohaConnectButton", () => {
     expect(socket.sent).toHaveLength(0);
     expect(wrapper.text()).toContain("does not match the scanned session");
     randomValuesSpy.mockRestore();
+  });
+
+  it("opens the pairing approval for an iroha://connect deep link waiting at mount", async () => {
+    takePendingDeepLinkMock.mockResolvedValueOnce(VALID_CONNECT_WALLET_URI);
+    const wrapper = mountComponent();
+    await flushPromises();
+
+    expect(takePendingDeepLinkMock).toHaveBeenCalled();
+    const dialog = getOpenDialog();
+    expect(dialog?.textContent).toContain(VALID_CONNECT_SID);
+    // Deep links get the same explicit approval as scanned QRs.
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(inspectEndpointMock).not.toHaveBeenCalled();
+    getDialogButtonByText(t("Approve connection")).click();
+    await flushPromises();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(wrapper.text()).not.toContain("not canonical");
+  });
+
+  it("takes a deep link announced after mount and validates it like a QR", async () => {
+    const wrapper = mountComponent();
+    await flushPromises();
+    takePendingDeepLinkMock.mockResolvedValueOnce(
+      VALID_CONNECT_WALLET_URI.replace("role=wallet", "role=app"),
+    );
+    window.dispatchEvent(new Event("iroha-connect-deep-link"));
+    await flushPromises();
+
+    expect(getOpenDialog()).toBeNull();
+    expect(wrapper.text()).toContain("role=wallet");
+
+    takePendingDeepLinkMock.mockResolvedValueOnce(VALID_CONNECT_WALLET_URI);
+    window.dispatchEvent(new Event("iroha-connect-deep-link"));
+    await flushPromises();
+    expect(getOpenDialog()?.textContent).toContain(VALID_CONNECT_SID);
   });
 
   it("rejects connection approval on Escape and returns focus", async () => {

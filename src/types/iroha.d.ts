@@ -1061,6 +1061,8 @@ export interface IrohaBridge {
     requestToken: string;
   }): { frameBase64: string };
   closeIrohaConnectSession(input: { sessionToken: string }): void;
+  /** Take the pending `iroha://connect?...` link opened from another app. */
+  takePendingIrohaConnectDeepLink(): Promise<string | null>;
   getConfidentialAssetPolicy(input: {
     toriiUrl: string;
     accountId: string;

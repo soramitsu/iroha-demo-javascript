@@ -20,9 +20,14 @@ import {
   type ConfidentialReceiveKeyRecord,
 } from "./secureVault";
 import {
+  extractIrohaConnectDeepLinkFromArgv,
   extractKaigiDeepLinkFromArgv,
-  parseKaigiDeepLinkToHashRoute,
+  parseWalletDeepLink,
 } from "./deepLink";
+import {
+  IROHA_CONNECT_DEEP_LINK_AVAILABLE_CHANNEL,
+  IROHA_CONNECT_TAKE_DEEP_LINK_CHANNEL,
+} from "./irohaConnectDeepLinkChannels";
 import {
   registerDisplayMediaRequestHandler,
   registerMediaPermissionHandlers,
@@ -93,6 +98,11 @@ const getTrustedRendererUrl = () =>
 let mainWindow: BrowserWindow | null = null;
 let mainWindowTrustedRendererUrl: string | null = null;
 let pendingKaigiHashRoute: string | null = extractKaigiDeepLinkFromArgv(
+  process.argv,
+);
+// Latest `iroha://connect?...` pairing link, held until the renderer's
+// IrohaConnect surface takes it. Only the newest link is kept.
+let pendingIrohaConnectUri: string | null = extractIrohaConnectDeepLinkFromArgv(
   process.argv,
 );
 const devProfileSuffix = createHash("sha1")
@@ -174,7 +184,38 @@ const queueKaigiHashRoute = (hashRoute: string | null) => {
   }
 };
 
-const registerKaigiProtocol = () => {
+const focusMainWindow = (window: BrowserWindow) => {
+  if (window.isMinimized()) {
+    window.restore();
+  }
+  window.focus();
+};
+
+const queueIrohaConnectDeepLink = (uri: string | null) => {
+  if (!uri) {
+    return;
+  }
+  pendingIrohaConnectUri = uri;
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) {
+    return;
+  }
+  focusMainWindow(window);
+  if (!window.webContents.isLoadingMainFrame()) {
+    window.webContents.send(IROHA_CONNECT_DEEP_LINK_AVAILABLE_CHANNEL);
+  }
+};
+
+const handleWalletDeepLink = (url: string) => {
+  const link = parseWalletDeepLink(url);
+  if (link?.kind === "kaigi") {
+    queueKaigiHashRoute(link.hashRoute);
+  } else if (link?.kind === "connect") {
+    queueIrohaConnectDeepLink(link.uri);
+  }
+};
+
+const registerIrohaProtocol = () => {
   if (process.defaultApp && process.argv.length >= 2) {
     app.setAsDefaultProtocolClient("iroha", process.execPath, [
       process.argv[1]!,
@@ -214,11 +255,12 @@ const registerRendererProtocol = () => {
 
 app.on("second-instance", (_event, argv) => {
   queueKaigiHashRoute(extractKaigiDeepLinkFromArgv(argv));
+  queueIrohaConnectDeepLink(extractIrohaConnectDeepLinkFromArgv(argv));
 });
 
 app.on("open-url", (event, url) => {
   event.preventDefault();
-  queueKaigiHashRoute(parseKaigiDeepLinkToHashRoute(url));
+  handleWalletDeepLink(url);
 });
 
 const createWindow = () => {
@@ -260,6 +302,9 @@ const createWindow = () => {
   });
   window.webContents.on("did-finish-load", () => {
     void flushPendingKaigiHashRoute(window);
+    if (pendingIrohaConnectUri) {
+      window.webContents.send(IROHA_CONNECT_DEEP_LINK_AVAILABLE_CHANNEL);
+    }
   });
   window.on("closed", () => {
     if (mainWindow === window) {
@@ -569,6 +614,19 @@ const registerNetworkIdentityHandlers = () => {
   );
 };
 
+const registerIrohaConnectDeepLinkHandler = () => {
+  ipcMain.handle(
+    IROHA_CONNECT_TAKE_DEEP_LINK_CHANNEL,
+    (event, ...args: unknown[]) => {
+      assertTrustedMainFrameIpcEvent(event);
+      assertNoIpcArguments(args, "IrohaConnect deep-link take");
+      const uri = pendingIrohaConnectUri;
+      pendingIrohaConnectUri = null;
+      return uri;
+    },
+  );
+};
+
 const registerIrohaConnectConfirmationHandler = () => {
   ipcMain.handle(
     IROHA_CONNECT_CONFIRMATION_CHANNEL,
@@ -637,6 +695,7 @@ app.whenReady().then(() => {
   registerGovernanceRuntimeConfigHandler();
   registerGovernanceValidationFeePolicyHandler();
   registerNetworkIdentityHandlers();
+  registerIrohaConnectDeepLinkHandler();
   registerIrohaConnectConfirmationHandler();
   registerMediaPermissionHandlers(session.defaultSession, {
     getRendererUrl: () => mainWindowTrustedRendererUrl ?? undefined,
@@ -650,7 +709,7 @@ app.whenReady().then(() => {
     getRendererUrl: () => mainWindowTrustedRendererUrl ?? undefined,
     getTrustedMainFrame: () => mainWindow?.webContents.mainFrame ?? null,
   });
-  registerKaigiProtocol();
+  registerIrohaProtocol();
   createWindow();
 
   app.on("activate", () => {
@@ -659,6 +718,7 @@ app.whenReady().then(() => {
       return;
     }
     queueKaigiHashRoute(pendingKaigiHashRoute);
+    queueIrohaConnectDeepLink(pendingIrohaConnectUri);
   });
 });
 

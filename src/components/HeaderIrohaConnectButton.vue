@@ -211,7 +211,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, shallowRef, watch } from "vue";
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  shallowRef,
+  watch,
+} from "vue";
 import AppDialog from "@/components/ui/AppDialog.vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { useQrScanner } from "@/composables/useQrScanner";
@@ -225,6 +232,8 @@ import {
   rejectIrohaConnectRequest,
   resetIrohaConnectBoundary,
   setIrohaConnectContext,
+  takePendingIrohaConnectDeepLink,
+  IROHA_CONNECT_DEEP_LINK_EVENT,
 } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import { getPublicAccountId } from "@/utils/accountId";
@@ -940,31 +949,56 @@ const rejectPendingConnectRequest = () => {
   }
 };
 
-const connectScanner = useQrScanner(
-  (payload) => {
-    connectScanError.value = "";
-    connectApprovalStatus.value = "";
-    try {
-      const parsed = parseIrohaConnectUri(payload);
-      if (parsed.role !== "wallet") {
-        throw new Error("Scan the wallet-role IrohaConnect QR from the app.");
-      }
-      connectApprovalGeneration.value += 1;
-      closeScannedConnectSocket("new pairing scanned");
-      scannedConnectSession.value = parsed;
-      pendingConnectSession.value = parsed;
-      connectScanner.message.value = t(
-        "Review connection details before approving.",
-      );
-    } catch (error) {
-      scannedConnectSession.value = null;
-      pendingConnectSession.value = null;
-      connectScanError.value =
-        error instanceof Error ? error.message : String(error);
+/**
+ * Shared entry for scanned QR payloads and `iroha://connect` deep links: both
+ * go through the same canonical URI validation and the approval modal.
+ */
+const beginConnectPairing = (payload: string) => {
+  connectScanError.value = "";
+  connectApprovalStatus.value = "";
+  try {
+    const parsed = parseIrohaConnectUri(payload);
+    if (parsed.role !== "wallet") {
+      throw new Error("Scan the wallet-role IrohaConnect QR from the app.");
     }
-  },
-  { translate: t },
-);
+    connectApprovalGeneration.value += 1;
+    closeScannedConnectSocket("new pairing scanned");
+    scannedConnectSession.value = parsed;
+    pendingConnectSession.value = parsed;
+    connectScanner.message.value = t(
+      "Review connection details before approving.",
+    );
+  } catch (error) {
+    scannedConnectSession.value = null;
+    pendingConnectSession.value = null;
+    connectScanError.value =
+      error instanceof Error ? error.message : String(error);
+  }
+};
+
+const connectScanner = useQrScanner(beginConnectPairing, { translate: t });
+
+let deepLinkTakeInFlight = false;
+const takePendingDeepLink = async () => {
+  if (!session.hasAccount || deepLinkTakeInFlight) {
+    return;
+  }
+  deepLinkTakeInFlight = true;
+  try {
+    const uri = await takePendingIrohaConnectDeepLink();
+    if (uri) {
+      beginConnectPairing(uri);
+    }
+  } catch (error) {
+    connectScanError.value =
+      error instanceof Error ? error.message : String(error);
+  } finally {
+    deepLinkTakeInFlight = false;
+  }
+};
+const handleDeepLinkAvailable = () => {
+  void takePendingDeepLink();
+};
 
 const connectStatusMessage = computed(
   () => connectScanError.value || connectScanner.message.value,
@@ -1006,7 +1040,28 @@ watch(currentConnectContextKey, resetConnectForContextChange, {
   flush: "sync",
 });
 
+watch(
+  () => session.hasAccount,
+  (hasAccount) => {
+    if (hasAccount) {
+      void takePendingDeepLink();
+    }
+  },
+);
+
+onMounted(() => {
+  window.addEventListener(
+    IROHA_CONNECT_DEEP_LINK_EVENT,
+    handleDeepLinkAvailable,
+  );
+  void takePendingDeepLink();
+});
+
 onBeforeUnmount(() => {
+  window.removeEventListener(
+    IROHA_CONNECT_DEEP_LINK_EVENT,
+    handleDeepLinkAvailable,
+  );
   connectApprovalGeneration.value += 1;
   connectScanner.stop();
   closeScannedConnectSocket();

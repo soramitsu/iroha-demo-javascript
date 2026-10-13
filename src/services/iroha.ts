@@ -178,6 +178,12 @@ export const closeIrohaConnectSession = (
   input: Parameters<IrohaBridge["closeIrohaConnectSession"]>[0],
 ) => bridge().closeIrohaConnectSession(input);
 
+export const takePendingIrohaConnectDeepLink = (): Promise<string | null> =>
+  bridge().takePendingIrohaConnectDeepLink();
+
+/** DOM event the preload dispatches when a pairing link is waiting. */
+export const IROHA_CONNECT_DEEP_LINK_EVENT = "iroha-connect-deep-link";
+
 export const getConfidentialAssetPolicy = (
   input: Parameters<IrohaBridge["getConfidentialAssetPolicy"]>[0],
 ): Promise<ConfidentialAssetPolicyView> =>

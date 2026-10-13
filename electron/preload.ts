@@ -162,6 +162,12 @@ import {
   readSumeragiCommittedHeight,
 } from "./faucetFinality";
 import { reviewConnectTransactionPayload } from "./connectTransactionReview";
+import { parseIrohaConnectDeepLink } from "./deepLink";
+import {
+  IROHA_CONNECT_DEEP_LINK_AVAILABLE_CHANNEL,
+  IROHA_CONNECT_DEEP_LINK_DOM_EVENT,
+  IROHA_CONNECT_TAKE_DEEP_LINK_CHANNEL,
+} from "./irohaConnectDeepLinkChannels";
 import {
   IROHA_CONNECT_CONFIRMATION_CHANNEL,
   IrohaConnectBoundary,
@@ -1368,6 +1374,8 @@ type IrohaBridge = {
     input: Parameters<IrohaConnectBoundary["rejectRequest"]>[0],
   ): ReturnType<IrohaConnectBoundary["rejectRequest"]>;
   closeIrohaConnectSession(input: { sessionToken: string }): void;
+  /** Take the pending `iroha://connect?...` link opened from another app. */
+  takePendingIrohaConnectDeepLink(): Promise<string | null>;
   getConfidentialAssetPolicy(input: {
     toriiUrl: string;
     accountId: string;
@@ -7842,6 +7850,18 @@ const api: IrohaBridge = {
     );
     irohaConnectBoundary.closeSession(sessionToken);
   },
+  async takePendingIrohaConnectDeepLink() {
+    const uri: unknown = await ipcRenderer.invoke(
+      IROHA_CONNECT_TAKE_DEEP_LINK_CHANNEL,
+    );
+    if (uri === null) {
+      return null;
+    }
+    if (typeof uri !== "string" || parseIrohaConnectDeepLink(uri) !== uri) {
+      throw new Error("The pending IrohaConnect link is not canonical.");
+    }
+    return uri;
+  },
   async getConfidentialAssetPolicy(input) {
     const { toriiUrl, accountId, assetDefinitionId } =
       requireFirstReleaseIpcInput(input, "confidentialAssetPolicy");
@@ -9299,3 +9319,10 @@ contextBridge.exposeInMainWorld(
   "iroha",
   wrapRendererSigningBoundary(api, SETUP_SECRET_INPUT_METHODS),
 );
+
+// Main signals that an `iroha://connect` pairing link is waiting; the
+// renderer pulls it with takePendingIrohaConnectDeepLink(). Only a payload-
+// free DOM event crosses into the page.
+ipcRenderer.on(IROHA_CONNECT_DEEP_LINK_AVAILABLE_CHANNEL, () => {
+  window.dispatchEvent(new Event(IROHA_CONNECT_DEEP_LINK_DOM_EVENT));
+});
