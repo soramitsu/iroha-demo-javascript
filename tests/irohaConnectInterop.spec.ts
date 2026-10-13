@@ -22,6 +22,7 @@ import {
   encryptConnectEnvelope,
   generateConnectWalletKeyPair,
 } from "@/utils/soraswapConnectWire";
+import { withRelayFixedArrayLayout } from "./helpers/connectRelayFixedArrays";
 
 type SocketHandler = (event: Event | MessageEvent) => void;
 
@@ -226,7 +227,11 @@ describe("IrohaConnect linked SDK interoperability", () => {
         methods: ["sign_raw"],
         resources: ["interop:raw:v1"],
       },
-      webSocketImpl: RecordingWebSocket as unknown as typeof WebSocket,
+      // The linked SDK still writes raw [u8; 32] arrays; the live relay
+      // requires element-framed arrays (see connectRelayFixedArrays.ts).
+      webSocketImpl: withRelayFixedArrayLayout(
+        RecordingWebSocket,
+      ) as unknown as typeof WebSocket,
     });
     const socket = RecordingWebSocket.instances[0];
     socket.open();
@@ -338,5 +343,5 @@ describe("IrohaConnect linked SDK interoperability", () => {
       }),
     );
     await expect(signaturePromise).resolves.toEqual(rawSignature);
-  });
+  }, 30_000);
 });

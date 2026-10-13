@@ -296,6 +296,19 @@ const requireByteLength = (
   return bytes;
 };
 
+/**
+ * Norito byte elements as the Torii Connect relay encodes and requires them in
+ * plaintext frames: every byte is its own u64-length-prefixed element. The
+ * relay decodes and re-encodes every frame, so raw byte arrays are rejected
+ * and never delivered.
+ */
+const encodeByteElements = (bytes: Uint8Array) =>
+  concatBytes(...Array.from(bytes, (byte) => encodeField(Uint8Array.of(byte))));
+
+/** Norito `[u8; N]` (a 32-byte array occupies 288 bytes). */
+const encodeFixedBytes = (bytes: Uint8Array, length: number, label: string) =>
+  encodeByteElements(requireByteLength(bytes, length, label));
+
 const hexCharCode = (value: number) => (value < 10 ? 48 + value : 87 + value);
 
 export const bytesToHex = (bytes: Uint8Array) => {
@@ -578,7 +591,7 @@ export const assertConnectSessionCommitment = (input: {
   }
 };
 
-const encodeWalletSignaturePayload = (payload: {
+const requireEd25519WalletSignature = (payload: {
   algorithmCode: number;
   signatureBase64: string;
 }) => {
@@ -586,10 +599,39 @@ const encodeWalletSignaturePayload = (payload: {
   if (payload.algorithmCode !== 0) {
     throw new Error("Connect wallet signatures must use Ed25519");
   }
-  requireByteLength(signatureBytes, 64, "wallet signature");
-  return encodeStruct([
+  return requireByteLength(signatureBytes, 64, "wallet signature");
+};
+
+/**
+ * `WalletSignatureV1` inside the end-to-end encrypted envelope, in the layout
+ * the `@iroha/iroha-js` app session decodes (u8 algorithm, raw byte vector).
+ * The relay never sees it; change it only in lockstep with the SDK.
+ */
+const encodeWalletSignaturePayload = (payload: {
+  algorithmCode: number;
+  signatureBase64: string;
+}) =>
+  encodeStruct([
     Uint8Array.of(payload.algorithmCode),
-    encodeByteVec(signatureBytes),
+    encodeByteVec(requireEd25519WalletSignature(payload)),
+  ]);
+
+/**
+ * `WalletSignatureV1` in a plaintext Approve frame, in the layout the live
+ * Torii relay decodes before relaying: `Algorithm` as a u32 discriminant and
+ * `Signature` as a u64 element count followed by element-framed bytes.
+ */
+const encodeRelayWalletSignaturePayload = (payload: {
+  algorithmCode: number;
+  signatureBase64: string;
+}) => {
+  const signatureBytes = requireEd25519WalletSignature(payload);
+  return encodeStruct([
+    encodeU32(payload.algorithmCode),
+    concatBytes(
+      encodeU64(signatureBytes.length),
+      encodeByteElements(signatureBytes),
+    ),
   ]);
 };
 
@@ -597,7 +639,7 @@ const encodeControlPayload = (payload: ConnectControlPayload) => {
   switch (payload.type) {
     case "open": {
       const body = encodeStruct([
-        requireByteLength(
+        encodeFixedBytes(
           hexToBytes(payload.appPublicKeyHex),
           32,
           "open.app_pk",
@@ -612,7 +654,7 @@ const encodeControlPayload = (payload: ConnectControlPayload) => {
     }
     case "approve": {
       const body = encodeStruct([
-        requireByteLength(
+        encodeFixedBytes(
           hexToBytes(payload.walletPublicKeyHex),
           32,
           "approve.wallet_pk",
@@ -620,7 +662,7 @@ const encodeControlPayload = (payload: ConnectControlPayload) => {
         encodeString(payload.accountId),
         encodeOption(payload.permissions, encodePermissionsPayload),
         encodeOption(payload.proof, encodeSignInProofPayload),
-        encodeWalletSignaturePayload(payload.signature),
+        encodeRelayWalletSignaturePayload(payload.signature),
       ]);
       return concatBytes(encodeU32(1), encodeU64(body.length), body);
     }
@@ -699,7 +741,7 @@ export const encodeControlConnectFrame = (input: {
 }) => {
   const controlPayload = encodeControlPayload(input.control);
   return encodeStruct([
-    requireByteLength(base64UrlToBytes(input.sid), 32, "frame.sid"),
+    encodeFixedBytes(base64UrlToBytes(input.sid), 32, "frame.sid"),
     encodeDirection(input.direction),
     encodeU64(input.seq),
     concatBytes(encodeU32(0), encodeU64(controlPayload.length), controlPayload),
@@ -871,6 +913,34 @@ const readField = (cursor: Cursor, label: string) => {
   return readBytes(cursor, length, label);
 };
 
+const readByteElements = (
+  cursor: Cursor,
+  length: number,
+  label: string,
+): Uint8Array => {
+  const out = new Uint8Array(length);
+  for (let index = 0; index < length; index += 1) {
+    const element = readField(cursor, `${label}[${index}]`);
+    if (element.length !== 1) {
+      throw new RangeError(`${label} must use one-byte Norito elements`);
+    }
+    out[index] = element[0]!;
+  }
+  return out;
+};
+
+/** Strict inverse of {@link encodeFixedBytes}. */
+const decodeFixedBytes = (
+  payload: Uint8Array,
+  length: number,
+  label: string,
+): Uint8Array => {
+  const cursor = createCursor(payload);
+  const out = readByteElements(cursor, length, label);
+  ensureExact(cursor, label);
+  return out;
+};
+
 const decodeStringPayload = (bytes: Uint8Array, label: string) => {
   const cursor = createCursor(bytes);
   const length = readU64(cursor, `${label} string length`);
@@ -1019,9 +1089,46 @@ const decodeWalletSignaturePayload = (bytes: Uint8Array, label: string) => {
   };
 };
 
+/** Strict inverse of {@link encodeRelayWalletSignaturePayload}. */
+const decodeRelayWalletSignaturePayload = (
+  bytes: Uint8Array,
+  label: string,
+) => {
+  const cursor = createCursor(bytes);
+  const algorithmField = readField(cursor, `${label}.algorithm`);
+  if (algorithmField.length !== 4) {
+    throw new Error(`${label}.algorithm must be a u32 discriminant`);
+  }
+  const algorithmCode = readU32(
+    createCursor(algorithmField),
+    `${label}.algorithm`,
+  );
+  const signatureCursor = createCursor(readField(cursor, `${label}.signature`));
+  const count = readU64(signatureCursor, `${label}.signature.length`);
+  if (algorithmCode !== 0) {
+    throw new Error(`${label}.algorithm must be Ed25519`);
+  }
+  if (count !== 64) {
+    throw new RangeError(`${label}.signature must be 64 bytes`);
+  }
+  const signatureBytes = readByteElements(
+    signatureCursor,
+    count,
+    `${label}.signature`,
+  );
+  ensureExact(signatureCursor, `${label}.signature`);
+  ensureExact(cursor, label);
+  return {
+    algorithmCode,
+    algorithmLabel: algorithmLabel(algorithmCode),
+    signatureHex: bytesToHex(signatureBytes),
+    signatureBase64: bytesToBase64(signatureBytes),
+  };
+};
+
 const decodeOpenControlBody = (bytes: Uint8Array): ConnectControlPayload => {
   const cursor = createCursor(bytes);
-  const appPublicKey = requireByteLength(
+  const appPublicKey = decodeFixedBytes(
     readField(cursor, "open.app_pk"),
     32,
     "open.app_pk",
@@ -1084,7 +1191,7 @@ const decodeOpenControlBody = (bytes: Uint8Array): ConnectControlPayload => {
 
 const decodeApproveControlBody = (bytes: Uint8Array): ConnectControlPayload => {
   const cursor = createCursor(bytes);
-  const walletPublicKey = requireByteLength(
+  const walletPublicKey = decodeFixedBytes(
     readField(cursor, "approve.wallet_pk"),
     32,
     "approve.wallet_pk",
@@ -1103,7 +1210,7 @@ const decodeApproveControlBody = (bytes: Uint8Array): ConnectControlPayload => {
     "approve.proof",
     decodeSignInProofPayload,
   );
-  const signature = decodeWalletSignaturePayload(
+  const signature = decodeRelayWalletSignaturePayload(
     readField(cursor, "approve.sig_wallet"),
     "approve.sig_wallet",
   );
@@ -1608,7 +1715,7 @@ export const encodeCiphertextConnectFrame = (input: {
     encodeByteVec(input.aead),
   ]);
   return encodeStruct([
-    requireByteLength(base64UrlToBytes(input.sid), 32, "frame.sid"),
+    encodeFixedBytes(base64UrlToBytes(input.sid), 32, "frame.sid"),
     encodeDirection(input.direction),
     encodeU64(input.seq),
     concatBytes(encodeU32(1), encodeU64(ciphertextBody.length), ciphertextBody),
@@ -1617,7 +1724,7 @@ export const encodeCiphertextConnectFrame = (input: {
 
 export const decodeConnectFrame = (bytes: Uint8Array): ConnectFrameSummary => {
   const cursor = createCursor(bytes);
-  const sidBytes = requireByteLength(
+  const sidBytes = decodeFixedBytes(
     readField(cursor, "frame.sid"),
     32,
     "frame.sid",

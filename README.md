@@ -96,6 +96,26 @@ transactions it submits itself:
    the Iroha payload hash (`HashOf<TransactionPayload>`), which the dApp
    finalizes with the native `finalizeSignedTransaction`.
 
+The live TAIRA relay decodes and re-encodes every plaintext frame. It requires
+element-framed `[u8; 32]` values (`frame.sid`, `open.app_pk`,
+`approve.wallet_pk`: each byte a u64-length-prefixed element) and an Approve
+`sig_wallet` made of a u32 algorithm discriminant plus an element-framed
+signature; it closes any socket that sends the older raw arrays. The wallet
+emits that layout (pinned by frames captured from the live relay in
+`tests/irohaConnectRelayLayout.spec.ts`). `connect.browser.js` in the current
+`@iroha/iroha-js` still writes and reads the raw arrays, so a dApp built on it
+cannot pair over the live relay until the SDK adopts the same frame layout;
+the encrypted envelope layout is unchanged on both sides. The opt-in live test
+shows the full pairing and payload-hash signing round trip against TAIRA by
+routing the SDK socket through `tests/helpers/connectRelayFixedArrays.ts`:
+
+```bash
+LIVE_TAIRA=1 npx vitest run tests/liveTaira.spec.ts
+```
+
+It creates an ephemeral relay session and finalizes the signature locally;
+nothing is submitted to the chain.
+
 ### Network identity after a TAIRA reset
 
 TAIRA is reset periodically. The wallet derives the NetworkId from
