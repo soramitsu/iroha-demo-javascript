@@ -172,14 +172,15 @@ const compatibleNativeModule = () => ({
   noritoDecodeInstruction() {
     return JSON.stringify({});
   },
+  noritoDecodeInstructionBoxArchive() {
+    return JSON.stringify({});
+  },
   noritoEncodeInstruction() {
     return Buffer.from([0]);
   },
   inspectSubscriptionTriggerAction() {
     return JSON.stringify({});
   },
-  validationFeeHijiriQuoteRequestV1() {},
-  validationFeeVerifyHijiriQuoteResponseV1() {},
   validationFeePolicyProposalFingerprintV1(
     proposalOperator: unknown,
     policyJson: unknown,
@@ -211,7 +212,7 @@ const compatibleNativeModule = () => ({
     throw new Error("unexpected proposal operator");
   },
   connectNoritoBridgeAbiVersion() {
-    return 23;
+    return 29;
   },
   securePrivateFileAbiVersion() {
     return 1;
@@ -255,10 +256,9 @@ const ACTIVE_RUNTIME_NATIVE_EXPORTS = [
   "hashSignedTransaction",
   "decodeTransactionReceiptJson",
   "noritoDecodeInstruction",
+  "noritoDecodeInstructionBoxArchive",
   "noritoEncodeInstruction",
   "inspectSubscriptionTriggerAction",
-  "validationFeeHijiriQuoteRequestV1",
-  "validationFeeVerifyHijiriQuoteResponseV1",
   "securePrivateFileAbiVersion",
   "securePrivateDirectoryEnsure",
   "securePrivateFileRead",
@@ -599,7 +599,7 @@ describe("resolveNativeBuildRequirement", () => {
     );
   });
 
-  it("requests a rebuild when the native Connect bridge ABI is not exactly 23", () => {
+  it("requests a rebuild when the native Connect bridge ABI is not exactly 29", () => {
     const tempPackage = makeTempPackage();
     tempRoots.push(tempPackage.root);
 
@@ -615,7 +615,7 @@ describe("resolveNativeBuildRequirement", () => {
 
     expect(result.shouldBuild).toBe(true);
     expect(result.reason).toBe(
-      "connect Norito bridge ABI mismatch: expected 23, observed 20",
+      "connect Norito bridge ABI mismatch: expected 29, observed 20",
     );
   });
 

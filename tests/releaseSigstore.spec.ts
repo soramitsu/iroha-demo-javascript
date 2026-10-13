@@ -177,8 +177,7 @@ describe("release Sigstore boundary", () => {
     for (const requiredExport of [
       "encodeSignedTransactionVersioned",
       "decodeTransactionReceiptJson",
-      "validationFeeHijiriQuoteRequestV1",
-      "validationFeeVerifyHijiriQuoteResponseV1",
+      "noritoDecodeInstructionBoxArchive",
       "securePrivateFileWriteAtomic",
     ]) {
       expect(workflow).toContain(`"${requiredExport}"`);

@@ -78,14 +78,15 @@ const compatibleNativeModule = () => ({
   noritoDecodeInstruction() {
     return JSON.stringify({ trusted: "decode" });
   },
+  noritoDecodeInstructionBoxArchive() {
+    return JSON.stringify({ trusted: "archive-decode" });
+  },
   noritoEncodeInstruction() {
     return Buffer.from([0]);
   },
   inspectSubscriptionTriggerAction() {
     return JSON.stringify({ trusted: "inspection" });
   },
-  validationFeeHijiriQuoteRequestV1() {},
-  validationFeeVerifyHijiriQuoteResponseV1() {},
   validationFeePolicyProposalFingerprintV1(
     proposalOperator: unknown,
     policyJson: unknown,
@@ -117,7 +118,7 @@ const compatibleNativeModule = () => ({
     throw new Error("unexpected proposal operator");
   },
   connectNoritoBridgeAbiVersion() {
-    return 23;
+    return 29;
   },
   securePrivateFileAbiVersion() {
     return 1;

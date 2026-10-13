@@ -15,8 +15,7 @@ import {
 const CALL_ID = "default.universal:kaigi-weekly-sync";
 const OTHER_CALL_ID = "default.universal:kaigi-other";
 const MARKED_HASH = `${"00".repeat(31)}01`;
-const VERIFIER_BACKEND =
-  "halo2/pasta/confidential-transfer-2x2-merkle16-axiom-poseidon-v3" as const;
+const VERIFIER_BACKEND = "pipa-r/pasta/confidential-transfer-v1" as const;
 const VERIFIER_NAME = "wallet-confidential-transfer-v1";
 const VERIFIER_BYTES = Buffer.from([1, 2, 3, 4]);
 const SCHEDULED_START_MS = 1_700_000_000_000;
@@ -74,7 +73,7 @@ const validVerifyingKey = () => ({
     circuit_id: VERIFIER_BACKEND,
     owner_manifest_id: null,
     namespace: "core",
-    backend: "halo2-ipa-pasta",
+    backend: "native-pipa-r-pasta",
     curve: "pallas",
     public_inputs_schema_hash: "11".repeat(32),
     commitment: verifierCommitment(VERIFIER_BACKEND, VERIFIER_BYTES),

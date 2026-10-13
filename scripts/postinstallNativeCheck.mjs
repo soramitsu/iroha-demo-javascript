@@ -36,10 +36,9 @@ const REQUIRED_NATIVE_EXPORTS = [
   "hashSignedTransaction",
   "decodeTransactionReceiptJson",
   "noritoDecodeInstruction",
+  "noritoDecodeInstructionBoxArchive",
   "noritoEncodeInstruction",
   "inspectSubscriptionTriggerAction",
-  "validationFeeHijiriQuoteRequestV1",
-  "validationFeeVerifyHijiriQuoteResponseV1",
   "validationFeePolicyProposalFingerprintV1",
   "validationFeePayoutLifecycleProposalFingerprintV1",
   "connectNoritoBridgeAbiVersion",
@@ -48,7 +47,7 @@ const REQUIRED_NATIVE_EXPORTS = [
   "securePrivateFileRead",
   "securePrivateFileWriteAtomic",
 ];
-const REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION = 23;
+const REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION = 29;
 const REQUIRED_SECURE_PRIVATE_FILE_ABI_VERSION = 1;
 const REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR =
   "sorauﾛ1Pｽp8zXFQﾗｷPsFﾒｶﾑ3ｵmﾉbｼｽUｱｶヱﾚBXヱﾊCﾋﾘﾈvuKFKM346";

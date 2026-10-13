@@ -28,10 +28,9 @@ const REQUIRED_NATIVE_EXPORTS = [
   "hashSignedTransaction",
   "decodeTransactionReceiptJson",
   "noritoDecodeInstruction",
+  "noritoDecodeInstructionBoxArchive",
   "noritoEncodeInstruction",
   "inspectSubscriptionTriggerAction",
-  "validationFeeHijiriQuoteRequestV1",
-  "validationFeeVerifyHijiriQuoteResponseV1",
   "validationFeePolicyProposalFingerprintV1",
   "validationFeePayoutLifecycleProposalFingerprintV1",
   "connectNoritoBridgeAbiVersion",
@@ -40,7 +39,7 @@ const REQUIRED_NATIVE_EXPORTS = [
   "securePrivateFileRead",
   "securePrivateFileWriteAtomic",
 ] as const;
-const REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION = 23;
+const REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION = 29;
 export const REQUIRED_SECURE_PRIVATE_FILE_ABI_VERSION = 1;
 const REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR =
   "sorauﾛ1Pｽp8zXFQﾗｷPsFﾒｶﾑ3ｵmﾉbｼｽUｱｶヱﾚBXヱﾊCﾋﾘﾈvuKFKM346";
@@ -462,7 +461,7 @@ export const loadIrohaJsNativeBinding = (
     );
   if (!nativeDir) {
     throw new Error(
-      "The @iroha/iroha-js native binding is required. Run node scripts/build-iroha-native.mjs --sdk-root ../iroha/javascript/iroha_js from the wallet checkout.",
+      "The @iroha/iroha-js native binding is required. Run node scripts/build-iroha-native.mjs --sdk-root <selected SDK root> from the wallet checkout (the SDK root is $IROHA_JS_SDK_ROOT, or ../iroha/javascript/iroha_js when unset).",
     );
   }
 
@@ -473,7 +472,7 @@ export const loadIrohaJsNativeBinding = (
     );
     if (!hasRequiredIrohaJsNativeExports(nativeModule)) {
       throw new Error(
-        "The @iroha/iroha-js native binding is stale or incomplete; rebuild it with node scripts/build-iroha-native.mjs --sdk-root ../iroha/javascript/iroha_js before signing transactions.",
+        "The @iroha/iroha-js native binding is stale or incomplete; rebuild it with node scripts/build-iroha-native.mjs --sdk-root <selected SDK root> (the SDK root is $IROHA_JS_SDK_ROOT, or ../iroha/javascript/iroha_js when unset) before signing transactions.",
       );
     }
     return nativeModule;

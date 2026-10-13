@@ -34,14 +34,14 @@ const KAIGI_SECRET_BOX_SCHEMA_V1 = "iroha-demo-kaigi-secret-box/v1";
 const KAIGI_SEALED_BOX_SCHEMA_V1 = "iroha-demo-kaigi-sealed-box/v1";
 const KAIGI_MEETING_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
+// Exact current SDK/native verifier-registry labels (ToriiVerifierBackendLabelV1).
 const VERIFIER_BACKENDS = new Set<ToriiVerifierBackendLabelV1>([
-  "halo2/ipa",
-  "halo2/pasta/kaigi-authorization-v1",
-  "halo2/pasta/kaigi-usage-v1",
-  "halo2/pasta/ivm-execution-v1",
-  "halo2/pasta/confidential-transfer-2x2-merkle16-axiom-poseidon-v3",
-  "halo2/pasta/confidential-unshield-full-merkle16-axiom-poseidon-v3",
-  "halo2/pasta/confidential-unshield-change-merkle16-axiom-poseidon-v4",
+  "pipa-r/pasta",
+  "pipa-r/pasta/kaigi-authorization-v1",
+  "pipa-r/pasta/kaigi-usage-v1",
+  "pipa-r/pasta/confidential-transfer-v1",
+  "pipa-r/pasta/confidential-unshield-full-v1",
+  "pipa-r/pasta/confidential-unshield-change-v1",
   "stark/fri/poseidon-x7-goldilocks-6x64-v1",
 ]);
 
@@ -457,7 +457,7 @@ export const normalizeFirstReleaseVerifyingKeyDetail = (
   );
   const expectedEngine = backend.startsWith("stark/")
     ? "stark"
-    : "halo2-ipa-pasta";
+    : "native-pipa-r-pasta";
   const expectedCurve = expectedEngine === "stark" ? "goldilocks" : "pallas";
   if (engine !== expectedEngine || rawRecord.curve !== expectedCurve) {
     throw new Error(
@@ -556,7 +556,7 @@ export const normalizeFirstReleaseVerifyingKeyDetail = (
         rawRecord.namespace,
         "Verifying key response.record.namespace",
       ),
-      backend: engine as "halo2-ipa-pasta" | "stark",
+      backend: engine as "native-pipa-r-pasta" | "stark",
       curve: expectedCurve,
       public_inputs_schema_hash: requireLowerHex32(
         rawRecord.public_inputs_schema_hash,

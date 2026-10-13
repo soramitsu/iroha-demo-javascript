@@ -7,7 +7,8 @@ access, signing, and transaction submission stay in Electron.
 ## Requirements
 
 - Node.js 24 or newer
-- The current Iroha checkout at `../iroha`
+- The current Iroha checkout at `../iroha` (or another checkout selected with
+  `IROHA_JS_SDK_ROOT`, see below)
 - Rust and the native build prerequisites required by `@iroha/iroha-js`
 
 The SDK dependency is intentionally local:
@@ -44,6 +45,65 @@ npm run build
 
 `npm run verify` runs lint, both renderer and Electron typechecks, and the test
 suite.
+
+### Selecting a different SDK checkout (bond-poc worktree)
+
+Every build consumer (Vite, Vitest, `tsc`, native staging, the Electron
+native loader) resolves the SDK through `scripts/iroha-sdk-compat.mjs`, which
+honours one absolute `IROHA_JS_SDK_ROOT`. To run against the SDK being
+extended for the Palmatrix bond demo in the `iroha-bond-poc` worktree:
+
+```bash
+# One-time, in the SDK worktree (writes only gitignored dist/, native/ and
+# node_modules/; coordinate with whoever owns that worktree):
+cd ../iroha-bond-poc/javascript/iroha_js
+npm ci
+npm run build:dist
+
+# In this wallet checkout, for every shell that builds or runs the wallet:
+cd ../../../iroha-demo-javascript
+export IROHA_JS_SDK_ROOT="$(cd ../iroha-bond-poc/javascript/iroha_js && pwd)"
+node scripts/iroha-sdk-compat.mjs        # activates and verifies the root
+node scripts/build-iroha-native.mjs --sdk-root "$IROHA_JS_SDK_ROOT"
+npm run dev
+```
+
+`build-iroha-native.mjs` builds into a Cargo target outside both checkouts
+(`../.iroha-js-native-targets/`), so it does not contend with Cargo builds in
+the worktree itself. Unset `IROHA_JS_SDK_ROOT` to return to
+`../iroha/javascript/iroha_js`. The wallet requires the current native bridge
+(Connect Norito bridge ABI 29, `noritoDecodeInstructionBoxArchive`); an older
+`native/iroha_js_host.node` is rejected until it is rebuilt.
+
+## IrohaConnect dApp signing (Palmatrix demo)
+
+A web dApp pairs with the wallet through IrohaConnect and asks it to sign
+transactions it submits itself:
+
+1. The dApp creates a session (`createConnectSessionPreview` /
+   `registerConnectSession`) and shows the wallet-role URI as a QR code and an
+   "Open in wallet" link:
+   `iroha://connect?sid=…&network_id=…&app_pk=…&nonce=…&node=…&v=1&role=wallet&token=…&relay=…`.
+   The wallet handles that link from the OS (`iroha://` protocol) or a QR scan
+   and shows the same approval modal either way.
+2. The session's `network_id` must equal the endpoint's pinned NetworkId (see
+   Settings). A session may request `sign_transaction` and `sign_raw`
+   together; raw signing is limited to the exact requested domain tags.
+3. For `SignRequestTx` the dApp sends the unsigned payload bytes from
+   `buildTransactionPayload`. The wallet decodes them, checks that the
+   authority is the paired account and the payload NetworkId is the
+   session's, lists every instruction in a native approval dialog, and signs
+   the Iroha payload hash (`HashOf<TransactionPayload>`), which the dApp
+   finalizes with the native `finalizeSignedTransaction`.
+
+### Network identity after a TAIRA reset
+
+TAIRA is reset periodically. The wallet derives the NetworkId from
+`/v1/accounts/capabilities` and the genesis block, pins it per endpoint on
+first use, and blocks writes and Connect pairing when it changes. After an
+intentional reset, open Settings, check the endpoint, and choose **Trust new
+network identity** to confirm the new identity in the native dialog. Pins
+live in `network-identity-pins.json` under the Electron `userData` directory.
 
 ## SCCP operator artifacts (runtime disabled)
 

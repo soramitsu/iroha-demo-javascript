@@ -199,7 +199,7 @@ describe("v2.0.1 governance release boundary", () => {
     expect(releaseWorkflow).not.toContain('"sora.wallet.release-source.v1"');
     expect(releaseWorkflow).not.toContain("rustup toolchain install stable");
     expect(releaseWorkflow).not.toContain("rustup default stable");
-    expect(releaseWorkflow).toContain("connect_norito_bridge_abi_version: 23");
+    expect(releaseWorkflow).toContain("connect_norito_bridge_abi_version: 29");
     expect(releaseWorkflow).not.toContain(
       "validation_fee_policy_fingerprint_arity",
     );
@@ -262,7 +262,7 @@ describe("v2.0.1 governance release boundary", () => {
         "validationFeePayoutLifecycleProposalFingerprintV1",
       );
       expect(nativeCheck).toContain(
-        "REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION = 23",
+        "REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION = 29",
       );
       expect(nativeCheck).toContain("connectNoritoBridgeAbiVersion");
       expect(nativeCheck).toContain(
