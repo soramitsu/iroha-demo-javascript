@@ -7,6 +7,7 @@
     "src/utils/assetId.ts",
     "src/utils/chainMetadata.ts",
     "src/utils/confidential.ts",
+    "src/utils/connectTransactionReview.ts",
     "src/utils/errorMessage.ts",
     "src/utils/endpoint.ts",
     "src/utils/endpointFeatures.ts",
@@ -22,6 +23,7 @@
     "src/utils/soraswapConnectWire.ts",
     "src/utils/transactionFee.ts",
     "src/utils/walletBackup.ts",
+    "src/types/connectTransactionReview.ts",
     "src/types/endpointInspection.ts"
   ],
   "compilerOptions": {

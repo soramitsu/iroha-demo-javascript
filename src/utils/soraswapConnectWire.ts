@@ -179,17 +179,16 @@ export const assertConnectSigningPermission = (
   if (!permissions?.methods.includes(method)) {
     throw new Error(`IrohaConnect Open permissions do not grant ${method}.`);
   }
+  // `resources` scopes raw signing to exact domain tags. SignRequestTx has no
+  // resource selector, so a session may grant both methods: transaction
+  // requests need only `sign_transaction` (each one is decoded and approved
+  // individually), while raw requests stay limited to the listed domains.
   if (
     request.type === "sign_request_raw" &&
     (!request.domainTag || !permissions.resources?.includes(request.domainTag))
   ) {
     throw new Error(
       `IrohaConnect Open permissions do not grant raw-signing domain "${request.domainTag || ""}".`,
-    );
-  }
-  if (request.type === "sign_request_tx" && permissions.resources !== null) {
-    throw new Error(
-      "IrohaConnect transaction signing requires unrestricted resources because SignRequestTx has no resource selector.",
     );
   }
 };

@@ -270,6 +270,9 @@ describe("AccountSetupView", () => {
     testIrohaConnectBoundary = new IrohaConnectBoundary({
       assertContext: async (context) => ({ ...context }),
       authorize: async () => true,
+      reviewTransaction: () => {
+        throw new Error("Transaction review is not used by these tests.");
+      },
       sign: async (context, message) => {
         const result = (await signIrohaConnectMessageMock({
           ...context,

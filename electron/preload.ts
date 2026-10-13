@@ -161,6 +161,7 @@ import {
   FaucetCommittedHeightStalledError,
   readSumeragiCommittedHeight,
 } from "./faucetFinality";
+import { reviewConnectTransactionPayload } from "./connectTransactionReview";
 import {
   IROHA_CONNECT_CONFIRMATION_CHANNEL,
   IrohaConnectBoundary,
@@ -7253,6 +7254,15 @@ const irohaConnectBoundary = new IrohaConnectBoundary({
       IROHA_CONNECT_CONFIRMATION_CHANNEL,
       confirmation,
     )) === true,
+  reviewTransaction: (context, payloadBytes) =>
+    reviewConnectTransactionPayload({
+      payloadBytes,
+      expectedAuthority: context.accountId,
+      expectedNetworkId: context.networkId,
+      networkPrefix: context.networkPrefix,
+    }),
+  // Raw requests sign the exact message; transaction requests sign the
+  // reviewed `HashOf<TransactionPayload>` derived by the boundary.
   sign: signExactIrohaConnectMessage,
 });
 

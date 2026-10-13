@@ -24,6 +24,7 @@ import {
 } from "@/utils/soraswapConnectWire";
 import { TEST_TAIRA_NETWORK_ID as TAIRA_NETWORK_ID } from "./helpers/networkIdentityFixture";
 import { deriveAccountAddressView } from "../electron/accountAddress";
+import { irohaTransactionPayloadHash } from "../electron/connectTransactionReview";
 
 const ACCOUNT_A = deriveAccountAddressView({
   domain: "default",
@@ -107,14 +108,50 @@ const createHarness = (input?: {
       return { ...fakeSignature };
     },
   );
+  const reviewTransaction = vi.fn(
+    (context: IrohaConnectWalletContext, payloadBytes: Uint8Array) => {
+      if (Buffer.from(payloadBytes).toString("utf8") === "not a payload") {
+        throw new Error(
+          "payload authority does not match the requested signer",
+        );
+      }
+      const payloadHash = irohaTransactionPayloadHash(payloadBytes);
+      return {
+        payloadHash,
+        review: {
+          schema: "iroha.wallet.connect-transaction-review.v1" as const,
+          networkId: context.networkId,
+          authority: context.accountId,
+          payloadHashHex: bytesToHex(payloadHash),
+          payloadByteLength: payloadBytes.length,
+          creationTimeMs: "1",
+          ttlMs: "60000",
+          executable: "instructions" as const,
+          instructions: [
+            {
+              index: 1,
+              wireId: "iroha.transfer",
+              kind: "transfer" as const,
+              title: "Transfer asset",
+              fields: [{ label: "Amount", value: "10" }],
+              json: null,
+              warning: null,
+            },
+          ],
+          warnings: [],
+        },
+      };
+    },
+  );
   const boundary = new IrohaConnectBoundary({
     assertContext,
     authorize,
+    reviewTransaction,
     sign,
     ...(input?.now ? { now: input.now } : {}),
     ...(input?.randomToken ? { randomToken: input.randomToken } : {}),
   });
-  return { boundary, assertContext, authorize, sign };
+  return { boundary, assertContext, authorize, reviewTransaction, sign };
 };
 
 type ActiveHarnessSession = {
@@ -219,6 +256,120 @@ const decryptResponse = (
     hexToBytes(frame.ciphertext.aeadHex),
   ).payload;
 };
+
+const txPayload = (bytes: Uint8Array): ConnectEnvelopePayload => ({
+  type: "sign_request_tx",
+  txBytesHex: bytesToHex(bytes),
+  txBytesBase64: bytesToBase64(bytes),
+  txBytesLength: bytes.length,
+});
+
+describe("IrohaConnect transaction requests", () => {
+  it("reviews the payload and signs only its Iroha payload hash after approval", async () => {
+    const { boundary, authorize, reviewTransaction, sign } = createHarness();
+    const session = await activateSession(boundary, {
+      permissions: {
+        methods: ["sign_raw", "sign_transaction"],
+        events: [],
+        resources: ["iroha:torii:canonical-request:v1"],
+      },
+    });
+    authorize.mockClear();
+    sign.mockClear();
+    const payload = Buffer.from("canonical unsigned payload bytes");
+
+    const processed = sendPayload(boundary, session, txPayload(payload));
+    if (processed.kind !== "request") {
+      throw new Error("Expected an IrohaConnect transaction request.");
+    }
+    expect(processed.review).toMatchObject({
+      networkId: CONTEXT_A.networkId,
+      authority: CONTEXT_A.accountId,
+      payloadHashHex: bytesToHex(irohaTransactionPayloadHash(payload)),
+    });
+    expect(sign).not.toHaveBeenCalled();
+
+    const approved = await boundary.approveRequest({
+      sessionToken: session.sessionToken,
+      requestToken: processed.requestToken,
+    });
+
+    expect(approved.signed).toBe(true);
+    expect(authorize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "sign_request_tx",
+        networkId: CONTEXT_A.networkId,
+        review: processed.review,
+      }),
+    );
+    expect(reviewTransaction).toHaveBeenCalledTimes(2);
+    expect(sign).toHaveBeenCalledTimes(1);
+    const signedMessage = sign.mock.calls[0]![1];
+    expect(bytesToHex(signedMessage)).toBe(
+      bytesToHex(irohaTransactionPayloadHash(payload)),
+    );
+    expect(decryptResponse(session, approved.frameBase64)).toMatchObject({
+      type: "sign_result_ok",
+    });
+  });
+
+  it("answers an unreviewable payload with INVALID_TRANSACTION and keeps the slot free", async () => {
+    const { boundary, authorize, sign } = createHarness();
+    const session = await activateSession(boundary);
+    authorize.mockClear();
+    sign.mockClear();
+
+    const rejected = sendPayload(
+      boundary,
+      session,
+      txPayload(Buffer.from("not a payload")),
+    );
+    expect(rejected.kind).toBe("response");
+    if (rejected.kind !== "response") return;
+    expect(decryptResponse(session, rejected.frameBase64)).toMatchObject({
+      type: "sign_result_err",
+      code: "INVALID_TRANSACTION",
+    });
+    expect(rejected.error).toContain("refused this transaction");
+
+    const next = sendPayload(boundary, session, txPayload(Buffer.from("ok")));
+    expect(next.kind).toBe("request");
+    expect(authorize).not.toHaveBeenCalled();
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it("refuses to sign when the payload hash changes between review and approval", async () => {
+    const { boundary, reviewTransaction, sign } = createHarness();
+    const session = await activateSession(boundary);
+    sign.mockClear();
+    const processed = sendPayload(
+      boundary,
+      session,
+      txPayload(Buffer.from("payload")),
+    );
+    if (processed.kind !== "request") throw new Error("Expected a request.");
+    const original = reviewTransaction.getMockImplementation()!;
+    reviewTransaction.mockImplementationOnce((context, bytes) => {
+      const result = original(context, bytes);
+      return {
+        ...result,
+        payloadHash: Uint8Array.from({ length: 32 }, () => 1),
+      };
+    });
+
+    const approved = await boundary.approveRequest({
+      sessionToken: session.sessionToken,
+      requestToken: processed.requestToken,
+    });
+
+    expect(approved.signed).toBe(false);
+    expect(sign).not.toHaveBeenCalled();
+    expect(decryptResponse(session, approved.frameBase64)).toMatchObject({
+      type: "sign_result_err",
+      code: "SIGNING_FAILED",
+    });
+  });
+});
 
 describe("IrohaConnect preload-owned approval boundary", () => {
   it("requires generated boundary tokens to be canonical 32-byte base64url", async () => {

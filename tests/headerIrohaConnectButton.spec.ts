@@ -29,6 +29,56 @@ import {
   TEST_TAIRA_NETWORK_ID as TAIRA_NETWORK_ID,
   matchedNetworkIdentity,
 } from "./helpers/networkIdentityFixture";
+import { irohaTransactionPayloadHash } from "../electron/connectTransactionReview";
+import type { ConnectTransactionReview } from "@/types/connectTransactionReview";
+
+const INVALID_TRANSACTION_TEXT = "not a canonical transaction";
+
+/**
+ * UI-level stand-in for the preload payload decoder: the real decoder is
+ * covered by connectTransactionReview.spec.ts against SDK-built payloads.
+ */
+const fakeTransactionReview = (
+  context: IrohaConnectWalletContext,
+  payloadBytes: Uint8Array,
+): { review: ConnectTransactionReview; payloadHash: Uint8Array } => {
+  if (Buffer.from(payloadBytes).toString("utf8") === INVALID_TRANSACTION_TEXT) {
+    throw new Error(
+      "transaction payload authority does not match the requested signer",
+    );
+  }
+  const payloadHash = irohaTransactionPayloadHash(payloadBytes);
+  return {
+    payloadHash,
+    review: {
+      schema: "iroha.wallet.connect-transaction-review.v1",
+      networkId: context.networkId,
+      authority: context.accountId,
+      payloadHashHex: Buffer.from(payloadHash).toString("hex"),
+      payloadByteLength: payloadBytes.length,
+      creationTimeMs: "1791861265764",
+      ttlMs: "60000",
+      executable: "instructions",
+      instructions: [
+        {
+          index: 1,
+          wireId: "iroha.transfer",
+          kind: "transfer",
+          title: "Transfer asset",
+          fields: [
+            { label: "Amount", value: "10" },
+            { label: "Asset", value: "6TEAJqbb8oEPmLncoNiMRbLEK6tw" },
+            { label: "From", value: context.accountId },
+            { label: "To", value: "bond-escrow" },
+          ],
+          json: null,
+          warning: null,
+        },
+      ],
+      warnings: [],
+    },
+  };
+};
 
 const CONTRACT_CALL_SIGN_SCHEMA =
   "uranai.irohaconnect.contract-call-signature.v1";
@@ -218,6 +268,7 @@ describe("HeaderIrohaConnectButton", () => {
     testIrohaConnectBoundary = new IrohaConnectBoundary({
       assertContext: async (context) => ({ ...context }),
       authorize: async () => true,
+      reviewTransaction: fakeTransactionReview,
       sign: async (context, message) => {
         const result = (await signIrohaConnectMessageMock({
           ...context,
@@ -855,11 +906,11 @@ describe("HeaderIrohaConnectButton", () => {
       domainTag: RAW_DOMAIN,
     },
     {
-      label: "resource-scoped transaction grants",
+      label: "transaction requests without a sign_transaction grant",
       permissions: {
-        methods: ["sign_transaction"],
+        methods: ["sign_raw"],
         events: [],
-        resources: ["asset:opaque"],
+        resources: [RAW_DOMAIN],
       },
       requestType: "sign_request_tx" as const,
       domainTag: undefined,
@@ -890,30 +941,89 @@ describe("HeaderIrohaConnectButton", () => {
     },
   );
 
-  it("accepts an unscoped sign_transaction grant", async () => {
+  it.each([
+    {
+      label: "an unscoped sign_transaction grant",
+      permissions: {
+        methods: ["sign_transaction"],
+        events: [],
+        resources: null,
+      },
+    },
+    {
+      label: "a session that also grants scoped raw signing",
+      permissions: {
+        methods: ["sign_raw", "sign_transaction"],
+        events: [],
+        resources: [RAW_DOMAIN],
+      },
+    },
+  ])(
+    "signs only the reviewed payload hash for $label",
+    async ({ permissions }) => {
+      mountComponent();
+      const { socket, keys } = await approveConnection(permissions);
+      const payload = Buffer.from("unsigned transaction payload");
+      emitBinaryMessage(
+        socket,
+        encodeSignRequestFrame(keys.appKey, {
+          type: "sign_request_tx",
+          signingMessageB64: payload.toString("base64"),
+        }),
+      );
+      await flushPromises();
+      const dialogText = getOpenDialog()?.textContent ?? "";
+      expect(dialogText).toContain("1. Transfer asset");
+      expect(dialogText).toContain("Amount: 10");
+      expect(dialogText).toContain("To: bond-escrow");
+      expect(dialogText).toContain(
+        Buffer.from(irohaTransactionPayloadHash(payload)).toString("hex"),
+      );
+      expect(signIrohaConnectMessageMock).not.toHaveBeenCalled();
+
+      getDialogButtonByText(t("Approve and sign")).click();
+      await flushPromises();
+
+      expect(signIrohaConnectMessageMock).toHaveBeenCalledTimes(1);
+      expect(signIrohaConnectMessageMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          signingMessageB64: Buffer.from(
+            irohaTransactionPayloadHash(payload),
+          ).toString("base64"),
+        }),
+      );
+      expect(
+        decodeLatestWalletEnvelope(socket, keys.walletKey).payload.type,
+      ).toBe("sign_result_ok");
+    },
+  );
+
+  it("refuses an undecodable transaction without opening an approval", async () => {
     mountComponent();
     const { socket, keys } = await approveConnection({
       methods: ["sign_transaction"],
       events: [],
       resources: null,
     });
-    const signingMessageB64 = Buffer.from("unsigned transaction").toString(
-      "base64",
-    );
     emitBinaryMessage(
       socket,
       encodeSignRequestFrame(keys.appKey, {
         type: "sign_request_tx",
-        signingMessageB64,
+        signingMessageB64: Buffer.from(INVALID_TRANSACTION_TEXT).toString(
+          "base64",
+        ),
       }),
     );
     await flushPromises();
-    getDialogButtonByText(t("Approve and sign")).click();
-    await flushPromises();
 
-    expect(signIrohaConnectMessageMock).toHaveBeenCalledWith(
-      expect.objectContaining({ signingMessageB64 }),
-    );
+    expect(getOpenDialog()).toBeNull();
+    expect(signIrohaConnectMessageMock).not.toHaveBeenCalled();
+    expect(
+      decodeLatestWalletEnvelope(socket, keys.walletKey).payload,
+    ).toMatchObject({
+      type: "sign_result_err",
+      code: "INVALID_TRANSACTION",
+    });
   });
 
   it("tracks relay server events separately from the peer app sequence", async () => {

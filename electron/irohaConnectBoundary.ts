@@ -23,6 +23,8 @@ import {
   type ConnectWalletSignature,
 } from "../src/utils/soraswapConnectWire";
 import { parseNetworkIdLiteral } from "../src/utils/networkIdentity";
+import { isConnectTransactionReview } from "../src/utils/connectTransactionReview";
+import type { ConnectTransactionReview } from "../src/types/connectTransactionReview";
 import { normalizeEndpointUrl } from "../src/utils/endpoint";
 import { normalizeCanonicalAccountIdLiteral } from "./accountAddress";
 
@@ -38,27 +40,31 @@ export type IrohaConnectWalletContext = {
   accountId: string;
 };
 
+type IrohaConnectConfirmationContext = {
+  sid: string;
+  accountId: string;
+  toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
+  networkId: string;
+};
+
 export type IrohaConnectConfirmation =
-  | {
+  | (IrohaConnectConfirmationContext & {
       kind: "session";
-      sid: string;
-      accountId: string;
-      toriiUrl: string;
-      chainId: string;
-      networkPrefix: number;
       permissions: ConnectPermissions | null;
-    }
-  | {
-      kind: "sign_request_raw" | "sign_request_tx";
-      sid: string;
-      accountId: string;
-      toriiUrl: string;
-      chainId: string;
-      networkPrefix: number;
-      domainTag: string | null;
+    })
+  | (IrohaConnectConfirmationContext & {
+      kind: "sign_request_raw";
+      domainTag: string;
       byteLength: number;
       payloadPreviewHex: string;
-    };
+    })
+  | (IrohaConnectConfirmationContext & {
+      kind: "sign_request_tx";
+      /** Decoded payload; the wallet signs exactly `review.payloadHashHex`. */
+      review: ConnectTransactionReview;
+    });
 
 const snapshotExactOwnDataFields = (
   value: object,
@@ -122,11 +128,15 @@ const isCanonicalConfirmationContext = (
     Object.is(value.networkPrefix, -0) ||
     (value.networkPrefix as number) < 0 ||
     (value.networkPrefix as number) > 16_383 ||
-    !isCanonicalConfirmationText(value.toriiUrl, 2048)
+    !isCanonicalConfirmationText(value.toriiUrl, 2048) ||
+    !isCanonicalConfirmationText(value.networkId, 128)
   ) {
     return false;
   }
   try {
+    if (parseNetworkIdLiteral(value.networkId) !== value.networkId) {
+      return false;
+    }
     const endpoint = normalizeEndpointUrl(value.toriiUrl);
     if (new URL(endpoint).pathname !== "/") return false;
     const accountId = normalizeCanonicalAccountIdLiteral(
@@ -245,6 +255,7 @@ export const isIrohaConnectConfirmation = (
       "toriiUrl",
       "chainId",
       "networkPrefix",
+      "networkId",
       "permissions",
     ]);
     return Boolean(
@@ -253,7 +264,26 @@ export const isIrohaConnectConfirmation = (
         isCanonicalConnectPermissions(record.permissions),
     );
   }
-  if (kind !== "sign_request_raw" && kind !== "sign_request_tx") {
+  if (kind === "sign_request_tx") {
+    const record = snapshotExactOwnDataFields(value, [
+      "kind",
+      "sid",
+      "accountId",
+      "toriiUrl",
+      "chainId",
+      "networkPrefix",
+      "networkId",
+      "review",
+    ]);
+    return Boolean(
+      record &&
+        isCanonicalConfirmationContext(record) &&
+        isConnectTransactionReview(record.review) &&
+        record.review.authority === record.accountId &&
+        record.review.networkId === record.networkId,
+    );
+  }
+  if (kind !== "sign_request_raw") {
     return false;
   }
   const record = snapshotExactOwnDataFields(value, [
@@ -263,15 +293,14 @@ export const isIrohaConnectConfirmation = (
     "toriiUrl",
     "chainId",
     "networkPrefix",
+    "networkId",
     "domainTag",
     "byteLength",
     "payloadPreviewHex",
   ]);
   if (!record || !isCanonicalConfirmationContext(record)) return false;
   return (
-    (kind === "sign_request_raw"
-      ? isCanonicalConfirmationText(record.domainTag, 256)
-      : record.domainTag === null) &&
+    isCanonicalConfirmationText(record.domainTag, 256) &&
     Number.isSafeInteger(record.byteLength) &&
     (record.byteLength as number) >= 1 &&
     (record.byteLength as number) <= IROHA_CONNECT_MAX_FRAME_BYTES &&
@@ -287,6 +316,16 @@ export type IrohaConnectBoundaryDependencies = {
     context: IrohaConnectWalletContext,
   ): Promise<IrohaConnectWalletContext>;
   authorize(confirmation: IrohaConnectConfirmation): Promise<boolean>;
+  /**
+   * Decode `SignRequestTx` payload bytes, bind them to the paired account and
+   * session NetworkId, and return the review plus the exact payload hash.
+   * Throws for any payload the wallet must not sign.
+   */
+  reviewTransaction(
+    context: IrohaConnectWalletContext,
+    payloadBytes: Uint8Array,
+  ): { review: ConnectTransactionReview; payloadHash: Uint8Array };
+  /** Ed25519-sign `message` with the vault key; called only after approval. */
   sign(
     context: IrohaConnectWalletContext,
     message: Uint8Array,
@@ -329,7 +368,10 @@ type PendingRequest = {
   contextKey: string;
   requestType: "sign_request_raw" | "sign_request_tx";
   domainTag: string | null;
+  /** Raw message bytes, or the exact unsigned transaction payload bytes. */
   message: Uint8Array;
+  /** Present for `sign_request_tx` only. */
+  review: ConnectTransactionReview | null;
   expiresAtMs: number;
 };
 
@@ -349,6 +391,7 @@ export type IrohaConnectProcessedFrame =
       domainTag: string | null;
       byteLength: number;
       payloadPreviewHex: string;
+      review: ConnectTransactionReview | null;
     }
   | { kind: "ignored" };
 
@@ -606,6 +649,7 @@ export class IrohaConnectBoundary {
         toriiUrl: pending.context.toriiUrl,
         chainId: pending.context.chainId,
         networkPrefix: pending.context.networkPrefix,
+        networkId: pending.context.networkId,
         permissions: copyConnectPermissions(pending.permissions),
       });
       if (!authorized) {
@@ -784,6 +828,28 @@ export class IrohaConnectBoundary {
         error: reason,
       };
     }
+    let review: ConnectTransactionReview | null = null;
+    if (envelope.payload.type === "sign_request_tx") {
+      try {
+        review = this.#dependencies.reviewTransaction(
+          session.context,
+          Uint8Array.from(message),
+        ).review;
+      } catch (error) {
+        const reason = `The wallet refused this transaction: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+        return {
+          kind: "response",
+          frameBase64: this.#encryptResult(session, {
+            type: "sign_result_err",
+            code: "INVALID_TRANSACTION",
+            message: reason,
+          }),
+          error: reason,
+        };
+      }
+    }
     const requestToken = this.#uniqueToken();
     const request: PendingRequest = {
       requestToken,
@@ -795,6 +861,7 @@ export class IrohaConnectBoundary {
           ? envelope.payload.domainTag
           : null,
       message: Uint8Array.from(message),
+      review,
       expiresAtMs: this.#dependencies.now() + REQUEST_APPROVAL_TTL_MS,
     };
     session.requestSlot = {
@@ -808,6 +875,7 @@ export class IrohaConnectBoundary {
       domainTag: request.domainTag,
       byteLength: request.message.length,
       payloadPreviewHex: bytesToHex(request.message.slice(0, 96)),
+      review,
     };
   }
 
@@ -827,17 +895,28 @@ export class IrohaConnectBoundary {
           signed: false,
         };
       }
-      const confirmation: IrohaConnectConfirmation = {
-        kind: request.requestType,
+      const confirmationContext = {
         sid: session.sid,
         accountId: session.context.accountId,
         toriiUrl: session.context.toriiUrl,
         chainId: session.context.chainId,
         networkPrefix: session.context.networkPrefix,
-        domainTag: request.domainTag,
-        byteLength: request.message.length,
-        payloadPreviewHex: bytesToHex(request.message.slice(0, 96)),
+        networkId: session.context.networkId,
       };
+      const confirmation: IrohaConnectConfirmation =
+        request.requestType === "sign_request_tx" && request.review
+          ? {
+              kind: "sign_request_tx",
+              ...confirmationContext,
+              review: request.review,
+            }
+          : {
+              kind: "sign_request_raw",
+              ...confirmationContext,
+              domainTag: request.domainTag ?? "",
+              byteLength: request.message.length,
+              payloadPreviewHex: bytesToHex(request.message.slice(0, 96)),
+            };
       const authorized = await this.#dependencies.authorize(confirmation);
       this.#requireSessionMatches(session);
       if (!authorized) {
@@ -859,11 +938,27 @@ export class IrohaConnectBoundary {
           "The active wallet context changed before IrohaConnect signing.",
         );
       }
-      const signature = copySignature(
-        await this.#dependencies.sign(
+      let signingMessage = Uint8Array.from(request.message);
+      if (request.requestType === "sign_request_tx") {
+        // Re-derive the hash from the exact bytes under the re-verified
+        // context; it must equal the hash the user approved.
+        const reviewed = this.#dependencies.reviewTransaction(
           verifiedContext,
           Uint8Array.from(request.message),
-        ),
+        );
+        if (
+          !request.review ||
+          reviewed.review.payloadHashHex !== request.review.payloadHashHex ||
+          bytesToHex(reviewed.payloadHash) !== request.review.payloadHashHex
+        ) {
+          throw new Error(
+            "The transaction payload hash changed after it was reviewed.",
+          );
+        }
+        signingMessage = Uint8Array.from(reviewed.payloadHash);
+      }
+      const signature = copySignature(
+        await this.#dependencies.sign(verifiedContext, signingMessage),
       );
       this.#requireSessionMatches(session);
       return {

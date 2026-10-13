@@ -711,9 +711,21 @@
           <span class="kv-label">{{ t("Domain") }}</span>
           <span class="kv-value">{{ pendingConnectRequest.domainTag }}</span>
         </div>
-        <div class="kv monospace">
+        <div
+          v-if="pendingConnectRequest.reviewRows.length === 0"
+          class="kv monospace"
+        >
           <span class="kv-label">{{ t("Signing payload preview") }}</span>
           <span class="kv-value">{{ pendingConnectRequest.preview }}</span>
+        </div>
+        <div
+          v-for="row in pendingConnectRequest.reviewRows"
+          :key="row.label"
+          class="kv connect-review-row"
+          :class="{ monospace: row.monospace, error: row.warning }"
+        >
+          <span class="kv-label">{{ row.label }}</span>
+          <span class="kv-value">{{ row.value }}</span>
         </div>
       </div>
       <p v-if="connectRequestError" class="helper error">
@@ -815,6 +827,10 @@ import {
   type ParsedIrohaConnectUri,
   validateIrohaConnectNetworkClaim,
 } from "@/utils/irohaConnect";
+import {
+  connectTransactionReviewRows,
+  type ConnectTransactionReviewRow,
+} from "@/utils/connectTransactionReview";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -1510,6 +1526,7 @@ const pendingConnectRequest = shallowRef<{
   byteLength: number;
   preview: string;
   label: string;
+  reviewRows: ConnectTransactionReviewRow[];
 } | null>(null);
 const connectRequestLoading = ref(false);
 const connectRequestError = ref("");
@@ -1789,6 +1806,9 @@ const queueConnectSigningRequest = (
       request.requestType === "sign_request_raw"
         ? t("Raw message signature")
         : t("Transaction signature"),
+    reviewRows: request.review
+      ? connectTransactionReviewRows(request.review)
+      : [],
   };
   connectRequestError.value = "";
 };
@@ -2349,6 +2369,14 @@ onBeforeUnmount(() => {
 
 .connect-modal-grid .kv {
   min-width: 0;
+}
+
+.connect-modal-grid .kv.connect-review-row {
+  grid-column: 1 / -1;
+}
+
+.connect-modal-grid .kv.connect-review-row .kv-value {
+  white-space: pre-line;
 }
 
 .connect-modal-grid .kv:last-child:nth-child(odd) {

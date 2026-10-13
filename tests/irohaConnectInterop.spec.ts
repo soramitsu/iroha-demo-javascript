@@ -138,11 +138,29 @@ describe("IrohaConnect linked SDK interoperability", () => {
         { type: "sign_request_tx" },
       ),
     ).not.toThrow();
+    // A session granting both methods signs transactions while raw signing
+    // stays limited to the exact requested domains.
     expect(() =>
       assertConnectSigningPermission(copied, {
         type: "sign_request_tx",
       }),
-    ).toThrow("requires unrestricted resources");
+    ).not.toThrow();
+    expect(() =>
+      assertConnectSigningPermission(
+        { methods: ["sign_raw"], events: [], resources: ["domain:allowed"] },
+        { type: "sign_request_tx" },
+      ),
+    ).toThrow("do not grant sign_transaction");
+    expect(() =>
+      assertConnectSigningPermission(
+        {
+          methods: ["sign_raw", "sign_transaction"],
+          events: [],
+          resources: null,
+        },
+        { type: "sign_request_raw", domainTag: "domain:allowed" },
+      ),
+    ).toThrow("do not grant raw-signing domain");
   });
 
   it("rejects foreign Norito version, schema, and layout header bytes", () => {

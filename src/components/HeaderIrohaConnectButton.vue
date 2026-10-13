@@ -172,7 +172,11 @@
         v-for="detail in pendingConnectRequest?.details || []"
         :key="detail.label"
         class="kv"
-        :class="{ monospace: detail.monospace }"
+        :class="{
+          monospace: detail.monospace,
+          'review-row': detail.wide,
+          error: detail.warning,
+        }"
       >
         <span class="kv-label">{{ detail.label }}</span>
         <span class="kv-value">{{ detail.value }}</span>
@@ -232,6 +236,8 @@ import {
   type ParsedIrohaConnectUri,
   validateIrohaConnectNetworkClaim,
 } from "@/utils/irohaConnect";
+import { connectTransactionReviewRows } from "@/utils/connectTransactionReview";
+import type { ConnectTransactionReview } from "@/types/connectTransactionReview";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -267,6 +273,8 @@ interface IrohaConnectDetail {
   label: string;
   value: string;
   monospace?: boolean;
+  wide?: boolean;
+  warning?: boolean;
 }
 
 type PendingConnectRequest = {
@@ -396,7 +404,28 @@ const buildSigningRequestDetails = (
   payloadPreviewHex: string,
   domainTag: string | null,
   approvedAccountId: string,
+  review: ConnectTransactionReview | null,
 ): IrohaConnectDetail[] => {
+  if (review) {
+    return [
+      {
+        label: t("Active account"),
+        value: approvedAccountId || t("No active wallet"),
+        monospace: true,
+      },
+      { label: t("Session ID"), value: parsed.sid, monospace: true },
+      { label: "NetworkId", value: review.networkId, monospace: true },
+      {
+        label: t("Endpoint"),
+        value: parsed.node || session.connection.toriiUrl,
+        monospace: true,
+      },
+      ...connectTransactionReviewRows(review).map((row) => ({
+        ...row,
+        wide: true,
+      })),
+    ];
+  }
   return [
     {
       label: t("Active account"),
@@ -576,6 +605,7 @@ const queueConnectSigningRequest = (
       request.payloadPreviewHex,
       request.domainTag,
       scannedConnectApprovedAccountId,
+      request.review,
     ),
   };
   connectApprovalStatus.value = t("Waiting for your approval...");
@@ -996,6 +1026,14 @@ onBeforeUnmount(() => {
 
 .header-connect-modal-grid .kv:last-child:nth-child(odd) {
   grid-column: 1 / -1;
+}
+
+.header-connect-modal-grid .kv.review-row {
+  grid-column: 1 / -1;
+}
+
+.header-connect-modal-grid .kv.review-row .kv-value {
+  white-space: pre-line;
 }
 
 .monospace {

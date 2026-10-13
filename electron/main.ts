@@ -50,6 +50,7 @@ import {
   IROHA_CONNECT_CONFIRMATION_CHANNEL,
   isIrohaConnectConfirmation,
 } from "./irohaConnectBoundary";
+import { formatConnectTransactionReviewLines } from "../src/utils/connectTransactionReview";
 import { installGlobalIrohaJsNativeBinding } from "./irohaJsNativeDir";
 import { assertTrustedMainFrameIpcSender } from "./ipcTrustedMainFrame";
 import { requireFirstReleaseIpcInputObject } from "./firstReleaseIpcInput";
@@ -460,6 +461,8 @@ const registerGovernanceValidationFeePolicyHandler = () => {
   );
 };
 
+const MAX_CONNECT_REVIEW_DIALOG_LINES = 400;
+
 const confirmationText = (value: unknown, maxLength = 512) =>
   Array.from(String(value ?? ""))
     .map((character) => {
@@ -585,17 +588,29 @@ const registerIrohaConnectConfirmationHandler = () => {
         `Account: ${confirmationText(input.accountId)}`,
         `Session: ${confirmationText(input.sid)}`,
         `Endpoint: ${confirmationText(input.toriiUrl)}`,
-        `Chain: ${confirmationText(input.chainId)}`,
+        `Network ID: ${confirmationText(input.networkId)}`,
         `Network prefix: ${input.networkPrefix}`,
       ];
       if (input.kind === "session") {
         detail.push(
           `Methods: ${confirmationText(input.permissions?.methods.join(", ") || "none")}`,
-          `Resources: ${confirmationText(input.permissions?.resources?.join(", ") || (input.permissions?.resources === null ? "unrestricted" : "none"))}`,
+          `Raw-signing domains: ${confirmationText(input.permissions?.resources?.join(", ") || (input.permissions?.resources === null ? "unrestricted" : "none"))}`,
+        );
+      } else if (input.kind === "sign_request_tx") {
+        // Every decoded instruction is listed; the wallet signs only the
+        // payload hash shown here.
+        detail.push(
+          "",
+          ...formatConnectTransactionReviewLines(input.review)
+            .slice(0, MAX_CONNECT_REVIEW_DIALOG_LINES)
+            .map(
+              (line) =>
+                (/^ */u.exec(line)?.[0] ?? "") + confirmationText(line, 1_024),
+            ),
         );
       } else {
         detail.push(
-          `Domain: ${confirmationText(input.domainTag || "not applicable")}`,
+          `Domain: ${confirmationText(input.domainTag)}`,
           `Bytes: ${Number.isSafeInteger(input.byteLength) ? input.byteLength : 0}`,
           `Preview: ${confirmationText(input.payloadPreviewHex, 192)}`,
         );

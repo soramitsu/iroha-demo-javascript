@@ -12,6 +12,9 @@ import type {
   EndpointNetworkContext,
 } from "@/types/endpointInspection";
 import type { SoraCloudHfStatusView } from "@/utils/soracloud";
+import type { ConnectTransactionReview } from "@/types/connectTransactionReview";
+
+export type { ConnectTransactionReview };
 
 export type ToriiHealth = ({ status: string } & Record<string, unknown>) | null;
 
@@ -461,6 +464,8 @@ export type IrohaConnectProcessedFrame =
       domainTag: string | null;
       byteLength: number;
       payloadPreviewHex: string;
+      /** Decoded payload review for `sign_request_tx`; null for raw requests. */
+      review: ConnectTransactionReview | null;
     }
   | { kind: "ignored" };
 
