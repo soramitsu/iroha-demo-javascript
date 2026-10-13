@@ -2,6 +2,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "electron-vite";
 import vue from "@vitejs/plugin-vue";
+import type { Plugin } from "vite";
 import {
   buildIrohaSdkAliases,
   resolveCompatibleIrohaSdkRoot,
@@ -35,6 +36,23 @@ const rendererAliases = [
 ];
 const sharedDedupe = ["@noble/curves", "@noble/hashes"];
 
+// electron-vite builds the preload as SSR with browser-first resolution, and merging config
+// only appends to those arrays. The preload runs with Node integration (sandbox: false), so
+// resolve it for Node after the preset: otherwise the SDK's `browser` field swaps
+// dist/native.js for its stub, which throws "Native binding required" on every native call.
+const preloadNodeResolution: Plugin = {
+  name: "wallet:preload-node-resolution",
+  enforce: "post",
+  config(config) {
+    config.ssr ??= {};
+    config.ssr.resolve = {
+      ...config.ssr.resolve,
+      conditions: ["module", "node", "development|production"],
+      mainFields: ["module", "jsnext:main", "jsnext"],
+    };
+  },
+};
+
 export default defineConfig({
   main: {
     resolve: {
@@ -60,6 +78,7 @@ export default defineConfig({
       alias: sharedAliases,
       dedupe: sharedDedupe,
     },
+    plugins: [preloadNodeResolution],
     build: {
       outDir: "dist/preload",
       rollupOptions: {

@@ -1,4 +1,4 @@
-import { clipboard, contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer } from "electron";
 import {
   createCipheriv,
   createDecipheriv,
@@ -222,6 +222,7 @@ import { parseRetryAfterMs, withBoundedHttpGetRetry } from "./httpReadRetry";
 import {
   normalizeGovernanceDraftPayloadHex,
   normalizeGovernanceDraftWireId,
+  reviewedGovernanceDraftWireId,
 } from "./governanceDraftInstruction";
 import {
   runLocalVpnRepair,
@@ -230,19 +231,11 @@ import {
 } from "./vpnPreloadGuard";
 import { normalizeFirstReleaseAssetDefinitionId } from "./assetDefinitionId";
 import {
-  assertValidationFeePayoutLifecycleDecodedInstruction,
-  assertValidationFeePayoutLifecycleDraftResponse,
   assertValidationFeePolicyDecodedInstruction,
   assertValidationFeePolicyDraftResponse,
-  buildValidationFeePayoutLifecycleDraftRequest,
   buildValidationFeePolicyDraftRequest,
-  VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_DECODED_VARIANT,
-  VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID,
-  VALIDATION_FEE_POLICY_DRAFT_DECODED_VARIANT,
+  validationFeePolicyDraftInstruction,
   VALIDATION_FEE_POLICY_DRAFT_PATH,
-  VALIDATION_FEE_POLICY_DRAFT_WIRE_ID,
-  type ValidationFeePayoutLifecycleDraftRequest,
-  type ValidationFeePolicyDraftRequest,
 } from "./governanceValidationFeeDraft";
 import {
   governanceCapabilitiesContractFingerprintV1,
@@ -329,6 +322,7 @@ import {
 } from "./firstReleaseKaigiPayloads";
 import {
   decodeFirstReleaseInstruction,
+  decodeReviewedFirstReleaseInstructionDraft,
   inspectFirstReleaseSubscriptionTriggerAction,
 } from "./firstReleaseNativeInstruction";
 import {
@@ -4499,12 +4493,18 @@ const getSubscriptionPlanFromTorii = async (
   );
 };
 
-const decodeSubscriptionDraftInstruction = (payloadHex: string): unknown =>
-  decodeFirstReleaseInstruction(Buffer.from(payloadHex, "hex"));
+const subscriptionDraftInstructionDecoder =
+  (networkPrefix: number) =>
+  (payloadHex: string): unknown =>
+    decodeFirstReleaseInstruction(
+      Buffer.from(payloadHex, "hex"),
+      networkPrefix,
+    );
 
-const inspectSubscriptionDraftTriggerAction = (
-  encodedAction: string,
-): unknown => inspectFirstReleaseSubscriptionTriggerAction(encodedAction);
+const subscriptionDraftTriggerActionInspector =
+  (networkPrefix: number) =>
+  (encodedAction: string): unknown =>
+    inspectFirstReleaseSubscriptionTriggerAction(encodedAction, networkPrefix);
 
 const confirmSubscriptionResultingState = async (input: {
   toriiUrl: string;
@@ -4726,8 +4726,10 @@ const createSubscriptionOnTorii = async (
             ivmMaxCycles,
             networkPrefix: writeConnection.networkPrefix,
           },
-          decodeSubscriptionDraftInstruction,
-          inspectSubscriptionDraftTriggerAction,
+          subscriptionDraftInstructionDecoder(writeConnection.networkPrefix),
+          subscriptionDraftTriggerActionInspector(
+            writeConnection.networkPrefix,
+          ),
         );
         const [freshPlan, freshIvmMaxCycles] = await Promise.all([
           getSubscriptionPlanFromTorii(input.toriiUrl, planId),
@@ -4899,8 +4901,10 @@ const postSubscriptionActionToTorii = async (
             ivmMaxCycles,
             networkPrefix: writeConnection.networkPrefix,
           },
-          decodeSubscriptionDraftInstruction,
-          inspectSubscriptionDraftTriggerAction,
+          subscriptionDraftInstructionDecoder(writeConnection.networkPrefix),
+          subscriptionDraftTriggerActionInspector(
+            writeConnection.networkPrefix,
+          ),
         );
         const [freshCurrent, freshIvmMaxCycles] = await Promise.all([
           getSubscriptionFromTorii({
@@ -6256,7 +6260,6 @@ const resolveValidationFeeProposalFingerprint: GovernanceProposalIdResolver = ({
       proposalOperator: proposer,
       networkPrefix: TAIRA_GOVERNANCE_NETWORK_PREFIX,
       policy: kind.policy as unknown as Record<string, unknown>,
-      payoutLifecycleProposalId: kind.payoutLifecycleProposalId,
     });
   }
   return computeFirstReleaseValidationFeePayoutLifecycleFingerprint({
@@ -6451,9 +6454,15 @@ const assertGovernanceDecodedVariant = (
   }
 };
 
+/**
+ * Torii drafts carry the registered concrete instruction frame, so the
+ * wallet admits one only when it is byte-identical to the native encoding of
+ * the exact instruction it reviewed, and reviews that native decoding.
+ */
 const decodeGovernanceDraftInstruction = (
   draft: Record<string, unknown>,
-  expectedVariant: string,
+  expectedInstruction: Record<string, unknown>,
+  networkPrefix: number,
 ): Record<string, unknown> => {
   const instructions = draft.tx_instructions;
   if (!Array.isArray(instructions) || instructions.length !== 1) {
@@ -6469,20 +6478,21 @@ const decodeGovernanceDraftInstruction = (
     "Governance draft instruction",
   );
   const wireId = normalizeGovernanceWireId(item.wire_id);
-  const reviewedWireIds: Readonly<Record<string, string>> = {
-    RegisterCitizen: "iroha_data_model::isi::governance::RegisterCitizen",
-    ProposeValidationFeePolicy: VALIDATION_FEE_POLICY_DRAFT_WIRE_ID,
-    ProposeValidationFeePayoutLifecycle:
-      VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID,
-  };
-  const expectedWireId = reviewedWireIds[expectedVariant];
+  const expectedVariant =
+    governanceInstructionVariant(expectedInstruction).variant;
+  const expectedWireId = reviewedGovernanceDraftWireId(expectedVariant);
   if (!expectedWireId || wireId !== expectedWireId) {
     throw new Error(
       `Governance draft returned ${wireId}; expected exact wire id ${expectedWireId ?? "unsupported"}.`,
     );
   }
   const payloadHex = normalizeGovernanceDraftPayloadHex(item.payload_hex);
-  const decoded = decodeFirstReleaseInstruction(Buffer.from(payloadHex, "hex"));
+  const decoded = decodeReviewedFirstReleaseInstructionDraft({
+    wireId,
+    frame: Buffer.from(payloadHex, "hex"),
+    expectedInstruction,
+    networkPrefix,
+  });
   const variant = governanceInstructionVariant(decoded);
   if (variant.variant !== expectedVariant) {
     throw new Error(
@@ -6490,23 +6500,6 @@ const decodeGovernanceDraftInstruction = (
     );
   }
   return decoded;
-};
-
-const governanceProposalEndpoint = (
-  kind: GovernanceProposalPrepareInput["kind"],
-) => {
-  switch (kind) {
-    case "ValidationFeePayoutLifecycle":
-      return {
-        path: VALIDATION_FEE_POLICY_DRAFT_PATH,
-        wireId: VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_DECODED_VARIANT,
-      };
-    case "ValidationFeePolicy":
-      return {
-        path: VALIDATION_FEE_POLICY_DRAFT_PATH,
-        wireId: VALIDATION_FEE_POLICY_DRAFT_DECODED_VARIANT,
-      };
-  }
 };
 
 const prunePreparedGovernanceActions = () => {
@@ -6529,7 +6522,7 @@ const prepareGovernanceDecodedAction = async (input: {
   title: string;
   proposalId?: string | null;
   draft: Record<string, unknown>;
-  expectedVariant: string;
+  expectedInstruction: Record<string, unknown>;
   validate: (decoded: Record<string, unknown>) => void;
   authentication?: GovernancePrepareAuthentication;
 }): Promise<GovernancePreparedActionView> => {
@@ -6551,7 +6544,8 @@ const prepareGovernanceDecodedAction = async (input: {
   );
   const decoded = decodeGovernanceDraftInstruction(
     input.draft,
-    input.expectedVariant,
+    input.expectedInstruction,
+    writeConnection.networkPrefix,
   );
   input.validate(decoded);
   const networkId = writeConnection.networkId;
@@ -6686,7 +6680,7 @@ const prepareGovernanceCitizenRegistrationAction = async (
     operation: "register-citizen",
     title: "Register bonded citizen",
     draft,
-    expectedVariant: "RegisterCitizen",
+    expectedInstruction: { RegisterCitizen: { owner, amount } },
     validate(decoded) {
       assertGovernanceDecodedVariant(decoded, "RegisterCitizen", {
         owner,
@@ -6699,6 +6693,15 @@ const prepareGovernanceCitizenRegistrationAction = async (
 const prepareGovernanceProposalAction = async (
   input: GovernanceProposalPrepareInput,
 ) => {
+  // The pinned native codec has no reviewable JSON form for
+  // ProposeValidationFeePayoutLifecycle, so the policy is the only kind this
+  // wallet can decode, review, and sign. Refuse anything else before any
+  // endpoint request or vault access.
+  if (input.kind !== "ValidationFeePolicy") {
+    throw new Error(
+      "This wallet can prepare only validation-fee policy proposals.",
+    );
+  }
   const capabilities = await assertGovernanceWriteCapabilities(input);
   await assertCurrentBondedGovernanceCitizen(input, capabilities);
   const proposalOperator = normalizeCanonicalAccountIdLiteral(
@@ -6711,51 +6714,18 @@ const prepareGovernanceProposalAction = async (
   if (!isPlainRecord(input.payload)) {
     throw new Error("Governance proposal payload must be an object.");
   }
-  const endpoint = governanceProposalEndpoint(input.kind);
-  const validationFeeRequest: ValidationFeePolicyDraftRequest | null =
-    input.kind === "ValidationFeePolicy"
-      ? buildValidationFeePolicyDraftRequest(
-          input.payload,
-          proposalOperator,
-          networkId.toString(),
-        )
-      : null;
-  const validationFeePayoutLifecycleRequest: ValidationFeePayoutLifecycleDraftRequest | null =
-    input.kind === "ValidationFeePayoutLifecycle"
-      ? buildValidationFeePayoutLifecycleDraftRequest(
-          input.payload,
-          proposalOperator,
-        )
-      : null;
-  const expectedValidationFeeProposalId = validationFeeRequest
-    ? computeFirstReleaseValidationFeePolicyFingerprint({
-        proposalOperator,
-        networkPrefix: capabilities.networkPrefix,
-        policy: validationFeeRequest.proposal.payload.policy,
-        payoutLifecycleProposalId:
-          validationFeeRequest.proposal.payload.payout_lifecycle_proposal_id ===
-          null
-            ? null
-            : validationFeeRequest.proposal.payload
-                .payout_lifecycle_proposal_id,
-      })
-    : null;
-  const expectedValidationFeePayoutLifecycleProposalId =
-    validationFeePayoutLifecycleRequest
-      ? computeFirstReleaseValidationFeePayoutLifecycleFingerprint({
-          proposalOperator,
-          networkPrefix: capabilities.networkPrefix,
-          payoutBinding:
-            validationFeePayoutLifecycleRequest.proposal.payload.payout_binding,
-        })
-      : null;
-  const requestPayload =
-    validationFeeRequest ?? validationFeePayoutLifecycleRequest;
-  if (!requestPayload) {
-    throw new Error(
-      "This proposal kind is not advertised by the Taira governance capabilities.",
-    );
-  }
+  const validationFeeRequest = buildValidationFeePolicyDraftRequest(
+    input.payload,
+    proposalOperator,
+    networkId.toString(),
+    capabilities.networkPrefix,
+  );
+  const expectedValidationFeeProposalId =
+    computeFirstReleaseValidationFeePolicyFingerprint({
+      proposalOperator,
+      networkPrefix: capabilities.networkPrefix,
+      policy: validationFeeRequest.proposal.payload.policy,
+    });
   // The explicit renderer "Decode and quote" action authorizes only these
   // route-scoped authenticated reads. Transaction signing still happens only
   // after the separate review confirmation below.
@@ -6771,7 +6741,7 @@ const prepareGovernanceProposalAction = async (
   try {
     const response = await canonicalToriiJsonRequest({
       toriiUrl: input.toriiUrl,
-      path: endpoint.path,
+      path: VALIDATION_FEE_POLICY_DRAFT_PATH,
       method: "POST",
       label: "Governance validation-fee proposal draft",
       auth: {
@@ -6779,7 +6749,7 @@ const prepareGovernanceProposalAction = async (
         networkId,
         privateKey,
       },
-      body: requestPayload,
+      body: validationFeeRequest,
     });
     if (!response.ok) {
       throw await createApiRequestError(
@@ -6791,26 +6761,19 @@ const prepareGovernanceProposalAction = async (
       response,
       "Governance validation-fee proposal draft",
     );
-    if (validationFeeRequest) {
-      assertValidationFeePolicyDraftResponse(
-        draft,
-        validationFeeRequest,
-        expectedValidationFeeProposalId as string,
-      );
-    } else if (validationFeePayoutLifecycleRequest) {
-      assertValidationFeePayoutLifecycleDraftResponse(
-        draft,
-        validationFeePayoutLifecycleRequest,
-        expectedValidationFeePayoutLifecycleProposalId as string,
-      );
-    }
+    assertValidationFeePolicyDraftResponse(
+      draft,
+      validationFeeRequest,
+      expectedValidationFeeProposalId,
+    );
     return await prepareGovernanceDecodedAction({
       context: input,
       operation: "propose",
       title: `Propose ${input.kind}`,
       proposalId: trimString(draft.proposal_id),
       draft,
-      expectedVariant: endpoint.wireId,
+      expectedInstruction:
+        validationFeePolicyDraftInstruction(validationFeeRequest),
       authentication: {
         accountId: proposalOperator,
         networkId,
@@ -6818,17 +6781,10 @@ const prepareGovernanceProposalAction = async (
         signingAlgorithm: signingMaterial.signingAlgorithm,
       },
       validate(decoded) {
-        if (validationFeeRequest) {
-          assertValidationFeePolicyDecodedInstruction(
-            decoded,
-            validationFeeRequest,
-          );
-        } else if (validationFeePayoutLifecycleRequest) {
-          assertValidationFeePayoutLifecycleDecodedInstruction(
-            decoded,
-            validationFeePayoutLifecycleRequest,
-          );
-        }
+        assertValidationFeePolicyDecodedInstruction(
+          decoded,
+          validationFeeRequest,
+        );
       },
     });
   } finally {
@@ -7111,7 +7067,7 @@ const api: IrohaBridge = {
     ) {
       throw new Error("Clipboard text exceeds the first-release byte limit.");
     }
-    clipboard.writeText(text);
+    await ipcRenderer.invoke("clipboard:writeText", text);
   },
   deriveAccountAddress(input) {
     const { domain, publicKeyHex, networkPrefix, signingAlgorithm } =

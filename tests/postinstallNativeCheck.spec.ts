@@ -117,20 +117,20 @@ const PROPOSAL_OPERATOR =
   "sorauﾛ1Pｽp8zXFQﾗｷPsFﾒｶﾑ3ｵmﾉbｼｽUｱｶヱﾚBXヱﾊCﾋﾘﾈvuKFKM346";
 const SECOND_PROPOSAL_OPERATOR =
   "sorauﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K";
-const POLICY_FINGERPRINT = Buffer.from(
-  "4742b1f274928767564c6effa414e640e6f635874d74684b06b95414c5afa16e",
-  "hex",
-);
-const PAYOUT_FINGERPRINT = Buffer.from(
-  "8fd84f6599e22db4da15f7152a914dc0091dd73a7906d5981cce37d485191c25",
-  "hex",
-);
+// Pinned native fingerprint vectors for the SDK retail_fee_native_policy_v1 /
+// retail_fee_native_conversion_v1 fixtures (the Rust tests pin no hex literals).
+const POLICY_FINGERPRINT_HEX =
+  "7ea3f657b77099f869d1aae9a47845d66094154e26e664c971434722cb0b31c4";
+const SECOND_OPERATOR_POLICY_FINGERPRINT_HEX =
+  "e6fae2d16761eb221142b5e236ad09d31e1bdd1c4245538f08a932fb8136f7f1";
+const PAYOUT_FINGERPRINT_HEX =
+  "8e28c5de8ce8928696065b15e09073b9bbebbaa30e690d4c6bd2ca75b9a3c1b4";
+const SECOND_OPERATOR_PAYOUT_FINGERPRINT_HEX =
+  "8ff01a1ac68e79c64901830452ba2ff4185cf4a41b140704b8101e1b747d2bcd";
 
-const currentOperatorBoundFingerprint = (
-  proposalOperator: unknown,
-  policyJson: unknown,
-  payoutLifecycleProposalId: unknown,
-): Buffer => {
+const currentOperatorBoundFingerprint = (...args: unknown[]): Buffer => {
+  expect(args).toHaveLength(2);
+  const [proposalOperator, policyJson] = args;
   if (policyJson === "{}") {
     throw new Error(
       "validation-fee policy must contain exactly [current fields]",
@@ -140,10 +140,41 @@ const currentOperatorBoundFingerprint = (
   expect(policy.network_id).toBe(
     "hash:1313131313131313131313131313131313131313131313131313131313131313#9CE1",
   );
-  expect(payoutLifecycleProposalId).toBeNull();
-  if (proposalOperator === PROPOSAL_OPERATOR) return POLICY_FINGERPRINT;
+  expect(policy.charging_mode).toEqual({
+    charging_mode: "RETAIL_MONTHLY_ALLOWANCE",
+    value: null,
+  });
+  expect(policy).toHaveProperty("retail_schedule");
+  expect(policy).toHaveProperty("reward_custody");
+  expect(policy).not.toHaveProperty("effective_from_height");
+  if (proposalOperator === PROPOSAL_OPERATOR) {
+    return Buffer.from(POLICY_FINGERPRINT_HEX, "hex");
+  }
   if (proposalOperator === SECOND_PROPOSAL_OPERATOR) {
-    return Buffer.alloc(32, 0x86);
+    return Buffer.from(SECOND_OPERATOR_POLICY_FINGERPRINT_HEX, "hex");
+  }
+  throw new Error("unexpected proposal operator");
+};
+
+const currentOperatorBoundPayoutFingerprint = (...args: unknown[]): Buffer => {
+  expect(args).toHaveLength(2);
+  const [proposalOperator, payoutBindingJson] = args;
+  if (payoutBindingJson === "{}") {
+    throw new Error("payout binding must contain exactly [contract_address]");
+  }
+  const payoutBinding = JSON.parse(String(payoutBindingJson)) as Record<
+    string,
+    unknown
+  >;
+  expect(payoutBinding.ds_asset_id).toBe("7FF2EKZbaWzi5QTD6hewE2voveah");
+  expect(payoutBinding.xor_asset_id).toBe("5dHF5UNffENuEg9mhjYwY1jcZ1K5");
+  expect(payoutBinding.reference_feed_id).toEqual(["xor_per_sbd"]);
+  expect(payoutBinding).not.toHaveProperty("recipients");
+  if (proposalOperator === PROPOSAL_OPERATOR) {
+    return Buffer.from(PAYOUT_FINGERPRINT_HEX, "hex");
+  }
+  if (proposalOperator === SECOND_PROPOSAL_OPERATOR) {
+    return Buffer.from(SECOND_OPERATOR_PAYOUT_FINGERPRINT_HEX, "hex");
   }
   throw new Error("unexpected proposal operator");
 };
@@ -181,35 +212,11 @@ const compatibleNativeModule = () => ({
   inspectSubscriptionTriggerAction() {
     return JSON.stringify({});
   },
-  validationFeePolicyProposalFingerprintV1(
-    proposalOperator: unknown,
-    policyJson: unknown,
-    _payoutLifecycleProposalId: unknown,
-  ) {
-    return currentOperatorBoundFingerprint(
-      proposalOperator,
-      policyJson,
-      _payoutLifecycleProposalId,
-    );
+  validationFeePolicyProposalFingerprintV1(...args: unknown[]) {
+    return currentOperatorBoundFingerprint(...args);
   },
-  validationFeePayoutLifecycleProposalFingerprintV1(
-    proposalOperator: unknown,
-    payoutBindingJson: unknown,
-  ) {
-    if (payoutBindingJson === "{}") {
-      throw new Error("payout binding must contain exactly [contract_address]");
-    }
-    const payoutBinding = JSON.parse(String(payoutBindingJson)) as Record<
-      string,
-      unknown
-    >;
-    expect(payoutBinding.ds_asset_id).toBe("7FF2EKZbaWzi5QTD6hewE2voveah");
-    expect(payoutBinding.xor_asset_id).toBe("5dHF5UNffENuEg9mhjYwY1jcZ1K5");
-    if (proposalOperator === PROPOSAL_OPERATOR) return PAYOUT_FINGERPRINT;
-    if (proposalOperator === SECOND_PROPOSAL_OPERATOR) {
-      return Buffer.alloc(32, 0x90);
-    }
-    throw new Error("unexpected proposal operator");
+  validationFeePayoutLifecycleProposalFingerprintV1(...args: unknown[]) {
+    return currentOperatorBoundPayoutFingerprint(...args);
   },
   connectNoritoBridgeAbiVersion() {
     return 29;
@@ -627,13 +634,9 @@ describe("resolveNativeBuildRequirement", () => {
 
     const nativeModule = compatibleNativeModule();
     nativeModule.validationFeePolicyProposalFingerprintV1 = function (
-      _proposalOperator: unknown,
-      _policyJson: unknown,
-      _payoutLifecycleProposalId: unknown,
+      ...args: unknown[]
     ) {
-      void _proposalOperator;
-      void _policyJson;
-      void _payoutLifecycleProposalId;
+      void args;
       return Buffer.alloc(32);
     };
     const result = resolveNativeBuildRequirement(
@@ -644,7 +647,83 @@ describe("resolveNativeBuildRequirement", () => {
 
     expect(result.shouldBuild).toBe(true);
     expect(result.reason).toContain(
-      "native fingerprint contract mismatch for validationFeePolicyProposalFingerprintV1: expected deterministic operator-bound vector 4742b1f274928767564c6effa414e640e6f635874d74684b06b95414c5afa16e",
+      `native fingerprint contract mismatch for validationFeePolicyProposalFingerprintV1: expected deterministic operator-bound vectors ${POLICY_FINGERPRINT_HEX} and ${SECOND_OPERATOR_POLICY_FINGERPRINT_HEX}`,
+    );
+  });
+
+  it("requests a rebuild when the second-operator payout vector differs", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+
+    writeNativeBundle(tempPackage.nativeDir, releaseChecksumEntry());
+
+    const nativeModule = compatibleNativeModule();
+    nativeModule.validationFeePayoutLifecycleProposalFingerprintV1 = function (
+      ...args: unknown[]
+    ) {
+      const result = currentOperatorBoundPayoutFingerprint(...args);
+      return args[0] === SECOND_PROPOSAL_OPERATOR
+        ? Buffer.alloc(32, 0x90)
+        : result;
+    };
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      () => nativeModule,
+    );
+
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toBe(
+      `native fingerprint contract mismatch for validationFeePayoutLifecycleProposalFingerprintV1: expected deterministic operator-bound vectors ${PAYOUT_FINGERPRINT_HEX} and ${SECOND_OPERATOR_PAYOUT_FINGERPRINT_HEX}, observed ${PAYOUT_FINGERPRINT_HEX} and ${"90".repeat(32)}`,
+    );
+  });
+
+  it("requests a rebuild when a native helper rejects the current-schema fixture", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+
+    writeNativeBundle(tempPackage.nativeDir, releaseChecksumEntry());
+
+    const nativeModule = compatibleNativeModule();
+    nativeModule.validationFeePolicyProposalFingerprintV1 = function () {
+      throw new Error(
+        "validation-fee policy must contain exactly [old fields]; missing [], unexpected [retail_schedule]",
+      );
+    };
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      () => nativeModule,
+    );
+
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toBe(
+      "native fingerprint contract probe failed for validationFeePolicyProposalFingerprintV1: validation-fee policy must contain exactly [old fields]; missing [], unexpected [retail_schedule]",
+    );
+  });
+
+  it("requests a rebuild when the empty payout binding is not rejected by field set", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+
+    writeNativeBundle(tempPackage.nativeDir, releaseChecksumEntry());
+
+    const nativeModule = compatibleNativeModule();
+    nativeModule.validationFeePayoutLifecycleProposalFingerprintV1 = function (
+      ...args: unknown[]
+    ) {
+      if (args[1] === "{}") throw new Error("JSON error: unexpected end");
+      return currentOperatorBoundPayoutFingerprint(...args);
+    };
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      () => nativeModule,
+    );
+
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toBe(
+      "native fingerprint contract rejection probe failed for validationFeePayoutLifecycleProposalFingerprintV1: JSON error: unexpected end",
     );
   });
 

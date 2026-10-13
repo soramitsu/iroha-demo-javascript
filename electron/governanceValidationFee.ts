@@ -1,148 +1,140 @@
 import { createHash } from "node:crypto";
 import { parseJsonWithoutDuplicateObjectKeys } from "../src/utils/json";
 import { parseNetworkIdLiteral } from "../src/utils/networkIdentity";
-import type { ValidationFeePolicyPayload } from "../src/governance/model";
-import type { GovernanceValidationFeePolicyView } from "./governanceValidationFeePolicyView";
+import {
+  NATIVE_SBD_ASSET_DEFINITION_ID,
+  VALIDATION_FEE_CHARGING_MODE,
+  VALIDATION_FEE_PAYOUT_ENTRYPOINT,
+  VALIDATION_FEE_REFERENCE_PROVIDER_COUNT,
+  VALIDATION_FEE_TREASURY_PAYOUT_EXEMPTION,
+  normalizeRetailFeeSchedule,
+  normalizeValidationFeePolicy,
+  validationFeeActivationError,
+  type GovernanceValidationFeePolicyView,
+  type RetailFeeSchedulePayload,
+} from "../src/governance/model";
 
 export const GOVERNANCE_VALIDATION_FEE_CONFIG_ENV =
   "GOVERNANCE_VALIDATION_FEE_CONFIG_JSON";
 export const CBSI_CORE_API_BASE_URL_ENV = "CBSI_CORE_API_BASE_URL";
 
-export const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
-export const CBSI_SBD_ASSET_DEFINITION_ID = "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
-export const CBSI_XOR_ASSET_DEFINITION_ID = "5dHF5UNffENuEg9mhjYwY1jcZ1K5";
-export const VALIDATION_FEE_PAYOUT_CONTRACT_ADDRESS =
-  "irohac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9gg4yxgjw";
-export const VALIDATION_FEE_PAYOUT_CONTRACT_SUBJECT_ACCOUNT_ID =
-  "sorauﾛ1PZﾗidｱJJHofｸXNｵｿcﾐﾃgﾀﾔzBYﾜcﾈｦfｶxKfﾁｼ1pG871VMK";
-export const VALIDATION_FEE_ACTIVATION_DELAY_BLOCKS = 120_960;
-const VALIDATION_FEE_PLAIN_MIN_TURNOUT = "1";
-const VALIDATION_FEE_PLAIN_APPROVAL_THRESHOLD_NUMERATOR = "1";
-const VALIDATION_FEE_PLAIN_APPROVAL_THRESHOLD_DENOMINATOR = "2";
+export const CBSI_SBD_ASSET_DEFINITION_ID = NATIVE_SBD_ASSET_DEFINITION_ID;
 
-const LEDGER_BINDING_SCHEMA = "cbsi.mobile-validation-fee-ledger-binding.v1";
+/** CBSI Core `ValidationFeeLedgerBindingV2` (camelCase, deny unknown fields). */
+const LEDGER_BINDING_SCHEMA = "cbsi.mobile-validation-fee-ledger-binding.v2";
 const LEDGER_PROJECTION_SCHEMA = "cbsi.validation-fee-ledger-projection.v1";
 const STATUS_SCHEMA = "cbsi.validation-fee-status.v1";
 const AUTHORIZATION_MODEL = "SORA_PARLIAMENT_V1";
 const REGISTRY_PARAMETER_ID = "iroha:validation_fee_policy_registry_v1";
-const CHARGING_MODE = "PER_QUALIFYING_TRANSFER_INSTRUCTION";
-const PAYOUT_ENTRYPOINT = "autonomous_validation_fee_tick";
-const U128_MAX = (1n << 128n) - 1n;
-const U64_MAX = (1n << 64n) - 1n;
-const MAX_VALIDATION_FEE_CONFIG_BYTES = 1024 * 1024;
+const U32_MAX = 0xffff_ffff;
+/**
+ * Native `MAX_FINALITY_CHECKPOINT_BYTES` (two 32 MiB finality frames plus
+ * 4 MiB of context) and the standard Base64 length CBSI Core admits for it.
+ */
+const MAX_FINALITY_CHECKPOINT_BYTES = 68 * 1024 * 1024;
+const MAX_FINALITY_CHECKPOINT_BASE64_CHARS =
+  Math.ceil(MAX_FINALITY_CHECKPOINT_BYTES / 3) * 4;
+const STANDARD_BASE64 = /^[A-Za-z0-9+/]+={0,2}$/u;
+/** The generated config embeds the Core binding's Base64 checkpoint. */
+export const MAX_VALIDATION_FEE_CONFIG_BYTES =
+  MAX_FINALITY_CHECKPOINT_BASE64_CHARS + 1024 * 1024;
 const MAX_VALIDATION_FEE_CORE_RESPONSE_BYTES = 4 * 1024 * 1024;
 const NONZERO_LOWER_HASH_32 = /^[0-9a-f]{64}$/u;
-
-const isReviewedPayoutContractAddress = (value: string): boolean =>
-  value === VALIDATION_FEE_PAYOUT_CONTRACT_ADDRESS;
-
-type ValidationFeeProposalKind =
-  | "ValidationFeePolicyV1"
-  | "ValidationFeePayoutLifecycleV1";
-
-type ValidationFeeFinalizationConfig = {
-  proposal_id: string;
-  referendum_id: string;
-  finalized_at_height: string;
-  mode: "PLAIN";
-  approve: string;
-  reject: string;
-  abstain: string;
-  min_turnout: string;
-  approval_threshold_numerator: string;
-  approval_threshold_denominator: string;
-  approved: true;
-};
-
-type ValidationFeeProposalConfig = {
-  proposal_kind: ValidationFeeProposalKind;
-  proposal_id: string;
-  payload_hash: string;
-  parliament_roster_root: string;
-  enactment_window: {
-    opens_at_height: string;
-    closes_at_height: string;
-    enacted_at_height: string;
-  };
-  finalization: ValidationFeeFinalizationConfig;
-};
+/** Top-level native `GovernanceCertificateV1` JSON fields (SDK parliamentApiV1). */
+const GOVERNANCE_CERTIFICATE_FIELDS = [
+  "proposal_content_id",
+  "governance_attempt_id",
+  "governance_attempt_sequence",
+  "risk_tier",
+  "body_bindings",
+  "policy_version",
+  "effect_preimage_hash",
+  "expected_head",
+  "certified_at_height",
+  "enact_at_height",
+] as const;
 
 export type GovernanceValidationFeeEnabledConfig = {
   enabled: true;
+  /**
+   * Exact CBSI Core release binding. `checkpoint.canonicalBase64` carries the
+   * Core-verified native finality checkpoint; this wallet exports no native
+   * checkpoint verifier, so it checks only canonical Base64 within the native
+   * bound and trusts projection checkpoint coordinates by exact equality.
+   */
   ledgerBinding: {
     schema: typeof LEDGER_BINDING_SCHEMA;
-    chainId: typeof TAIRA_CHAIN_ID;
+    networkId: string;
     genesisHash: string;
     policyChainGenesisHash: string;
     checkpoint: {
       height: number;
       contextId: string;
+      canonicalBase64: string;
     };
   };
+  /**
+   * Immutable release coordinates only. Fee amounts, retail schedules,
+   * activation times, and Parliament authorities are governed on chain and
+   * are verified structurally rather than pinned.
+   */
   expected: {
-    activePolicyVersion: "1";
-    activePolicyHash: string;
-    feeAssetDefinitionId: typeof CBSI_SBD_ASSET_DEFINITION_ID;
-    feeScale: 2;
-    feeMinorUnits: "10";
-    chargingMode: typeof CHARGING_MODE;
-    effectiveFromHeight: string;
-    expiresAfterHeight: null;
-    parliament: {
-      validationFeePolicy: ValidationFeeProposalConfig & {
-        proposal_kind: "ValidationFeePolicyV1";
-      };
-      payoutLifecycle: ValidationFeeProposalConfig & {
-        proposal_kind: "ValidationFeePayoutLifecycleV1";
-      };
-      payoutLifecycleSealHash: string;
-    };
-    payout: {
+    rewardCustody: {
       contractAddress: string;
-      codeHash: string;
-      entrypoint: typeof PAYOUT_ENTRYPOINT;
-      sbdAssetDefinitionId: typeof CBSI_SBD_ASSET_DEFINITION_ID;
-      xorAssetDefinitionId: string;
       treasuryAccountId: string;
-      vaultAccountId: string;
-      batchSbdMinorUnits: "1000";
-      sbdScale: 2;
-      xorOutputMin: "4";
-      xorOutputMax: "100";
-      recipients: Array<{
-        account_id: string;
-        share_basis_points: 2500;
-      }>;
+      xorAssetDefinitionId: string;
+      rewardPoolAccountId: string;
+      validatorLaneId: number;
     };
   };
 };
 
-type ValidationFeeFinalization = {
-  proposal_id_hex: string;
-  referendum_id_hex: string;
-  finalized_at_height: number;
-  mode: "PLAIN";
-  approve: string;
-  reject: string;
-  abstain: string;
-  min_turnout: string;
-  approval_threshold_numerator: string;
-  approval_threshold_denominator: string;
-  approved: true;
+type RewardCustodyProjection = {
+  contract_address: string;
+  treasury_account_id: string;
+  sbd_asset_id: string;
+  xor_asset_id: string;
+  reward_pool_account_id: string;
+  validator_lane_id: number;
 };
 
-type ValidationFeeProposal = {
-  proposal_id_hex: string;
+type ParliamentAuthorityProjection = {
+  proposal_operator: string;
   proposal_fingerprint_hex: string;
-  parliament_roster_root_hex: string;
-  enactment_window: {
-    opens_at_height: number;
-    closes_at_height: number;
-    enacted_at_height: number;
-  };
-  finalization: ValidationFeeFinalization;
+  governance_certificate_id_hex: string;
+  governance_certificate: Record<string, unknown>;
+  enacted_at_height: number;
 };
 
+type PayoutLifecycleAuthorityProjection = ParliamentAuthorityProjection & {
+  lifecycle_seal_hex: string;
+};
+
+type ConversionBindingProjection = {
+  contract_address: string;
+  contract_subject_account_id: string;
+  code_hash_hex: string;
+  entrypoint: typeof VALIDATION_FEE_PAYOUT_ENTRYPOINT;
+  treasury_account_id: string;
+  sbd_asset_id: string;
+  xor_asset_id: string;
+  pool_contract_address: string;
+  pool_code_hash_hex: string;
+  pool_vault_account_id: string;
+  reward_pool_account_id: string;
+  reference_feed_id: string;
+  reference_feed_config_version: number;
+  reference_provider_accounts: string[];
+  max_sbd_per_attempt_minor: number;
+  max_sbd_per_day_minor: number;
+  min_interval_ms: number;
+  max_source_age_ms: number;
+  max_slippage_bps: number;
+  validator_lane_id: number;
+  min_reward_claim_xor_minor: number;
+};
+
+/** Exact CBSI Core `ValidationFeeLedgerProjectionV1`. */
 type ValidationFeeProjection = {
   schema: typeof LEDGER_PROJECTION_SCHEMA;
   authorization_model: typeof AUTHORIZATION_MODEL;
@@ -152,41 +144,30 @@ type ValidationFeeProjection = {
     network_id: string;
     genesis_hash_hex: string;
     policy_version: number;
-    previous_policy_hash_hex: null;
+    previous_policy_hash_hex: string | null;
     policy_hash_hex: string;
-    sbd_asset_id: string;
+    sbd_asset_id: typeof CBSI_SBD_ASSET_DEFINITION_ID;
     sbd_scale: 2;
-    fee: "0.10";
-    fee_minor_units: 10;
+    fee: string;
+    fee_minor_units: number;
     treasury_account_id: string;
-    charging_mode: typeof CHARGING_MODE;
+    charging_mode: typeof VALIDATION_FEE_CHARGING_MODE;
     effective_from_height: number;
-    expires_after_height: null;
-    exemption_classes: ["TREASURY_PAYOUT"];
-    treasury_payout_binding: {
-      contract_address: string;
-      contract_subject_account_id: string;
-      code_hash_hex: string;
-      entrypoint: typeof PAYOUT_ENTRYPOINT;
-      treasury_account_id: string;
-      sbd_asset_id: string;
-      xor_asset_id: string;
-      pool_vault_account_id: string;
-      batch_sbd: "10";
-      min_xor_out: "4";
-      max_xor_out: "100";
-      recipients: Array<{ account_id: string; share: "0.25" }>;
-      lifecycle_seal_hex: string;
-    };
+    effective_from_ms: number;
+    notice_published_at_ms: number;
+    retail_schedule: RetailFeeSchedulePayload;
+    exemption_classes: [typeof VALIDATION_FEE_TREASURY_PAYOUT_EXEMPTION];
+    reward_custody: RewardCustodyProjection;
   };
-  parliament_authorization: {
-    policy_proposal: ValidationFeeProposal;
-    payout_lifecycle_proposal: ValidationFeeProposal & {
-      lifecycle_seal_hex: string;
-    };
+  parliament_authorization: ParliamentAuthorityProjection;
+  conversion_policy: {
+    revision: number;
+    binding: ConversionBindingProjection;
+    authority: PayoutLifecycleAuthorityProjection;
   };
   ledger_finality: {
     ledger_finalised_height: number;
+    block_timestamp_ms: number;
     block_hash_hex: string;
     ordinary_writes_root_hex: string;
     context_id_hex: string;
@@ -395,33 +376,39 @@ function parseEnabledConfig(
     raw.ledgerBinding,
     [
       "schema",
-      "chainId",
+      "networkId",
       "genesisHash",
       "policyChainGenesisHash",
       "checkpoint",
     ],
     "validationFee.ledgerBinding",
   );
-  if (
-    bindingRaw.schema !== LEDGER_BINDING_SCHEMA ||
-    bindingRaw.chainId !== TAIRA_CHAIN_ID
-  ) {
+  if (bindingRaw.schema !== LEDGER_BINDING_SCHEMA) {
     throw new Error(
-      "validationFee.ledgerBinding must identify the exact Taira ledger.",
+      `validationFee.ledgerBinding.schema must be ${LEDGER_BINDING_SCHEMA}.`,
     );
   }
   const checkpointRaw = exactRecord(
     bindingRaw.checkpoint,
-    ["height", "contextId"],
+    ["height", "contextId", "canonicalBase64"],
     "validationFee.ledgerBinding.checkpoint",
   );
+  const genesisHash = canonicalIrohaHash(
+    bindingRaw.genesisHash,
+    "validationFee.ledgerBinding.genesisHash",
+  );
+  // Core `ValidationFeeLedgerBindingV2::validate`: the canonical checksummed
+  // NetworkId literal must be the one derived from the genesis hash.
+  const networkId = bindingNetworkId(genesisHash);
+  if (bindingRaw.networkId !== networkId) {
+    throw new Error(
+      "validationFee.ledgerBinding.networkId must be the canonical NetworkId derived from genesisHash.",
+    );
+  }
   const binding: GovernanceValidationFeeEnabledConfig["ledgerBinding"] = {
     schema: LEDGER_BINDING_SCHEMA,
-    chainId: TAIRA_CHAIN_ID,
-    genesisHash: canonicalIrohaHash(
-      bindingRaw.genesisHash,
-      "validationFee.ledgerBinding.genesisHash",
-    ),
+    networkId,
+    genesisHash,
     policyChainGenesisHash: canonicalIrohaHash(
       bindingRaw.policyChainGenesisHash,
       "validationFee.ledgerBinding.policyChainGenesisHash",
@@ -435,343 +422,64 @@ function parseEnabledConfig(
         checkpointRaw.contextId,
         "validationFee.ledgerBinding.checkpoint.contextId",
       ),
+      canonicalBase64: canonicalCheckpointBase64(
+        checkpointRaw.canonicalBase64,
+        "validationFee.ledgerBinding.checkpoint.canonicalBase64",
+      ),
     },
   };
   const expectedRaw = exactRecord(
     raw.expected,
-    [
-      "activePolicyVersion",
-      "activePolicyHash",
-      "feeAssetDefinitionId",
-      "feeScale",
-      "feeMinorUnits",
-      "chargingMode",
-      "effectiveFromHeight",
-      "expiresAfterHeight",
-      "parliament",
-      "payout",
-    ],
+    ["rewardCustody"],
     "validationFee.expected",
   );
+  const custodyLabel = "validationFee.expected.rewardCustody";
+  const custodyRaw = exactRecord(
+    expectedRaw.rewardCustody,
+    [
+      "contractAddress",
+      "treasuryAccountId",
+      "xorAssetDefinitionId",
+      "rewardPoolAccountId",
+      "validatorLaneId",
+    ],
+    custodyLabel,
+  );
+  const rewardCustody = {
+    contractAddress: exactText(
+      custodyRaw.contractAddress,
+      `${custodyLabel}.contractAddress`,
+    ),
+    treasuryAccountId: exactText(
+      custodyRaw.treasuryAccountId,
+      `${custodyLabel}.treasuryAccountId`,
+    ),
+    xorAssetDefinitionId: exactText(
+      custodyRaw.xorAssetDefinitionId,
+      `${custodyLabel}.xorAssetDefinitionId`,
+    ),
+    rewardPoolAccountId: exactText(
+      custodyRaw.rewardPoolAccountId,
+      `${custodyLabel}.rewardPoolAccountId`,
+    ),
+    validatorLaneId: boundedSafeInteger(
+      custodyRaw.validatorLaneId,
+      `${custodyLabel}.validatorLaneId`,
+      { maximum: U32_MAX },
+    ),
+  };
   if (
-    expectedRaw.activePolicyVersion !== "1" ||
-    expectedRaw.feeAssetDefinitionId !== CBSI_SBD_ASSET_DEFINITION_ID ||
-    expectedRaw.feeScale !== 2 ||
-    expectedRaw.feeMinorUnits !== "10" ||
-    expectedRaw.chargingMode !== CHARGING_MODE ||
-    expectedRaw.expiresAfterHeight !== null
+    rewardCustody.treasuryAccountId === rewardCustody.rewardPoolAccountId ||
+    rewardCustody.xorAssetDefinitionId === CBSI_SBD_ASSET_DEFINITION_ID
   ) {
     throw new Error(
-      "validationFee.expected must pin the exact initial 0.10 SBD policy.",
+      `${custodyLabel} requires distinct treasury and reward pool accounts and distinct SBD and XOR assets.`,
     );
   }
-  const activePolicyHash = canonicalIrohaHash(
-    expectedRaw.activePolicyHash,
-    "validationFee.expected.activePolicyHash",
-  );
-  if (activePolicyHash !== binding.policyChainGenesisHash) {
-    throw new Error(
-      "validationFee.expected.activePolicyHash must match the policy-chain genesis hash.",
-    );
-  }
-  const parliamentRaw = exactRecord(
-    expectedRaw.parliament,
-    ["validationFeePolicy", "payoutLifecycle", "payoutLifecycleSealHash"],
-    "validationFee.expected.parliament",
-  );
-  const validationFeePolicy = parseConfigProposal(
-    parliamentRaw.validationFeePolicy,
-    "ValidationFeePolicyV1",
-    "validationFee.expected.parliament.validationFeePolicy",
-  );
-  const payoutLifecycle = parseConfigProposal(
-    parliamentRaw.payoutLifecycle,
-    "ValidationFeePayoutLifecycleV1",
-    "validationFee.expected.parliament.payoutLifecycle",
-  );
-  if (validationFeePolicy.proposal_id === payoutLifecycle.proposal_id) {
-    throw new Error("Validation-fee Parliament proposal IDs must differ.");
-  }
-  const effectiveFromHeight = positiveSafeIntegerText(
-    expectedRaw.effectiveFromHeight,
-    "validationFee.expected.effectiveFromHeight",
-  );
-  if (
-    BigInt(effectiveFromHeight) -
-      BigInt(validationFeePolicy.enactment_window.enacted_at_height) !==
-    BigInt(VALIDATION_FEE_ACTIVATION_DELAY_BLOCKS)
-  ) {
-    throw new Error(
-      "Validation-fee activation must be exactly 120,960 blocks after policy enactment.",
-    );
-  }
-  if (
-    BigInt(payoutLifecycle.enactment_window.enacted_at_height) >
-      BigInt(validationFeePolicy.enactment_window.enacted_at_height) ||
-    BigInt(binding.checkpoint.height) >= BigInt(effectiveFromHeight)
-  ) {
-    throw new Error(
-      "Payout-lifecycle enactment must not follow policy enactment, and the trusted checkpoint must predate activation.",
-    );
-  }
-  const payout = parseConfigPayout(expectedRaw.payout);
-  const payoutLifecycleSealHash = canonicalIrohaHash(
-    parliamentRaw.payoutLifecycleSealHash,
-    "validationFee.expected.parliament.payoutLifecycleSealHash",
-  );
   return {
     enabled: true,
     ledgerBinding: binding,
-    expected: {
-      activePolicyVersion: "1",
-      activePolicyHash,
-      feeAssetDefinitionId: CBSI_SBD_ASSET_DEFINITION_ID,
-      feeScale: 2,
-      feeMinorUnits: "10",
-      chargingMode: CHARGING_MODE,
-      effectiveFromHeight,
-      expiresAfterHeight: null,
-      parliament: {
-        validationFeePolicy,
-        payoutLifecycle,
-        payoutLifecycleSealHash,
-      },
-      payout,
-    },
-  };
-}
-
-function parseConfigProposal<TKind extends ValidationFeeProposalKind>(
-  value: unknown,
-  expectedKind: TKind,
-  label: string,
-): ValidationFeeProposalConfig & { proposal_kind: TKind } {
-  const raw = exactRecord(
-    value,
-    [
-      "proposal_kind",
-      "proposal_id",
-      "payload_hash",
-      "parliament_roster_root",
-      "enactment_window",
-      "finalization",
-    ],
-    label,
-  );
-  if (raw.proposal_kind !== expectedKind) {
-    throw new Error(`${label}.proposal_kind must be ${expectedKind}.`);
-  }
-  const proposalId = lowerHash(raw.proposal_id, `${label}.proposal_id`);
-  const payloadHash = lowerHash(raw.payload_hash, `${label}.payload_hash`);
-  if (proposalId !== payloadHash) {
-    throw new Error(`${label}.proposal_id must equal payload_hash.`);
-  }
-  const windowRaw = exactRecord(
-    raw.enactment_window,
-    ["opens_at_height", "closes_at_height", "enacted_at_height"],
-    `${label}.enactment_window`,
-  );
-  const enactmentWindow = {
-    opens_at_height: positiveSafeIntegerText(
-      windowRaw.opens_at_height,
-      `${label}.enactment_window.opens_at_height`,
-    ),
-    closes_at_height: positiveSafeIntegerText(
-      windowRaw.closes_at_height,
-      `${label}.enactment_window.closes_at_height`,
-    ),
-    enacted_at_height: positiveSafeIntegerText(
-      windowRaw.enacted_at_height,
-      `${label}.enactment_window.enacted_at_height`,
-    ),
-  };
-  const finalization = parseConfigFinalization(
-    raw.finalization,
-    proposalId,
-    `${label}.finalization`,
-  );
-  const opens = BigInt(enactmentWindow.opens_at_height);
-  const closes = BigInt(enactmentWindow.closes_at_height);
-  const enacted = BigInt(enactmentWindow.enacted_at_height);
-  const finalized = BigInt(finalization.finalized_at_height);
-  if (
-    closes < opens ||
-    finalized < opens ||
-    finalized > closes ||
-    enacted <= finalized
-  ) {
-    throw new Error(
-      `${label} must finalize inside its inclusive referendum window and enact strictly later.`,
-    );
-  }
-  return {
-    proposal_kind: expectedKind,
-    proposal_id: proposalId,
-    payload_hash: payloadHash,
-    parliament_roster_root: lowerHash(
-      raw.parliament_roster_root,
-      `${label}.parliament_roster_root`,
-    ),
-    enactment_window: enactmentWindow,
-    finalization,
-  };
-}
-
-function parseConfigFinalization(
-  value: unknown,
-  proposalId: string,
-  label: string,
-): ValidationFeeFinalizationConfig {
-  const raw = exactRecord(
-    value,
-    [
-      "proposal_id",
-      "referendum_id",
-      "finalized_at_height",
-      "mode",
-      "approve",
-      "reject",
-      "abstain",
-      "min_turnout",
-      "approval_threshold_numerator",
-      "approval_threshold_denominator",
-      "approved",
-    ],
-    label,
-  );
-  if (
-    lowerHash(raw.proposal_id, `${label}.proposal_id`) !== proposalId ||
-    lowerHash(raw.referendum_id, `${label}.referendum_id`) !== proposalId ||
-    raw.mode !== "PLAIN" ||
-    raw.approved !== true
-  ) {
-    throw new Error(`${label} must contain approved PLAIN finalization.`);
-  }
-  const result: ValidationFeeFinalizationConfig = {
-    proposal_id: proposalId,
-    referendum_id: proposalId,
-    finalized_at_height: positiveSafeIntegerText(
-      raw.finalized_at_height,
-      `${label}.finalized_at_height`,
-    ),
-    mode: "PLAIN",
-    approve: unsignedU128(raw.approve, `${label}.approve`),
-    reject: unsignedU128(raw.reject, `${label}.reject`),
-    abstain: unsignedU128(raw.abstain, `${label}.abstain`),
-    min_turnout: unsignedU128(raw.min_turnout, `${label}.min_turnout`),
-    approval_threshold_numerator: positiveU64(
-      raw.approval_threshold_numerator,
-      `${label}.approval_threshold_numerator`,
-    ),
-    approval_threshold_denominator: positiveU64(
-      raw.approval_threshold_denominator,
-      `${label}.approval_threshold_denominator`,
-    ),
-    approved: true,
-  };
-  assertApprovedTally(result, label);
-  return result;
-}
-
-function parseConfigPayout(
-  value: unknown,
-): GovernanceValidationFeeEnabledConfig["expected"]["payout"] {
-  const label = "validationFee.expected.payout";
-  const raw = exactRecord(
-    value,
-    [
-      "contractAddress",
-      "codeHash",
-      "entrypoint",
-      "sbdAssetDefinitionId",
-      "xorAssetDefinitionId",
-      "treasuryAccountId",
-      "vaultAccountId",
-      "batchSbdMinorUnits",
-      "sbdScale",
-      "xorOutputMin",
-      "xorOutputMax",
-      "recipients",
-    ],
-    label,
-  );
-  const contractAddress = exactText(
-    raw.contractAddress,
-    `${label}.contractAddress`,
-  );
-  if (
-    !isReviewedPayoutContractAddress(contractAddress) ||
-    raw.entrypoint !== PAYOUT_ENTRYPOINT ||
-    raw.sbdAssetDefinitionId !== CBSI_SBD_ASSET_DEFINITION_ID ||
-    raw.xorAssetDefinitionId !== CBSI_XOR_ASSET_DEFINITION_ID ||
-    raw.treasuryAccountId !==
-      VALIDATION_FEE_PAYOUT_CONTRACT_SUBJECT_ACCOUNT_ID ||
-    raw.batchSbdMinorUnits !== "1000" ||
-    raw.sbdScale !== 2 ||
-    raw.xorOutputMin !== "4" ||
-    raw.xorOutputMax !== "100"
-  ) {
-    throw new Error(`${label} differs from the first-release payout contract.`);
-  }
-  const xorAssetDefinitionId = exactText(
-    raw.xorAssetDefinitionId,
-    `${label}.xorAssetDefinitionId`,
-  );
-  if (xorAssetDefinitionId === CBSI_SBD_ASSET_DEFINITION_ID) {
-    throw new Error(`${label} SBD and XOR assets must differ.`);
-  }
-  const treasuryAccountId = exactText(
-    raw.treasuryAccountId,
-    `${label}.treasuryAccountId`,
-  );
-  const vaultAccountId = exactText(
-    raw.vaultAccountId,
-    `${label}.vaultAccountId`,
-  );
-  if (!Array.isArray(raw.recipients) || raw.recipients.length !== 4) {
-    throw new Error(`${label}.recipients must contain exactly four entries.`);
-  }
-  const recipients = raw.recipients.map((value, index) => {
-    const recipient = exactRecord(
-      value,
-      ["account_id", "share_basis_points"],
-      `${label}.recipients[${index}]`,
-    );
-    if (recipient.share_basis_points !== 2500) {
-      throw new Error(`${label} recipient shares must be exactly 2500 bps.`);
-    }
-    return {
-      account_id: exactText(
-        recipient.account_id,
-        `${label}.recipients[${index}].account_id`,
-      ),
-      share_basis_points: 2500 as const,
-    };
-  });
-  const accounts = recipients.map((recipient) => recipient.account_id);
-  if (
-    treasuryAccountId === vaultAccountId ||
-    new Set(accounts).size !== 4 ||
-    accounts.includes(treasuryAccountId) ||
-    accounts.includes(vaultAccountId)
-  ) {
-    throw new Error(
-      `${label} treasury, vault, and recipients must be distinct.`,
-    );
-  }
-  return {
-    contractAddress,
-    codeHash: lowerHash(raw.codeHash, `${label}.codeHash`),
-    entrypoint: PAYOUT_ENTRYPOINT,
-    sbdAssetDefinitionId: CBSI_SBD_ASSET_DEFINITION_ID,
-    xorAssetDefinitionId,
-    treasuryAccountId,
-    vaultAccountId,
-    batchSbdMinorUnits: "1000",
-    sbdScale: 2,
-    xorOutputMin: "4",
-    xorOutputMax: "100",
-    recipients,
+    expected: { rewardCustody },
   };
 }
 
@@ -784,6 +492,7 @@ function parseProjection(value: unknown): ValidationFeeProjection {
       "policy_chain_genesis_hash_hex",
       "policy",
       "parliament_authorization",
+      "conversion_policy",
       "ledger_finality",
     ],
     "validation-fee ledger projection",
@@ -794,11 +503,6 @@ function parseProjection(value: unknown): ValidationFeeProjection {
   ) {
     throw new Error("CBSI Core returned an unsupported projection schema.");
   }
-  const policy = parseProjectionPolicy(raw.policy);
-  const parliamentAuthorization = parseProjectionParliament(
-    raw.parliament_authorization,
-  );
-  const ledgerFinality = parseProjectionFinality(raw.ledger_finality);
   const result: ValidationFeeProjection = {
     schema: LEDGER_PROJECTION_SCHEMA,
     authorization_model: AUTHORIZATION_MODEL,
@@ -806,9 +510,13 @@ function parseProjection(value: unknown): ValidationFeeProjection {
       raw.policy_chain_genesis_hash_hex,
       "projection policy-chain genesis hash",
     ),
-    policy,
-    parliament_authorization: parliamentAuthorization,
-    ledger_finality: ledgerFinality,
+    policy: parseProjectionPolicy(raw.policy),
+    parliament_authorization: parseParliamentAuthority(
+      raw.parliament_authorization,
+      "projection policy Parliament authority",
+    ),
+    conversion_policy: parseConversionPolicy(raw.conversion_policy),
+    ledger_finality: parseProjectionFinality(raw.ledger_finality),
   };
   assertProjectionRelationships(result);
   return result;
@@ -833,65 +541,258 @@ function parseProjectionPolicy(
       "treasury_account_id",
       "charging_mode",
       "effective_from_height",
-      "expires_after_height",
+      "effective_from_ms",
+      "notice_published_at_ms",
+      "retail_schedule",
       "exemption_classes",
-      "treasury_payout_binding",
+      "reward_custody",
     ],
     "validation-fee policy",
   );
+  const policyVersion = positiveSafeInteger(
+    raw.policy_version,
+    "projection policy version",
+  );
+  const feeMinorUnits = positiveSafeInteger(
+    raw.fee_minor_units,
+    "projection fee minor units",
+  );
+  const previousPolicyHash =
+    raw.previous_policy_hash_hex === null
+      ? null
+      : canonicalIrohaHash(
+          raw.previous_policy_hash_hex,
+          "projection previous policy hash",
+        );
   if (
     raw.schema_version !== 1 ||
-    raw.policy_version !== 1 ||
-    raw.previous_policy_hash_hex !== null ||
-    raw.sbd_asset_id !== CBSI_SBD_ASSET_DEFINITION_ID ||
     raw.sbd_scale !== 2 ||
-    raw.fee !== "0.10" ||
-    raw.fee_minor_units !== 10 ||
-    raw.charging_mode !== CHARGING_MODE ||
-    raw.expires_after_height !== null ||
+    raw.sbd_asset_id !== CBSI_SBD_ASSET_DEFINITION_ID ||
+    raw.fee !== formatMinorUnits(feeMinorUnits) ||
+    raw.charging_mode !== VALIDATION_FEE_CHARGING_MODE ||
+    (policyVersion === 1) !== (previousPolicyHash === null) ||
     !Array.isArray(raw.exemption_classes) ||
     raw.exemption_classes.length !== 1 ||
-    raw.exemption_classes[0] !== "TREASURY_PAYOUT"
+    raw.exemption_classes[0] !== VALIDATION_FEE_TREASURY_PAYOUT_EXEMPTION
   ) {
     throw new Error(
-      "CBSI Core projection differs from the exact initial 0.10 SBD policy.",
+      "CBSI Core projection is not a governed monthly-allowance SBD fee policy.",
+    );
+  }
+  let retailSchedule: RetailFeeSchedulePayload;
+  try {
+    retailSchedule = normalizeRetailFeeSchedule(
+      raw.retail_schedule,
+      "projection retail schedule",
+    );
+  } catch (error) {
+    throw new Error(
+      `CBSI Core projection has an invalid governed retail schedule: ${errorMessage(error)}`,
+    );
+  }
+  const effectiveFromMs = positiveSafeInteger(
+    raw.effective_from_ms,
+    "projection effective time",
+  );
+  const noticePublishedAtMs = positiveSafeInteger(
+    raw.notice_published_at_ms,
+    "projection notice time",
+  );
+  if (validationFeeActivationError(noticePublishedAtMs, effectiveFromMs)) {
+    throw new Error(
+      "CBSI Core fee activation requires a Honiara month boundary and 30 calendar days notice.",
+    );
+  }
+  const genesisHash = canonicalIrohaHash(
+    raw.genesis_hash_hex,
+    "projection genesis hash",
+  );
+  const networkId = exactText(raw.network_id, "projection network id");
+  if (networkId !== bindingNetworkId(genesisHash)) {
+    throw new Error("CBSI Core fee network identity differs from genesis.");
+  }
+  const treasuryAccountId = exactText(
+    raw.treasury_account_id,
+    "projection treasury account",
+  );
+  const rewardCustody = parseRewardCustody(raw.reward_custody);
+  if (
+    rewardCustody.sbd_asset_id !== CBSI_SBD_ASSET_DEFINITION_ID ||
+    rewardCustody.treasury_account_id !== treasuryAccountId ||
+    rewardCustody.reward_pool_account_id === treasuryAccountId ||
+    rewardCustody.xor_asset_id === CBSI_SBD_ASSET_DEFINITION_ID
+  ) {
+    throw new Error(
+      "CBSI Core projection has invalid immutable reward custody.",
     );
   }
   return {
     schema_version: 1,
-    network_id: exactText(raw.network_id, "projection network id"),
-    genesis_hash_hex: canonicalIrohaHash(
-      raw.genesis_hash_hex,
-      "projection genesis hash",
-    ),
-    policy_version: 1,
-    previous_policy_hash_hex: null,
+    network_id: networkId,
+    genesis_hash_hex: genesisHash,
+    policy_version: policyVersion,
+    previous_policy_hash_hex: previousPolicyHash,
     policy_hash_hex: canonicalIrohaHash(
       raw.policy_hash_hex,
       "projection policy hash",
     ),
     sbd_asset_id: CBSI_SBD_ASSET_DEFINITION_ID,
     sbd_scale: 2,
-    fee: "0.10",
-    fee_minor_units: 10,
-    treasury_account_id: exactText(
-      raw.treasury_account_id,
-      "projection treasury account",
-    ),
-    charging_mode: CHARGING_MODE,
+    fee: formatMinorUnits(feeMinorUnits),
+    fee_minor_units: feeMinorUnits,
+    treasury_account_id: treasuryAccountId,
+    charging_mode: VALIDATION_FEE_CHARGING_MODE,
     effective_from_height: positiveSafeInteger(
       raw.effective_from_height,
       "projection effective height",
     ),
-    expires_after_height: null,
-    exemption_classes: ["TREASURY_PAYOUT"],
-    treasury_payout_binding: parseProjectionPayout(raw.treasury_payout_binding),
+    effective_from_ms: effectiveFromMs,
+    notice_published_at_ms: noticePublishedAtMs,
+    retail_schedule: retailSchedule,
+    exemption_classes: [VALIDATION_FEE_TREASURY_PAYOUT_EXEMPTION],
+    reward_custody: rewardCustody,
   };
 }
 
-function parseProjectionPayout(
+function parseRewardCustody(value: unknown): RewardCustodyProjection {
+  const raw = exactRecord(
+    value,
+    [
+      "contract_address",
+      "treasury_account_id",
+      "sbd_asset_id",
+      "xor_asset_id",
+      "reward_pool_account_id",
+      "validator_lane_id",
+    ],
+    "projection reward custody",
+  );
+  return {
+    contract_address: exactText(
+      raw.contract_address,
+      "projection reward custody contract",
+    ),
+    treasury_account_id: exactText(
+      raw.treasury_account_id,
+      "projection reward treasury",
+    ),
+    sbd_asset_id: exactText(raw.sbd_asset_id, "projection reward SBD asset"),
+    xor_asset_id: exactText(raw.xor_asset_id, "projection reward asset"),
+    reward_pool_account_id: exactText(
+      raw.reward_pool_account_id,
+      "projection reward pool",
+    ),
+    validator_lane_id: boundedSafeInteger(
+      raw.validator_lane_id,
+      "projection reward validator lane",
+      { maximum: U32_MAX },
+    ),
+  };
+}
+
+function parseParliamentAuthority(
   value: unknown,
-): ValidationFeeProjection["policy"]["treasury_payout_binding"] {
+  label: string,
+  lifecycle = false,
+): ParliamentAuthorityProjection {
+  const raw = exactRecord(
+    value,
+    [
+      "proposal_operator",
+      "proposal_fingerprint_hex",
+      "governance_certificate_id_hex",
+      "governance_certificate",
+      "enacted_at_height",
+      ...(lifecycle ? ["lifecycle_seal_hex"] : []),
+    ],
+    label,
+  );
+  const fingerprint = lowerHash(
+    raw.proposal_fingerprint_hex,
+    `${label} proposal fingerprint`,
+  );
+  const enactedAtHeight = positiveSafeInteger(
+    raw.enacted_at_height,
+    `${label} enacted height`,
+  );
+  // The public SDK does not export the complete native certificate
+  // validator, so the wallet binds only the certificate fields that tie it
+  // to this proposal and enactment; Core verifies the certificate natively.
+  const certificate = exactRecord(
+    raw.governance_certificate,
+    GOVERNANCE_CERTIFICATE_FIELDS,
+    `${label} certificate`,
+  );
+  const certifiedAtHeight = positiveSafeInteger(
+    certificate.certified_at_height,
+    `${label} certificate certified height`,
+  );
+  if (
+    certificate.proposal_content_id !== fingerprint ||
+    certificate.enact_at_height !== enactedAtHeight ||
+    certifiedAtHeight >= enactedAtHeight
+  ) {
+    throw new Error(
+      `${label} certificate does not bind this proposal and enactment.`,
+    );
+  }
+  return {
+    proposal_operator: exactText(
+      raw.proposal_operator,
+      `${label} proposal operator`,
+    ),
+    proposal_fingerprint_hex: fingerprint,
+    governance_certificate_id_hex: lowerHash(
+      raw.governance_certificate_id_hex,
+      `${label} certificate identifier`,
+    ),
+    governance_certificate: certificate,
+    enacted_at_height: enactedAtHeight,
+  };
+}
+
+function parseConversionPolicy(
+  value: unknown,
+): ValidationFeeProjection["conversion_policy"] {
+  const raw = exactRecord(
+    value,
+    ["revision", "binding", "authority"],
+    "projection conversion policy",
+  );
+  const authorityRaw = exactRecord(
+    raw.authority,
+    [
+      "proposal_operator",
+      "proposal_fingerprint_hex",
+      "governance_certificate_id_hex",
+      "governance_certificate",
+      "enacted_at_height",
+      "lifecycle_seal_hex",
+    ],
+    "projection conversion authority",
+  );
+  return {
+    revision: positiveSafeInteger(
+      raw.revision,
+      "projection conversion revision",
+    ),
+    binding: parseConversionBinding(raw.binding),
+    authority: {
+      ...parseParliamentAuthority(
+        authorityRaw,
+        "projection conversion authority",
+        true,
+      ),
+      lifecycle_seal_hex: canonicalIrohaHash(
+        authorityRaw.lifecycle_seal_hex,
+        "projection payout lifecycle seal",
+      ),
+    },
+  };
+}
+
+function parseConversionBinding(value: unknown): ConversionBindingProjection {
+  const label = "projection conversion binding";
   const raw = exactRecord(
     value,
     [
@@ -902,259 +803,118 @@ function parseProjectionPayout(
       "treasury_account_id",
       "sbd_asset_id",
       "xor_asset_id",
+      "pool_contract_address",
+      "pool_code_hash_hex",
       "pool_vault_account_id",
-      "batch_sbd",
-      "min_xor_out",
-      "max_xor_out",
-      "recipients",
-      "lifecycle_seal_hex",
+      "reward_pool_account_id",
+      "reference_feed_id",
+      "reference_feed_config_version",
+      "reference_provider_accounts",
+      "max_sbd_per_attempt_minor",
+      "max_sbd_per_day_minor",
+      "min_interval_ms",
+      "max_source_age_ms",
+      "max_slippage_bps",
+      "validator_lane_id",
+      "min_reward_claim_xor_minor",
     ],
-    "validation-fee payout binding",
-  );
-  const contractAddress = exactText(
-    raw.contract_address,
-    "projection payout contract",
+    label,
   );
   if (
-    !isReviewedPayoutContractAddress(contractAddress) ||
-    raw.entrypoint !== PAYOUT_ENTRYPOINT ||
-    raw.sbd_asset_id !== CBSI_SBD_ASSET_DEFINITION_ID ||
-    raw.xor_asset_id !== CBSI_XOR_ASSET_DEFINITION_ID ||
-    raw.contract_subject_account_id !==
-      VALIDATION_FEE_PAYOUT_CONTRACT_SUBJECT_ACCOUNT_ID ||
-    raw.treasury_account_id !==
-      VALIDATION_FEE_PAYOUT_CONTRACT_SUBJECT_ACCOUNT_ID ||
-    raw.batch_sbd !== "10" ||
-    raw.min_xor_out !== "4" ||
-    raw.max_xor_out !== "100" ||
-    !Array.isArray(raw.recipients) ||
-    raw.recipients.length !== 4
+    !Array.isArray(raw.reference_provider_accounts) ||
+    raw.reference_provider_accounts.length !==
+      VALIDATION_FEE_REFERENCE_PROVIDER_COUNT
   ) {
-    throw new Error(
-      "CBSI Core payout projection differs from the exact first release.",
-    );
+    throw new Error(`${label} requires exactly five reference providers.`);
   }
-  const recipients = raw.recipients.map((value, index) => {
-    const recipient = exactRecord(
-      value,
-      ["account_id", "share"],
-      `projection payout recipient ${index}`,
-    );
-    if (recipient.share !== "0.25") {
-      throw new Error("Projection payout shares must each be exactly 0.25.");
-    }
-    return {
-      account_id: exactText(
-        recipient.account_id,
-        `projection payout recipient ${index}`,
-      ),
-      share: "0.25" as const,
-    };
-  });
-  if (new Set(recipients.map((recipient) => recipient.account_id)).size !== 4) {
-    throw new Error("Projection payout recipient accounts must be unique.");
-  }
-  return {
-    contract_address: contractAddress,
+  const providers = raw.reference_provider_accounts.map((entry, index) =>
+    exactText(entry, `${label} reference provider ${index}`),
+  );
+  const binding: ConversionBindingProjection = {
+    contract_address: exactText(raw.contract_address, `${label} contract`),
     contract_subject_account_id: exactText(
       raw.contract_subject_account_id,
-      "projection payout contract subject",
+      `${label} contract subject`,
     ),
-    code_hash_hex: lowerHash(raw.code_hash_hex, "projection payout code hash"),
-    entrypoint: PAYOUT_ENTRYPOINT,
+    code_hash_hex: lowerHash(raw.code_hash_hex, `${label} code hash`),
+    entrypoint: VALIDATION_FEE_PAYOUT_ENTRYPOINT,
     treasury_account_id: exactText(
       raw.treasury_account_id,
-      "projection payout treasury",
+      `${label} treasury`,
     ),
-    sbd_asset_id: CBSI_SBD_ASSET_DEFINITION_ID,
-    xor_asset_id: exactText(raw.xor_asset_id, "projection payout XOR asset"),
+    sbd_asset_id: exactText(raw.sbd_asset_id, `${label} SBD asset`),
+    xor_asset_id: exactText(raw.xor_asset_id, `${label} XOR asset`),
+    pool_contract_address: exactText(
+      raw.pool_contract_address,
+      `${label} pool contract`,
+    ),
+    pool_code_hash_hex: lowerHash(
+      raw.pool_code_hash_hex,
+      `${label} pool code hash`,
+    ),
     pool_vault_account_id: exactText(
       raw.pool_vault_account_id,
-      "projection payout vault",
+      `${label} pool vault`,
     ),
-    batch_sbd: "10",
-    min_xor_out: "4",
-    max_xor_out: "100",
-    recipients,
-    lifecycle_seal_hex: canonicalIrohaHash(
-      raw.lifecycle_seal_hex,
-      "projection payout lifecycle seal",
+    reward_pool_account_id: exactText(
+      raw.reward_pool_account_id,
+      `${label} reward pool`,
     ),
-  };
-}
-
-function parseProjectionParliament(
-  value: unknown,
-): ValidationFeeProjection["parliament_authorization"] {
-  const raw = exactRecord(
-    value,
-    ["policy_proposal", "payout_lifecycle_proposal"],
-    "projection Parliament authorization",
-  );
-  const policyProposal = parseProjectionProposal(
-    raw.policy_proposal,
-    "projection policy proposal",
-  );
-  const lifecycleRaw = exactRecord(
-    raw.payout_lifecycle_proposal,
-    [
-      "proposal_id_hex",
-      "proposal_fingerprint_hex",
-      "parliament_roster_root_hex",
-      "enactment_window",
-      "finalization",
-      "lifecycle_seal_hex",
-    ],
-    "projection payout lifecycle proposal",
-  );
-  const payoutLifecycleProposal = {
-    ...parseProjectionProposal(
-      lifecycleRaw,
-      "projection payout lifecycle proposal",
-      true,
+    reference_feed_id: exactText(
+      raw.reference_feed_id,
+      `${label} reference feed`,
     ),
-    lifecycle_seal_hex: canonicalIrohaHash(
-      lifecycleRaw.lifecycle_seal_hex,
-      "projection payout lifecycle seal",
+    reference_feed_config_version: positiveSafeInteger(
+      raw.reference_feed_config_version,
+      `${label} reference feed config version`,
+    ),
+    reference_provider_accounts: providers,
+    max_sbd_per_attempt_minor: positiveSafeInteger(
+      raw.max_sbd_per_attempt_minor,
+      `${label} per-attempt limit`,
+    ),
+    max_sbd_per_day_minor: positiveSafeInteger(
+      raw.max_sbd_per_day_minor,
+      `${label} daily limit`,
+    ),
+    min_interval_ms: positiveSafeInteger(
+      raw.min_interval_ms,
+      `${label} minimum interval`,
+    ),
+    max_source_age_ms: positiveSafeInteger(
+      raw.max_source_age_ms,
+      `${label} maximum source age`,
+    ),
+    max_slippage_bps: boundedSafeInteger(
+      raw.max_slippage_bps,
+      `${label} maximum slippage`,
+      { maximum: 9_999 },
+    ),
+    validator_lane_id: boundedSafeInteger(
+      raw.validator_lane_id,
+      `${label} validator lane`,
+      { maximum: U32_MAX },
+    ),
+    min_reward_claim_xor_minor: positiveSafeInteger(
+      raw.min_reward_claim_xor_minor,
+      `${label} minimum reward claim`,
     ),
   };
   if (
-    policyProposal.proposal_id_hex === payoutLifecycleProposal.proposal_id_hex
+    raw.entrypoint !== VALIDATION_FEE_PAYOUT_ENTRYPOINT ||
+    binding.reference_feed_config_version > U32_MAX ||
+    new Set(providers).size !== providers.length ||
+    binding.max_sbd_per_day_minor < binding.max_sbd_per_attempt_minor ||
+    binding.sbd_asset_id === binding.xor_asset_id ||
+    new Set([
+      binding.treasury_account_id,
+      binding.pool_vault_account_id,
+      binding.reward_pool_account_id,
+    ]).size !== 3
   ) {
-    throw new Error("Projection Parliament proposal IDs must differ.");
+    throw new Error(`${label} is not a valid governed conversion binding.`);
   }
-  return {
-    policy_proposal: policyProposal,
-    payout_lifecycle_proposal: payoutLifecycleProposal,
-  };
-}
-
-function parseProjectionProposal(
-  value: unknown,
-  label: string,
-  lifecycle = false,
-): ValidationFeeProposal {
-  const raw = exactRecord(
-    value,
-    [
-      "proposal_id_hex",
-      "proposal_fingerprint_hex",
-      "parliament_roster_root_hex",
-      "enactment_window",
-      "finalization",
-      ...(lifecycle ? ["lifecycle_seal_hex"] : []),
-    ],
-    label,
-  );
-  const proposalId = lowerHash(raw.proposal_id_hex, `${label} id`);
-  const proposalFingerprint = lowerHash(
-    raw.proposal_fingerprint_hex,
-    `${label} fingerprint`,
-  );
-  if (proposalId !== proposalFingerprint) {
-    throw new Error(`${label} ID must equal its typed fingerprint.`);
-  }
-  const windowRaw = exactRecord(
-    raw.enactment_window,
-    ["opens_at_height", "closes_at_height", "enacted_at_height"],
-    `${label} enactment window`,
-  );
-  const window = {
-    opens_at_height: positiveSafeInteger(
-      windowRaw.opens_at_height,
-      `${label} opens height`,
-    ),
-    closes_at_height: positiveSafeInteger(
-      windowRaw.closes_at_height,
-      `${label} closes height`,
-    ),
-    enacted_at_height: positiveSafeInteger(
-      windowRaw.enacted_at_height,
-      `${label} enacted height`,
-    ),
-  };
-  const finalization = parseProjectionFinalization(
-    raw.finalization,
-    proposalId,
-    label,
-  );
-  if (
-    window.closes_at_height < window.opens_at_height ||
-    finalization.finalized_at_height < window.opens_at_height ||
-    finalization.finalized_at_height > window.closes_at_height ||
-    window.enacted_at_height <= finalization.finalized_at_height
-  ) {
-    throw new Error(
-      `${label} must finalize inside its inclusive referendum window and enact strictly later.`,
-    );
-  }
-  return {
-    proposal_id_hex: proposalId,
-    proposal_fingerprint_hex: proposalFingerprint,
-    parliament_roster_root_hex: lowerHash(
-      raw.parliament_roster_root_hex,
-      `${label} roster root`,
-    ),
-    enactment_window: window,
-    finalization,
-  };
-}
-
-function parseProjectionFinalization(
-  value: unknown,
-  proposalId: string,
-  label: string,
-): ValidationFeeFinalization {
-  const raw = exactRecord(
-    value,
-    [
-      "proposal_id_hex",
-      "referendum_id_hex",
-      "finalized_at_height",
-      "mode",
-      "approve",
-      "reject",
-      "abstain",
-      "min_turnout",
-      "approval_threshold_numerator",
-      "approval_threshold_denominator",
-      "approved",
-    ],
-    `${label} finalization`,
-  );
-  if (
-    lowerHash(raw.proposal_id_hex, `${label} finalization proposal`) !==
-      proposalId ||
-    lowerHash(raw.referendum_id_hex, `${label} referendum`) !== proposalId ||
-    raw.mode !== "PLAIN" ||
-    raw.approved !== true
-  ) {
-    throw new Error(`${label} lacks exact approved PLAIN finalization.`);
-  }
-  const result: ValidationFeeFinalization = {
-    proposal_id_hex: proposalId,
-    referendum_id_hex: proposalId,
-    finalized_at_height: positiveSafeInteger(
-      raw.finalized_at_height,
-      `${label} finalized height`,
-    ),
-    mode: "PLAIN",
-    approve: unsignedU128(raw.approve, `${label} approve tally`),
-    reject: unsignedU128(raw.reject, `${label} reject tally`),
-    abstain: unsignedU128(raw.abstain, `${label} abstain tally`),
-    min_turnout: unsignedU128(raw.min_turnout, `${label} minimum turnout`),
-    approval_threshold_numerator: positiveU64(
-      raw.approval_threshold_numerator,
-      `${label} threshold numerator`,
-    ),
-    approval_threshold_denominator: positiveU64(
-      raw.approval_threshold_denominator,
-      `${label} threshold denominator`,
-    ),
-    approved: true,
-  };
-  assertApprovedTally(result, label);
-  return result;
+  return binding;
 }
 
 function parseProjectionFinality(
@@ -1164,6 +924,7 @@ function parseProjectionFinality(
     value,
     [
       "ledger_finalised_height",
+      "block_timestamp_ms",
       "block_hash_hex",
       "ordinary_writes_root_hex",
       "context_id_hex",
@@ -1189,10 +950,14 @@ function parseProjectionFinality(
       "CBSI Core projection lacks verified checkpoint lineage or registry inclusion.",
     );
   }
-  return {
+  const finality: ValidationFeeProjection["ledger_finality"] = {
     ledger_finalised_height: positiveSafeInteger(
       raw.ledger_finalised_height,
       "projection finalized height",
+    ),
+    block_timestamp_ms: positiveSafeInteger(
+      raw.block_timestamp_ms,
+      "projection finalized block timestamp",
     ),
     block_hash_hex: canonicalIrohaHash(
       raw.block_hash_hex,
@@ -1238,6 +1003,12 @@ function parseProjectionFinality(
     checkpoint_lineage_verified: true,
     registry_inclusion_verified: true,
   };
+  if (finality.ledger_finalised_height < finality.checkpoint_height) {
+    throw new Error(
+      "CBSI Core validation-fee finality rolls back before its trusted checkpoint.",
+    );
+  }
+  return finality;
 }
 
 function parseStatus(value: unknown): {
@@ -1277,167 +1048,94 @@ function parseStatus(value: unknown): {
   };
 }
 
+/** Mirror of Core `ValidationFeeLedgerProjectionV1::validate` relationships. */
 function assertProjectionRelationships(projection: ValidationFeeProjection) {
   const policy = projection.policy;
   const finality = projection.ledger_finality;
-  const payout = policy.treasury_payout_binding;
-  const policyProposal = projection.parliament_authorization.policy_proposal;
-  const lifecycle =
-    projection.parliament_authorization.payout_lifecycle_proposal;
-  if (
-    policy.policy_hash_hex !== projection.policy_chain_genesis_hash_hex ||
-    finality.head_policy_hash_hex !== policy.policy_hash_hex ||
-    finality.scheduled_policy_hash_hex !== policy.policy_hash_hex ||
-    finality.effective_policy_hash_hex !== policy.policy_hash_hex
-  ) {
+  const pricingAuthority = projection.parliament_authorization;
+  const conversion = projection.conversion_policy;
+  const binding = conversion.binding;
+  const custody = policy.reward_custody;
+  if (pricingAuthority.enacted_at_height + 1 !== policy.effective_from_height) {
     throw new Error(
-      "CBSI Core projection policy chain and protected registry head differ.",
+      "CBSI Core fee policy differs from its enacted Parliament authority.",
     );
   }
   if (
-    finality.ledger_finalised_height < finality.checkpoint_height ||
-    finality.ledger_finalised_height < policy.effective_from_height
+    conversion.authority.enacted_at_height >=
+      finality.ledger_finalised_height ||
+    conversion.authority.proposal_fingerprint_hex ===
+      pricingAuthority.proposal_fingerprint_hex ||
+    binding.contract_address !== custody.contract_address ||
+    binding.contract_subject_account_id !== custody.treasury_account_id ||
+    binding.treasury_account_id !== custody.treasury_account_id ||
+    binding.sbd_asset_id !== custody.sbd_asset_id ||
+    binding.xor_asset_id !== custody.xor_asset_id ||
+    binding.reward_pool_account_id !== custody.reward_pool_account_id ||
+    binding.validator_lane_id !== custody.validator_lane_id
   ) {
     throw new Error(
-      "CBSI Core validation-fee projection is not active at finalized height.",
+      "CBSI Core conversion policy differs from its finalized authority or immutable reward custody.",
     );
   }
   if (
-    policy.effective_from_height !==
-    policyProposal.enactment_window.enacted_at_height +
-      VALIDATION_FEE_ACTIVATION_DELAY_BLOCKS
+    finality.ledger_finalised_height < policy.effective_from_height ||
+    finality.block_timestamp_ms < policy.effective_from_ms
   ) {
     throw new Error(
-      "Validation-fee policy does not preserve the 120,960-block activation delay.",
+      "CBSI Core validation-fee policy is not active at the proved finalized block.",
     );
   }
   if (
-    lifecycle.enactment_window.enacted_at_height >
-      policyProposal.enactment_window.enacted_at_height ||
-    payout.lifecycle_seal_hex !== lifecycle.lifecycle_seal_hex ||
-    payout.contract_subject_account_id !== policy.treasury_account_id ||
-    payout.treasury_account_id !== policy.treasury_account_id ||
-    payout.sbd_asset_id !== policy.sbd_asset_id ||
-    payout.pool_vault_account_id === policy.treasury_account_id ||
-    payout.recipients.some(
-      (recipient) =>
-        recipient.account_id === policy.treasury_account_id ||
-        recipient.account_id === payout.pool_vault_account_id,
-    )
+    policy.policy_version === 1 &&
+    policy.policy_hash_hex !== projection.policy_chain_genesis_hash_hex
   ) {
     throw new Error(
-      "CBSI Core payout lifecycle differs from the active fee policy.",
+      "CBSI Core first validation-fee policy differs from the policy-chain genesis.",
+    );
+  }
+  if (finality.effective_policy_hash_hex !== policy.policy_hash_hex) {
+    throw new Error(
+      "CBSI Core effective registry entry differs from the projected policy.",
     );
   }
 }
 
+/** Mirror of Core `verify_active_projection` plus immutable custody pins. */
 function assertProjectionMatchesRuntime(
   projection: ValidationFeeProjection,
   config: GovernanceValidationFeeEnabledConfig,
 ) {
-  const expectedProjection = expectedProjectionFromRuntime(config);
-  const actualWithoutFinality = {
-    schema: projection.schema,
-    authorization_model: projection.authorization_model,
-    policy_chain_genesis_hash_hex: projection.policy_chain_genesis_hash_hex,
-    policy: projection.policy,
-    parliament_authorization: projection.parliament_authorization,
-  };
+  const binding = config.ledgerBinding;
   if (
-    canonicalJson(actualWithoutFinality) !== canonicalJson(expectedProjection)
-  ) {
-    throw new Error(
-      "CBSI Core validation-fee projection does not exactly match runtime ledgerBinding and expected coordinates.",
-    );
-  }
-  if (
+    projection.policy.network_id !== binding.networkId ||
+    projection.policy.network_id !== bindingNetworkId(binding.genesisHash) ||
+    projection.policy.genesis_hash_hex !== binding.genesisHash ||
+    projection.policy_chain_genesis_hash_hex !==
+      binding.policyChainGenesisHash ||
     projection.ledger_finality.checkpoint_height !==
-      config.ledgerBinding.checkpoint.height ||
+      binding.checkpoint.height ||
     projection.ledger_finality.checkpoint_context_id_hex !==
-      config.ledgerBinding.checkpoint.contextId
+      binding.checkpoint.contextId
   ) {
     throw new Error(
-      "CBSI Core validation-fee finality does not match the runtime trusted checkpoint.",
+      "CBSI Core validation-fee projection differs from the immutable runtime ledger binding.",
     );
   }
-}
-
-function expectedProjectionFromRuntime(
-  config: GovernanceValidationFeeEnabledConfig,
-) {
-  const { ledgerBinding: binding, expected } = config;
-  const proposal = (value: ValidationFeeProposalConfig) => ({
-    proposal_id_hex: value.proposal_id,
-    proposal_fingerprint_hex: value.payload_hash,
-    parliament_roster_root_hex: value.parliament_roster_root,
-    enactment_window: {
-      opens_at_height: Number(value.enactment_window.opens_at_height),
-      closes_at_height: Number(value.enactment_window.closes_at_height),
-      enacted_at_height: Number(value.enactment_window.enacted_at_height),
-    },
-    finalization: {
-      proposal_id_hex: value.finalization.proposal_id,
-      referendum_id_hex: value.finalization.referendum_id,
-      finalized_at_height: Number(value.finalization.finalized_at_height),
-      mode: "PLAIN" as const,
-      approve: value.finalization.approve,
-      reject: value.finalization.reject,
-      abstain: value.finalization.abstain,
-      min_turnout: value.finalization.min_turnout,
-      approval_threshold_numerator:
-        value.finalization.approval_threshold_numerator,
-      approval_threshold_denominator:
-        value.finalization.approval_threshold_denominator,
-      approved: true as const,
-    },
-  });
-  return {
-    schema: LEDGER_PROJECTION_SCHEMA,
-    authorization_model: AUTHORIZATION_MODEL,
-    policy_chain_genesis_hash_hex: binding.policyChainGenesisHash,
-    policy: {
-      schema_version: 1,
-      network_id: binding.chainId,
-      genesis_hash_hex: binding.genesisHash,
-      policy_version: 1,
-      previous_policy_hash_hex: null,
-      policy_hash_hex: expected.activePolicyHash,
-      sbd_asset_id: expected.feeAssetDefinitionId,
-      sbd_scale: 2,
-      fee: "0.10",
-      fee_minor_units: 10,
-      treasury_account_id: expected.payout.treasuryAccountId,
-      charging_mode: CHARGING_MODE,
-      effective_from_height: Number(expected.effectiveFromHeight),
-      expires_after_height: null,
-      exemption_classes: ["TREASURY_PAYOUT"],
-      treasury_payout_binding: {
-        contract_address: expected.payout.contractAddress,
-        contract_subject_account_id: expected.payout.treasuryAccountId,
-        code_hash_hex: expected.payout.codeHash,
-        entrypoint: PAYOUT_ENTRYPOINT,
-        treasury_account_id: expected.payout.treasuryAccountId,
-        sbd_asset_id: expected.payout.sbdAssetDefinitionId,
-        xor_asset_id: expected.payout.xorAssetDefinitionId,
-        pool_vault_account_id: expected.payout.vaultAccountId,
-        batch_sbd: "10",
-        min_xor_out: "4",
-        max_xor_out: "100",
-        recipients: expected.payout.recipients.map((recipient) => ({
-          account_id: recipient.account_id,
-          share: "0.25",
-        })),
-        lifecycle_seal_hex: expected.parliament.payoutLifecycleSealHash,
-      },
-    },
-    parliament_authorization: {
-      policy_proposal: proposal(expected.parliament.validationFeePolicy),
-      payout_lifecycle_proposal: {
-        ...proposal(expected.parliament.payoutLifecycle),
-        lifecycle_seal_hex: expected.parliament.payoutLifecycleSealHash,
-      },
-    },
-  };
+  const expected = config.expected.rewardCustody;
+  const custody = projection.policy.reward_custody;
+  if (
+    custody.contract_address !== expected.contractAddress ||
+    custody.treasury_account_id !== expected.treasuryAccountId ||
+    custody.sbd_asset_id !== CBSI_SBD_ASSET_DEFINITION_ID ||
+    custody.xor_asset_id !== expected.xorAssetDefinitionId ||
+    custody.reward_pool_account_id !== expected.rewardPoolAccountId ||
+    custody.validator_lane_id !== expected.validatorLaneId
+  ) {
+    throw new Error(
+      "CBSI Core validation-fee reward custody does not exactly match the runtime release coordinates.",
+    );
+  }
 }
 
 function buildGovernanceValidationFeeFinalityObservation(
@@ -1455,111 +1153,93 @@ function buildGovernanceValidationFeeFinalityObservation(
   });
 }
 
+/**
+ * Map Core's public names (`sbd_*`, lowercase hashes, two-decimal fee text)
+ * onto the exact native `ValidationFeePolicyV1` JSON that the composer
+ * extends and the native fingerprint consumes.
+ */
 function projectPolicyView(
   projection: ValidationFeeProjection,
 ): GovernanceValidationFeePolicyView {
   const policy = projection.policy;
-  const binding = policy.treasury_payout_binding;
-  const effective: ValidationFeePolicyPayload = {
-    schema_version: policy.schema_version,
-    // The ledger binding's genesis hash is the policy's NetworkId.
-    network_id: parseNetworkIdLiteral(
-      policy.genesis_hash_hex,
-      "validation-fee policy genesis hash",
-    ),
+  const finality = projection.ledger_finality;
+  const effective = normalizeValidationFeePolicy({
+    schema_version: 1,
+    network_id: policy.network_id,
     policy_version: String(policy.policy_version),
-    previous_policy_hash: policy.previous_policy_hash_hex,
-    ds_asset_id: CBSI_SBD_ASSET_DEFINITION_ID,
-    ds_scale: policy.sbd_scale,
-    fee: "0.1" as const,
+    previous_policy_hash:
+      policy.previous_policy_hash_hex === null
+        ? null
+        : policy.previous_policy_hash_hex.toUpperCase(),
+    ds_asset_id: policy.sbd_asset_id,
+    ds_scale: 2,
+    retail_schedule: policy.retail_schedule,
+    effective_from_ms: policy.effective_from_ms,
+    notice_published_at_ms: policy.notice_published_at_ms,
+    fee: canonicalQuantityFromMinorUnits(policy.fee_minor_units),
     treasury_account_id: policy.treasury_account_id,
     charging_mode: {
-      charging_mode: policy.charging_mode,
+      charging_mode: VALIDATION_FEE_CHARGING_MODE,
       value: null,
     },
-    effective_from_height: String(policy.effective_from_height),
-    expires_after_height: null,
-    exemption_classes: policy.exemption_classes,
-    treasury_payout_binding: {
-      contract_address: binding.contract_address,
-      code_hash: binding.code_hash_hex,
-      entrypoint: binding.entrypoint,
-      treasury_account_id: binding.treasury_account_id,
-      ds_asset_id: CBSI_SBD_ASSET_DEFINITION_ID,
-      xor_asset_id: binding.xor_asset_id,
-      pool_vault_account_id: binding.pool_vault_account_id,
-      batch_ds: binding.batch_sbd,
-      min_xor_out: binding.min_xor_out,
-      max_xor_out: binding.max_xor_out,
-      recipients: binding.recipients,
+    exemption_classes: [VALIDATION_FEE_TREASURY_PAYOUT_EXEMPTION],
+    reward_custody: {
+      contract_address: policy.reward_custody.contract_address,
+      treasury_account_id: policy.reward_custody.treasury_account_id,
+      ds_asset_id: policy.reward_custody.sbd_asset_id,
+      xor_asset_id: policy.reward_custody.xor_asset_id,
+      reward_pool_account_id: policy.reward_custody.reward_pool_account_id,
+      validator_lane_id: policy.reward_custody.validator_lane_id,
     },
-  };
+  });
+  const headIsEffective =
+    finality.head_policy_hash_hex === policy.policy_hash_hex;
   return deepFreeze({
-    observedHeight: String(projection.ledger_finality.ledger_finalised_height),
+    observedHeight: String(finality.ledger_finalised_height),
+    observedAtMs: finality.block_timestamp_ms,
     effective,
-    latestEnacted: effective,
-    scheduled: [],
+    effectivePolicyHash: policy.policy_hash_hex,
     registryHead: {
-      policyVersion: String(policy.policy_version),
-      policyHash: policy.policy_hash_hex,
+      policyHash: finality.head_policy_hash_hex,
+      policyVersion: headIsEffective ? String(policy.policy_version) : null,
     },
     verifiedProof: {
       schema: LEDGER_PROJECTION_SCHEMA,
       authorizationModel: AUTHORIZATION_MODEL,
-      registrySnapshotHash:
-        projection.ledger_finality.registry_snapshot_hash_hex,
-      finalizedBlockHash: projection.ledger_finality.block_hash_hex,
-      finalizedContextId: projection.ledger_finality.context_id_hex,
-      trustedCheckpointHeight: String(
-        projection.ledger_finality.checkpoint_height,
-      ),
-      trustedCheckpointContextId:
-        projection.ledger_finality.checkpoint_context_id_hex,
+      registrySnapshotHash: finality.registry_snapshot_hash_hex,
+      finalizedBlockHash: finality.block_hash_hex,
+      finalizedContextId: finality.context_id_hex,
+      trustedCheckpointHeight: String(finality.checkpoint_height),
+      trustedCheckpointContextId: finality.checkpoint_context_id_hex,
     },
   });
 }
 
-function assertApprovedTally(
-  value: ValidationFeeFinalization | ValidationFeeFinalizationConfig,
-  label: string,
-) {
-  const turnout = checkedU128Add(
-    checkedU128Add(
-      BigInt(value.approve),
-      BigInt(value.reject),
-      `${label} turnout`,
-    ),
-    BigInt(value.abstain),
-    `${label} turnout`,
-  );
-  // The source tallies remain bounded u128 and threshold components remain
-  // bounded u64, but their exact rational-comparison products may need 192 bits.
-  const weightedApprove =
-    BigInt(value.approve) * BigInt(value.approval_threshold_denominator);
-  const weightedTurnout = turnout * BigInt(value.approval_threshold_numerator);
-  if (
-    value.min_turnout !== VALIDATION_FEE_PLAIN_MIN_TURNOUT ||
-    value.approval_threshold_numerator !==
-      VALIDATION_FEE_PLAIN_APPROVAL_THRESHOLD_NUMERATOR ||
-    value.approval_threshold_denominator !==
-      VALIDATION_FEE_PLAIN_APPROVAL_THRESHOLD_DENOMINATOR ||
-    BigInt(value.approval_threshold_numerator) >
-      BigInt(value.approval_threshold_denominator) ||
-    turnout < BigInt(value.min_turnout) ||
-    weightedApprove < weightedTurnout
-  ) {
+/** Core `format_minor_units` for the fixed SBD scale 2. */
+function formatMinorUnits(minorUnits: number): string {
+  const units = BigInt(minorUnits);
+  return `${units / 100n}.${(units % 100n).toString().padStart(2, "0")}`;
+}
+
+/** Native canonical `Quantity` text for SBD minor units (no trailing zeros). */
+function canonicalQuantityFromMinorUnits(minorUnits: number): string {
+  const [whole, fraction] = formatMinorUnits(minorUnits).split(".");
+  const trimmed = fraction.replace(/0+$/u, "");
+  return trimmed ? `${whole}.${trimmed}` : whole;
+}
+
+function bindingNetworkId(genesisHash: string): string {
+  try {
+    return parseNetworkIdLiteral(genesisHash, "validation-fee genesis hash");
+  } catch {
     throw new Error(
-      `${label} must use exact first-release PLAIN min_turnout=1 and approval threshold=1/2 and be deterministically approved.`,
+      "validation-fee genesis hash does not derive a canonical NetworkId.",
     );
   }
 }
 
-function checkedU128Add(left: bigint, right: bigint, label: string): bigint {
-  const result = left + right;
-  if (result > U128_MAX) {
-    throw new Error(`${label} overflows u128.`);
-  }
-  return result;
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function exactRecord(
@@ -1589,7 +1269,7 @@ function exactText(value: unknown, label: string): string {
     value.trim() !== value ||
     Array.from(value).some((character) => {
       const codePoint = character.codePointAt(0) ?? 0;
-      return codePoint <= 0x1f || codePoint === 0x7f;
+      return codePoint <= 0x1f || codePoint === 0x7f || /\s/u.test(character);
     })
   ) {
     throw new Error(`${label} must be canonical non-empty text.`);
@@ -1616,6 +1296,33 @@ function canonicalIrohaHash(value: unknown, label: string): string {
   return hash;
 }
 
+/**
+ * Core `decode_finality_checkpoint` wire checks: non-empty canonical standard
+ * Base64 whose decoded bytes fit the native checkpoint bound.
+ */
+function canonicalCheckpointBase64(value: unknown, label: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_FINALITY_CHECKPOINT_BASE64_CHARS ||
+    value.length % 4 !== 0 ||
+    !STANDARD_BASE64.test(value)
+  ) {
+    throw new Error(`${label} must be canonical standard Base64.`);
+  }
+  const bytes = Buffer.from(value, "base64");
+  if (
+    bytes.byteLength === 0 ||
+    bytes.byteLength > MAX_FINALITY_CHECKPOINT_BYTES ||
+    bytes.toString("base64") !== value
+  ) {
+    throw new Error(
+      `${label} must be canonical standard Base64 within the native checkpoint bound.`,
+    );
+  }
+  return value;
+}
+
 function positiveSafeInteger(value: unknown, label: string): number {
   if (!Number.isSafeInteger(value) || Number(value) <= 0) {
     throw new Error(`${label} must be a positive safe integer.`);
@@ -1623,37 +1330,21 @@ function positiveSafeInteger(value: unknown, label: string): number {
   return Number(value);
 }
 
-function positiveSafeIntegerText(value: unknown, label: string): string {
+function boundedSafeInteger(
+  value: unknown,
+  label: string,
+  options: Readonly<{ maximum: number }>,
+): number {
   if (
-    typeof value !== "string" ||
-    !/^[1-9][0-9]*$/u.test(value) ||
-    BigInt(value) > BigInt(Number.MAX_SAFE_INTEGER)
+    !Number.isSafeInteger(value) ||
+    Number(value) < 0 ||
+    Number(value) > options.maximum
   ) {
-    throw new Error(`${label} must be a positive safe-integer string.`);
+    throw new Error(
+      `${label} must be a safe integer between 0 and ${options.maximum}.`,
+    );
   }
-  return value;
-}
-
-function unsignedU128(value: unknown, label: string): string {
-  if (
-    typeof value !== "string" ||
-    !/^(0|[1-9][0-9]*)$/u.test(value) ||
-    BigInt(value) > U128_MAX
-  ) {
-    throw new Error(`${label} must be a canonical u128 integer string.`);
-  }
-  return value;
-}
-
-function positiveU64(value: unknown, label: string): string {
-  if (
-    typeof value !== "string" ||
-    !/^[1-9][0-9]*$/u.test(value) ||
-    BigInt(value) > U64_MAX
-  ) {
-    throw new Error(`${label} must be a canonical positive u64 string.`);
-  }
-  return value;
+  return Number(value);
 }
 
 function canonicalJson(value: unknown): string {

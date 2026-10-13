@@ -113,7 +113,9 @@ builds remain development-only and cannot pass the release workflow.
 
 The checked-in release corridor is still sealed to authenticated baseline
 `1bcb05eb208d8bda1610789d827a7ed97e66e56c`. That baseline predates the
-mandatory native ABI 23 contract described below, so it is an intentional
+mandatory native contract described below (Connect Norito bridge ABI 29,
+secure private-file ABI 1, and the current validation-fee proposal schema
+vectors), so it is an intentional
 release blocker rather than a publishable source pin. Do not create a release
 tag until the revision, parent, trees, Cargo lock, workflow constants, and this
 document have been replaced together from one reviewed signed commit. Until
@@ -140,7 +142,7 @@ SHA-256 selected by the complete reviewed pin set, and set
 `source_tree_clean: true`; missing, malformed, or unknown provenance fields fail
 closed. On macOS, version `4` also requires the exact `macos_build` SDK,
 deployment-target, compiler, and linker identity. The reviewed addon must
-report exactly `23` from
+report exactly `29` from
 `connectNoritoBridgeAbiVersion()`, export the exact address, confidential
 receive-address, versioned-transaction, subscription, Hijiri quote,
 governance fingerprint, and secure private-file methods enforced by
@@ -182,18 +184,38 @@ non-empty regular files (the platform matrix above); missing or extra
 distributables fail before checksums or Sigstore bundles are created.
 
 The native compatibility gate also executes the current operator-bound
-validation-fee proposal known-answer tests. The policy fixture binds the exact
+validation-fee proposal known-answer tests. Both fixtures are byte-identical to
+the reviewed SDK fixtures `test/fixtures/retail_fee_native_policy_v1.json` and
+`test/fixtures/retail_fee_native_conversion_v1.json`, which are the Rust
+`crates/iroha_js_host/src/validation_fee_tests.rs` fixtures. The policy fixture
+is the 14-field `ValidationFeePolicyV1`: the
 `hash:1313131313131313131313131313131313131313131313131313131313131313#9CE1`
-network, seed-7 proposal operator, seed-1 treasury,
-`7FF2EKZbaWzi5QTD6hewE2voveah` DS asset, and no payout; its fingerprint is
-`4742b1f274928767564c6effa414e640e6f635874d74684b06b95414c5afa16e`.
-The payout fixture binds the same operator to the upstream
-`validation_fee_payout_binding_fixture`, including its immutable contract,
-code hash, seed-2 pool vault, seed-3 through seed-6 recipients, DS asset, and
-`5dHF5UNffENuEg9mhjYwY1jcZ1K5` XOR asset; its fingerprint is
-`8fd84f6599e22db4da15f7152a914dc0091dd73a7906d5981cce37d485191c25`.
-Both probes require the exact positive vector, deterministic repetition,
-operator sensitivity, and strict rejection of malformed input. These fixture
+network, version 1 with no predecessor, the `7FF2EKZbaWzi5QTD6hewE2voveah` SBD
+asset at scale 2, the launch retail schedule (50 included payments, 10 minor
+units overage, five maintenance tiers), a 2026-11-01 Honiara activation with
+exactly thirty days of notice, a `0.1` fee, `RETAIL_MONTHLY_ALLOWANCE`,
+`TREASURY_PAYOUT`, and its immutable reward custody. With the seed-7 proposal
+operator its fingerprint is
+`7ea3f657b77099f869d1aae9a47845d66094154e26e664c971434722cb0b31c4`. The payout
+fixture is the 20-field `ValidationFeeTreasuryPayoutBindingV1` conversion and
+reward binding: contract and pool contract with their code hashes, the
+contract-subject treasury, the pool-contract-subject vault, a distinct reward
+pool, the SBD asset and `5dHF5UNffENuEg9mhjYwY1jcZ1K5` XOR asset, the
+`xor_per_sbd` reference feed with five single-key providers, conversion limits,
+lane 0, and a minimum reward claim. With the same operator its fingerprint is
+`8e28c5de8ce8928696065b15e09073b9bbebbaa30e690d4c6bd2ca75b9a3c1b4`.
+Both probes call the native helpers with exactly `(proposalOperator, json)` and
+require the exact first-operator vector, deterministic repetition, the exact
+different seed-8 operator vectors (`e6fae2d1…f7f1` and `8ff01a1a…2bcd`), and
+rejection of `{}` with the native exact-field messages. The vectors are the
+native outputs at the reviewed SDK commit. The Rust tests pin no hex literals:
+they assert that the first-operator policy and payout outputs equal
+`ProposalKind::fingerprint()` and that the second-operator policy output
+differs, and no Rust test covers the second-operator payout value. All four
+values were cross-checked during review by recomputing Blake2b-256 over the
+governance-fingerprint domain and Norito proposal bytes assembled in
+JavaScript from the Rust layouts, without the native encoder. Never replace a
+vector with a value derived only from the binding under test. These fixture
 identities are compatibility test data, not runtime governance configuration.
 
 The release tag must be covered by an active GitHub tag-protection ruleset.
@@ -251,7 +273,16 @@ directory:
 
 Its only fields are `schema`, `validationFee`, and `cbsiCoreApiBaseUrl`.
 `schema` must be `sora.wallet.governance-runtime.v1`; `validationFee` must be
-the exact generated `{enabled, ledgerBinding, expected}` config; and
+the exact generated `{enabled, ledgerBinding, expected}` config, where
+`ledgerBinding` is the exact CBSI Core
+`cbsi.mobile-validation-fee-ledger-binding.v2` object (`schema`, `networkId`,
+`genesisHash`, `policyChainGenesisHash`, and `checkpoint` with `height`,
+`contextId`, and `canonicalBase64`) emitted by Core's
+`validation_fee_parliament_evidence_verify`, and
+`expected` pins only the immutable reward custody
+(`{rewardCustody: {contractAddress, treasuryAccountId, xorAssetDefinitionId,
+rewardPoolAccountId, validatorLaneId}}`) because retail prices, schedules, and
+activation months are governed revisions rather than release pins; and
 `cbsiCoreApiBaseUrl` must be the credential-free HTTPS CBSI Core origin serving
 both `/v1/validation-fee/policy` and `/v1/validation-fee/status`. Install the
 manifest atomically before a Finder, Start-menu, or desktop-entry launch. The
@@ -263,9 +294,9 @@ strict managed-launch override. If either variable is present, both are
 required and the manifest is not used. Partial or malformed overrides fail
 closed.
 
-Do not hand-edit or synthesize the Parliament evidence in the generated config.
-Missing or mismatched inputs intentionally leave validation-fee policy writes
-unavailable.
+Do not hand-edit or synthesize the generated config's `ledgerBinding` or
+reward-custody pin. Missing or mismatched inputs intentionally leave
+validation-fee policy state, and therefore policy writes, unavailable.
 
 ## Refreshing the sealed Iroha release source
 
@@ -273,8 +304,13 @@ The checked-in Iroha revision, tree, JavaScript tree, and sealed Cargo-lock
 values below predate the secure private-file ABI. They remain only as the last
 fully authenticated baseline and must not be used to publish this release.
 Replace the entire pin set together from one clean signed Iroha commit that
-contains bridge ABI 23 and secure private-file ABI 1, then rebuild every
-platform artifact from that exact source. Do not advance an individual digest
+contains Connect Norito bridge ABI 29, secure private-file ABI 1, and the
+current validation-fee proposal schema (the 14-field `ValidationFeePolicyV1`
+and 20-field `ValidationFeeTreasuryPayoutBindingV1`, reproducing the pinned
+`validation_fee_policy_fingerprint_vector` and
+`validation_fee_payout_lifecycle_fingerprint_vector` in
+`.github/workflows/release.yml`; an older-schema native rejects the probe
+fixtures), then rebuild every platform artifact from that exact source. Do not advance an individual digest
 or revision in isolation.
 
 These commands are local only; they do not contact Taira or deploy anything.

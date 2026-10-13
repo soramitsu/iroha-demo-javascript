@@ -5,6 +5,7 @@ import type {
 import type {
   GovernanceProposalDetail,
   GovernanceProposalList,
+  GovernanceValidationFeePolicyView,
   GovernanceWritableProposalKindId,
 } from "@/governance/model";
 import type {
@@ -887,60 +888,7 @@ export interface GovernanceFinalizedAction extends TransactionSubmissionResult {
   status: "finalized";
 }
 
-export interface GovernanceValidationFeePayoutBindingView {
-  contract_address: string;
-  code_hash: string;
-  entrypoint: "autonomous_validation_fee_tick";
-  treasury_account_id: string;
-  ds_asset_id: "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
-  xor_asset_id: string;
-  pool_vault_account_id: string;
-  batch_ds: "10";
-  min_xor_out: "4";
-  max_xor_out: "100";
-  recipients: Array<{ account_id: string; share: "0.25" }>;
-}
-
-export interface GovernanceValidationFeeEffectivePolicyView {
-  schema_version: 1;
-  network_id: "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94";
-  policy_version: string;
-  previous_policy_hash: string | null;
-  ds_asset_id: "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
-  ds_scale: 2;
-  fee: "0" | "0.1";
-  treasury_account_id: string;
-  charging_mode:
-    | { charging_mode: "DISABLED"; value: null }
-    | {
-        charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION";
-        value: null;
-      };
-  effective_from_height: string;
-  expires_after_height: string | null;
-  exemption_classes: [] | ["TREASURY_PAYOUT"];
-  treasury_payout_binding: GovernanceValidationFeePayoutBindingView | null;
-}
-
-export interface GovernanceValidationFeePolicyView {
-  observedHeight: string;
-  effective: GovernanceValidationFeeEffectivePolicyView;
-  latestEnacted: GovernanceValidationFeeEffectivePolicyView;
-  scheduled: [];
-  registryHead: {
-    policyVersion: string;
-    policyHash: string;
-  };
-  verifiedProof: {
-    schema: "cbsi.validation-fee-ledger-projection.v1";
-    authorizationModel: "SORA_PARLIAMENT_V1";
-    registrySnapshotHash: string;
-    finalizedBlockHash: string;
-    finalizedContextId: string;
-    trustedCheckpointHeight: string;
-    trustedCheckpointContextId: string;
-  };
-}
+export type { GovernanceValidationFeePolicyView };
 
 export interface SigningAlgorithmOption {
   id: string;

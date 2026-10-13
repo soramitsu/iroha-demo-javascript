@@ -201,6 +201,41 @@ describe("trusted main-frame IPC boundary", () => {
     ).toHaveLength(5);
   });
 
+  it("guards and bounds clipboard writes in the main process", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "electron/main.ts"),
+      "utf8",
+    );
+    const start = source.indexOf("const registerClipboardHandler");
+    const end = source.indexOf("const registerVpnHandlers", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const handler = source.slice(start, end);
+    const trust = handler.indexOf("assertTrustedMainFrameIpcEvent(event);");
+    const bound = handler.indexOf("FIRST_RELEASE_CLIPBOARD_TEXT_MAX_BYTES");
+    const write = handler.indexOf("clipboard.writeText(text);");
+    expect(trust).toBeGreaterThan(-1);
+    expect(bound).toBeGreaterThan(trust);
+    expect(write).toBeGreaterThan(bound);
+    expect(source).toContain("registerClipboardHandler();");
+  });
+
+  it("never imports main-process-only Electron modules into the preload", () => {
+    const preload = readFileSync(
+      resolve(process.cwd(), "electron/preload.ts"),
+      "utf8",
+    );
+    const electronImport = preload.match(
+      /import \{([^}]*)\} from "electron";/u,
+    );
+    expect(electronImport).not.toBeNull();
+    const names = electronImport![1]
+      .split(",")
+      .map((name) => name.trim())
+      .filter(Boolean);
+    expect(names.sort()).toEqual(["contextBridge", "ipcRenderer"]);
+  });
+
   it("bounds and snapshots the exact receive-key batch before one atomic vault call", () => {
     const mainPath = resolve(process.cwd(), "electron/main.ts");
     const source = readFileSync(mainPath, "utf8");

@@ -41,44 +41,17 @@
           )
         }}
       </p>
+      <p>
+        {{
+          t(
+            "Payout-lifecycle proposals are inspect-only: the reviewed Iroha SDK cannot decode that instruction for review, so this wallet does not draft or sign it.",
+          )
+        }}
+      </p>
     </section>
 
     <form class="composer-form" @submit.prevent="governance.prepareProposal">
-      <template
-        v-if="governance.composerKind === 'ValidationFeePayoutLifecycle'"
-      >
-        <section class="policy-provenance span-2">
-          <div>
-            <span>{{ t("Sequence") }}</span>
-            <strong>{{ t("Step 1 of 2") }}</strong>
-          </div>
-          <div>
-            <span>{{ t("Proposal operator") }}</span>
-            <strong class="mono">{{ shortValue(governance.accountId) }}</strong>
-          </div>
-        </section>
-        <label class="span-2">
-          {{ t("Exact treasury payout binding") }}
-          <textarea
-            v-model="governance.validationFeePayoutBindingJson"
-            class="mono payload-editor"
-            spellcheck="false"
-          ></textarea>
-        </label>
-        <ul
-          v-if="governance.validationFeePayoutLifecycleErrors.length"
-          class="validation-errors span-2"
-        >
-          <li
-            v-for="error in governance.validationFeePayoutLifecycleErrors"
-            :key="error"
-          >
-            {{ t(error) }}
-          </li>
-        </ul>
-      </template>
-
-      <template v-else-if="governance.composerKind === 'ValidationFeePolicy'">
+      <template v-if="governance.composerKind === 'ValidationFeePolicy'">
         <section class="policy-provenance span-2">
           <div>
             <span>{{ t("Observed height") }}</span>
@@ -87,8 +60,11 @@
             }}</strong>
           </div>
           <div>
-            <span>{{ t("Sequence") }}</span>
-            <strong>{{ t("Step 2 of 2") }}</strong>
+            <span>{{ t("Effective policy version") }}</span>
+            <strong>{{
+              governance.validationFeePolicy?.effective.policy_version ??
+              t("Unavailable")
+            }}</strong>
           </div>
           <div>
             <span>{{ t("Registry head") }}</span>
@@ -99,12 +75,19 @@
             }}</strong>
           </div>
           <p v-if="governance.policyError">{{ governance.policyError }}</p>
+          <p v-else>
+            {{
+              t(
+                "Treasury and reward custody are immutable and must equal the enacted conversion binding. Activation is a Honiara month start at least thirty days after the notice and after Parliament enactment.",
+              )
+            }}
+          </p>
         </section>
 
         <label class="span-2">
           {{ t("Network ID") }}
           <input
-            v-model.trim="governance.validationFeeComposer.network_id"
+            :value="governance.validationFeeComposer.network_id"
             class="mono"
             disabled
           />
@@ -112,17 +95,13 @@
         <label>
           {{ t("Policy version") }}
           <input
-            v-model.trim="governance.validationFeeComposer.policy_version"
+            :value="governance.validationFeeComposer.policy_version"
             disabled
           />
         </label>
         <label>
-          {{ t("Fee amount") }}
-          <input
-            v-model.trim="governance.validationFeeComposer.fee"
-            inputmode="decimal"
-            disabled
-          />
+          {{ t("Charging mode") }}
+          <input :value="t('Retail monthly allowance')" disabled />
         </label>
         <label class="span-2">
           {{ t("Previous policy hash") }}
@@ -135,60 +114,172 @@
         <label>
           {{ t("Fee asset ID") }}
           <input
-            v-model.trim="governance.validationFeeComposer.ds_asset_id"
+            :value="governance.validationFeeComposer.ds_asset_id"
             class="mono"
             disabled
           />
         </label>
         <label>
           {{ t("Asset scale") }}
+          <input :value="governance.validationFeeComposer.ds_scale" disabled />
+        </label>
+        <label>
+          {{ t("Institutional payment fee (SBD)") }}
           <input
-            v-model.number="governance.validationFeeComposer.ds_scale"
+            v-model.trim="governance.validationFeeComposer.fee"
+            inputmode="decimal"
+            autocomplete="off"
+            aria-describedby="validation-fee-institutional-hint"
+          />
+          <small id="validation-fee-institutional-hint" class="field-hint">
+            {{
+              t(
+                "Charged on each qualifying institutional transfer, separately from the retail monthly allowance.",
+              )
+            }}
+          </small>
+        </label>
+        <label>
+          {{ t("Included payments per month") }}
+          <input
+            v-model.number="
+              governance.validationFeeComposer.retail_schedule.included_payments
+            "
             type="number"
+            min="1"
+            step="1"
+          />
+        </label>
+        <label>
+          {{ t("Overage fee (minor units)") }}
+          <input
+            v-model.number="
+              governance.validationFeeComposer.retail_schedule.overage_minor
+            "
+            type="number"
+            min="1"
+            step="1"
+          />
+        </label>
+        <fieldset class="tier-editor span-2">
+          <legend>{{ t("Maintenance tiers (minor units)") }}</legend>
+          <div
+            v-for="(tier, index) in governance.validationFeeComposer
+              .retail_schedule.maintenance_tiers"
+            :key="index"
+            class="tier-row"
+          >
+            <label>
+              {{ t("Minimum average balance") }}
+              <input
+                v-model.number="tier.minimum_average_balance_minor"
+                type="number"
+                min="0"
+                step="1"
+                :disabled="index === 0"
+              />
+            </label>
+            <label>
+              {{ t("Monthly fee") }}
+              <input
+                v-model.number="tier.monthly_fee_minor"
+                type="number"
+                min="1"
+                step="1"
+              />
+            </label>
+            <AppButton
+              variant="ghost"
+              size="sm"
+              :disabled="index === 0"
+              @click="governance.removeValidationFeeMaintenanceTier(index)"
+            >
+              {{ t("Remove tier") }}
+            </AppButton>
+          </div>
+          <AppButton
+            variant="secondary"
+            size="sm"
+            :disabled="
+              governance.validationFeeComposer.retail_schedule.maintenance_tiers
+                .length >= tierLimit
+            "
+            @click="governance.addValidationFeeMaintenanceTier"
+          >
+            {{ t("Add tier") }}
+          </AppButton>
+        </fieldset>
+        <label>
+          {{ t("Notice published") }}
+          <input
+            :value="
+              honiaraTime(
+                governance.validationFeeComposer.notice_published_at_ms,
+              )
+            "
             disabled
           />
         </label>
         <label>
-          {{ t("Effective height") }}
-          <input
-            v-model.trim="
-              governance.validationFeeComposer.effective_from_height
-            "
-            inputmode="numeric"
-          />
-        </label>
-        <label>
-          {{ t("Expiry height (optional)") }}
-          <input
-            :value="governance.validationFeeComposer.expires_after_height ?? ''"
-            inputmode="numeric"
-            @input="
-              governance.validationFeeComposer.expires_after_height =
-                ($event.target as HTMLInputElement).value.trim() || null
-            "
-          />
+          {{ t("Activation month") }}
+          <select
+            v-model.number="governance.validationFeeComposer.effective_from_ms"
+          >
+            <option
+              v-for="choice in governance.validationFeeActivationChoices"
+              :key="choice"
+              :value="choice"
+            >
+              {{ honiaraTime(choice) }}
+            </option>
+          </select>
         </label>
         <label class="span-2">
           {{ t("Treasury account") }}
           <input
-            v-model.trim="governance.validationFeeComposer.treasury_account_id"
+            :value="governance.validationFeeComposer.treasury_account_id"
             class="mono"
+            disabled
           />
         </label>
         <label class="span-2">
-          {{ t("Enacted treasury payout binding") }}
-          <textarea
-            v-model="governance.validationFeePayoutBindingJson"
-            class="mono payload-editor"
-            spellcheck="false"
-          ></textarea>
+          {{ t("Reward custody contract") }}
+          <input
+            :value="
+              governance.validationFeeComposer.reward_custody.contract_address
+            "
+            class="mono"
+            disabled
+          />
         </label>
         <label class="span-2">
-          {{ t("Payout lifecycle proposal ID (required with binding)") }}
+          {{ t("Reward pool account") }}
           <input
-            v-model.trim="governance.validationFeePayoutLifecycleProposalId"
+            :value="
+              governance.validationFeeComposer.reward_custody
+                .reward_pool_account_id
+            "
             class="mono"
-            autocomplete="off"
+            disabled
+          />
+        </label>
+        <label>
+          {{ t("XOR asset ID") }}
+          <input
+            :value="
+              governance.validationFeeComposer.reward_custody.xor_asset_id
+            "
+            class="mono"
+            disabled
+          />
+        </label>
+        <label>
+          {{ t("Validator lane") }}
+          <input
+            :value="
+              governance.validationFeeComposer.reward_custody.validator_lane_id
+            "
+            disabled
           />
         </label>
         <ul
@@ -231,7 +322,11 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
-import { GOVERNANCE_KIND_ADAPTERS } from "@/governance/model";
+import {
+  GOVERNANCE_KIND_ADAPTERS,
+  RETAIL_MAINTENANCE_TIER_LIMIT,
+  formatHoniaraTimestamp,
+} from "@/governance/model";
 import { useParliamentStore } from "@/stores/parliament";
 import { AppButton, AppDialog } from "@/components/ui";
 
@@ -239,6 +334,11 @@ const governance = useParliamentStore();
 const { t } = useAppI18n();
 const adapters = GOVERNANCE_KIND_ADAPTERS;
 const supportedKinds = computed(() => governance.supportedComposerKinds);
+const tierLimit = RETAIL_MAINTENANCE_TIER_LIMIT;
+const honiaraTime = (ms: number) => {
+  const time = formatHoniaraTimestamp(ms);
+  return time ? t("{time} Honiara time", { time }) : t("Unavailable");
+};
 const shortValue = (value: string | null | undefined) => {
   if (!value) return t("Unavailable");
   return value.length > 24 ? `${value.slice(0, 12)}…${value.slice(-8)}` : value;
@@ -251,9 +351,7 @@ const canPrepare = computed(() => {
   ) {
     return false;
   }
-  return governance.composerKind === "ValidationFeePayoutLifecycle"
-    ? governance.validationFeePayoutLifecycleErrors.length === 0
-    : governance.validationFeeComposerErrors.length === 0;
+  return governance.validationFeeComposerErrors.length === 0;
 });
 </script>
 
@@ -356,14 +454,37 @@ label {
 }
 
 input,
-textarea {
+select {
   width: 100%;
   font-size: 0.72rem;
 }
 
-.payload-editor {
-  min-height: 120px;
-  resize: vertical;
+.field-hint {
+  color: var(--color-text-muted);
+  font-size: 0.6rem;
+  line-height: 1.4;
+}
+
+.tier-editor {
+  margin: 0;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+}
+
+.tier-editor legend {
+  padding: 0 4px;
+  color: var(--color-text-muted);
+  font-size: 0.67rem;
+}
+
+.tier-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  align-items: end;
+  gap: 10px;
 }
 
 .validation-errors {
@@ -385,7 +506,8 @@ textarea {
 @media (max-width: 620px) {
   .kind-selector,
   .composer-form,
-  .policy-provenance {
+  .policy-provenance,
+  .tier-row {
     grid-template-columns: 1fr;
   }
 

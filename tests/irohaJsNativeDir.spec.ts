@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 import {
@@ -23,33 +26,105 @@ const PROPOSAL_OPERATOR =
   "sorauﾛ1Pｽp8zXFQﾗｷPsFﾒｶﾑ3ｵmﾉbｼｽUｱｶヱﾚBXヱﾊCﾋﾘﾈvuKFKM346";
 const SECOND_PROPOSAL_OPERATOR =
   "sorauﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K";
+// Pinned native fingerprint vectors for the SDK retail_fee_native_policy_v1 /
+// retail_fee_native_conversion_v1 fixtures (the crates/iroha_js_host
+// validation_fee_tests.rs fixtures; those tests pin no hex literals).
 const POLICY_FINGERPRINT = Buffer.from(
-  "4742b1f274928767564c6effa414e640e6f635874d74684b06b95414c5afa16e",
+  "7ea3f657b77099f869d1aae9a47845d66094154e26e664c971434722cb0b31c4",
+  "hex",
+);
+const SECOND_OPERATOR_POLICY_FINGERPRINT = Buffer.from(
+  "e6fae2d16761eb221142b5e236ad09d31e1bdd1c4245538f08a932fb8136f7f1",
   "hex",
 );
 const PAYOUT_FINGERPRINT = Buffer.from(
-  "8fd84f6599e22db4da15f7152a914dc0091dd73a7906d5981cce37d485191c25",
+  "8e28c5de8ce8928696065b15e09073b9bbebbaa30e690d4c6bd2ca75b9a3c1b4",
   "hex",
 );
+const SECOND_OPERATOR_PAYOUT_FINGERPRINT = Buffer.from(
+  "8ff01a1ac68e79c64901830452ba2ff4185cf4a41b140704b8101e1b747d2bcd",
+  "hex",
+);
+const POLICY_FIELDS = [
+  "schema_version",
+  "network_id",
+  "policy_version",
+  "previous_policy_hash",
+  "ds_asset_id",
+  "ds_scale",
+  "retail_schedule",
+  "effective_from_ms",
+  "notice_published_at_ms",
+  "fee",
+  "treasury_account_id",
+  "charging_mode",
+  "exemption_classes",
+  "reward_custody",
+];
+const PAYOUT_BINDING_FIELDS = [
+  "contract_address",
+  "code_hash",
+  "entrypoint",
+  "treasury_account_id",
+  "ds_asset_id",
+  "xor_asset_id",
+  "pool_contract_address",
+  "pool_code_hash",
+  "pool_vault_account_id",
+  "reward_pool_account_id",
+  "reference_feed_id",
+  "reference_feed_config_version",
+  "reference_provider_accounts",
+  "max_sbd_per_attempt_minor",
+  "max_sbd_per_day_minor",
+  "min_interval_ms",
+  "max_source_age_ms",
+  "max_slippage_bps",
+  "validator_lane_id",
+  "min_reward_claim_xor_minor",
+];
 
-const currentOperatorBoundFingerprint = (
-  proposalOperator: unknown,
-  policyJson: unknown,
-  payoutLifecycleProposalId: unknown,
-): Buffer => {
+const currentOperatorBoundFingerprint = (...args: unknown[]): Buffer => {
+  expect(args).toHaveLength(2);
+  const [proposalOperator, policyJson] = args;
   if (policyJson === "{}") {
     throw new Error(
       "validation-fee policy must contain exactly [current fields]",
     );
   }
   const policy = JSON.parse(String(policyJson)) as Record<string, unknown>;
+  expect(Object.keys(policy)).toEqual(POLICY_FIELDS);
   expect(policy.network_id).toBe(
     "hash:1313131313131313131313131313131313131313131313131313131313131313#9CE1",
   );
-  expect(payoutLifecycleProposalId).toBeNull();
+  expect(policy.charging_mode).toEqual({
+    charging_mode: "RETAIL_MONTHLY_ALLOWANCE",
+    value: null,
+  });
   if (proposalOperator === PROPOSAL_OPERATOR) return POLICY_FINGERPRINT;
   if (proposalOperator === SECOND_PROPOSAL_OPERATOR) {
-    return Buffer.alloc(32, 0x86);
+    return SECOND_OPERATOR_POLICY_FINGERPRINT;
+  }
+  throw new Error("unexpected proposal operator");
+};
+
+const currentOperatorBoundPayoutFingerprint = (...args: unknown[]): Buffer => {
+  expect(args).toHaveLength(2);
+  const [proposalOperator, payoutBindingJson] = args;
+  if (payoutBindingJson === "{}") {
+    throw new Error("payout binding must contain exactly [contract_address]");
+  }
+  const payoutBinding = JSON.parse(String(payoutBindingJson)) as Record<
+    string,
+    unknown
+  >;
+  expect(Object.keys(payoutBinding)).toEqual(PAYOUT_BINDING_FIELDS);
+  expect(payoutBinding.ds_asset_id).toBe("7FF2EKZbaWzi5QTD6hewE2voveah");
+  expect(payoutBinding.xor_asset_id).toBe("5dHF5UNffENuEg9mhjYwY1jcZ1K5");
+  expect(payoutBinding.reference_feed_id).toEqual(["xor_per_sbd"]);
+  if (proposalOperator === PROPOSAL_OPERATOR) return PAYOUT_FINGERPRINT;
+  if (proposalOperator === SECOND_PROPOSAL_OPERATOR) {
+    return SECOND_OPERATOR_PAYOUT_FINGERPRINT;
   }
   throw new Error("unexpected proposal operator");
 };
@@ -87,35 +162,11 @@ const compatibleNativeModule = () => ({
   inspectSubscriptionTriggerAction() {
     return JSON.stringify({ trusted: "inspection" });
   },
-  validationFeePolicyProposalFingerprintV1(
-    proposalOperator: unknown,
-    policyJson: unknown,
-    _payoutLifecycleProposalId: unknown,
-  ) {
-    return currentOperatorBoundFingerprint(
-      proposalOperator,
-      policyJson,
-      _payoutLifecycleProposalId,
-    );
+  validationFeePolicyProposalFingerprintV1(...args: unknown[]) {
+    return currentOperatorBoundFingerprint(...args);
   },
-  validationFeePayoutLifecycleProposalFingerprintV1(
-    proposalOperator: unknown,
-    payoutBindingJson: unknown,
-  ) {
-    if (payoutBindingJson === "{}") {
-      throw new Error("payout binding must contain exactly [contract_address]");
-    }
-    const payoutBinding = JSON.parse(String(payoutBindingJson)) as Record<
-      string,
-      unknown
-    >;
-    expect(payoutBinding.ds_asset_id).toBe("7FF2EKZbaWzi5QTD6hewE2voveah");
-    expect(payoutBinding.xor_asset_id).toBe("5dHF5UNffENuEg9mhjYwY1jcZ1K5");
-    if (proposalOperator === PROPOSAL_OPERATOR) return PAYOUT_FINGERPRINT;
-    if (proposalOperator === SECOND_PROPOSAL_OPERATOR) {
-      return Buffer.alloc(32, 0x90);
-    }
-    throw new Error("unexpected proposal operator");
+  validationFeePayoutLifecycleProposalFingerprintV1(...args: unknown[]) {
+    return currentOperatorBoundPayoutFingerprint(...args);
   },
   connectNoritoBridgeAbiVersion() {
     return 29;
@@ -432,6 +483,36 @@ describe("irohaJsNativeDir", () => {
   });
 });
 
+describe("active SDK native binding", () => {
+  it("passes the exact pinned validation-fee fingerprint probe", () => {
+    const moduleUrl = pathToFileURL(
+      resolve(process.cwd(), "electron", "irohaJsNativeDir.ts"),
+    ).href;
+    const nativeDir = resolveIrohaJsNativeDir(moduleUrl);
+    expect(nativeDir).not.toBeNull();
+    const nativeModule = createRequire(moduleUrl)(
+      join(nativeDir as string, "iroha_js_host.node"),
+    ) as Record<string, (...args: unknown[]) => unknown>;
+    expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(true);
+    expect(() =>
+      nativeModule.validationFeePolicyProposalFingerprintV1(
+        PROPOSAL_OPERATOR,
+        "{}",
+      ),
+    ).toThrow(
+      "validation-fee policy must contain exactly [schema_version, network_id, policy_version, previous_policy_hash, ds_asset_id, ds_scale, retail_schedule, effective_from_ms, notice_published_at_ms, fee, treasury_account_id, charging_mode, exemption_classes, reward_custody]",
+    );
+    expect(() =>
+      nativeModule.validationFeePayoutLifecycleProposalFingerprintV1(
+        PROPOSAL_OPERATOR,
+        "{}",
+      ),
+    ).toThrow(
+      "payout binding must contain exactly [contract_address, code_hash, entrypoint, treasury_account_id, ds_asset_id, xor_asset_id, pool_contract_address, pool_code_hash, pool_vault_account_id, reward_pool_account_id, reference_feed_id, reference_feed_config_version, reference_provider_accounts, max_sbd_per_attempt_minor, max_sbd_per_day_minor, min_interval_ms, max_source_age_ms, max_slippage_bps, validator_lane_id, min_reward_claim_xor_minor]",
+    );
+  });
+});
+
 describe("hasRequiredPackagedIrohaJsNativeProvenance", () => {
   const nativeDir = "/mock/dist/native";
   const nativeBytes = Buffer.from("reviewed-v4-native-fixture");
@@ -662,53 +743,98 @@ describe("hasRequiredIrohaJsNativeExports", () => {
 
   it("rejects deterministic fingerprints that miss either exact known-answer vector", () => {
     const wrongPolicyModule = compatibleNativeModule();
-    const policyFingerprint =
-      wrongPolicyModule.validationFeePolicyProposalFingerprintV1;
     wrongPolicyModule.validationFeePolicyProposalFingerprintV1 = function (
-      proposalOperator: unknown,
-      policyJson: unknown,
-      payoutLifecycleProposalId: unknown,
+      ...args: unknown[]
     ) {
-      const result = policyFingerprint(
-        proposalOperator,
-        policyJson,
-        payoutLifecycleProposalId,
-      );
-      return proposalOperator === PROPOSAL_OPERATOR
-        ? Buffer.alloc(32, 0x47)
+      const result = currentOperatorBoundFingerprint(...args);
+      return args[0] === PROPOSAL_OPERATOR ? Buffer.alloc(32, 0x47) : result;
+    };
+    expect(hasRequiredIrohaJsNativeExports(wrongPolicyModule)).toBe(false);
+
+    const wrongPayoutModule = compatibleNativeModule();
+    wrongPayoutModule.validationFeePayoutLifecycleProposalFingerprintV1 =
+      function (...args: unknown[]) {
+        const result = currentOperatorBoundPayoutFingerprint(...args);
+        return args[0] === PROPOSAL_OPERATOR ? Buffer.alloc(32, 0x8f) : result;
+      };
+    expect(hasRequiredIrohaJsNativeExports(wrongPayoutModule)).toBe(false);
+  });
+
+  it("rejects fingerprints that miss either exact second-operator vector", () => {
+    const wrongPolicyModule = compatibleNativeModule();
+    wrongPolicyModule.validationFeePolicyProposalFingerprintV1 = function (
+      ...args: unknown[]
+    ) {
+      const result = currentOperatorBoundFingerprint(...args);
+      return args[0] === SECOND_PROPOSAL_OPERATOR
+        ? Buffer.alloc(32, 0x86)
         : result;
     };
     expect(hasRequiredIrohaJsNativeExports(wrongPolicyModule)).toBe(false);
 
     const wrongPayoutModule = compatibleNativeModule();
-    const payoutFingerprint =
-      wrongPayoutModule.validationFeePayoutLifecycleProposalFingerprintV1;
     wrongPayoutModule.validationFeePayoutLifecycleProposalFingerprintV1 =
-      function (proposalOperator: unknown, payoutBindingJson: unknown) {
-        const result = payoutFingerprint(proposalOperator, payoutBindingJson);
-        return proposalOperator === PROPOSAL_OPERATOR
-          ? Buffer.alloc(32, 0x8f)
+      function (...args: unknown[]) {
+        const result = currentOperatorBoundPayoutFingerprint(...args);
+        return args[0] === SECOND_PROPOSAL_OPERATOR
+          ? Buffer.alloc(32, 0x90)
           : result;
       };
     expect(hasRequiredIrohaJsNativeExports(wrongPayoutModule)).toBe(false);
   });
 
+  it("probes both fingerprint helpers with exactly the operator and JSON arguments", () => {
+    const calls: unknown[][] = [];
+    const nativeModule = compatibleNativeModule();
+    nativeModule.validationFeePolicyProposalFingerprintV1 = function (
+      ...args: unknown[]
+    ) {
+      calls.push(args);
+      return currentOperatorBoundFingerprint(...args);
+    };
+    nativeModule.validationFeePayoutLifecycleProposalFingerprintV1 = function (
+      ...args: unknown[]
+    ) {
+      calls.push(args);
+      return currentOperatorBoundPayoutFingerprint(...args);
+    };
+    expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(true);
+    expect(calls).toHaveLength(8);
+    for (const call of calls) {
+      expect(call).toHaveLength(2);
+      expect(typeof call[0]).toBe("string");
+      expect(typeof call[1]).toBe("string");
+    }
+  });
+
+  it("rejects the retired policy fixture and its trailing lifecycle argument", () => {
+    const nativeModule = compatibleNativeModule();
+    nativeModule.validationFeePolicyProposalFingerprintV1 = function (
+      ...args: unknown[]
+    ) {
+      const policy = JSON.parse(String(args[1])) as Record<string, unknown>;
+      if (
+        "effective_from_height" in policy ||
+        "treasury_payout_binding" in policy ||
+        args.length !== 2
+      ) {
+        return POLICY_FINGERPRINT;
+      }
+      throw new Error(
+        "validation-fee policy must contain exactly [schema_version, network_id, policy_version, previous_policy_hash, ds_asset_id, ds_scale, effective_from_height, expires_after_height, treasury_payout_binding]",
+      );
+    };
+    expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(false);
+  });
+
   it("rejects nondeterministic or operator-insensitive policy fingerprints", () => {
     const nondeterministicModule = compatibleNativeModule();
     let primaryCalls = 0;
-    const policyFingerprint =
-      nondeterministicModule.validationFeePolicyProposalFingerprintV1;
     nondeterministicModule.validationFeePolicyProposalFingerprintV1 = function (
-      proposalOperator: unknown,
-      policyJson: unknown,
-      payoutLifecycleProposalId: unknown,
+      ...args: unknown[]
     ) {
-      const result = policyFingerprint(
-        proposalOperator,
-        policyJson,
-        payoutLifecycleProposalId,
-      );
-      if (proposalOperator !== PROPOSAL_OPERATOR || policyJson === "{}") {
+      const result = currentOperatorBoundFingerprint(...args);
+      if (args[0] !== PROPOSAL_OPERATOR || args[1] === "{}") {
         return result;
       }
       primaryCalls += 1;
@@ -718,42 +844,55 @@ describe("hasRequiredIrohaJsNativeExports", () => {
 
     const insensitiveModule = compatibleNativeModule();
     insensitiveModule.validationFeePolicyProposalFingerprintV1 = function (
-      proposalOperator: unknown,
-      policyJson: unknown,
-      _payoutLifecycleProposalId: unknown,
+      ...args: unknown[]
     ) {
-      if (policyJson === "{}") {
+      if (args[1] === "{}") {
         throw new Error(
           "validation-fee policy must contain exactly [current fields]",
         );
       }
-      void proposalOperator;
-      void _payoutLifecycleProposalId;
       return POLICY_FINGERPRINT;
     };
     expect(hasRequiredIrohaJsNativeExports(insensitiveModule)).toBe(false);
+
+    const insensitivePayoutModule = compatibleNativeModule();
+    insensitivePayoutModule.validationFeePayoutLifecycleProposalFingerprintV1 =
+      function (...args: unknown[]) {
+        if (args[1] === "{}") {
+          throw new Error("payout binding must contain exactly [current]");
+        }
+        return PAYOUT_FINGERPRINT;
+      };
+    expect(hasRequiredIrohaJsNativeExports(insensitivePayoutModule)).toBe(
+      false,
+    );
   });
 
   it("rejects a policy helper that accepts the malformed rejection probe", () => {
     const nativeModule = compatibleNativeModule();
-    const policyFingerprint =
-      nativeModule.validationFeePolicyProposalFingerprintV1;
     nativeModule.validationFeePolicyProposalFingerprintV1 = function (
-      proposalOperator: unknown,
-      policyJson: unknown,
-      payoutLifecycleProposalId: unknown,
+      ...args: unknown[]
     ) {
-      if (policyJson === "{}") return Buffer.alloc(32);
-      return policyFingerprint(
-        proposalOperator,
-        policyJson,
-        payoutLifecycleProposalId,
-      );
+      if (args[1] === "{}") return Buffer.alloc(32);
+      return currentOperatorBoundFingerprint(...args);
     };
     expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(false);
   });
 
-  it("rejects a native Connect bridge ABI other than 23", () => {
+  it("rejects a rejection probe that fails with an unrelated error", () => {
+    const nativeModule = compatibleNativeModule();
+    nativeModule.validationFeePolicyProposalFingerprintV1 = function (
+      ...args: unknown[]
+    ) {
+      if (args[1] === "{}") {
+        throw new Error("ERR_UNSUPPORTED_ADDRESS_FORMAT");
+      }
+      return currentOperatorBoundFingerprint(...args);
+    };
+    expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(false);
+  });
+
+  it("rejects a native Connect bridge ABI other than 29", () => {
     const nativeModule = compatibleNativeModule();
     nativeModule.connectNoritoBridgeAbiVersion = () => 20;
 

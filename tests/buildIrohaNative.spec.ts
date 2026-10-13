@@ -64,7 +64,7 @@ describe("Iroha native build environment", () => {
       stdout: `${fixture.tools[args[1] ?? ""]}\n`,
     }));
     const result = resolveIrohaNativeBuildEnvironment({
-      environment: { CARGO_TARGET_DIR: fixture.target },
+      environment: { CARGO_TARGET_DIR: fixture.target, RUSTC_BOOTSTRAP: "1" },
       projectRoot: fixture.projectRoot,
       runProcess,
       sdkRoot: fixture.sdkRoot,
@@ -85,9 +85,10 @@ describe("Iroha native build environment", () => {
       IROHA_JS_CARGO_LOCKFILE_PATH: join(fixture.repoRoot, "Cargo.lock"),
       IROHA_JS_CARGO_PATH: fixture.tools.cargo,
       RUSTC: fixture.tools.rustc,
-      RUSTC_BOOTSTRAP: "1",
       RUSTDOC: fixture.tools.rustdoc,
     });
+    // The SDK native build refuses RUSTC_BOOTSTRAP, even when inherited.
+    expect(result.buildEnvironment).not.toHaveProperty("RUSTC_BOOTSTRAP");
     expect(runProcess).toHaveBeenCalledTimes(3);
   });
 

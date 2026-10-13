@@ -49,7 +49,6 @@ import {
   decodeConnectFrame,
 } from "@/utils/soraswapConnectWire";
 import type { NetworkIdentityPin } from "@/utils/networkIdentity";
-import { withRelayFixedArrayLayout } from "./helpers/connectRelayFixedArrays";
 
 const LIVE = process.env.LIVE_TAIRA === "1";
 const TAIRA = "https://taira.sora.org";
@@ -279,9 +278,7 @@ describe.skipIf(!LIVE)("live TAIRA (opt-in)", () => {
         events: [],
         resources: ["iroha:torii:canonical-request:v1"],
       },
-      // The linked SDK still writes raw [u8; 32] frame arrays, which the live
-      // relay rejects; the shim applies the relay's element-framed layout.
-      webSocketImpl: withRelayFixedArrayLayout(WebSocket),
+      webSocketImpl: WebSocket,
     });
     try {
       const approval = await app.waitForApproval();

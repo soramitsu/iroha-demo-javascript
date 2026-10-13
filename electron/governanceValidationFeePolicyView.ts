@@ -1,7 +1,9 @@
 import {
   normalizeValidationFeePolicy,
-  type ValidationFeePolicyPayload,
+  type GovernanceValidationFeePolicyView,
 } from "../src/governance/model";
+
+export type { GovernanceValidationFeePolicyView };
 
 const LEDGER_PROJECTION_SCHEMA = "cbsi.validation-fee-ledger-projection.v1";
 const AUTHORIZATION_MODEL = "SORA_PARLIAMENT_V1";
@@ -9,26 +11,6 @@ const LOWER_HASH_32 = /^[0-9a-f]{64}$/u;
 const MAX_U64 = 0xffff_ffff_ffff_ffffn;
 
 type PlainRecord = Record<string, unknown>;
-
-export type GovernanceValidationFeePolicyView = Readonly<{
-  observedHeight: string;
-  effective: ValidationFeePolicyPayload;
-  latestEnacted: ValidationFeePolicyPayload;
-  scheduled: readonly [];
-  registryHead: Readonly<{
-    policyVersion: string;
-    policyHash: string;
-  }>;
-  verifiedProof: Readonly<{
-    schema: typeof LEDGER_PROJECTION_SCHEMA;
-    authorizationModel: typeof AUTHORIZATION_MODEL;
-    registrySnapshotHash: string;
-    finalizedBlockHash: string;
-    finalizedContextId: string;
-    trustedCheckpointHeight: string;
-    trustedCheckpointContextId: string;
-  }>;
-}>;
 
 const exactRecord = (
   value: unknown,
@@ -85,16 +67,11 @@ const canonicalHash = (value: unknown, label: string): string => {
   return value;
 };
 
-const canonicalJson = (value: unknown): string => {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
+const positiveSafeInteger = (value: unknown, label: string): number => {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw new TypeError(`${label} must be a positive safe integer.`);
   }
-  const record = value as PlainRecord;
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-    .join(",")}}`;
+  return value;
 };
 
 const deepFreeze = <T>(value: T): T => {
@@ -107,8 +84,9 @@ const deepFreeze = <T>(value: T): T => {
 
 /**
  * Revalidate the main-process result before it crosses the isolated preload
- * bridge. Retired chain/genesis aliases and policy-proof extension fields are
- * deliberately outside this exact response contract.
+ * bridge. The effective policy must be the exact native
+ * `ValidationFeePolicyV1`; the registry head carries a version only while it is
+ * the effective policy (a scheduled revision has no projected version).
  */
 export const parseGovernanceValidationFeePolicyView = (
   value: unknown,
@@ -117,10 +95,10 @@ export const parseGovernanceValidationFeePolicyView = (
     value,
     [
       "effective",
-      "latestEnacted",
+      "effectivePolicyHash",
+      "observedAtMs",
       "observedHeight",
       "registryHead",
-      "scheduled",
       "verifiedProof",
     ],
     "Governance validation-fee policy view",
@@ -130,16 +108,18 @@ export const parseGovernanceValidationFeePolicyView = (
     "Governance validation-fee policy observedHeight",
     true,
   );
+  const observedAtMs = positiveSafeInteger(
+    source.observedAtMs,
+    "Governance validation-fee policy observedAtMs",
+  );
   const effective = normalizeValidationFeePolicy(source.effective);
-  const latestEnacted = normalizeValidationFeePolicy(source.latestEnacted);
-  if (canonicalJson(effective) !== canonicalJson(latestEnacted)) {
+  const effectivePolicyHash = canonicalHash(
+    source.effectivePolicyHash,
+    "Governance validation-fee effective policy hash",
+  );
+  if (observedAtMs < effective.effective_from_ms) {
     throw new TypeError(
-      "Governance validation-fee latest enacted policy differs from the effective policy.",
-    );
-  }
-  if (!Array.isArray(source.scheduled) || source.scheduled.length !== 0) {
-    throw new TypeError(
-      "Governance validation-fee scheduled policies must be exactly empty.",
+      "Governance validation-fee effective policy is not active at the observed block.",
     );
   }
   const registryHead = exactRecord(
@@ -147,14 +127,24 @@ export const parseGovernanceValidationFeePolicyView = (
     ["policyHash", "policyVersion"],
     "Governance validation-fee registry head",
   );
-  const policyVersion = canonicalU64(
-    registryHead.policyVersion,
-    "Governance validation-fee registry policyVersion",
-    true,
+  const headHash = canonicalHash(
+    registryHead.policyHash,
+    "Governance validation-fee registry policyHash",
   );
-  if (policyVersion !== effective.policy_version) {
+  const headVersion =
+    registryHead.policyVersion === null
+      ? null
+      : canonicalU64(
+          registryHead.policyVersion,
+          "Governance validation-fee registry policyVersion",
+          true,
+        );
+  if (
+    (headHash === effectivePolicyHash) !== (headVersion !== null) ||
+    (headVersion !== null && headVersion !== effective.policy_version)
+  ) {
     throw new TypeError(
-      "Governance validation-fee registry head version differs from the effective policy.",
+      "Governance validation-fee registry head differs from the effective policy.",
     );
   }
   const verifiedProof = exactRecord(
@@ -180,15 +170,12 @@ export const parseGovernanceValidationFeePolicyView = (
   }
   return deepFreeze({
     observedHeight,
+    observedAtMs,
     effective,
-    latestEnacted,
-    scheduled: [] as const,
+    effectivePolicyHash,
     registryHead: {
-      policyVersion,
-      policyHash: canonicalHash(
-        registryHead.policyHash,
-        "Governance validation-fee registry policyHash",
-      ),
+      policyHash: headHash,
+      policyVersion: headVersion,
     },
     verifiedProof: {
       schema: LEDGER_PROJECTION_SCHEMA,

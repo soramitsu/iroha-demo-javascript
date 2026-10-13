@@ -322,7 +322,7 @@ export const deriveGovernanceValidationFeeImmutableLedgerScope = (
   config: GovernanceValidationFeeEnabledConfig,
 ): GovernanceValidationFeeImmutableLedgerScope => {
   const identity = JSON.stringify({
-    chainId: config.ledgerBinding.chainId,
+    networkId: config.ledgerBinding.networkId,
     genesisHash: config.ledgerBinding.genesisHash,
     policyChainGenesisHash: config.ledgerBinding.policyChainGenesisHash,
   });

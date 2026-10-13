@@ -4,6 +4,7 @@ import { parseJsonWithoutDuplicateObjectKeys } from "../src/utils/json";
 import {
   CBSI_CORE_API_BASE_URL_ENV,
   GOVERNANCE_VALIDATION_FEE_CONFIG_ENV,
+  MAX_VALIDATION_FEE_CONFIG_BYTES,
   readCbsiCoreApiBaseUrl,
   readGovernanceValidationFeeConfig,
   type GovernanceValidationFeeEnabledConfig,
@@ -15,7 +16,9 @@ export const GOVERNANCE_RUNTIME_CONFIG_FILENAME = "governance-runtime.json";
 export const GOVERNANCE_RUNTIME_CONFIG_IPC_CHANNEL =
   "governance:getValidationFeeRuntimeConfig";
 
-const MAX_RUNTIME_CONFIG_BYTES = 1024 * 1024;
+/** The embedded validation-fee config plus the manifest's own small fields. */
+export const MAX_RUNTIME_CONFIG_BYTES =
+  MAX_VALIDATION_FEE_CONFIG_BYTES + 64 * 1024;
 const RUNTIME_CONFIG_KEYS = Object.freeze([
   "cbsiCoreApiBaseUrl",
   "schema",
@@ -74,7 +77,8 @@ const defaultReadFile: RuntimeConfigFileReader = (path) => {
       );
     }
 
-    const bytes = Buffer.allocUnsafe(MAX_RUNTIME_CONFIG_BYTES + 1);
+    // One byte beyond the observed size detects growth during the read.
+    const bytes = Buffer.allocUnsafe(Number(before.size) + 1);
     let offset = 0;
     while (offset < bytes.length) {
       const count = readSync(

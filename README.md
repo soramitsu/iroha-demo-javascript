@@ -46,23 +46,25 @@ npm run build
 `npm run verify` runs lint, both renderer and Electron typechecks, and the test
 suite.
 
-### Selecting a different SDK checkout (bond-poc worktree)
+### Selecting the smart-bond SDK runtime
 
 Every build consumer (Vite, Vitest, `tsc`, native staging, the Electron
 native loader) resolves the SDK through `scripts/iroha-sdk-compat.mjs`, which
 honours one absolute `IROHA_JS_SDK_ROOT`. To run against the SDK being
-extended for the Palmatrix bond demo in the `iroha-bond-poc` worktree:
+used for the Palmatrix smart-bond demo on SORA Nexus Taira, select the prepared
+`iroha-sdk-poc` runtime checkout. Its source is the signed `bond-poc-sdk` branch;
+the runtime checkout remains detached so building does not alter that branch:
 
 ```bash
 # One-time, in the SDK worktree (writes only gitignored dist/, native/ and
 # node_modules/; coordinate with whoever owns that worktree):
-cd ../iroha-bond-poc/javascript/iroha_js
+cd ../iroha-sdk-poc/javascript/iroha_js
 npm ci
 npm run build:dist
 
 # In this wallet checkout, for every shell that builds or runs the wallet:
 cd ../../../iroha-demo-javascript
-export IROHA_JS_SDK_ROOT="$(cd ../iroha-bond-poc/javascript/iroha_js && pwd)"
+export IROHA_JS_SDK_ROOT="$(cd ../iroha-sdk-poc/javascript/iroha_js && pwd)"
 node scripts/iroha-sdk-compat.mjs        # activates and verifies the root
 node scripts/build-iroha-native.mjs --sdk-root "$IROHA_JS_SDK_ROOT"
 npm run dev
@@ -102,19 +104,40 @@ element-framed `[u8; 32]` values (`frame.sid`, `open.app_pk`,
 `sig_wallet` made of a u32 algorithm discriminant plus an element-framed
 signature; it closes any socket that sends the older raw arrays. The wallet
 emits that layout (pinned by frames captured from the live relay in
-`tests/irohaConnectRelayLayout.spec.ts`). `connect.browser.js` in the current
-`@iroha/iroha-js` still writes and reads the raw arrays, so a dApp built on it
-cannot pair over the live relay until the SDK adopts the same frame layout;
-the encrypted envelope layout is unchanged on both sides. The opt-in live test
-shows the full pairing and payload-hash signing round trip against TAIRA by
-routing the SDK socket through `tests/helpers/connectRelayFixedArrays.ts`:
+`tests/irohaConnectRelayLayout.spec.ts`). The selected `bond-poc-sdk` implements
+the same layout directly; no socket adapter is used. The encrypted envelope
+layout is unchanged. Readable approvals include settlement movements and every
+escrow leg, conditional escrow open/attest/expire, and repo cash principal,
+collateral, rate, maturity, and the initiator's early-repayment permission.
+`tests/connectTransactionReview.spec.ts` builds those instructions with the SDK
+and decodes their real native archives, including four escrow legs and two
+issuer bond movements.
+
+The opt-in live test proves pairing and payload-hash signing against Taira. It
+creates an ephemeral relay session and finalizes the signature locally without
+submitting a transaction:
 
 ```bash
 LIVE_TAIRA=1 npx vitest run tests/liveTaira.spec.ts
 ```
 
-It creates an ephemeral relay session and finalizes the signature locally;
-nothing is submitted to the chain.
+For a complete headless rehearsal, first run a local demo server with
+`BOND_LEDGER=taira` and finish its setup. Then run:
+
+```bash
+LIVE_BOND_CONNECT=1 BOND_DEMO_URL=http://127.0.0.1:18990 \
+  npx vitest run tests/liveBondConnect.spec.ts
+```
+
+The opt-in harness uses the wallet's production Connect boundary, wire codec,
+and transaction review. It pairs via `POST /api/wallet/connect`, keeps a fresh
+investor key only in memory, and approves two purchases, a repo, and early
+repayment. These are real testnet submissions. It only accepts loopback demo
+URLs, disconnects afterwards, and leaves investor signing in `connect` mode.
+Supply a local presenter's `BOND_ACCESS_CODE` through the environment if needed;
+never put it in a tracked file. `BOND_CONNECT_PAIR_ONLY=1` proves just the
+server pairing, while the server may still fund the new wallet. The interactive
+wallet continues to require its approval modal and native confirmation dialog.
 
 ### Network identity after a TAIRA reset
 
@@ -681,10 +704,18 @@ supports:
 - exact inspection of the ten-body timed-OVN Parliament capability contract;
 - validation-fee lifecycle, certificate, and finalized-evidence inspection;
 - reviewed citizenship registration through the Core citizen-draft route;
-- typed payout-lifecycle composition followed by an exact linked
-  validation-fee policy;
+- retail validation-fee policy revisions (the exact native 14-field policy:
+  monthly allowance schedule, Honiara month-start activation with thirty days
+  of notice, and the immutable reward custody);
 - quote, review, vault-backed signing, and commit in separate prepare/confirm
-  phases.
+  phases. A Torii draft instruction is admitted only when its concrete
+  instruction frame is byte-identical to the native encoding of the exact
+  reviewed instruction.
+
+Conversion-and-reward payout-lifecycle proposals (the exact native 20-field
+binding) are inspect-only: the reviewed Iroha SDK has no native JSON codec for
+`ProposeValidationFeePayoutLifecycle`, so the wallet cannot decode that draft
+for review and does not draft or sign it.
 
 The wallet exposes no ballot, Parliament ceremony/transition, or enactment
 control. Standalone PLAIN/ZK and timed-OVN routes required by the capability
@@ -712,20 +743,41 @@ generated enabled config:
 {
   "enabled": true,
   "ledgerBinding": {
-    "schema": "cbsi.mobile-validation-fee-ledger-binding.v1",
-    "chainId": "fc56984b-2be7-431d-840e-21514d1883f0",
+    "schema": "cbsi.mobile-validation-fee-ledger-binding.v2",
+    "networkId": "hash:...#....",
     "genesisHash": "...",
     "policyChainGenesisHash": "...",
     "checkpoint": {
       "height": 1,
-      "contextId": "..."
+      "contextId": "...",
+      "canonicalBase64": "..."
     }
   },
   "expected": {
-    "...": "generated release evidence only"
+    "rewardCustody": {
+      "contractAddress": "irohac1...",
+      "treasuryAccountId": "testu...",
+      "xorAssetDefinitionId": "...",
+      "rewardPoolAccountId": "testu...",
+      "validatorLaneId": 0
+    }
   }
 }
 ```
+
+`ledgerBinding` is the exact CBSI Core `ValidationFeeLedgerBindingV2` emitted
+by Core's `validation_fee_parliament_evidence_verify`: `networkId` must be the
+canonical checksummed NetworkId derived from `genesisHash`, and
+`checkpoint.canonicalBase64` carries the Core-verified native finality
+checkpoint. The wallet exports no native checkpoint verifier, so it checks
+only canonical standard Base64 within the native 68 MiB checkpoint bound and
+accepts Core projections whose network, genesis, policy-chain, and checkpoint
+coordinates equal the binding exactly. The config and runtime manifest size
+limits leave room for a checkpoint of that size.
+
+`expected` pins only the immutable reward custody. Fee amounts, retail
+schedules, activation months, and Parliament authorities are governed
+revisions and are verified structurally, never pinned.
 
 For normal packaged launches, install that exact generated object in the
 versioned runtime manifest at:
@@ -742,17 +794,18 @@ The manifest shape is exact:
   "validationFee": {
     "enabled": true,
     "ledgerBinding": {
-      "schema": "cbsi.mobile-validation-fee-ledger-binding.v1",
-      "chainId": "fc56984b-2be7-431d-840e-21514d1883f0",
+      "schema": "cbsi.mobile-validation-fee-ledger-binding.v2",
+      "networkId": "hash:...#....",
       "genesisHash": "...",
       "policyChainGenesisHash": "...",
       "checkpoint": {
         "height": 1,
-        "contextId": "..."
+        "contextId": "...",
+        "canonicalBase64": "..."
       }
     },
     "expected": {
-      "...": "generated release evidence only"
+      "rewardCustody": { "...": "immutable reward custody" }
     }
   },
   "cbsiCoreApiBaseUrl": "https://cbsi-core.soramitsu.io"
@@ -774,10 +827,17 @@ empty, partial, or malformed override fails closed. Unknown fields are rejected
 at every manifest, config, and projection level.
 
 The host concurrently reads Core's raw `/v1/validation-fee/policy` projection
-and `/v1/validation-fee/status`, requires the status wrapper to contain the
-exact same projection, checks every runtime ledger/Parliament/payout
-coordinate, and rejects rollback or same-coordinate equivocation. Any failed
-read clears the renderer state; no stale cached policy is served.
+and `/v1/validation-fee/status` (`cbsi.validation-fee-ledger-projection.v1`:
+the governed monthly-allowance policy, its Parliament certificate authority,
+the conversion policy with its 20-field binding, and ledger finality), requires
+the status wrapper to contain the exact same projection, re-checks Core's
+policy, reward-custody, conversion, certificate-binding, activation-time, and
+finality invariants, matches the runtime ledger binding and reward custody, and
+rejects rollback or same-coordinate equivocation. Any failed read clears the
+renderer state; no stale cached policy is served. The effective policy is
+mapped onto the exact native `ValidationFeePolicyV1` JSON so the next revision
+extends the verified registry head; while a scheduled revision is pending the
+head carries no version and composition is blocked.
 
 Governance proposal lifecycle, certificate, and finalized evidence use only
 the strict typed validation-fee proposal-detail response and canonical

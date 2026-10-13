@@ -209,6 +209,28 @@ const activateSdkRoot = (projectRoot, sdkRoot) => {
   return sdkRoot;
 };
 
+/**
+ * Developer-local SDK pin: an `IROHA_JS_SDK_ROOT=` line in the git-ignored `.env.local`, so a
+ * plain `npm run dev` selects the same SDK as an exported variable would. Never used for
+ * reviewed release builds (IROHA_ROOT), and an exported variable always wins.
+ */
+export const readLocalIrohaSdkRoot = (projectRoot) => {
+  let text;
+  try {
+    text = readFileSync(join(projectRoot, ".env.local"), "utf8");
+  } catch {
+    return "";
+  }
+  const line = text
+    .split(/\r?\n/u)
+    .find((entry) => /^\s*IROHA_JS_SDK_ROOT\s*=/u.test(entry));
+  if (!line) return "";
+  return line
+    .slice(line.indexOf("=") + 1)
+    .trim()
+    .replace(/^(["'])(.*)\1$/u, "$2");
+};
+
 export const resolveCompatibleIrohaSdkRoot = ({
   projectRoot = defaultProjectRoot,
   env = process.env,
@@ -241,14 +263,15 @@ export const resolveCompatibleIrohaSdkRoot = ({
     );
     return activateSdkRoot(projectRoot, installedRoot);
   }
-  if (configuredRoot && !isAbsolute(configuredRoot)) {
+  const developmentRoot = configuredRoot || readLocalIrohaSdkRoot(projectRoot);
+  if (developmentRoot && !isAbsolute(developmentRoot)) {
     throw new Error(
       "IROHA_JS_SDK_ROOT must be an explicit absolute path so every build consumer selects the same SDK root.",
     );
   }
   const sdkRoot = requireCanonicalPhysicalDirectory(
-    configuredRoot
-      ? resolve(configuredRoot)
+    developmentRoot
+      ? resolve(developmentRoot)
       : resolve(projectRoot, "../iroha/javascript/iroha_js"),
     "Current @iroha/iroha-js SDK",
   );

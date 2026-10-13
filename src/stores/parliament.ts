@@ -3,16 +3,19 @@ import { defineStore } from "pinia";
 import { useAppI18n } from "@/composables/useAppI18n";
 import {
   GOVERNANCE_KIND_ADAPTERS,
-  VALIDATION_FEE_EXACT_ACTIVATION_DELAY_BLOCKS,
+  NATIVE_SBD_ASSET_DEFINITION_ID,
+  VALIDATION_FEE_CHARGING_MODE,
+  VALIDATION_FEE_TREASURY_PAYOUT_EXEMPTION,
+  appendRetailMaintenanceTier,
   canonicalGovernanceProposalId,
-  canonicalValidationFeeHash,
-  normalizeValidationFeePayoutBinding,
+  draftNextValidationFeePolicy,
+  removeRetailMaintenanceTier,
   validateValidationFeePolicy,
-  validationFeePolicyEnactmentTargetHeight,
+  validationFeeActivationChoices as nextValidationFeeActivationChoices,
+  validationFeeEnactmentWindowError,
   type GovernanceProposalDetail,
   type GovernanceProposalSummary,
   type GovernanceWritableProposalKindId,
-  type ValidationFeePayoutBindingPayload,
   type ValidationFeePolicyPayload,
 } from "@/governance/model";
 import {
@@ -43,7 +46,6 @@ import type {
 } from "@/types/iroha";
 import { getPublicAccountId } from "@/utils/accountId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
-import { parseJsonWithoutDuplicateObjectKeys } from "@/utils/json";
 import { resolveGovernanceBondBalance } from "@/utils/parliament";
 import { compareDecimalStrings } from "@/utils/staking";
 import { assertFinalizedSubmissionResult } from "@/utils/transactionFinality";
@@ -71,8 +73,9 @@ interface GovernanceCapabilitiesRequestContext {
   networkPrefix: number;
 }
 
-const NATIVE_SBD_ASSET_DEFINITION_ID = "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
-const MAX_PAYOUT_BINDING_JSON_BYTES = 16 * 1024;
+const VALIDATION_FEE_ACTIVATION_CHOICES = 12;
+/** How often an open composer re-checks the activation against the clock. */
+export const VALIDATION_FEE_COMPOSER_CLOCK_INTERVAL_MS = 60_000;
 
 const emptyValidationFeePolicy = (): ValidationFeePolicyPayload => ({
   schema_version: 1,
@@ -82,16 +85,27 @@ const emptyValidationFeePolicy = (): ValidationFeePolicyPayload => ({
   previous_policy_hash: null,
   ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,
   ds_scale: 2,
-  fee: "0.1",
-  treasury_account_id: "",
-  charging_mode: {
-    charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION",
-    value: null,
+  retail_schedule: {
+    included_payments: 0,
+    overage_minor: 0,
+    maintenance_tiers: [
+      { minimum_average_balance_minor: 0, monthly_fee_minor: 0 },
+    ],
   },
-  effective_from_height: "",
-  expires_after_height: null,
-  exemption_classes: [],
-  treasury_payout_binding: null,
+  effective_from_ms: 0,
+  notice_published_at_ms: 0,
+  fee: "",
+  treasury_account_id: "",
+  charging_mode: { charging_mode: VALIDATION_FEE_CHARGING_MODE, value: null },
+  exemption_classes: [VALIDATION_FEE_TREASURY_PAYOUT_EXEMPTION],
+  reward_custody: {
+    contract_address: "",
+    treasury_account_id: "",
+    ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,
+    xor_asset_id: "",
+    reward_pool_account_id: "",
+    validator_lane_id: 0,
+  },
 });
 
 const contextKey = (context: GovernanceCapabilitiesRequestContext) =>
@@ -101,35 +115,6 @@ const contextKey = (context: GovernanceCapabilitiesRequestContext) =>
     context.chainId,
     context.networkPrefix,
   ]);
-
-const parseJsonRecord = (literal: string, label: string) => {
-  if (
-    literal.length > MAX_PAYOUT_BINDING_JSON_BYTES ||
-    new TextEncoder().encode(literal).byteLength > MAX_PAYOUT_BINDING_JSON_BYTES
-  ) {
-    throw new Error(
-      `${label} must be at most ${MAX_PAYOUT_BINDING_JSON_BYTES} UTF-8 bytes.`,
-    );
-  }
-  let value: unknown;
-  try {
-    value = parseJsonWithoutDuplicateObjectKeys(literal, label);
-  } catch {
-    throw new Error(`${label} must be valid JSON.`);
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${label} must be a JSON object.`);
-  }
-  return value as Record<string, unknown>;
-};
-
-const nextU64 = (value: string) => {
-  try {
-    return (BigInt(value || "0") + 1n).toString();
-  } catch {
-    return "1";
-  }
-};
 
 export const useParliamentStore = defineStore("parliament", () => {
   const session = useSessionStore();
@@ -202,13 +187,19 @@ export const useParliamentStore = defineStore("parliament", () => {
 
   const composerOpen = ref(false);
   const composerKind = ref<GovernanceWritableProposalKindId>(
-    "ValidationFeePayoutLifecycle",
+    "ValidationFeePolicy",
   );
   const validationFeeComposer = ref<ValidationFeePolicyPayload>(
     emptyValidationFeePolicy(),
   );
-  const validationFeePayoutBindingJson = ref("");
-  const validationFeePayoutLifecycleProposalId = ref("");
+  const validationFeeComposerSeedKey = ref("");
+  /**
+   * Wallet clock for the drafted revision. The proposal is its own public
+   * notice, so the notice time follows this clock, and the ledger can enact
+   * the proposal no earlier than it.
+   */
+  const validationFeeNowMs = ref(Date.now());
+  let validationFeeClockTimer: ReturnType<typeof setInterval> | null = null;
   const review = ref<GovernancePreparedAction | null>(null);
 
   let contextGeneration = 0;
@@ -264,15 +255,12 @@ export const useParliamentStore = defineStore("parliament", () => {
   const isCitizen = computed(() => citizenState.value === "citizen");
   const supportedComposerKinds = computed<GovernanceWritableProposalKindId[]>(
     () => {
+      // Payout-lifecycle proposals stay inspect-only: the pinned native codec
+      // cannot decode ProposeValidationFeePayoutLifecycle for review.
       const kinds = capabilities.value?.supportedProposalKinds ?? [];
-      return [
-        ...(kinds.includes("VALIDATION_FEE_PAYOUT_LIFECYCLE")
-          ? (["ValidationFeePayoutLifecycle"] as const)
-          : []),
-        ...(kinds.includes("VALIDATION_FEE_POLICY")
-          ? (["ValidationFeePolicy"] as const)
-          : []),
-      ];
+      return kinds.includes("VALIDATION_FEE_POLICY")
+        ? ["ValidationFeePolicy"]
+        : [];
     },
   );
   const proposalGate = computed<GovernanceActionGate>(() => {
@@ -359,83 +347,91 @@ export const useParliamentStore = defineStore("parliament", () => {
       : null,
   );
 
-  const materializePayoutBinding = (): ValidationFeePayoutBindingPayload =>
-    normalizeValidationFeePayoutBinding(
-      parseJsonRecord(
-        validationFeePayoutBindingJson.value,
-        "Treasury payout binding",
-      ),
+  // A plain JSON copy: reactive proxies must not cross the preload bridge.
+  const materializeValidationFeePolicy = (): ValidationFeePolicyPayload =>
+    JSON.parse(
+      JSON.stringify({
+        ...validationFeeComposer.value,
+        network_id: capabilities.value?.networkId ?? "",
+        ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,
+        ds_scale: 2,
+        charging_mode: {
+          charging_mode: VALIDATION_FEE_CHARGING_MODE,
+          value: null,
+        },
+        exemption_classes: [VALIDATION_FEE_TREASURY_PAYOUT_EXEMPTION],
+      }),
+    ) as ValidationFeePolicyPayload;
+
+  const validationFeeActivationChoices = computed<number[]>(() => {
+    const current = validationFeePolicy.value;
+    if (!current) return [];
+    return nextValidationFeeActivationChoices(
+      validationFeeComposer.value.notice_published_at_ms,
+      current.effective.effective_from_ms,
+      VALIDATION_FEE_ACTIVATION_CHOICES,
     );
-
-  const materializeValidationFeePolicy = (): ValidationFeePolicyPayload => {
-    const payoutBinding = validationFeePayoutBindingJson.value.trim()
-      ? materializePayoutBinding()
-      : null;
-    return {
-      ...validationFeeComposer.value,
-      network_id: capabilities.value?.networkId ?? "",
-      ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,
-      ds_scale: 2,
-      exemption_classes: payoutBinding ? ["TREASURY_PAYOUT"] : [],
-      treasury_payout_binding: payoutBinding,
-    };
-  };
-
-  const validationFeePayoutLifecycleErrors = computed(() => {
-    if (!validationFeePayoutBindingJson.value.trim()) {
-      return ["The exact treasury payout binding is required."];
-    }
-    try {
-      materializePayoutBinding();
-      return [];
-    } catch (error) {
-      return [
-        error instanceof Error
-          ? error.message
-          : "Treasury payout binding is outside the exact native V1 contract.",
-      ];
-    }
   });
 
   const validationFeeComposerErrors = computed(() => {
-    let policy: ValidationFeePolicyPayload;
-    try {
-      policy = materializeValidationFeePolicy();
-    } catch (error) {
-      return [
-        error instanceof Error
-          ? error.message
-          : "Treasury payout binding is outside the exact native V1 contract.",
-      ];
-    }
-    const errors = validateValidationFeePolicy(
-      policy,
-      validationFeePayoutLifecycleProposalId.value,
-    );
-    if (policy.treasury_payout_binding === null) {
-      errors.push(
-        "The first-release Taira policy must bind its enacted payout lifecycle.",
-      );
-    }
-    const target = validationFeePolicyEnactmentTargetHeight(
-      policy.effective_from_height,
-    );
-    if (target === null) {
-      errors.push(
-        "Effective height must reserve the exact 120,960-block post-enactment activation delay.",
-      );
-    } else if (
-      capabilities.value &&
-      BigInt(target) <
-        BigInt(capabilities.value.currentHeight) +
-          BigInt(capabilities.value.minEnactmentDelay)
-    ) {
-      errors.push(
-        "Policy enactment target is earlier than the capabilities minimum enactment delay.",
-      );
-    }
-    return [...new Set(errors)];
+    const current = validationFeePolicy.value;
+    return [
+      ...new Set(
+        validateValidationFeePolicy(
+          materializeValidationFeePolicy(),
+          current
+            ? {
+                effective: current.effective,
+                registryHead: current.registryHead,
+              }
+            : null,
+          { nowMs: validationFeeNowMs.value },
+        ),
+      ),
+    ];
   });
+
+  /**
+   * Advance the composer clock and the notice time that follows it. When
+   * `reselectActivation` is set (opening the composer or reloading verified
+   * policy state, not the periodic tick or Decode and quote), an activation
+   * month that has fallen inside the thirty-day window moves to the earliest
+   * valid month; otherwise it stays and the composer reports it as invalid.
+   */
+  const advanceValidationFeeClock = (
+    options: Readonly<{ reselectActivation?: boolean }> = {},
+  ) => {
+    const now = Date.now();
+    validationFeeNowMs.value = now;
+    const current = validationFeePolicy.value;
+    if (!current || !validationFeeComposerSeedKey.value) return;
+    const composer = validationFeeComposer.value;
+    composer.notice_published_at_ms = now;
+    if (!options.reselectActivation) return;
+    const [earliest] = nextValidationFeeActivationChoices(
+      now,
+      current.effective.effective_from_ms,
+      1,
+    );
+    if (earliest !== undefined && composer.effective_from_ms < earliest) {
+      composer.effective_from_ms = earliest;
+    }
+  };
+
+  const addValidationFeeMaintenanceTier = () => {
+    const schedule = validationFeeComposer.value.retail_schedule;
+    schedule.maintenance_tiers = appendRetailMaintenanceTier(
+      schedule.maintenance_tiers,
+    );
+  };
+
+  const removeValidationFeeMaintenanceTier = (index: number) => {
+    const schedule = validationFeeComposer.value.retail_schedule;
+    schedule.maintenance_tiers = removeRetailMaintenanceTier(
+      schedule.maintenance_tiers,
+      index,
+    );
+  };
 
   const resetActionFeedback = () => {
     actionError.value = "";
@@ -478,17 +474,7 @@ export const useParliamentStore = defineStore("parliament", () => {
         capabilitiesContextKey.value = key;
         validationFeeComposer.value = {
           ...validationFeeComposer.value,
-          network_id: capabilities.value?.networkId ?? "",
-          ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,
-          ds_scale: 2,
-          fee: "0.1",
-          effective_from_height:
-            validationFeeComposer.value.effective_from_height ||
-            (
-              BigInt(loaded.currentHeight) +
-              BigInt(loaded.minEnactmentDelay) +
-              VALIDATION_FEE_EXACT_ACTIVATION_DELAY_BLOCKS
-            ).toString(),
+          network_id: loaded.networkId,
         };
         return loaded;
       } catch (error) {
@@ -653,26 +639,30 @@ export const useParliamentStore = defineStore("parliament", () => {
     }
   };
 
+  /**
+   * Seed the next contiguous revision from the verified effective policy:
+   * immutable treasury and reward custody, the head hash and next version,
+   * and the current tariff as the editable starting point. Edits survive
+   * refreshes until the verified registry head or effective policy changes.
+   */
   const syncValidationFeeComposer = (
     current: GovernanceValidationFeePolicyView,
   ) => {
-    const latest = current.latestEnacted ?? current.effective;
-    const headVersion = current.registryHead.policyVersion;
-    const headHash = canonicalValidationFeeHash(
+    const seedKey = JSON.stringify([
+      current.effectivePolicyHash,
       current.registryHead.policyHash,
-    );
-    validationFeeComposer.value = {
-      ...validationFeeComposer.value,
-      network_id: capabilities.value?.networkId ?? "",
-      policy_version: headVersion ? nextU64(headVersion) : "1",
-      previous_policy_hash: headHash,
-      ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,
-      ds_scale: 2,
-      fee: "0.1",
-      treasury_account_id:
-        validationFeeComposer.value.treasury_account_id ||
-        latest.treasury_account_id,
-    };
+      current.registryHead.policyVersion,
+    ]);
+    if (seedKey === validationFeeComposerSeedKey.value) {
+      advanceValidationFeeClock({ reselectActivation: true });
+      return;
+    }
+    validationFeeComposerSeedKey.value = seedKey;
+    validationFeeNowMs.value = Date.now();
+    validationFeeComposer.value = draftNextValidationFeePolicy(current, {
+      networkId: capabilities.value?.networkId ?? current.effective.network_id,
+      noticePublishedAtMs: validationFeeNowMs.value,
+    });
   };
 
   const loadValidationFeePolicy = async () => {
@@ -884,7 +874,7 @@ export const useParliamentStore = defineStore("parliament", () => {
   };
 
   const openComposer = (
-    kind: GovernanceWritableProposalKindId = "ValidationFeePayoutLifecycle",
+    kind: GovernanceWritableProposalKindId = "ValidationFeePolicy",
   ) => {
     resetActionFeedback();
     if (!proposalGate.value.allowed) {
@@ -896,6 +886,7 @@ export const useParliamentStore = defineStore("parliament", () => {
       return;
     }
     composerKind.value = kind;
+    advanceValidationFeeClock({ reselectActivation: true });
     composerOpen.value = true;
   };
 
@@ -930,61 +921,27 @@ export const useParliamentStore = defineStore("parliament", () => {
           "This proposal kind is not advertised by the exact capabilities contract.",
         );
       }
-      let payload: Record<string, unknown>;
-      if (composerKind.value === "ValidationFeePayoutLifecycle") {
-        if (validationFeePayoutLifecycleErrors.value.length) {
-          throw new Error(validationFeePayoutLifecycleErrors.value[0]);
-        }
-        payload = { payout_binding: materializePayoutBinding() };
-      } else {
-        if (!validationFeePolicy.value) {
-          throw new Error(
-            "Validation-fee policy proposals require locally verified consensus proof state.",
-          );
-        }
-        const policy = materializeValidationFeePolicy();
-        if (validationFeeComposerErrors.value.length) {
-          throw new Error(validationFeeComposerErrors.value[0]);
-        }
-        const lifecycleId = canonicalValidationFeeHash(
-          validationFeePayoutLifecycleProposalId.value.trim(),
+      if (!validationFeePolicy.value) {
+        throw new Error(
+          "Validation-fee policy proposals require locally verified consensus proof state.",
         );
-        if (!lifecycleId) {
-          throw new Error(
-            "Select the enacted payout lifecycle proposal first.",
-          );
-        }
-        const lifecycle = await getGovernanceProposalDetail({
-          toriiUrl: toriiUrl.value,
-          networkPrefix: networkPrefix.value,
-          proposalId: lifecycleId,
-        });
-        if (
-          lifecycle.kind.type !== "ValidationFeePayoutLifecycle" ||
-          lifecycle.summary.status !== "Enacted" ||
-          lifecycle.governanceCertificate === null
-        ) {
-          throw new Error(
-            "The selected payout lifecycle must be certificate-enacted before the policy is proposed.",
-          );
-        }
-        if (
-          JSON.stringify(lifecycle.kind.payoutBinding) !==
-          JSON.stringify(policy.treasury_payout_binding)
-        ) {
-          throw new Error(
-            "The policy payout binding differs from the enacted lifecycle proposal.",
-          );
-        }
-        payload = {
-          policy,
-          payout_lifecycle_proposal_id: lifecycleId,
-        };
       }
+      // Re-check against the current clock: the proposal cannot be enacted
+      // before it is prepared, whatever time the draft was seeded.
+      advanceValidationFeeClock();
+      const policy = materializeValidationFeePolicy();
+      if (validationFeeComposerErrors.value.length) {
+        throw new Error(validationFeeComposerErrors.value[0]);
+      }
+      const enactmentError = validationFeeEnactmentWindowError(
+        policy,
+        Date.now(),
+      );
+      if (enactmentError) throw new Error(enactmentError);
       review.value = await prepareGovernanceProposal({
         ...commonPrepareContext(),
         kind: composerKind.value,
-        payload,
+        payload: { policy },
       });
     } catch (error) {
       actionError.value = toUserFacingErrorMessage(
@@ -1023,10 +980,6 @@ export const useParliamentStore = defineStore("parliament", () => {
       });
       if (finalized.proposalId) {
         selectedProposalId.value = finalized.proposalId;
-        if (composerKind.value === "ValidationFeePayoutLifecycle") {
-          validationFeePayoutLifecycleProposalId.value =
-            finalized.proposalId.replace(/^0x/u, "");
-        }
       }
       finalizedRefresh.value = true;
       if (refreshPulseTimer) clearTimeout(refreshPulseTimer);
@@ -1048,6 +1001,22 @@ export const useParliamentStore = defineStore("parliament", () => {
     void loadProposals({ preserveSelection: true });
   });
 
+  // While the composer is open, keep the clock (and the notice that follows
+  // it) current so an activation month that falls inside the thirty-day
+  // enactment window is reported and blocks Decode and quote.
+  watch(composerOpen, (open) => {
+    if (validationFeeClockTimer) {
+      clearInterval(validationFeeClockTimer);
+      validationFeeClockTimer = null;
+    }
+    if (open) {
+      validationFeeClockTimer = setInterval(
+        () => advanceValidationFeeClock(),
+        VALIDATION_FEE_COMPOSER_CLOCK_INTERVAL_MS,
+      );
+    }
+  });
+
   watch(
     currentContextKey,
     (next, previous) => {
@@ -1062,6 +1031,8 @@ export const useParliamentStore = defineStore("parliament", () => {
       currentCouncil.value = null;
       unlockStats.value = null;
       validationFeePolicy.value = null;
+      validationFeeComposerSeedKey.value = "";
+      validationFeeComposer.value = emptyValidationFeePolicy();
       selectedProposalId.value = null;
       selectedProposal.value = null;
       proposals.value = [];
@@ -1122,9 +1093,9 @@ export const useParliamentStore = defineStore("parliament", () => {
     supportedComposerKinds,
     validationFeeComposer,
     validationFeeComposerErrors,
-    validationFeePayoutLifecycleErrors,
-    validationFeePayoutBindingJson,
-    validationFeePayoutLifecycleProposalId,
+    validationFeeActivationChoices,
+    addValidationFeeMaintenanceTier,
+    removeValidationFeeMaintenanceTier,
     review,
     bootstrap,
     refresh,

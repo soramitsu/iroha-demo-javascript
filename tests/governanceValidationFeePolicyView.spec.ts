@@ -1,49 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { parseGovernanceValidationFeePolicyView } from "../electron/governanceValidationFeePolicyView";
 import { TEST_TAIRA_NETWORK_ID as TAIRA_NETWORK_ID } from "./helpers/networkIdentityFixture";
+import {
+  EFFECTIVE_FROM_MS,
+  validationFeePolicy,
+} from "./helpers/validationFeeFixtures";
 
 const hash = (byte: string) => byte.repeat(64);
-
-const policy = () => ({
-  schema_version: 1,
-  network_id: TAIRA_NETWORK_ID,
-  policy_version: "1",
-  previous_policy_hash: null,
-  ds_asset_id: "7ZepsJTHCVLKsrFFNZGSRGZgvBhv",
-  ds_scale: 2,
-  fee: "0.1",
-  treasury_account_id: "treasury",
-  charging_mode: {
-    charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION",
-    value: null,
-  },
-  effective_from_height: "120960",
-  expires_after_height: null,
-  exemption_classes: ["TREASURY_PAYOUT"],
-  treasury_payout_binding: {
-    contract_address: "contract",
-    code_hash: hash("1"),
-    entrypoint: "autonomous_validation_fee_tick",
-    treasury_account_id: "treasury",
-    ds_asset_id: "7ZepsJTHCVLKsrFFNZGSRGZgvBhv",
-    xor_asset_id: "xor",
-    pool_vault_account_id: "vault",
-    batch_ds: "10",
-    min_xor_out: "4",
-    max_xor_out: "100",
-    recipients: ["a", "b", "c", "d"].map((account_id) => ({
-      account_id,
-      share: "0.25",
-    })),
-  },
-});
+const policyHash = `${"ab".repeat(31)}ad`;
 
 const view = () => ({
   observedHeight: "130000",
-  effective: policy(),
-  latestEnacted: policy(),
-  scheduled: [],
-  registryHead: { policyVersion: "1", policyHash: hash("2") },
+  observedAtMs: EFFECTIVE_FROM_MS + 86_400_000,
+  effective: validationFeePolicy(),
+  effectivePolicyHash: policyHash,
+  registryHead: { policyVersion: "1" as string | null, policyHash },
   verifiedProof: {
     schema: "cbsi.validation-fee-ledger-projection.v1",
     authorizationModel: "SORA_PARLIAMENT_V1",
@@ -60,11 +31,30 @@ describe("governance validation-fee main IPC response", () => {
     const parsed = parseGovernanceValidationFeePolicyView(view());
 
     expect(parsed.effective.network_id).toBe(TAIRA_NETWORK_ID);
-    expect(parsed.registryHead.policyVersion).toBe(
-      parsed.effective.policy_version,
+    expect(parsed.effective.charging_mode.charging_mode).toBe(
+      "RETAIL_MONTHLY_ALLOWANCE",
     );
+    expect(parsed.registryHead).toEqual({ policyVersion: "1", policyHash });
     expect(Object.isFrozen(parsed)).toBe(true);
     expect(Object.isFrozen(parsed.effective)).toBe(true);
+    expect(Object.isFrozen(parsed.effective.retail_schedule)).toBe(true);
+  });
+
+  it("accepts a scheduled head only without a projected version", () => {
+    const pending = view();
+    pending.registryHead = { policyVersion: null, policyHash: hash("7") };
+    expect(
+      parseGovernanceValidationFeePolicyView(pending).registryHead,
+    ).toEqual({ policyVersion: null, policyHash: hash("7") });
+
+    const versionedScheduledHead = view();
+    versionedScheduledHead.registryHead = {
+      policyVersion: "2",
+      policyHash: hash("7"),
+    };
+    expect(() =>
+      parseGovernanceValidationFeePolicyView(versionedScheduledHead),
+    ).toThrow(/registry head differs/);
   });
 
   it.each([
@@ -73,14 +63,24 @@ describe("governance validation-fee main IPC response", () => {
       (input: ReturnType<typeof view>) => Object.assign(input, { extra: true }),
     ],
     [
-      "retired chain alias",
+      "retired latest-enacted alias",
       (input: ReturnType<typeof view>) =>
-        Object.assign(input.effective, { chain_id: "retired" }),
+        Object.assign(input, { latestEnacted: input.effective }),
     ],
     [
-      "retired genesis alias",
+      "retired scheduled list",
       (input: ReturnType<typeof view>) =>
-        Object.assign(input.latestEnacted, { genesis_hash: hash("7") }),
+        Object.assign(input, { scheduled: [] }),
+    ],
+    [
+      "retired effective height",
+      (input: ReturnType<typeof view>) =>
+        Object.assign(input.effective, { effective_from_height: "120960" }),
+    ],
+    [
+      "retired payout binding",
+      (input: ReturnType<typeof view>) =>
+        Object.assign(input.effective, { treasury_payout_binding: null }),
     ],
     [
       "network drift",
@@ -95,9 +95,15 @@ describe("governance validation-fee main IPC response", () => {
       },
     ],
     [
-      "scheduled compatibility",
+      "inactive effective policy",
       (input: ReturnType<typeof view>) => {
-        input.scheduled.push(policy() as never);
+        input.observedAtMs = EFFECTIVE_FROM_MS - 1;
+      },
+    ],
+    [
+      "uppercase projection hash",
+      (input: ReturnType<typeof view>) => {
+        input.effectivePolicyHash = policyHash.toUpperCase();
       },
     ],
   ])("rejects %s", (_label, mutate) => {

@@ -7,10 +7,20 @@ import { ed25519 } from "@noble/curves/ed25519";
 import {
   AccountAddress,
   NetworkId,
+  assetDefinitionIdFromSeed,
+  buildAttestEscrowConditionInstruction,
+  buildExpireConditionalEscrowInstruction,
   buildGrantAccountPermissionInstruction,
   buildMintAssetInstruction,
+  buildOpenConditionalEscrowInstruction,
+  buildRepoInitiateInstruction,
+  buildRepoReverseInstruction,
+  buildSettleAtomicInstruction,
   buildTransactionPayload,
   buildTransferAssetInstruction,
+  newEscrowId,
+  newRepoAgreementId,
+  newSettlementId,
   noritoEncodeInstructionBoxArchive,
 } from "@iroha/iroha-js";
 import { browserTransactionPayloadHashHex } from "@iroha/iroha-js/transaction-codec";
@@ -101,6 +111,7 @@ const bondPurchaseInstructions = () => [
           { source: `${XOR}#${INVESTOR}`, recipient: ISSUER, quantity: "10" },
           { source: `${XOR}#${ISSUER}`, recipient: INVESTOR, quantity: "3" },
         ],
+        escrows: [],
         expires_at_height: 500,
         metadata: {},
       },
@@ -333,7 +344,7 @@ describe("IrohaConnect transaction payload review", () => {
     );
     expect(review.instructions[1]).toMatchObject({
       title: "Open conditional escrow",
-      fields: expect.arrayContaining([{ label: "amount", value: "7" }]),
+      fields: expect.arrayContaining([{ label: "Amount", value: "7" }]),
     });
     expect(review.instructions[2]!.title).toBe("Initiate repo");
     expect(review.instructions[3]).toMatchObject({
@@ -343,6 +354,180 @@ describe("IrohaConnect transaction payload review", () => {
     expect(review.warnings).toHaveLength(1);
     expect(formatConnectTransactionReviewLines(review)).toContain(
       '   JSON: {"BrandNewInstruction":{"value":1}}',
+    );
+  });
+
+  it("natively decodes four escrow legs, lifecycle instructions, and early-repayable repo terms", () => {
+    const bond = assetDefinitionIdFromSeed({
+      domain: "wallet-review.universal",
+      name: "bond",
+    });
+    const otherInvestor = accountFor(new Uint8Array(32).fill(11));
+    const escrowId = newEscrowId("wallet-review:escrow");
+    const agreementId = newRepoAgreementId("wallet-review:repo");
+    const conditions = [{ id: "min-raise", attestor: ISSUER, equals: true }];
+    const expiresAtMs = 1_900_000_000_000;
+    const draft = buildPayload(INVESTOR, [
+      buildSettleAtomicInstruction({
+        networkId: NETWORK,
+        settlementId: newSettlementId("wallet-review:settlement"),
+        movements: [
+          {
+            sourceAssetHoldingId: `${bond}#${ISSUER}`,
+            recipient: INVESTOR,
+            quantity: "2",
+          },
+          {
+            sourceAssetHoldingId: `${bond}#${ISSUER}`,
+            recipient: otherInvestor,
+            quantity: "1",
+          },
+        ],
+        escrows: [INVESTOR, otherInvestor].flatMap((investor, index) => [
+          {
+            sourceAssetHoldingId: `${XOR}#${investor}`,
+            escrowId: newEscrowId(`wallet-review:retention:${index}`),
+            beneficiary: ISSUER,
+            amount: "10",
+            conditions,
+            expiresAtMs,
+          },
+          {
+            sourceAssetHoldingId: `${bond}#${ISSUER}`,
+            escrowId: newEscrowId(`wallet-review:allotment:${index}`),
+            beneficiary: investor,
+            amount: "1",
+            conditions,
+            expiresAtMs,
+          },
+        ]),
+        expiresAtHeight: 10_000,
+      }),
+      buildOpenConditionalEscrowInstruction({
+        escrowId,
+        assetDefinitionId: XOR,
+        beneficiary: ISSUER,
+        amount: "10",
+        conditions,
+        expiresAtMs,
+      }),
+      buildAttestEscrowConditionInstruction({
+        escrowId,
+        conditionId: "min-raise",
+        value: true,
+      }),
+      buildExpireConditionalEscrowInstruction({ escrowId }),
+      buildRepoInitiateInstruction({
+        agreementId,
+        initiator: INVESTOR,
+        counterparty: ISSUER,
+        cashLeg: { assetDefinitionId: XOR, quantity: "120" },
+        collateralLeg: {
+          assetDefinitionId: bond,
+          quantity: "2",
+          metadata: { isin: "SI-DEMO" },
+        },
+        rateBps: 325,
+        maturityTimestampMs: expiresAtMs,
+        governance: {
+          haircutBps: 4_000,
+          marginFrequencySecs: 0,
+          allowEarlyRepayment: true,
+        },
+      }),
+      buildRepoReverseInstruction({ agreementId }),
+    ]);
+    const { review } = reviewConnectTransactionPayload({
+      payloadBytes: draft.payloadBytes,
+      expectedAuthority: INVESTOR,
+      expectedNetworkId: TEST_TAIRA_NETWORK_ID,
+      networkPrefix: PREFIX,
+      decoder: realDecoder(),
+    });
+    expect(review.warnings).toEqual([]);
+    expect(review.instructions.map((entry) => entry.title)).toEqual([
+      "Atomic settlement (2 movements, 4 escrow legs)",
+      "Open conditional escrow",
+      "Attest escrow condition",
+      "Expire conditional escrow",
+      "Initiate repo",
+      "Reverse repo",
+    ]);
+    expect(
+      review.instructions[0]!.fields.filter((entry) =>
+        /^Escrow leg \d$/u.test(entry.label),
+      ),
+    ).toHaveLength(4);
+    expect(review.instructions[1]!.fields).toEqual(
+      expect.arrayContaining([
+        { label: "Escrow ID", value: escrowId },
+        { label: "Amount", value: "10" },
+      ]),
+    );
+    expect(review.instructions[2]!.fields).toEqual(
+      expect.arrayContaining([
+        { label: "Condition ID", value: "min-raise" },
+        { label: "Attested value", value: '{"kind":"Bool","value":true}' },
+      ]),
+    );
+    expect(review.instructions[3]!.fields).toEqual([
+      { label: "Escrow ID", value: escrowId },
+    ]);
+    expect(review.instructions[4]!.fields).toEqual(
+      expect.arrayContaining([
+        { label: "Cash principal", value: `120 of ${XOR}` },
+        { label: "Collateral", value: `2 of ${bond}` },
+        { label: "Collateral metadata", value: '{"isin":"SI-DEMO"}' },
+        { label: "Interest rate (basis points)", value: "325" },
+        { label: "Initiator may repay early", value: "true" },
+      ]),
+    );
+    expect(review.instructions[5]!.fields).toEqual([
+      { label: "Agreement ID", value: agreementId },
+    ]);
+  });
+
+  it("keeps unfamiliar repo fields visible and describes disabled early repayment", () => {
+    const draft = buildPayload(INVESTOR, [
+      buildMintAssetInstruction({
+        assetId: `${XOR}#${INVESTOR}`,
+        quantity: "1",
+      }),
+    ]);
+    const { review } = reviewConnectTransactionPayload({
+      payloadBytes: draft.payloadBytes,
+      expectedAuthority: INVESTOR,
+      expectedNetworkId: TEST_TAIRA_NETWORK_ID,
+      networkPrefix: PREFIX,
+      decoder: {
+        ...realDecoder(),
+        decodeInstructionArchive: () =>
+          JSON.stringify({
+            Repo: {
+              Initiate: {
+                governance: {
+                  allow_early_repayment: false,
+                  new_rule: "retained",
+                },
+                cash_leg: {
+                  quantity: "3",
+                  asset_definition_id: XOR,
+                  new_term: "retained",
+                },
+                unexpected: "visible",
+                conditions: [],
+              },
+            },
+          }),
+      },
+    });
+    expect(review.instructions[0]!.fields).toEqual(
+      expect.arrayContaining([
+        { label: "Initiator may repay early", value: "false" },
+        { label: "new_rule", value: "retained" },
+        { label: "Cash new_term", value: "retained" },
+        { label: "unexpected", value: "visible" },
+      ]),
     );
   });
 

@@ -145,8 +145,8 @@ describe("Iroha service bridge", () => {
     const citizen = { ...context, amount: "10000" };
     const proposal = {
       ...context,
-      kind: "ValidationFeePayoutLifecycle" as const,
-      payload: { payout_binding: { contract_address: "contract:payout" } },
+      kind: "ValidationFeePolicy" as const,
+      payload: { policy: { policy_version: "2" } },
     };
 
     await prepareGovernanceCitizenRegistration(citizen);

@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildIrohaSdkAliases,
   hasCurrentIrohaSdkApi,
+  readLocalIrohaSdkRoot,
   resolveCompatibleIrohaSdkRoot,
 } from "../scripts/iroha-sdk-compat.mjs";
 
@@ -128,6 +129,49 @@ describe("Iroha SDK build selection", () => {
         ]),
       ),
     );
+  });
+
+  it("selects a developer-local SDK root from .env.local, unless the environment overrides it", () => {
+    const projectRoot = makeRoot();
+    const localSdk = join(projectRoot, "local-sdk");
+    const exportedSdk = join(projectRoot, "exported-sdk");
+    writeCurrentSdk(localSdk);
+    writeCurrentSdk(exportedSdk);
+    writeFileSync(
+      join(projectRoot, ".env.local"),
+      `# local only\nOTHER=1\nIROHA_JS_SDK_ROOT="${localSdk}"\n`,
+      "utf8",
+    );
+
+    expect(readLocalIrohaSdkRoot(projectRoot)).toBe(localSdk);
+    expect(
+      resolveCompatibleIrohaSdkRoot({
+        env: {},
+        log: () => undefined,
+        projectRoot,
+      }),
+    ).toBe(localSdk);
+    expect(
+      resolveCompatibleIrohaSdkRoot({
+        env: { IROHA_JS_SDK_ROOT: exportedSdk },
+        log: () => undefined,
+        projectRoot,
+      }),
+    ).toBe(exportedSdk);
+
+    writeFileSync(
+      join(projectRoot, ".env.local"),
+      "IROHA_JS_SDK_ROOT=relative/sdk\n",
+      "utf8",
+    );
+    expect(() =>
+      resolveCompatibleIrohaSdkRoot({
+        env: {},
+        log: () => undefined,
+        projectRoot,
+      }),
+    ).toThrow(/explicit absolute path/u);
+    expect(readLocalIrohaSdkRoot(join(projectRoot, "missing"))).toBe("");
   });
 
   it("rejects symlinked SDK roots and incomplete active module sets", () => {

@@ -45,6 +45,10 @@ const REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR =
   "sorauﾛ1Pｽp8zXFQﾗｷPsFﾒｶﾑ3ｵmﾉbｼｽUｱｶヱﾚBXヱﾊCﾋﾘﾈvuKFKM346";
 const REQUIRED_VALIDATION_FEE_SECOND_PROPOSAL_OPERATOR =
   "sorauﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K";
+// Exact native structural fixtures from the reviewed SDK
+// (`javascript/iroha_js/test/fixtures/retail_fee_native_policy_v1.json` and
+// `retail_fee_native_conversion_v1.json`), which are the Rust
+// `crates/iroha_js_host/src/validation_fee_tests.rs` fixtures.
 const REQUIRED_VALIDATION_FEE_POLICY_JSON = JSON.stringify({
   schema_version: 1,
   network_id:
@@ -53,16 +57,36 @@ const REQUIRED_VALIDATION_FEE_POLICY_JSON = JSON.stringify({
   previous_policy_hash: null,
   ds_asset_id: "7FF2EKZbaWzi5QTD6hewE2voveah",
   ds_scale: 2,
+  retail_schedule: {
+    included_payments: 50,
+    overage_minor: 10,
+    maintenance_tiers: [
+      { minimum_average_balance_minor: 0, monthly_fee_minor: 100 },
+      { minimum_average_balance_minor: 50000, monthly_fee_minor: 200 },
+      { minimum_average_balance_minor: 250000, monthly_fee_minor: 300 },
+      { minimum_average_balance_minor: 1000000, monthly_fee_minor: 500 },
+      { minimum_average_balance_minor: 5000000, monthly_fee_minor: 1000 },
+    ],
+  },
+  effective_from_ms: 1793451600000,
+  notice_published_at_ms: 1790859600000,
   fee: "0.1",
-  treasury_account_id: "sorauﾛ1PaQｽGh1ｴ6pAﾜnqｸfJuｿMﾑVqﾏvQﾐﾚｼｾﾋaﾈｳﾊc1ｺﾊ1GGM2D",
+  treasury_account_id: "sorauﾛ1PZﾗidｱJJHofｸXNｵｿcﾐﾃgﾀﾔzBYﾜcﾈｦfｶxKfﾁｼ1pG871VMK",
   charging_mode: {
-    charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION",
+    charging_mode: "RETAIL_MONTHLY_ALLOWANCE",
     value: null,
   },
-  effective_from_height: "121100",
-  expires_after_height: null,
-  exemption_classes: [],
-  treasury_payout_binding: null,
+  exemption_classes: ["TREASURY_PAYOUT"],
+  reward_custody: {
+    contract_address:
+      "irohac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9gg4yxgjw",
+    treasury_account_id: "sorauﾛ1PZﾗidｱJJHofｸXNｵｿcﾐﾃgﾀﾔzBYﾜcﾈｦfｶxKfﾁｼ1pG871VMK",
+    ds_asset_id: "7FF2EKZbaWzi5QTD6hewE2voveah",
+    xor_asset_id: "5dHF5UNffENuEg9mhjYwY1jcZ1K5",
+    reward_pool_account_id:
+      "sorauﾛ1Q2ﾜﾓ4bｳEDHﾏﾇｿSyFﾘk6bX74ﾙｦRﾙﾄM2GｻSｳｴpPヰｱ6HEY4T",
+    validator_lane_id: 0,
+  },
 });
 const REQUIRED_VALIDATION_FEE_PAYOUT_BINDING_JSON = JSON.stringify({
   contract_address:
@@ -72,34 +96,46 @@ const REQUIRED_VALIDATION_FEE_PAYOUT_BINDING_JSON = JSON.stringify({
   treasury_account_id: "sorauﾛ1PZﾗidｱJJHofｸXNｵｿcﾐﾃgﾀﾔzBYﾜcﾈｦfｶxKfﾁｼ1pG871VMK",
   ds_asset_id: "7FF2EKZbaWzi5QTD6hewE2voveah",
   xor_asset_id: "5dHF5UNffENuEg9mhjYwY1jcZ1K5",
+  pool_contract_address:
+    "irohac1qyqqqqqqqqqqqqqlzk3skqs8v0haerev9p09yp3ml26zrnctdwz5u",
+  pool_code_hash: "36".repeat(32),
   pool_vault_account_id:
-    "sorauﾛ1PTYｷEヱｿsYbe7ｾｵﾆﾐﾓﾕiﾋｵYヱfﾍuGFTmｺiSaHxgﾅｼ3BYUD1",
-  batch_ds: "10",
-  min_xor_out: "4",
-  max_xor_out: "100",
-  recipients: [
-    {
-      account_id: "sorauﾛ1Q2ﾜﾓ4bｳEDHﾏﾇｿSyFﾘk6bX74ﾙｦRﾙﾄM2GｻSｳｴpPヰｱ6HEY4T",
-      share: "0.25",
-    },
-    {
-      account_id: "sorauﾛ1Pﾑｺg4yﾁJ6ﾙﾀXZﾉSj3iｦﾚSﾖqFﾕdndｴ5ﾈﾓaｾSfﾋ9ｶ1TN5EN",
-      share: "0.25",
-    },
-    {
-      account_id: "sorauﾛ1PDeﾔ2ｾaﾐ6ﾑﾘjﾀgﾚﾄﾌ6ｾyｸC7ﾛppｸJﾐJヱLｺoｳﾚi7SR26GU2",
-      share: "0.25",
-    },
-    {
-      account_id: "sorauﾛ1PaQxﾄﾇRCﾛPﾑﾅLfｹiﾒｶHMﾖ9iPLw4ﾖPｦXKﾚﾁｦヰCv13TKYJL",
-      share: "0.25",
-    },
+    "sorauﾛ1NﾔBnヱ5ﾈﾘｦﾇｦTｻﾂVUﾓヱｺYﾏ3bｲ1ｻaﾌTtﾎﾉtｹZｱﾜo4VHCA4Q",
+  reward_pool_account_id:
+    "sorauﾛ1Q2ﾜﾓ4bｳEDHﾏﾇｿSyFﾘk6bX74ﾙｦRﾙﾄM2GｻSｳｴpPヰｱ6HEY4T",
+  reference_feed_id: ["xor_per_sbd"],
+  reference_feed_config_version: 1,
+  reference_provider_accounts: [
+    "sorauﾛ1NﾛfﾋﾅｴﾋｦpF6ﾃnｹ12YﾎﾓhEnﾉﾊzﾇDna3ﾘﾌﾓvyyfzﾈJNNQCB",
+    "sorauﾛ1PｹｵvｴｦsBBSi4ｴV8hKﾂﾐssqｦｸ5HsﾈetyﾑGｻﾐ894zJG3P54",
+    "sorauﾛ1NｷwkVｵﾄｼｻAm42LAﾎ6ﾘGpﾋヱ5ﾏｵﾁﾘﾓmKTヰﾃヰcｽFZcB7JLP1",
+    "sorauﾛ1NﾖWﾚﾉﾋﾐﾂﾉﾉoPMRgｷ5s1ﾀfｲs8ﾀPrｽDｱ7nﾑJヱﾌﾍCLK95DJD",
+    "sorauﾛ1NﾒEﾜM3ﾏHkhDﾎヰﾀsY4sｼCｹﾌ6ｼvNSﾖｽﾁｼ22ｦSヰyﾐﾜPQR463",
   ],
+  max_sbd_per_attempt_minor: 1000,
+  max_sbd_per_day_minor: 100000,
+  min_interval_ms: 60000,
+  max_source_age_ms: 300000,
+  max_slippage_bps: 100,
+  validator_lane_id: 0,
+  min_reward_claim_xor_minor: 1,
 });
+// Expected native outputs for the fixtures above at the reviewed SDK commit.
+// The Rust tests (`crates/iroha_js_host/src/validation_fee_tests.rs`) pin no
+// hex literals: they assert that the first-operator policy and payout outputs
+// equal `ProposalKind::fingerprint()` and that the second-operator policy
+// output differs; no Rust test covers the second-operator payout value. All
+// four values were cross-checked during review by recomputing Blake2b-256 over
+// the governance-fingerprint domain and Norito proposal bytes assembled in
+// JavaScript from the Rust layouts, without the native encoder.
 const REQUIRED_VALIDATION_FEE_POLICY_FINGERPRINT_HEX =
-  "4742b1f274928767564c6effa414e640e6f635874d74684b06b95414c5afa16e";
+  "7ea3f657b77099f869d1aae9a47845d66094154e26e664c971434722cb0b31c4";
+const REQUIRED_VALIDATION_FEE_SECOND_OPERATOR_POLICY_FINGERPRINT_HEX =
+  "e6fae2d16761eb221142b5e236ad09d31e1bdd1c4245538f08a932fb8136f7f1";
 const REQUIRED_VALIDATION_FEE_PAYOUT_FINGERPRINT_HEX =
-  "8fd84f6599e22db4da15f7152a914dc0091dd73a7906d5981cce37d485191c25";
+  "8e28c5de8ce8928696065b15e09073b9bbebbaa30e690d4c6bd2ca75b9a3c1b4";
+const REQUIRED_VALIDATION_FEE_SECOND_OPERATOR_PAYOUT_FINGERPRINT_HEX =
+  "8ff01a1ac68e79c64901830452ba2ff4185cf4a41b140704b8101e1b747d2bcd";
 
 const trimString = (value: unknown): string => String(value ?? "").trim();
 const hasOwn = (value: object, key: string): boolean =>
@@ -177,6 +213,54 @@ const defaultLoadNativeModule: LoadNativeModule = (
   return require(nativeModulePath);
 };
 
+const isExactFingerprint = (value: unknown, expectedHex: string): boolean =>
+  Buffer.isBuffer(value) &&
+  value.length === 32 &&
+  value.equals(Buffer.from(expectedHex, "hex"));
+
+/**
+ * Require the exact first-operator vector twice (determinism) and the exact,
+ * different second-operator vector (operator binding). The native helpers
+ * take exactly `(proposalOperator, json)`.
+ */
+const matchesOperatorBoundKnownAnswers = (
+  computeFingerprint: (proposalOperator: string, json: string) => unknown,
+  json: string,
+  expectedHex: string,
+  expectedSecondOperatorHex: string,
+): boolean => {
+  const first = computeFingerprint(
+    REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR,
+    json,
+  );
+  const repeated = computeFingerprint(
+    REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR,
+    json,
+  );
+  const secondOperator = computeFingerprint(
+    REQUIRED_VALIDATION_FEE_SECOND_PROPOSAL_OPERATOR,
+    json,
+  );
+  return (
+    expectedHex !== expectedSecondOperatorHex &&
+    isExactFingerprint(first, expectedHex) &&
+    isExactFingerprint(repeated, expectedHex) &&
+    isExactFingerprint(secondOperator, expectedSecondOperatorHex)
+  );
+};
+
+const rejectsEmptyProposal = (
+  computeFingerprint: (proposalOperator: string, json: string) => unknown,
+  expectedMessage: string,
+): boolean => {
+  try {
+    computeFingerprint(REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR, "{}");
+    return false;
+  } catch (error) {
+    return String(error).includes(expectedMessage);
+  }
+};
+
 export const hasRequiredIrohaJsNativeExports = (
   nativeModule: unknown,
 ): nativeModule is NativeModuleLike => {
@@ -212,96 +296,38 @@ export const hasRequiredIrohaJsNativeExports = (
       typedNativeModule.validationFeePolicyProposalFingerprintV1 as (
         proposalOperator: string,
         policyJson: string,
-        payoutLifecycleProposalId: null,
       ) => unknown;
-    const policyFingerprint = computePolicyFingerprint(
-      REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR,
-      REQUIRED_VALIDATION_FEE_POLICY_JSON,
-      null,
-    );
-    const repeatedPolicyFingerprint = computePolicyFingerprint(
-      REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR,
-      REQUIRED_VALIDATION_FEE_POLICY_JSON,
-      null,
-    );
-    const secondOperatorFingerprint = computePolicyFingerprint(
-      REQUIRED_VALIDATION_FEE_SECOND_PROPOSAL_OPERATOR,
-      REQUIRED_VALIDATION_FEE_POLICY_JSON,
-      null,
-    );
-    const requiredPolicyFingerprint = Buffer.from(
-      REQUIRED_VALIDATION_FEE_POLICY_FINGERPRINT_HEX,
-      "hex",
-    );
-    if (
-      !Buffer.isBuffer(policyFingerprint) ||
-      policyFingerprint.length !== 32 ||
-      !Buffer.isBuffer(repeatedPolicyFingerprint) ||
-      repeatedPolicyFingerprint.length !== 32 ||
-      !policyFingerprint.equals(requiredPolicyFingerprint) ||
-      !policyFingerprint.equals(repeatedPolicyFingerprint) ||
-      !Buffer.isBuffer(secondOperatorFingerprint) ||
-      secondOperatorFingerprint.length !== 32 ||
-      policyFingerprint.equals(secondOperatorFingerprint)
-    ) {
-      return false;
-    }
-
     const computePayoutFingerprint =
       typedNativeModule.validationFeePayoutLifecycleProposalFingerprintV1 as (
         proposalOperator: string,
         payoutBindingJson: string,
       ) => unknown;
-    const payoutFingerprint = computePayoutFingerprint(
-      REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR,
-      REQUIRED_VALIDATION_FEE_PAYOUT_BINDING_JSON,
-    );
-    const repeatedPayoutFingerprint = computePayoutFingerprint(
-      REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR,
-      REQUIRED_VALIDATION_FEE_PAYOUT_BINDING_JSON,
-    );
-    const secondOperatorPayoutFingerprint = computePayoutFingerprint(
-      REQUIRED_VALIDATION_FEE_SECOND_PROPOSAL_OPERATOR,
-      REQUIRED_VALIDATION_FEE_PAYOUT_BINDING_JSON,
-    );
-    const requiredPayoutFingerprint = Buffer.from(
-      REQUIRED_VALIDATION_FEE_PAYOUT_FINGERPRINT_HEX,
-      "hex",
-    );
     if (
-      !Buffer.isBuffer(payoutFingerprint) ||
-      payoutFingerprint.length !== 32 ||
-      !Buffer.isBuffer(repeatedPayoutFingerprint) ||
-      repeatedPayoutFingerprint.length !== 32 ||
-      !payoutFingerprint.equals(requiredPayoutFingerprint) ||
-      !payoutFingerprint.equals(repeatedPayoutFingerprint) ||
-      !Buffer.isBuffer(secondOperatorPayoutFingerprint) ||
-      secondOperatorPayoutFingerprint.length !== 32 ||
-      payoutFingerprint.equals(secondOperatorPayoutFingerprint)
+      !matchesOperatorBoundKnownAnswers(
+        computePolicyFingerprint,
+        REQUIRED_VALIDATION_FEE_POLICY_JSON,
+        REQUIRED_VALIDATION_FEE_POLICY_FINGERPRINT_HEX,
+        REQUIRED_VALIDATION_FEE_SECOND_OPERATOR_POLICY_FINGERPRINT_HEX,
+      ) ||
+      !matchesOperatorBoundKnownAnswers(
+        computePayoutFingerprint,
+        REQUIRED_VALIDATION_FEE_PAYOUT_BINDING_JSON,
+        REQUIRED_VALIDATION_FEE_PAYOUT_FINGERPRINT_HEX,
+        REQUIRED_VALIDATION_FEE_SECOND_OPERATOR_PAYOUT_FINGERPRINT_HEX,
+      )
     ) {
       return false;
     }
-
-    let rejectedInvalidPolicy = false;
-    try {
-      computePolicyFingerprint(
-        REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR,
-        "{}",
-        null,
-      );
-    } catch (error) {
-      rejectedInvalidPolicy = String(error).includes(
+    return (
+      rejectsEmptyProposal(
+        computePolicyFingerprint,
         "validation-fee policy must contain exactly",
-      );
-    }
-    if (!rejectedInvalidPolicy) return false;
-
-    try {
-      computePayoutFingerprint(REQUIRED_VALIDATION_FEE_PROPOSAL_OPERATOR, "{}");
-      return false;
-    } catch (error) {
-      return String(error).includes("payout binding must contain exactly");
-    }
+      ) &&
+      rejectsEmptyProposal(
+        computePayoutFingerprint,
+        "payout binding must contain exactly",
+      )
+    );
   } catch {
     return false;
   }

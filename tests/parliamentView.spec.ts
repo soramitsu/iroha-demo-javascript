@@ -4,33 +4,26 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import GovernanceProposalDetail from "@/components/governance/GovernanceProposalDetail.vue";
-import type { GovernanceProposalDetail as ProposalDetail } from "@/governance/model";
+import {
+  normalizeValidationFeePayoutBinding,
+  normalizeValidationFeePolicy,
+  type GovernanceProposalDetail as ProposalDetail,
+} from "@/governance/model";
 import { TEST_TAIRA_NETWORK_ID as TAIRA_NETWORK_ID } from "./helpers/networkIdentityFixture";
+import {
+  PROPOSAL_OPERATOR,
+  REWARD_POOL_ACCOUNT_ID,
+  validationFeePayoutBinding,
+  validationFeePolicy,
+} from "./helpers/validationFeeFixtures";
 
 const source = (path: string) =>
   readFileSync(resolve(process.cwd(), path), "utf8");
 
-const payoutBinding = {
-  contract_address: "ivm:payout-contract",
-  code_hash: "a".repeat(64),
-  entrypoint: "autonomous_validation_fee_tick" as const,
-  treasury_account_id: "testuTreasury",
-  ds_asset_id: "7ZepsJTHCVLKsrFFNZGSRGZgvBhv" as const,
-  xor_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-  pool_vault_account_id: "testuPoolVault",
-  batch_ds: "10" as const,
-  min_xor_out: "4" as const,
-  max_xor_out: "100" as const,
-  recipients: [1, 2, 3, 4].map((index) => ({
-    account_id: `testuValidator${index}`,
-    share: "0.25" as const,
-  })),
-};
-
 const detail: ProposalDetail = {
   summary: {
     proposalId: `0x${"1".repeat(64)}`,
-    proposer: "testuOperator",
+    proposer: PROPOSAL_OPERATOR,
     createdHeight: 100,
     status: "Proposed",
     kindType: "ValidationFeePolicy",
@@ -38,27 +31,28 @@ const detail: ProposalDetail = {
   },
   kind: {
     type: "ValidationFeePolicy",
-    proposalOperator: "testuOperator",
-    payoutLifecycleProposalId: "2".repeat(64),
-    policy: {
-      schema_version: 1,
-      network_id: TAIRA_NETWORK_ID,
-      policy_version: "1",
-      previous_policy_hash: null,
-      ds_asset_id: "7ZepsJTHCVLKsrFFNZGSRGZgvBhv",
-      ds_scale: 2,
-      fee: "0.1",
-      treasury_account_id: "testuTreasury",
-      charging_mode: {
-        charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION",
-        value: null,
-      },
-      effective_from_height: "121560",
-      expires_after_height: null,
-      exemption_classes: ["TREASURY_PAYOUT"],
-      treasury_payout_binding: payoutBinding,
-    },
+    proposalOperator: PROPOSAL_OPERATOR,
+    policy: normalizeValidationFeePolicy(validationFeePolicy()),
     raw: { kind: "ValidationFeePolicy", payload: {} },
+  },
+  currentHeight: "120",
+  governanceCertificate: null,
+  raw: {},
+};
+
+const lifecycleDetail: ProposalDetail = {
+  summary: {
+    ...detail.summary,
+    kindType: "ValidationFeePayoutLifecycle",
+    kindLabelKey: "Validation fee payout lifecycle",
+  },
+  kind: {
+    type: "ValidationFeePayoutLifecycle",
+    proposalOperator: PROPOSAL_OPERATOR,
+    payoutBinding: normalizeValidationFeePayoutBinding(
+      validationFeePayoutBinding(),
+    ),
+    raw: { kind: "ValidationFeePayoutLifecycle", payload: {} },
   },
   currentHeight: "120",
   governanceCertificate: null,
@@ -73,13 +67,35 @@ describe("first-release Parliament view", () => {
       props: { proposal: detail, loading: false, error: "" },
     });
 
-    expect(wrapper.text()).toContain("Mandatory private Parliament");
-    expect(wrapper.text()).toContain("testuOperator");
-    expect(wrapper.text()).toContain(TAIRA_NETWORK_ID);
-    expect(wrapper.text()).toContain("No Parliament certificate yet");
-    expect(wrapper.text()).not.toContain("PLAIN");
-    expect(wrapper.text()).not.toContain("Referendum");
-    expect(wrapper.text()).not.toContain("Seven-body");
+    const text = wrapper.text();
+    expect(text).toContain("Mandatory private Parliament");
+    expect(text).toContain(PROPOSAL_OPERATOR);
+    expect(text).toContain(TAIRA_NETWORK_ID);
+    expect(text).toContain("0.1 SBD");
+    expect(text).toContain("Institutional payment fee");
+    expect(text).toContain("2026-11-01 00:00 Honiara time");
+    expect(text).toContain("2026-10-02 00:00 Honiara time");
+    expect(text).toContain("From 5000000: 1000 per month");
+    expect(text).toContain(REWARD_POOL_ACCOUNT_ID);
+    expect(text).toContain("No Parliament certificate yet");
+    expect(text).not.toContain("Effective height");
+    expect(text).not.toContain("Payout lifecycle proposal");
+    expect(text).not.toContain("PLAIN");
+    expect(text).not.toContain("Referendum");
+    expect(text).not.toContain("Seven-body");
+  });
+
+  it("renders the typed conversion and reward binding facts", () => {
+    const wrapper = mount(GovernanceProposalDetail, {
+      props: { proposal: lifecycleDetail, loading: false, error: "" },
+    });
+    const text = wrapper.text();
+    expect(text).toContain("xor_per_sbd");
+    expect(text).toContain("Reference providers");
+    expect(text).toContain(REWARD_POOL_ACCOUNT_ID);
+    expect(text).toContain('"pool_contract_address"');
+    expect(text).not.toContain("recipients");
+    expect(text).not.toContain("batch_ds");
   });
 
   it("keeps every retired public workflow absent from production governance UI", () => {
@@ -106,6 +122,16 @@ describe("first-release Parliament view", () => {
       "validationFeeWindowUpper",
       "chain_id",
       "genesis_hash",
+      "effective_from_height",
+      "expires_after_height",
+      "treasury_payout_binding",
+      "payout_lifecycle_proposal_id",
+      "payoutLifecycleProposalId",
+      "PER_QUALIFYING_TRANSFER_INSTRUCTION",
+      "batch_ds",
+      "min_xor_out",
+      "max_xor_out",
+      "120,960",
     ]) {
       expect(production).not.toContain(retired);
     }
@@ -123,5 +149,39 @@ describe("first-release Parliament view", () => {
     );
     expect(inspector).toContain("privateBallotProtocol");
     expect(inspector).toContain("targetBodySizes");
+  });
+
+  it("keeps the two-column identity grid and drops retired composer styles", () => {
+    const styleRules = (path: string) => {
+      const style = source(path).split("<style scoped>")[1] ?? "";
+      return [...style.matchAll(/([^{}]+)\{([^{}]*)\}/gu)].map((match) => ({
+        selectors: match[1]
+          .split(",")
+          .map((selector) => selector.trim())
+          .filter(Boolean),
+        body: match[2],
+      }));
+    };
+    const detailRules = styleRules(
+      "src/components/governance/GovernanceProposalDetail.vue",
+    );
+    const rulesFor = (selector: string) =>
+      detailRules
+        .filter((rule) => rule.selectors.includes(selector))
+        .map((rule) => rule.body)
+        .join("\n");
+    for (const grid of [".identity-grid", ".payload-grid"]) {
+      expect(rulesFor(grid)).toMatch(
+        /grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/u,
+      );
+      expect(rulesFor(grid)).toMatch(/gap:\s*16px 24px/u);
+    }
+    expect(rulesFor(".tier-list")).toMatch(/gap:\s*2px/u);
+    expect(rulesFor(".tier-list")).not.toMatch(/grid-template-columns/u);
+
+    const composer = source("src/components/governance/GovernanceComposer.vue");
+    expect(composer).not.toMatch(/<textarea|payload-editor|textarea\s*[,{]/u);
+    expect(composer).toContain("Institutional payment fee (SBD)");
+    expect(composer).not.toContain("Per-payment fee");
   });
 });

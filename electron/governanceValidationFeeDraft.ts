@@ -1,5 +1,9 @@
-import { Buffer } from "node:buffer";
-
+import {
+  normalizeValidationFeePolicy,
+  type ValidationFeePolicyPayload,
+} from "../src/governance/model";
+import { normalizeCanonicalAccountIdLiteral } from "./accountAddress";
+import { normalizeFirstReleaseAssetDefinitionId } from "./assetDefinitionId";
 import { requireFirstReleaseJsonObject } from "./firstReleaseResourceLimits";
 
 export const VALIDATION_FEE_POLICY_DRAFT_PATH =
@@ -8,65 +12,14 @@ export const VALIDATION_FEE_POLICY_DRAFT_WIRE_ID =
   "iroha.instruction.v1::governance::ProposeValidationFeePolicy";
 export const VALIDATION_FEE_POLICY_DRAFT_DECODED_VARIANT =
   "ProposeValidationFeePolicy";
-export const VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID =
-  "iroha.instruction.v1::governance::ProposeValidationFeePayoutLifecycle";
-export const VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_DECODED_VARIANT =
-  "ProposeValidationFeePayoutLifecycle";
 
-const MAX_U64 = 0xffff_ffff_ffff_ffffn;
-const NATIVE_SBD_ASSET_DEFINITION_ID = "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
 const LOWER_HEX_32 = /^[0-9a-f]{64}$/u;
 const NETWORK_ID = /^hash:[0-9A-F]{64}#[0-9A-F]{4}$/u;
 const INSTRUCTION_PAYLOAD_MAX_HEX_CHARACTERS = 8 * 1024 * 1024;
 
 type PlainRecord = Record<string, unknown>;
 
-export type ValidationFeeFixedBytes32 = string;
-
-export interface ValidationFeePayoutRecipientWire extends PlainRecord {
-  account_id: string;
-  share: "0.25";
-}
-
-export interface ValidationFeePayoutBindingWire extends PlainRecord {
-  contract_address: string;
-  code_hash: ValidationFeeFixedBytes32;
-  entrypoint: "autonomous_validation_fee_tick";
-  treasury_account_id: string;
-  ds_asset_id: typeof NATIVE_SBD_ASSET_DEFINITION_ID;
-  xor_asset_id: string;
-  pool_vault_account_id: string;
-  batch_ds: "10";
-  min_xor_out: "4";
-  max_xor_out: "100";
-  recipients: ValidationFeePayoutRecipientWire[];
-}
-
-export type ValidationFeeChargingModeWire =
-  | {
-      charging_mode: "DISABLED";
-      value: null;
-    }
-  | {
-      charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION";
-      value: null;
-    };
-
-export interface ValidationFeePolicyWire extends PlainRecord {
-  schema_version: 1;
-  network_id: string;
-  policy_version: string;
-  previous_policy_hash: ValidationFeeFixedBytes32 | null;
-  ds_asset_id: typeof NATIVE_SBD_ASSET_DEFINITION_ID;
-  ds_scale: 2;
-  fee: "0" | "0.1";
-  treasury_account_id: string;
-  charging_mode: ValidationFeeChargingModeWire;
-  effective_from_height: string;
-  expires_after_height: string | null;
-  exemption_classes: [] | ["TREASURY_PAYOUT"];
-  treasury_payout_binding: ValidationFeePayoutBindingWire | null;
-}
+export type ValidationFeePolicyWire = ValidationFeePolicyPayload & PlainRecord;
 
 export interface ValidationFeePolicyDraftRequest extends PlainRecord {
   version: 1;
@@ -75,30 +28,12 @@ export interface ValidationFeePolicyDraftRequest extends PlainRecord {
     kind: "POLICY";
     payload: {
       policy: ValidationFeePolicyWire;
-      payout_lifecycle_proposal_id: ValidationFeeFixedBytes32 | null;
-    };
-  };
-}
-
-export interface ValidationFeePayoutLifecycleDraftRequest extends PlainRecord {
-  version: 1;
-  proposal_operator: string;
-  proposal: {
-    kind: "PAYOUT_LIFECYCLE";
-    payload: {
-      payout_binding: ValidationFeePayoutBindingWire;
     };
   };
 }
 
 export interface ValidationFeePolicyInstructionDraft extends PlainRecord {
   wire_id: typeof VALIDATION_FEE_POLICY_DRAFT_WIRE_ID;
-  payload_hex: string;
-}
-
-export interface ValidationFeePayoutLifecycleInstructionDraft
-  extends PlainRecord {
-  wire_id: typeof VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID;
   payload_hex: string;
 }
 
@@ -156,7 +91,7 @@ const requiredText = (value: unknown, label: string): string => {
     typeof value !== "string" ||
     value.length === 0 ||
     value.trim() !== value ||
-    Buffer.byteLength(value, "utf8") > 512 ||
+    new TextEncoder().encode(value).byteLength > 512 ||
     containsWhitespaceOrControl(value)
   ) {
     throw new TypeError(`${label} must be bounded canonical non-empty text.`);
@@ -174,406 +109,128 @@ const canonicalNetworkId = (value: unknown, label: string): string => {
   return networkId;
 };
 
-const canonicalU64 = (
-  value: unknown,
-  label: string,
-  options: Readonly<{ positive?: boolean }> = {},
-): string => {
-  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value)) {
+const requireNetworkPrefix = (value: unknown): number => {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 0 ||
+    value > 0x3fff
+  ) {
     throw new TypeError(
-      `${label} must be a canonical unsigned decimal string.`,
+      "validation-fee network prefix must be an integer between 0 and 16383.",
     );
-  }
-  const parsed = BigInt(value);
-  if (parsed > MAX_U64 || (options.positive === true && parsed === 0n)) {
-    throw new TypeError(`${label} is outside the unsigned 64-bit range.`);
   }
   return value;
 };
 
-const fixedBytes32 = (
-  value: unknown,
+/**
+ * Every account literal must already be the SDK-canonical I105 rendering for
+ * the active prefix; the native fingerprint parses all accounts with the
+ * operator's discriminant and rejects any other prefix.
+ */
+const requireCanonicalAccount = (
+  value: string,
   label: string,
-  options: Readonly<{ allowZero?: boolean }> = {},
-): ValidationFeeFixedBytes32 => {
-  if (typeof value !== "string" || !LOWER_HEX_32.test(value)) {
+  networkPrefix: number,
+): void => {
+  let canonical: string;
+  try {
+    canonical = normalizeCanonicalAccountIdLiteral(value, label, networkPrefix);
+  } catch {
     throw new TypeError(
-      `${label} must be exactly 64 lowercase hexadecimal digits.`,
+      `${label} must be one canonical I105 account for the active network.`,
     );
   }
-  if (options.allowZero !== true && /^0{64}$/u.test(value)) {
-    throw new TypeError(`${label} must be non-zero.`);
+  if (canonical !== value) {
+    throw new TypeError(
+      `${label} must be one canonical I105 account for the active network.`,
+    );
   }
-  return value;
 };
 
-const exactChargingMode = (value: unknown): ValidationFeeChargingModeWire => {
-  const mode = record(value, "validation-fee policy.charging_mode");
-  exactKeys(
-    mode,
-    ["charging_mode", "value"],
-    "validation-fee policy.charging_mode",
-  );
-  if (
-    (mode.charging_mode !== "DISABLED" &&
-      mode.charging_mode !== "PER_QUALIFYING_TRANSFER_INSTRUCTION") ||
-    mode.value !== null
-  ) {
+const requireCanonicalAsset = (value: string, label: string): void => {
+  try {
+    normalizeFirstReleaseAssetDefinitionId(value, label);
+  } catch {
     throw new TypeError(
-      "validation-fee policy.charging_mode is outside the closed native V1 enum.",
+      `${label} must be one canonical Base58 asset definition ID.`,
     );
   }
-  return {
-    charging_mode: mode.charging_mode,
-    value: null,
-  };
-};
-
-const normalizeRecipients = (
-  value: unknown,
-  treasuryAccountId: string,
-  poolVaultAccountId: string,
-): ValidationFeePayoutRecipientWire[] => {
-  if (!Array.isArray(value) || value.length !== 4) {
-    throw new TypeError(
-      "validation-fee payout binding.recipients must contain exactly four entries.",
-    );
-  }
-  const recipients = value.map((entry, index) => {
-    const recipient = record(
-      entry,
-      `validation-fee payout binding.recipients[${index}]`,
-    );
-    exactKeys(
-      recipient,
-      ["account_id", "share"],
-      `validation-fee payout binding.recipients[${index}]`,
-    );
-    const accountId = requiredText(
-      recipient.account_id,
-      `validation-fee payout binding.recipients[${index}].account_id`,
-    );
-    if (recipient.share !== "0.25") {
-      throw new TypeError(
-        "validation-fee payout recipients must each receive exactly 0.25.",
-      );
-    }
-    return { account_id: accountId, share: "0.25" as const };
-  });
-  const accounts = recipients.map(({ account_id }) => account_id);
-  if (
-    new Set(accounts).size !== accounts.length ||
-    accounts.includes(treasuryAccountId) ||
-    accounts.includes(poolVaultAccountId)
-  ) {
-    throw new TypeError(
-      "validation-fee payout recipients must be unique and differ from treasury and pool vault.",
-    );
-  }
-  return recipients;
-};
-
-const normalizePayoutBinding = (
-  value: unknown,
-): ValidationFeePayoutBindingWire => {
-  const binding = record(value, "validation-fee payout binding");
-  exactKeys(
-    binding,
-    [
-      "batch_ds",
-      "code_hash",
-      "contract_address",
-      "ds_asset_id",
-      "entrypoint",
-      "max_xor_out",
-      "min_xor_out",
-      "pool_vault_account_id",
-      "recipients",
-      "treasury_account_id",
-      "xor_asset_id",
-    ],
-    "validation-fee payout binding",
-  );
-  const treasuryAccountId = requiredText(
-    binding.treasury_account_id,
-    "validation-fee payout binding.treasury_account_id",
-  );
-  const poolVaultAccountId = requiredText(
-    binding.pool_vault_account_id,
-    "validation-fee payout binding.pool_vault_account_id",
-  );
-  const xorAssetId = requiredText(
-    binding.xor_asset_id,
-    "validation-fee payout binding.xor_asset_id",
-  );
-  if (
-    binding.ds_asset_id !== NATIVE_SBD_ASSET_DEFINITION_ID ||
-    binding.entrypoint !== "autonomous_validation_fee_tick" ||
-    binding.batch_ds !== "10" ||
-    binding.min_xor_out !== "4" ||
-    binding.max_xor_out !== "100"
-  ) {
-    throw new TypeError(
-      "validation-fee payout binding differs from the exact first-release DS payout contract.",
-    );
-  }
-  if (
-    treasuryAccountId === poolVaultAccountId ||
-    NATIVE_SBD_ASSET_DEFINITION_ID === xorAssetId
-  ) {
-    throw new TypeError(
-      "validation-fee payout treasury, pool vault, and asset definitions must be distinct.",
-    );
-  }
-  return {
-    contract_address: requiredText(
-      binding.contract_address,
-      "validation-fee payout binding.contract_address",
-    ),
-    code_hash: fixedBytes32(
-      binding.code_hash,
-      "validation-fee payout binding.code_hash",
-    ),
-    entrypoint: "autonomous_validation_fee_tick",
-    treasury_account_id: treasuryAccountId,
-    ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,
-    xor_asset_id: xorAssetId,
-    pool_vault_account_id: poolVaultAccountId,
-    batch_ds: "10",
-    min_xor_out: "4",
-    max_xor_out: "100",
-    recipients: normalizeRecipients(
-      binding.recipients,
-      treasuryAccountId,
-      poolVaultAccountId,
-    ),
-  };
 };
 
 const normalizePolicy = (
   value: unknown,
   expectedNetworkId: string,
+  networkPrefix: number,
 ): ValidationFeePolicyWire => {
-  const policy = record(value, "validation-fee policy");
-  exactKeys(
-    policy,
-    [
-      "charging_mode",
-      "ds_asset_id",
-      "ds_scale",
-      "effective_from_height",
-      "exemption_classes",
-      "expires_after_height",
-      "fee",
-      "network_id",
-      "policy_version",
-      "previous_policy_hash",
-      "schema_version",
-      "treasury_account_id",
-      "treasury_payout_binding",
-    ],
-    "validation-fee policy",
-  );
-  if (policy.schema_version !== 1 || policy.ds_scale !== 2) {
+  const policy = normalizeValidationFeePolicy(value);
+  const label = "validation-fee policy";
+  if (policy.network_id !== expectedNetworkId) {
     throw new TypeError(
-      "validation-fee policy must use schema_version 1 and ds_scale 2.",
+      `${label}.network_id differs from the active exact network.`,
     );
   }
-  const networkId = canonicalNetworkId(
-    policy.network_id,
-    "validation-fee policy.network_id",
-  );
-  if (networkId !== expectedNetworkId) {
-    throw new TypeError(
-      "validation-fee policy.network_id differs from the active exact network.",
-    );
-  }
-  if (policy.ds_asset_id !== NATIVE_SBD_ASSET_DEFINITION_ID) {
-    throw new TypeError(
-      `validation-fee policy.ds_asset_id must be ${NATIVE_SBD_ASSET_DEFINITION_ID}.`,
-    );
-  }
-  const policyVersion = canonicalU64(
-    policy.policy_version,
-    "validation-fee policy.policy_version",
-    { positive: true },
-  );
-  const previousPolicyHash =
-    policy.previous_policy_hash === null
-      ? null
-      : fixedBytes32(
-          policy.previous_policy_hash,
-          "validation-fee policy.previous_policy_hash",
-        );
-  if (
-    (policyVersion === "1" && previousPolicyHash !== null) ||
-    (policyVersion !== "1" && previousPolicyHash === null)
-  ) {
-    throw new TypeError(
-      "validation-fee policy previous_policy_hash does not match policy_version.",
-    );
-  }
-  const effectiveFromHeight = canonicalU64(
-    policy.effective_from_height,
-    "validation-fee policy.effective_from_height",
-  );
-  const expiresAfterHeight =
-    policy.expires_after_height === null
-      ? null
-      : canonicalU64(
-          policy.expires_after_height,
-          "validation-fee policy.expires_after_height",
-        );
-  if (
-    expiresAfterHeight !== null &&
-    BigInt(expiresAfterHeight) <= BigInt(effectiveFromHeight)
-  ) {
-    throw new TypeError(
-      "validation-fee policy expiry must be after its effective height.",
-    );
-  }
-  const chargingMode = exactChargingMode(policy.charging_mode);
-  const payoutBinding =
-    policy.treasury_payout_binding === null
-      ? null
-      : normalizePayoutBinding(policy.treasury_payout_binding);
-  const exemptions = policy.exemption_classes;
-  if (
-    !Array.isArray(exemptions) ||
-    !(
-      exemptions.length === 0 ||
-      (exemptions.length === 1 && exemptions[0] === "TREASURY_PAYOUT")
-    )
-  ) {
-    throw new TypeError(
-      "validation-fee policy.exemption_classes is outside the closed native V1 set.",
-    );
-  }
-  const treasuryAccountId = requiredText(
+  requireCanonicalAccount(
     policy.treasury_account_id,
-    "validation-fee policy.treasury_account_id",
+    `${label}.treasury_account_id`,
+    networkPrefix,
   );
-  const enabled =
-    chargingMode.charging_mode === "PER_QUALIFYING_TRANSFER_INSTRUCTION";
-  if (
-    (enabled && policy.fee !== "0.1") ||
-    (!enabled && policy.fee !== "0") ||
-    (!enabled && (exemptions.length !== 0 || payoutBinding !== null)) ||
-    (payoutBinding === null && exemptions.length !== 0) ||
-    (payoutBinding !== null &&
-      (exemptions.length !== 1 ||
-        payoutBinding.treasury_account_id !== treasuryAccountId))
-  ) {
-    throw new TypeError(
-      "validation-fee policy mode, amount, exemptions, and payout binding are inconsistent.",
-    );
-  }
-  return {
-    schema_version: 1,
-    network_id: networkId,
-    policy_version: policyVersion,
-    previous_policy_hash: previousPolicyHash,
-    ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,
-    ds_scale: 2,
-    fee: policy.fee as "0" | "0.1",
-    treasury_account_id: treasuryAccountId,
-    charging_mode: chargingMode,
-    effective_from_height: effectiveFromHeight,
-    expires_after_height: expiresAfterHeight,
-    exemption_classes: exemptions.length === 0 ? [] : ["TREASURY_PAYOUT"],
-    treasury_payout_binding: payoutBinding,
-  };
+  requireCanonicalAccount(
+    policy.reward_custody.reward_pool_account_id,
+    `${label}.reward_custody.reward_pool_account_id`,
+    networkPrefix,
+  );
+  requireCanonicalAsset(
+    policy.reward_custody.xor_asset_id,
+    `${label}.reward_custody.xor_asset_id`,
+  );
+  return policy as ValidationFeePolicyWire;
 };
 
 const draftContext = (
   proposalOperatorValue: unknown,
-  expectedNetworkIdValue?: unknown,
-): { proposalOperator: string; expectedNetworkId: string | null } => ({
-  proposalOperator: requiredText(
+  networkPrefixValue: unknown,
+): { proposalOperator: string; networkPrefix: number } => {
+  const networkPrefix = requireNetworkPrefix(networkPrefixValue);
+  const proposalOperator = requiredText(
     proposalOperatorValue,
     "validation-fee proposal_operator",
-  ),
-  expectedNetworkId:
-    expectedNetworkIdValue === undefined
-      ? null
-      : canonicalNetworkId(
-          expectedNetworkIdValue,
-          "validation-fee expected network_id",
-        ),
-});
+  );
+  requireCanonicalAccount(
+    proposalOperator,
+    "validation-fee proposal_operator",
+    networkPrefix,
+  );
+  return { proposalOperator, networkPrefix };
+};
 
-/** Build the exact current native policy draft request. */
+/** Build the exact current native policy draft request (`POLICY { policy }`). */
 export function buildValidationFeePolicyDraftRequest(
   value: unknown,
   proposalOperatorValue: unknown,
   expectedNetworkIdValue: unknown,
+  networkPrefixValue: unknown,
 ): ValidationFeePolicyDraftRequest {
   const input = requireFirstReleaseJsonObject(
     value,
     "validation-fee proposal input",
   );
-  exactKeys(
-    input,
-    ["payout_lifecycle_proposal_id", "policy"],
-    "validation-fee proposal input",
-  );
-  const { proposalOperator, expectedNetworkId } = draftContext(
+  exactKeys(input, ["policy"], "validation-fee proposal input");
+  const { proposalOperator, networkPrefix } = draftContext(
     proposalOperatorValue,
-    expectedNetworkIdValue,
+    networkPrefixValue,
   );
-  if (expectedNetworkId === null) {
-    throw new TypeError("validation-fee expected network_id is required.");
-  }
-  const policy = normalizePolicy(input.policy, expectedNetworkId);
-  const lifecycleId =
-    input.payout_lifecycle_proposal_id === null
-      ? null
-      : fixedBytes32(
-          input.payout_lifecycle_proposal_id,
-          "validation-fee payout lifecycle proposal id",
-        );
-  const payoutEnabled = policy.treasury_payout_binding !== null;
-  if (
-    (payoutEnabled && lifecycleId === null) ||
-    (!payoutEnabled && lifecycleId !== null)
-  ) {
-    throw new TypeError(
-      payoutEnabled
-        ? "payout-enabled validation-fee policy requires a lifecycle proposal id."
-        : "validation-fee policy without a payout binding cannot select a lifecycle proposal.",
-    );
-  }
+  const expectedNetworkId = canonicalNetworkId(
+    expectedNetworkIdValue,
+    "validation-fee expected network_id",
+  );
   return {
     version: 1,
     proposal_operator: proposalOperator,
     proposal: {
       kind: "POLICY",
       payload: {
-        policy,
-        payout_lifecycle_proposal_id: lifecycleId,
-      },
-    },
-  };
-}
-
-/** Build the exact current native payout-lifecycle draft request. */
-export function buildValidationFeePayoutLifecycleDraftRequest(
-  value: unknown,
-  proposalOperatorValue: unknown,
-): ValidationFeePayoutLifecycleDraftRequest {
-  const input = requireFirstReleaseJsonObject(
-    value,
-    "validation-fee payout lifecycle input",
-  );
-  exactKeys(input, ["payout_binding"], "validation-fee payout lifecycle input");
-  const { proposalOperator } = draftContext(proposalOperatorValue);
-  return {
-    version: 1,
-    proposal_operator: proposalOperator,
-    proposal: {
-      kind: "PAYOUT_LIFECYCLE",
-      payload: {
-        payout_binding: normalizePayoutBinding(input.payout_binding),
+        policy: normalizePolicy(input.policy, expectedNetworkId, networkPrefix),
       },
     },
   };
@@ -778,8 +435,6 @@ export function assertValidationFeePolicyDraftResponse(
     payload: {
       proposal_operator: request.proposal_operator,
       policy: request.proposal.payload.policy,
-      payout_lifecycle_proposal_id:
-        request.proposal.payload.payout_lifecycle_proposal_id,
     },
   };
   const response = draftResponse(
@@ -795,29 +450,19 @@ export function assertValidationFeePolicyDraftResponse(
   );
 }
 
-export function assertValidationFeePayoutLifecycleDraftResponse(
-  value: unknown,
-  request: ValidationFeePayoutLifecycleDraftRequest,
-  expectedProposalId: string,
-): ValidationFeePayoutLifecycleInstructionDraft {
-  const expected = {
-    kind: "ValidationFeePayoutLifecycle",
-    payload: {
-      proposal_operator: request.proposal_operator,
-      payout_binding: request.proposal.payload.payout_binding,
+/**
+ * The exact native instruction the wallet reviews for one policy draft. The
+ * Torii draft's concrete instruction frame must be byte-identical to this
+ * instruction's native encoding.
+ */
+export function validationFeePolicyDraftInstruction(
+  request: ValidationFeePolicyDraftRequest,
+): { ProposeValidationFeePolicy: { policy: ValidationFeePolicyWire } } {
+  return {
+    ProposeValidationFeePolicy: {
+      policy: request.proposal.payload.policy,
     },
   };
-  const response = draftResponse(
-    value,
-    request.proposal_operator,
-    expectedProposalId,
-    expected,
-  );
-  return exactInstructionDraft(
-    (response.tx_instructions as unknown[])[0],
-    VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID,
-    "validation-fee payout lifecycle draft instruction",
-  );
 }
 
 export function assertValidationFeePolicyDecodedInstruction(
@@ -826,28 +471,7 @@ export function assertValidationFeePolicyDecodedInstruction(
 ): void {
   assertDecodedValue(
     value,
-    {
-      ProposeValidationFeePolicy: {
-        policy: request.proposal.payload.policy,
-        payout_lifecycle_proposal_id:
-          request.proposal.payload.payout_lifecycle_proposal_id,
-      },
-    },
+    validationFeePolicyDraftInstruction(request),
     "decoded validation-fee policy instruction",
-  );
-}
-
-export function assertValidationFeePayoutLifecycleDecodedInstruction(
-  value: unknown,
-  request: ValidationFeePayoutLifecycleDraftRequest,
-): void {
-  assertDecodedValue(
-    value,
-    {
-      ProposeValidationFeePayoutLifecycle: {
-        payout_binding: request.proposal.payload.payout_binding,
-      },
-    },
-    "decoded validation-fee payout lifecycle instruction",
   );
 }

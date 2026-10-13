@@ -7,7 +7,6 @@ import {
 } from "./irohaJsNativeDir";
 import { requireFirstReleaseJsonObject } from "./firstReleaseResourceLimits";
 
-const LOWER_HEX_32 = /^[0-9a-f]{64}$/u;
 const MAX_GOVERNANCE_PROPOSAL_JSON_BYTES = 64 * 1024;
 
 type JsonObject = Record<string, unknown>;
@@ -16,7 +15,6 @@ type FirstReleaseGovernanceFingerprintNativeBinding = Readonly<{
   validationFeePolicyProposalFingerprintV1(
     proposalOperator: string,
     policyJson: string,
-    payoutLifecycleProposalId: Buffer | null,
   ): unknown;
   validationFeePayoutLifecycleProposalFingerprintV1(
     proposalOperator: string,
@@ -72,20 +70,6 @@ const serializeProposalObject = (value: unknown, label: string): string =>
     ),
   );
 
-const requireOptionalLifecycleProposalId = (value: unknown): Buffer | null => {
-  if (value === null) return null;
-  if (typeof value !== "string" || !LOWER_HEX_32.test(value)) {
-    throw new TypeError(
-      "payoutLifecycleProposalId must be null or exactly 64 lowercase hexadecimal digits.",
-    );
-  }
-  const bytes = Buffer.from(value, "hex");
-  if (bytes.every((byte) => byte === 0)) {
-    throw new TypeError("payoutLifecycleProposalId must be non-zero.");
-  }
-  return bytes;
-};
-
 const requireFingerprint = (value: unknown, label: string): string => {
   const bytes =
     value instanceof ArrayBuffer
@@ -99,11 +83,15 @@ const requireFingerprint = (value: unknown, label: string): string => {
   return Buffer.from(bytes).toString("hex");
 };
 
+/**
+ * Native `ProposalKind::ValidationFeePolicy` fingerprint. The policy binds its
+ * conversion lifecycle only through `reward_custody`, so the native helper takes
+ * exactly the operator and the policy JSON.
+ */
 export const computeFirstReleaseValidationFeePolicyFingerprint = (input: {
   proposalOperator: string;
   networkPrefix: number;
   policy: JsonObject;
-  payoutLifecycleProposalId: string | null;
 }): string => {
   const proposalOperator = requireCanonicalProposalOperator(
     input.proposalOperator,
@@ -113,14 +101,10 @@ export const computeFirstReleaseValidationFeePolicyFingerprint = (input: {
     input.policy,
     "validation-fee policy",
   );
-  const payoutLifecycleProposalId = requireOptionalLifecycleProposalId(
-    input.payoutLifecycleProposalId,
-  );
   return requireFingerprint(
     requireNativeBinding().validationFeePolicyProposalFingerprintV1(
       proposalOperator,
       policyJson,
-      payoutLifecycleProposalId,
     ),
     "Native validation-fee policy fingerprint",
   );

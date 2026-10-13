@@ -44,11 +44,16 @@ const governanceFixtureAccount = (seedByte) =>
     publicKey: ed25519.getPublicKey(new Uint8Array(32).fill(seedByte)),
   }).toI105(369);
 
+// The native binding requires the treasury and pool vault to be the subject
+// accounts of the conversion and pool contracts below. These are the TAIRA
+// (prefix 369) renderings of the reviewed SDK `retail_fee_native_conversion_v1`
+// fixture subjects, so the mocked binding is one the native would accept.
 const GOVERNANCE_FIXTURE_ACCOUNTS = Object.freeze({
-  treasury: governanceFixtureAccount(0x21),
-  poolVault: governanceFixtureAccount(0x22),
-  recipients: Object.freeze(
-    [0x23, 0x24, 0x25, 0x26].map(governanceFixtureAccount),
+  treasury: "testuﾛ1PZﾗidｱJJHofｸXNｵｿcﾐﾃgﾀﾔzBYﾜcﾈｦfｶxKfﾁｼ1pG871VMK",
+  poolVault: "testuﾛ1NﾔBnヱ5ﾈﾘｦﾇｦTｻﾂVUﾓヱｺYﾏ3bｲ1ｻaﾌTtﾎﾉtｹZｱﾜo4VHCA4Q",
+  rewardPool: governanceFixtureAccount(0x23),
+  referenceProviders: Object.freeze(
+    [0x24, 0x25, 0x26, 0x27, 0x28].map(governanceFixtureAccount),
   ),
 });
 
@@ -378,20 +383,29 @@ function buildInitScript() {
         proposalOperator: accountId,
         raw: {},
         payoutBinding: {
-          contract_address: "ivm:payout-contract",
-          code_hash: "b".repeat(64),
+          contract_address:
+            "irohac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9gg4yxgjw",
+          code_hash: "B".repeat(64),
           entrypoint: "autonomous_validation_fee_tick",
           treasury_account_id: governanceFixtureAccounts.treasury,
           ds_asset_id: "7ZepsJTHCVLKsrFFNZGSRGZgvBhv",
           xor_asset_id: xorAssetDefinitionId,
+          pool_contract_address:
+            "irohac1qyqqqqqqqqqqqqqlzk3skqs8v0haerev9p09yp3ml26zrnctdwz5u",
+          pool_code_hash: "C".repeat(64),
           pool_vault_account_id: governanceFixtureAccounts.poolVault,
-          batch_ds: "10",
-          min_xor_out: "4",
-          max_xor_out: "100",
-          recipients: governanceFixtureAccounts.recipients.map((account_id) => ({
-            account_id,
-            share: "0.25",
-          })),
+          reward_pool_account_id: governanceFixtureAccounts.rewardPool,
+          reference_feed_id: ["xor_per_sbd"],
+          reference_feed_config_version: 1,
+          reference_provider_accounts:
+            governanceFixtureAccounts.referenceProviders,
+          max_sbd_per_attempt_minor: 1000,
+          max_sbd_per_day_minor: 100000,
+          min_interval_ms: 60000,
+          max_source_age_ms: 300000,
+          max_slippage_bps: 100,
+          validator_lane_id: 0,
+          min_reward_claim_xor_minor: 1,
         },
       },
       currentHeight: "98765",

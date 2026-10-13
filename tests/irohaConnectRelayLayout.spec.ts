@@ -6,10 +6,6 @@ import {
   encodeCiphertextConnectFrame,
   encodeControlConnectFrame,
 } from "@/utils/soraswapConnectWire";
-import {
-  relayLayoutFrameToSdk,
-  sdkFrameToRelayLayout,
-} from "./helpers/connectRelayFixedArrays";
 
 /*
  * Frames captured from the live TAIRA Connect relay (https://taira.sora.org,
@@ -218,10 +214,13 @@ describe("IrohaConnect live relay frame layout", () => {
   });
 
   it("rejects the pre-relay raw [u8; 32] layout", () => {
-    const raw = relayLayoutFrameToSdk(fromHex(LIVE_RELAYED_OPEN_HEX));
-    expect(raw.length).toBe(718 - 2 * (288 - 32));
+    const framed = fromHex(LIVE_RELAYED_OPEN_HEX);
+    const raw = Buffer.concat([
+      Buffer.from([32, 0, 0, 0, 0, 0, 0, 0]),
+      Buffer.from(LIVE_OPEN_SID_HEX, "hex"),
+      framed.subarray(8 + 32 * 9),
+    ]);
     expect(() => decodeConnectFrame(raw)).toThrow(/frame\.sid/u);
-    expect(toHex(sdkFrameToRelayLayout(raw))).toBe(LIVE_RELAYED_OPEN_HEX);
   });
 
   it("element-frames Approve wallet keys and ciphertext frame sids", () => {

@@ -31,24 +31,25 @@ describe("first-release validation-fee fingerprint boundary", () => {
       .mockReturnValue(Buffer.alloc(32, 0x34));
   });
 
-  it("binds the policy fingerprint to the exact proposal operator", () => {
-    const policy = { schema_version: 1, network_id: "hash:fixture#0000" };
-    const lifecycleId = "56".repeat(32);
+  it("binds the policy fingerprint to the exact operator and policy only", () => {
+    const policy = {
+      schema_version: 1,
+      network_id: "hash:fixture#0000",
+      reward_custody: { validator_lane_id: 0 },
+    };
     expect(
       computeFirstReleaseValidationFeePolicyFingerprint({
         proposalOperator,
         networkPrefix: 369,
         policy,
-        payoutLifecycleProposalId: lifecycleId,
       }),
     ).toBe("12".repeat(32));
     expect(
       nativeBinding.validationFeePolicyProposalFingerprintV1,
-    ).toHaveBeenCalledExactlyOnceWith(
-      proposalOperator,
-      JSON.stringify(policy),
-      Buffer.from(lifecycleId, "hex"),
-    );
+    ).toHaveBeenCalledExactlyOnceWith(proposalOperator, JSON.stringify(policy));
+    expect(
+      nativeBinding.validationFeePolicyProposalFingerprintV1.mock.calls[0],
+    ).toHaveLength(2);
   });
 
   it("binds the payout lifecycle fingerprint to the exact operator", () => {
@@ -70,33 +71,26 @@ describe("first-release validation-fee fingerprint boundary", () => {
     );
   });
 
-  it("rejects retired rules arguments, lossy JSON, and lifecycle aliases", () => {
+  it("rejects lossy JSON before invoking the native helper", () => {
     expect(() =>
       computeFirstReleaseValidationFeePolicyFingerprint({
         proposalOperator,
         networkPrefix: 369,
         policy: { schema_version: 1, removed: undefined },
-        payoutLifecycleProposalId: null,
       }),
     ).toThrow(/non-JSON/u);
     expect(() =>
-      computeFirstReleaseValidationFeePolicyFingerprint({
+      computeFirstReleaseValidationFeePayoutLifecycleFingerprint({
         proposalOperator,
         networkPrefix: 369,
-        policy: { schema_version: 1 },
-        payoutLifecycleProposalId: `0x${"56".repeat(32)}`,
+        payoutBinding: { max_slippage_bps: Number.NaN },
       }),
-    ).toThrow(/64 lowercase hexadecimal/u);
-    expect(() =>
-      computeFirstReleaseValidationFeePolicyFingerprint({
-        proposalOperator,
-        networkPrefix: 369,
-        policy: { schema_version: 1 },
-        payoutLifecycleProposalId: "00".repeat(32),
-      }),
-    ).toThrow(/non-zero/u);
+    ).toThrow(/noncanonical number/u);
     expect(
       nativeBinding.validationFeePolicyProposalFingerprintV1,
+    ).not.toHaveBeenCalled();
+    expect(
+      nativeBinding.validationFeePayoutLifecycleProposalFingerprintV1,
     ).not.toHaveBeenCalled();
   });
 
@@ -109,7 +103,6 @@ describe("first-release validation-fee fingerprint boundary", () => {
         proposalOperator,
         networkPrefix: 369,
         policy: { schema_version: 1 },
-        payoutLifecycleProposalId: null,
       }),
     ).toThrow(/exactly 32 native bytes/u);
   });

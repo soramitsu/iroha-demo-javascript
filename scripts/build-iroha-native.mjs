@@ -21,8 +21,9 @@ const REQUIRED_BUILD_ENVIRONMENT = Object.freeze({
   CARGO_BUILD_JOBS: "1",
   CARGO_INCREMENTAL: "0",
   CARGO_NET_OFFLINE: "true",
-  RUSTC_BOOTSTRAP: "1",
 });
+// The SDK native build uses the stock pinned toolchain and rejects these outright.
+const FORBIDDEN_BUILD_ENVIRONMENT = Object.freeze(["RUSTC_BOOTSTRAP"]);
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultProjectRoot = resolve(dirname(scriptPath), "..");
 
@@ -213,7 +214,11 @@ export const resolveIrohaNativeBuildEnvironment = ({
 
   return Object.freeze({
     buildEnvironment: Object.freeze({
-      ...environment,
+      ...Object.fromEntries(
+        Object.entries(environment).filter(
+          ([key]) => !FORBIDDEN_BUILD_ENVIRONMENT.includes(key),
+        ),
+      ),
       ...REQUIRED_BUILD_ENVIRONMENT,
       ...(platform === "darwin" &&
       environment.MACOSX_DEPLOYMENT_TARGET === undefined

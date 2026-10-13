@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   desktopCapturer,
   dialog,
   ipcMain,
@@ -11,6 +12,7 @@ import {
   type IpcMainInvokeEvent,
 } from "electron";
 import { fileURLToPath } from "node:url";
+import { FIRST_RELEASE_CLIPBOARD_TEXT_MAX_BYTES } from "./firstReleaseResourceLimits";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { VpnRuntime } from "./vpnRuntime";
@@ -362,6 +364,23 @@ const assertNoIpcArguments = (
   }
 };
 
+// Electron 44 no longer exposes `clipboard` to preload scripts, so the preload forwards its
+// already-bounded text here and the main process re-checks it before touching the OS clipboard.
+const registerClipboardHandler = () => {
+  ipcMain.handle("clipboard:writeText", (event, text: unknown) => {
+    assertTrustedMainFrameIpcEvent(event);
+    if (typeof text !== "string" || text.length === 0) {
+      throw new Error("Clipboard text is required.");
+    }
+    if (
+      Buffer.byteLength(text, "utf8") > FIRST_RELEASE_CLIPBOARD_TEXT_MAX_BYTES
+    ) {
+      throw new Error("Clipboard text exceeds the first-release byte limit.");
+    }
+    clipboard.writeText(text);
+  });
+};
+
 const registerVpnHandlers = () => {
   ipcMain.handle("vpn:getAvailability", (event, input) => {
     assertTrustedMainFrameIpcEvent(event);
@@ -690,6 +709,7 @@ const registerIrohaConnectConfirmationHandler = () => {
 
 app.whenReady().then(() => {
   registerRendererProtocol();
+  registerClipboardHandler();
   registerVpnHandlers();
   registerVaultHandlers();
   registerGovernanceRuntimeConfigHandler();

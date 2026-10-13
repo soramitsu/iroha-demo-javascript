@@ -19,7 +19,7 @@ describe("public governance draft instruction boundary", () => {
   it("rejects nested fields outside exact wire_id and payload_hex", () => {
     const decoder = between(
       "const decodeGovernanceDraftInstruction",
-      "const governanceProposalEndpoint",
+      "const prunePreparedGovernanceActions",
     );
 
     expect(decoder).toContain(
@@ -30,6 +30,22 @@ describe("public governance draft instruction boundary", () => {
     );
     expect(decoder.indexOf("assertGovernanceExactKeys(")).toBeLessThan(
       decoder.indexOf("item.payload_hex"),
+    );
+  });
+
+  it("admits Torii concrete frames only by byte equality with the reviewed instruction", () => {
+    const decoder = between(
+      "const decodeGovernanceDraftInstruction",
+      "const prunePreparedGovernanceActions",
+    );
+
+    expect(decoder).toContain("reviewedGovernanceDraftWireId(expectedVariant)");
+    expect(decoder).toContain("decodeReviewedFirstReleaseInstructionDraft({");
+    expect(decoder).toContain("expectedInstruction,");
+    // The native public-frame decoder rejects Torii's concrete frames.
+    expect(decoder).not.toContain("decodeFirstReleaseInstruction(");
+    expect(source).not.toContain(
+      '"iroha_data_model::isi::governance::RegisterCitizen"',
     );
   });
 
@@ -49,7 +65,9 @@ describe("public governance draft instruction boundary", () => {
 
     expect(sharedPrepare).toContain("decodeGovernanceDraftInstruction(");
     expect(citizen).toContain("return prepareGovernanceDecodedAction({");
-    expect(citizen).toContain('expectedVariant: "RegisterCitizen"');
+    expect(citizen).toContain(
+      "expectedInstruction: { RegisterCitizen: { owner, amount } },",
+    );
     expect(proposal).toContain("return await prepareGovernanceDecodedAction({");
     expect(proposal).toContain('operation: "propose"');
     expect(proposal).not.toMatch(/CastPlainBallot|EnactReferendum/u);

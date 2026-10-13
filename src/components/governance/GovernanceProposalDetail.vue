@@ -57,10 +57,40 @@
           <p>
             {{
               t(
-                "The exact operator-bound payout lifecycle is inspectable here; binding approval remains private Parliament work.",
+                "The exact operator-bound conversion and reward binding is inspectable here; binding approval remains private Parliament work.",
               )
             }}
           </p>
+          <dl class="payload-grid policy-facts">
+            <div>
+              <dt>{{ t("Reference feed") }}</dt>
+              <dd class="mono">
+                {{ proposal.kind.payoutBinding.reference_feed_id[0] }}
+              </dd>
+            </div>
+            <div>
+              <dt>{{ t("Reference providers") }}</dt>
+              <dd>
+                {{
+                  proposal.kind.payoutBinding.reference_provider_accounts.length
+                }}
+              </dd>
+            </div>
+            <div>
+              <dt>{{ t("Validator lane") }}</dt>
+              <dd>{{ proposal.kind.payoutBinding.validator_lane_id }}</dd>
+            </div>
+            <div>
+              <dt>{{ t("Maximum slippage (bps)") }}</dt>
+              <dd>{{ proposal.kind.payoutBinding.max_slippage_bps }}</dd>
+            </div>
+            <div class="span-2">
+              <dt>{{ t("Reward pool account") }}</dt>
+              <dd class="mono">
+                {{ proposal.kind.payoutBinding.reward_pool_account_id }}
+              </dd>
+            </div>
+          </dl>
           <pre
             tabindex="0"
           ><code>{{ pretty(proposal.kind.payoutBinding) }}</code></pre>
@@ -73,7 +103,7 @@
         >
           <dl class="payload-grid policy-facts">
             <div>
-              <dt>{{ t("Fee") }}</dt>
+              <dt>{{ t("Institutional payment fee") }}</dt>
               <dd>{{ proposal.kind.policy.fee }} SBD</dd>
             </div>
             <div>
@@ -81,15 +111,48 @@
               <dd>{{ proposal.kind.policy.policy_version }}</dd>
             </div>
             <div>
-              <dt>{{ t("Effective height") }}</dt>
-              <dd>{{ proposal.kind.policy.effective_from_height }}</dd>
+              <dt>{{ t("Effective from") }}</dt>
+              <dd>{{ honiaraTime(proposal.kind.policy.effective_from_ms) }}</dd>
             </div>
             <div>
-              <dt>{{ t("Payout lifecycle proposal") }}</dt>
+              <dt>{{ t("Notice published") }}</dt>
+              <dd>
+                {{ honiaraTime(proposal.kind.policy.notice_published_at_ms) }}
+              </dd>
+            </div>
+            <div>
+              <dt>{{ t("Included payments") }}</dt>
+              <dd>
+                {{ proposal.kind.policy.retail_schedule.included_payments }}
+              </dd>
+            </div>
+            <div>
+              <dt>{{ t("Overage fee (minor units)") }}</dt>
+              <dd>{{ proposal.kind.policy.retail_schedule.overage_minor }}</dd>
+            </div>
+            <div class="span-2">
+              <dt>{{ t("Maintenance tiers (minor units)") }}</dt>
+              <dd>
+                <ul class="tier-list">
+                  <li
+                    v-for="(tier, index) in proposal.kind.policy.retail_schedule
+                      .maintenance_tiers"
+                    :key="index"
+                  >
+                    {{
+                      t("From {balance}: {fee} per month", {
+                        balance: tier.minimum_average_balance_minor,
+                        fee: tier.monthly_fee_minor,
+                      })
+                    }}
+                  </li>
+                </ul>
+              </dd>
+            </div>
+            <div class="span-2">
+              <dt>{{ t("Reward pool account") }}</dt>
               <dd class="mono">
-                {{
-                  proposal.kind.payoutLifecycleProposalId || t("Unavailable")
-                }}
+                {{ proposal.kind.policy.reward_custody.reward_pool_account_id }}
               </dd>
             </div>
             <div class="span-2">
@@ -185,6 +248,7 @@ import { computed } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import {
   GOVERNANCE_KIND_ADAPTERS,
+  formatHoniaraTimestamp,
   type GovernanceProposalDetail,
 } from "@/governance/model";
 
@@ -202,6 +266,10 @@ const adapter = computed(
     ],
 );
 const pretty = (value: unknown) => JSON.stringify(value, null, 2);
+const honiaraTime = (ms: number) => {
+  const time = formatHoniaraTimestamp(ms);
+  return time ? t("{time} Honiara time", { time }) : t("Unavailable");
+};
 </script>
 
 <style scoped>
@@ -277,6 +345,13 @@ const pretty = (value: unknown) => JSON.stringify(value, null, 2);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px 24px;
+}
+
+.tier-list {
+  margin: 0;
+  padding-inline-start: 16px;
+  display: grid;
+  gap: 2px;
 }
 
 .identity-grid {

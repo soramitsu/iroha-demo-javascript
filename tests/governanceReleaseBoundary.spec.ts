@@ -222,16 +222,42 @@ describe("v2.0.1 governance release boundary", () => {
     ]) {
       expect(releaseWorkflow).toContain(`"${secureStorageExport}"`);
     }
+    // Pinned native fingerprint vectors for the SDK retail_fee_native_policy_v1
+    // and retail_fee_native_conversion_v1 fixtures (first operator).
     for (const fingerprint of [
-      "4742b1f274928767564c6effa414e640e6f635874d74684b06b95414c5afa16e",
-      "8fd84f6599e22db4da15f7152a914dc0091dd73a7906d5981cce37d485191c25",
+      "7ea3f657b77099f869d1aae9a47845d66094154e26e664c971434722cb0b31c4",
+      "8e28c5de8ce8928696065b15e09073b9bbebbaa30e690d4c6bd2ca75b9a3c1b4",
     ]) {
       expect(releaseWorkflow).toContain(fingerprint);
       expect(postinstallNativeCheck).toContain(fingerprint);
       expect(runtimeNativeCheck).toContain(fingerprint);
       expect(releaseNotes).toContain(fingerprint);
     }
+    // Second-operator vectors that prove operator binding in both probes.
+    for (const fingerprint of [
+      "e6fae2d16761eb221142b5e236ad09d31e1bdd1c4245538f08a932fb8136f7f1",
+      "8ff01a1ac68e79c64901830452ba2ff4185cf4a41b140704b8101e1b747d2bcd",
+    ]) {
+      expect(postinstallNativeCheck).toContain(fingerprint);
+      expect(runtimeNativeCheck).toContain(fingerprint);
+    }
+    for (const nativeCheck of [postinstallNativeCheck, runtimeNativeCheck]) {
+      for (const retiredSchemaField of [
+        "effective_from_height",
+        "expires_after_height",
+        "treasury_payout_binding",
+        "PER_QUALIFYING_TRANSFER_INSTRUCTION",
+        "batch_ds",
+        "min_xor_out",
+        "max_xor_out",
+        "recipients",
+      ]) {
+        expect(nativeCheck).not.toContain(retiredSchemaField);
+      }
+    }
     for (const retiredFingerprint of [
+      "4742b1f274928767564c6effa414e640e6f635874d74684b06b95414c5afa16e",
+      "8fd84f6599e22db4da15f7152a914dc0091dd73a7906d5981cce37d485191c25",
       "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90",
       "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b",
       "4ec93301681c32cc0d44c55939f6020a0c1a1aaa5ad24ff2723a7561873fbbf7",

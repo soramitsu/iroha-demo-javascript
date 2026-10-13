@@ -4,73 +4,37 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  assertValidationFeePayoutLifecycleDecodedInstruction,
-  assertValidationFeePayoutLifecycleDraftResponse,
+  computeFirstReleaseValidationFeePayoutLifecycleFingerprint,
+  computeFirstReleaseValidationFeePolicyFingerprint,
+} from "../electron/firstReleaseGovernanceFingerprint";
+import {
   assertValidationFeePolicyDecodedInstruction,
   assertValidationFeePolicyDraftResponse,
-  buildValidationFeePayoutLifecycleDraftRequest,
   buildValidationFeePolicyDraftRequest,
-  VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID,
+  validationFeePolicyDraftInstruction,
   VALIDATION_FEE_POLICY_DRAFT_PATH,
   VALIDATION_FEE_POLICY_DRAFT_WIRE_ID,
   type ValidationFeePolicyDraftRequest,
 } from "../electron/governanceValidationFeeDraft";
+import { decodeReviewedFirstReleaseInstructionDraft } from "../electron/firstReleaseNativeInstruction";
+import { getInstalledIrohaJsNativeBinding } from "../electron/irohaJsNativeDir";
 import { TEST_TAIRA_NETWORK_ID as TAIRA_NETWORK_ID } from "./helpers/networkIdentityFixture";
+import {
+  PROPOSAL_OPERATOR as proposalOperator,
+  SECOND_PROPOSAL_OPERATOR,
+  TREASURY_ACCOUNT_ID,
+  validationFeePolicy as policy,
+} from "./helpers/validationFeeFixtures";
 
-const proposalOperator = "testuCanonicalProposalOperator";
-const dsAssetDefinitionId = "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
+const TAIRA_PREFIX = 369;
 const hash = (byte: string): string => byte.repeat(64);
-const bytes = (byte: number): number[] => Array(32).fill(byte);
 
-const payoutBinding = () => ({
-  contract_address: "irohac1canonicalcontract",
-  code_hash: hash("e"),
-  entrypoint: "autonomous_validation_fee_tick",
-  treasury_account_id: "testuTreasury",
-  ds_asset_id: dsAssetDefinitionId,
-  xor_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-  pool_vault_account_id: "testuPoolVault",
-  batch_ds: "10",
-  min_xor_out: "4",
-  max_xor_out: "100",
-  recipients: [1, 2, 3, 4].map((index) => ({
-    account_id: `testuValidator${index}`,
-    share: "0.25",
-  })),
-});
-
-const policy = (
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> => ({
-  schema_version: 1,
-  network_id: TAIRA_NETWORK_ID,
-  policy_version: "1",
-  previous_policy_hash: null,
-  ds_asset_id: dsAssetDefinitionId,
-  ds_scale: 2,
-  fee: "0.1",
-  treasury_account_id: "testuTreasury",
-  charging_mode: {
-    charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION",
-    value: null,
-  },
-  effective_from_height: "121100",
-  expires_after_height: null,
-  exemption_classes: [],
-  treasury_payout_binding: null,
-  ...overrides,
-});
-
-const policyRequest = (
-  input: Record<string, unknown> = {
-    policy: policy(),
-    payout_lifecycle_proposal_id: null,
-  },
-) =>
+const policyRequest = (input: Record<string, unknown> = { policy: policy() }) =>
   buildValidationFeePolicyDraftRequest(
     input,
     proposalOperator,
     TAIRA_NETWORK_ID,
+    TAIRA_PREFIX,
   );
 
 const policyResponse = (
@@ -85,8 +49,6 @@ const policyResponse = (
     payload: {
       proposal_operator: request.proposal_operator,
       policy: request.proposal.payload.policy,
-      payout_lifecycle_proposal_id:
-        request.proposal.payload.payout_lifecycle_proposal_id,
     },
   },
   tx_instructions: [
@@ -96,6 +58,32 @@ const policyResponse = (
     },
   ],
 });
+
+/** SDK `retail_fee_native_*_v1.json` fixtures rendered with prefix 369. */
+const sdkFixture = (name: string): Record<string, unknown> =>
+  JSON.parse(
+    readFileSync(
+      resolve(
+        process.env.IROHA_JS_SDK_ROOT ??
+          resolve(process.cwd(), "node_modules/.cache/iroha-sdk-compat/active"),
+        "test/fixtures",
+        name,
+      ),
+      "utf8",
+    ).replaceAll("sorau", "testu"),
+  ) as Record<string, unknown>;
+
+/**
+ * The registered concrete instruction frame Torii returns as `payload_hex`:
+ * the trailing `Vec<u8>` field of a public `InstructionBox` frame.
+ */
+const concreteInstructionFrame = (publicFrame: unknown): Buffer => {
+  const bytes = Buffer.from(publicFrame as Uint8Array);
+  const start = bytes.indexOf("NRT0", 40, "latin1");
+  expect(start).toBeGreaterThan(48);
+  expect(Number(bytes.readBigUInt64LE(start - 8))).toBe(bytes.length - start);
+  return bytes.subarray(start);
+};
 
 describe("current validation-fee proposal draft boundary", () => {
   it("uses operator-bound canonical authentication before decoding and quoting", () => {
@@ -107,17 +95,34 @@ describe("current validation-fee proposal draft boundary", () => {
       "const prepareGovernanceProposalAction = async",
     );
     const end = source.indexOf(
-      "const assertWritableGovernanceProposalKind",
+      "const confirmPreparedGovernanceAction = async",
       start,
     );
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
     const prepare = source.slice(start, end);
 
+    // Payout-lifecycle drafts are refused before any endpoint or vault access.
+    expect(prepare.indexOf('if (input.kind !== "ValidationFeePolicy")')).toBe(
+      prepare.indexOf("if ("),
+    );
+    expect(
+      prepare.indexOf('if (input.kind !== "ValidationFeePolicy")'),
+    ).toBeLessThan(prepare.indexOf("resolveSigningMaterial"));
+    expect(prepare).not.toMatch(
+      /PayoutLifecycleDraft|PAYOUT_LIFECYCLE|payout_binding/u,
+    );
+    expect(prepare).toContain(
+      "expectedInstruction:\n        validationFeePolicyDraftInstruction(validationFeeRequest),",
+    );
     expect(prepare).toContain("proposalOperator");
     expect(prepare).toContain("networkId.toString()");
     expect(prepare).toContain("canonicalToriiJsonRequest");
     expect(prepare).toContain("accountId: proposalOperator");
     expect(prepare).toContain("authentication:");
     expect(prepare).toContain("privateKey.fill(0)");
+    expect(prepare).not.toContain("payout_lifecycle_proposal_id");
+    expect(prepare).not.toContain("payoutLifecycleProposalId");
     expect(prepare).not.toContain("validationFeePlainElectorateRules");
     expect(prepare).not.toContain("referendum_window");
     expect(prepare).not.toContain("governanceRequestJson(input.toriiUrl");
@@ -138,144 +143,102 @@ describe("current validation-fee proposal draft boundary", () => {
       proposal_operator: proposalOperator,
       proposal: {
         kind: "POLICY",
-        payload: {
-          policy: policy(),
-          payout_lifecycle_proposal_id: null,
-        },
+        payload: { policy: policy() },
       },
     });
+    expect(Object.keys(request.proposal.payload.policy)).toEqual(
+      Object.keys(policy()),
+    );
   });
 
-  it("keeps every fixed 32-byte field in canonical Norito JSON hex", () => {
+  it("keeps native [u8; 32] fields in uppercase Norito JSON hex", () => {
     const request = policyRequest({
       policy: policy({
         policy_version: "2",
-        previous_policy_hash: hash("d"),
-        exemption_classes: ["TREASURY_PAYOUT"],
-        treasury_payout_binding: payoutBinding(),
+        previous_policy_hash: hash("D"),
       }),
-      payout_lifecycle_proposal_id: hash("f"),
     });
-
     expect(request.proposal.payload.policy.previous_policy_hash).toBe(
-      hash("d"),
+      hash("D"),
     );
-    expect(
-      request.proposal.payload.policy.treasury_payout_binding?.code_hash,
-    ).toBe(hash("e"));
-    expect(request.proposal.payload.payout_lifecycle_proposal_id).toBe(
-      hash("f"),
-    );
-  });
-
-  it("builds only the current payout-lifecycle payload names", () => {
-    const request = buildValidationFeePayoutLifecycleDraftRequest(
-      { payout_binding: payoutBinding() },
-      proposalOperator,
-    );
-
-    expect(VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID).toBe(
-      "iroha.instruction.v1::governance::ProposeValidationFeePayoutLifecycle",
-    );
-    expect(request.proposal_operator).toBe(proposalOperator);
-    expect(request.proposal.payload.payout_binding).toMatchObject({
-      ds_asset_id: dsAssetDefinitionId,
-      batch_ds: "10",
-      code_hash: hash("e"),
-    });
-    expect(request).not.toHaveProperty("referendum_window");
-    expect(request).not.toHaveProperty("mode");
-    expect(request).not.toHaveProperty("plain_electorate_rules");
-  });
-
-  it("rejects every retired identity, payout, and referendum field", () => {
-    for (const retiredPolicyField of [
-      { chain_id: "taira" },
-      { genesis_hash: hash("c") },
-      { fee_asset_id: dsAssetDefinitionId },
-    ]) {
-      expect(() =>
-        policyRequest({
-          policy: policy(retiredPolicyField),
-          payout_lifecycle_proposal_id: null,
-        }),
-      ).toThrow(/must contain exactly/u);
-    }
-
-    expect(() =>
-      policyRequest({
-        policy: policy(),
-        payout_lifecycle_proposal_id: null,
-        referendum_window: { lower: "1", upper: "2" },
-      }),
-    ).toThrow(/must contain exactly/u);
-    expect(() =>
-      buildValidationFeePayoutLifecycleDraftRequest(
-        {
-          payout_binding: {
-            ...payoutBinding(),
-            sbd_asset_id: dsAssetDefinitionId,
-          },
-        },
-        proposalOperator,
-      ),
-    ).toThrow(/must contain exactly/u);
-    expect(() =>
-      buildValidationFeePayoutLifecycleDraftRequest(
-        {
-          payout_binding: {
-            ...payoutBinding(),
-            batch_sbd: "10",
-          },
-        },
-        proposalOperator,
-      ),
-    ).toThrow(/must contain exactly/u);
-  });
-
-  it("rejects another network, lossy integers, and payout cross-wiring", () => {
-    expect(() =>
-      policyRequest({
-        policy: policy({ network_id: `hash:${"13".repeat(32)}#0000` }),
-        payout_lifecycle_proposal_id: null,
-      }),
-    ).toThrow(/active exact network/u);
-    expect(() =>
-      policyRequest({
-        policy: policy({ policy_version: 1 }),
-        payout_lifecycle_proposal_id: null,
-      }),
-    ).toThrow(/decimal string/u);
-    expect(() =>
-      policyRequest({
-        policy: policy(),
-        payout_lifecycle_proposal_id: hash("f"),
-      }),
-    ).toThrow(/without a payout binding/u);
     expect(() =>
       policyRequest({
         policy: policy({
-          exemption_classes: ["TREASURY_PAYOUT"],
-          treasury_payout_binding: payoutBinding(),
+          policy_version: "2",
+          previous_policy_hash: hash("d"),
         }),
-        payout_lifecycle_proposal_id: null,
       }),
-    ).toThrow(/requires a lifecycle proposal id/u);
+    ).toThrow(/uppercase hexadecimal/u);
   });
 
-  it("supports the closed native disabled policy variant", () => {
-    const request = policyRequest({
-      policy: policy({
-        fee: "0",
-        charging_mode: { charging_mode: "DISABLED", value: null },
+  it("rejects every retired policy, lifecycle-link, and referendum field", () => {
+    for (const retiredPolicyField of [
+      { chain_id: "taira" },
+      { genesis_hash: hash("c") },
+      { fee_asset_id: "7ZepsJTHCVLKsrFFNZGSRGZgvBhv" },
+      { effective_from_height: "121100" },
+      { expires_after_height: null },
+      { treasury_payout_binding: null },
+    ]) {
+      expect(() =>
+        policyRequest({ policy: policy(retiredPolicyField) }),
+      ).toThrow(/must contain exactly/u);
+    }
+    expect(() =>
+      policyRequest({ policy: policy(), payout_lifecycle_proposal_id: null }),
+    ).toThrow(/must contain exactly policy/u);
+    expect(() =>
+      policyRequest({
+        policy: policy(),
+        referendum_window: { lower: "1", upper: "2" },
       }),
-      payout_lifecycle_proposal_id: null,
-    });
-    expect(request.proposal.payload.policy.fee).toBe("0");
-    expect(request.proposal.payload.policy.charging_mode).toEqual({
-      charging_mode: "DISABLED",
-      value: null,
-    });
+    ).toThrow(/must contain exactly/u);
+  });
+
+  it("rejects another network, other prefixes, and lossy or retired values", () => {
+    expect(() =>
+      policyRequest({
+        policy: policy({ network_id: `hash:${"13".repeat(32)}#9CE1` }),
+      }),
+    ).toThrow(/canonical NetworkId|active exact network/u);
+    expect(() =>
+      policyRequest({ policy: policy({ policy_version: 1 }) }),
+    ).toThrow(/decimal string/u);
+    expect(() => policyRequest({ policy: policy({ fee: "0.10" }) })).toThrow(
+      /no trailing zeros/u,
+    );
+    expect(() =>
+      policyRequest({
+        policy: policy({ effective_from_ms: "1793451600000" }),
+      }),
+    ).toThrow(/JSON integer/u);
+    expect(() =>
+      policyRequest({
+        policy: policy({
+          charging_mode: { charging_mode: "DISABLED", value: null },
+        }),
+      }),
+    ).toThrow(/RETAIL_MONTHLY_ALLOWANCE/u);
+    const sorauTreasury = TREASURY_ACCOUNT_ID.replace("testu", "sorau");
+    expect(() =>
+      policyRequest({
+        policy: policy({
+          treasury_account_id: sorauTreasury,
+          reward_custody: {
+            ...(policy().reward_custody as Record<string, unknown>),
+            treasury_account_id: sorauTreasury,
+          },
+        }),
+      }),
+    ).toThrow(/canonical I105 account for the active network/u);
+    expect(() =>
+      buildValidationFeePolicyDraftRequest(
+        { policy: policy() },
+        proposalOperator.replace("testu", "sorau"),
+        TAIRA_NETWORK_ID,
+        TAIRA_PREFIX,
+      ),
+    ).toThrow(/canonical I105 account for the active network/u);
   });
 
   it("binds policy responses to operator, proposal, id, and current wire id", () => {
@@ -287,21 +250,21 @@ describe("current validation-fee proposal draft boundary", () => {
     ).toEqual(response.tx_instructions[0]);
     assertValidationFeePolicyDecodedInstruction(
       {
-        ProposeValidationFeePolicy: {
-          policy: request.proposal.payload.policy,
-          payout_lifecycle_proposal_id: null,
-        },
+        ProposeValidationFeePolicy: { policy: request.proposal.payload.policy },
       },
       request,
     );
 
     expect(() =>
       assertValidationFeePolicyDraftResponse(
-        { ...response, proposal_operator: "testuOther" },
+        { ...response, proposal_operator: SECOND_PROPOSAL_OPERATOR },
         request,
         hash("a"),
       ),
     ).toThrow(/proposal_operator/u);
+    expect(() =>
+      assertValidationFeePolicyDraftResponse(response, request, hash("b")),
+    ).toThrow(/native proposal fingerprint/u);
     expect(() =>
       assertValidationFeePolicyDraftResponse(
         {
@@ -318,60 +281,43 @@ describe("current validation-fee proposal draft boundary", () => {
         hash("a"),
       ),
     ).toThrow(/exact wire id/u);
-  });
-
-  it("binds lifecycle responses and decoded instructions to exact bytes", () => {
-    const request = buildValidationFeePayoutLifecycleDraftRequest(
-      { payout_binding: payoutBinding() },
-      proposalOperator,
-    );
-    const response = {
-      version: 1,
-      proposal_operator: proposalOperator,
-      proposal_id: hash("b"),
-      proposal_kind: {
-        kind: "ValidationFeePayoutLifecycle",
-        payload: {
-          proposal_operator: proposalOperator,
-          payout_binding: request.proposal.payload.payout_binding,
-        },
-      },
-      tx_instructions: [
-        {
-          wire_id: VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID,
-          payload_hex: "00",
-        },
-      ],
-    };
-
-    expect(
-      assertValidationFeePayoutLifecycleDraftResponse(
-        response,
-        request,
-        hash("b"),
-      ),
-    ).toEqual(response.tx_instructions[0]);
-    assertValidationFeePayoutLifecycleDecodedInstruction(
-      {
-        ProposeValidationFeePayoutLifecycle: {
-          payout_binding: request.proposal.payload.payout_binding,
-        },
-      },
-      request,
-    );
     expect(() =>
-      assertValidationFeePayoutLifecycleDecodedInstruction(
+      assertValidationFeePolicyDraftResponse(
         {
-          ProposeValidationFeePayoutLifecycle: {
-            payout_binding: {
-              ...request.proposal.payload.payout_binding,
-              code_hash: Uint8Array.from(bytes(0xee)),
+          ...response,
+          proposal_kind: {
+            ...response.proposal_kind,
+            payload: {
+              ...response.proposal_kind.payload,
+              payout_lifecycle_proposal_id: null,
             },
           },
         },
         request,
+        hash("a"),
       ),
-    ).toThrow(/reviewed value/u);
+    ).toThrow(/exact requested proposal/u);
+    expect(() =>
+      assertValidationFeePolicyDraftResponse(
+        {
+          ...response,
+          proposal_kind: {
+            ...response.proposal_kind,
+            payload: {
+              ...response.proposal_kind.payload,
+              policy: {
+                ...request.proposal.payload.policy,
+                effective_from_ms: String(
+                  request.proposal.payload.policy.effective_from_ms,
+                ),
+              },
+            },
+          },
+        },
+        request,
+        hash("a"),
+      ),
+    ).toThrow(/exact requested proposal/u);
   });
 
   it("rejects response aliases, unknown fields, and proposal tampering", () => {
@@ -392,7 +338,7 @@ describe("current validation-fee proposal draft boundary", () => {
             ...response.proposal_kind,
             payload: {
               ...response.proposal_kind.payload,
-              proposal_operator: "testuOther",
+              proposal_operator: SECOND_PROPOSAL_OPERATOR,
             },
           },
         },
@@ -406,7 +352,6 @@ describe("current validation-fee proposal draft boundary", () => {
           ProposeValidationFeePolicy: {
             policy: request.proposal.payload.policy,
             payout_lifecycle_proposal_id: null,
-            referendum_window: { lower: "1", upper: "2" },
           },
         },
         request,
@@ -455,5 +400,125 @@ describe("current validation-fee proposal draft boundary", () => {
       ),
     ).toThrow(/exact requested proposal/u);
     expect(payloadAccessorRead).toBe(false);
+  });
+});
+
+describe("validation-fee draft requests against the active native binding", () => {
+  it("reproduces the pinned native fingerprint vectors through the wallet fingerprint boundary", () => {
+    expect(
+      computeFirstReleaseValidationFeePolicyFingerprint({
+        proposalOperator,
+        networkPrefix: TAIRA_PREFIX,
+        policy: sdkFixture("retail_fee_native_policy_v1.json"),
+      }),
+    ).toBe("7ea3f657b77099f869d1aae9a47845d66094154e26e664c971434722cb0b31c4");
+    expect(
+      computeFirstReleaseValidationFeePolicyFingerprint({
+        proposalOperator: SECOND_PROPOSAL_OPERATOR,
+        networkPrefix: TAIRA_PREFIX,
+        policy: sdkFixture("retail_fee_native_policy_v1.json"),
+      }),
+    ).toBe("e6fae2d16761eb221142b5e236ad09d31e1bdd1c4245538f08a932fb8136f7f1");
+    expect(
+      computeFirstReleaseValidationFeePayoutLifecycleFingerprint({
+        proposalOperator,
+        networkPrefix: TAIRA_PREFIX,
+        payoutBinding: sdkFixture("retail_fee_native_conversion_v1.json"),
+      }),
+    ).toBe("8e28c5de8ce8928696065b15e09073b9bbebbaa30e690d4c6bd2ca75b9a3c1b4");
+  });
+
+  it("admits the Torii concrete policy frame only when it equals the reviewed instruction", () => {
+    const request = policyRequest();
+    expect(
+      computeFirstReleaseValidationFeePolicyFingerprint({
+        proposalOperator,
+        networkPrefix: TAIRA_PREFIX,
+        policy: request.proposal.payload.policy,
+      }),
+    ).toMatch(/^[0-9a-f]{64}$/u);
+    const native = getInstalledIrohaJsNativeBinding() as Record<
+      string,
+      (...args: unknown[]) => unknown
+    >;
+    const reviewed = validationFeePolicyDraftInstruction(request);
+    // Torii's `framed_instruction_payload`: the registered concrete frame.
+    const frame = concreteInstructionFrame(
+      native.noritoEncodeInstruction(JSON.stringify(reviewed), TAIRA_PREFIX),
+    );
+    expect(() => native.noritoDecodeInstruction(frame, TAIRA_PREFIX)).toThrow(
+      /schema mismatch/u,
+    );
+
+    const decoded = decodeReviewedFirstReleaseInstructionDraft({
+      wireId: VALIDATION_FEE_POLICY_DRAFT_WIRE_ID,
+      frame,
+      expectedInstruction: reviewed,
+      networkPrefix: TAIRA_PREFIX,
+    });
+    expect(decoded).toEqual(reviewed);
+    expect(() =>
+      assertValidationFeePolicyDecodedInstruction(decoded, request),
+    ).not.toThrow();
+
+    const otherPolicy = policy();
+    (otherPolicy.retail_schedule as Record<string, unknown>).included_payments =
+      60;
+    const otherFrame = concreteInstructionFrame(
+      native.noritoEncodeInstruction(
+        JSON.stringify(
+          validationFeePolicyDraftInstruction(
+            policyRequest({ policy: otherPolicy }),
+          ),
+        ),
+        TAIRA_PREFIX,
+      ),
+    );
+    const tampered = Buffer.from(frame);
+    tampered[tampered.length - 1] ^= 1;
+    for (const [wireId, candidate] of [
+      [VALIDATION_FEE_POLICY_DRAFT_WIRE_ID, otherFrame],
+      [VALIDATION_FEE_POLICY_DRAFT_WIRE_ID, tampered],
+      ["iroha.instruction.v1::governance::RegisterCitizen", frame],
+    ] as const) {
+      expect(() =>
+        decodeReviewedFirstReleaseInstructionDraft({
+          wireId,
+          frame: candidate,
+          expectedInstruction: reviewed,
+          networkPrefix: TAIRA_PREFIX,
+        }),
+      ).toThrow(/differ from the exact reviewed instruction/u);
+    }
+    expect(() =>
+      native.noritoEncodeInstruction(
+        JSON.stringify({
+          ProposeValidationFeePolicy: {
+            policy: request.proposal.payload.policy,
+            payout_lifecycle_proposal_id: null,
+          },
+        }),
+        TAIRA_PREFIX,
+      ),
+    ).toThrow(/must contain exactly \[policy\]/u);
+  });
+
+  it("has no reviewable payout-lifecycle instruction codec, so lifecycle writes stay disabled", () => {
+    const native = getInstalledIrohaJsNativeBinding() as Record<
+      string,
+      (...args: unknown[]) => unknown
+    >;
+    // If this starts passing, the SDK gained a JSON codec for the lifecycle
+    // instruction and the inspect-only restriction can be revisited.
+    expect(() =>
+      native.noritoEncodeInstruction(
+        JSON.stringify({
+          ProposeValidationFeePayoutLifecycle: {
+            payout_binding: sdkFixture("retail_fee_native_conversion_v1.json"),
+          },
+        }),
+        TAIRA_PREFIX,
+      ),
+    ).toThrow(/unsupported instruction/u);
   });
 });

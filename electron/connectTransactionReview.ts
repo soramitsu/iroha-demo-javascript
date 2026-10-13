@@ -360,6 +360,68 @@ const REPO_VARIANT_TITLES: Record<string, string> = {
   RepoMarginCallIsi: "Repo margin call",
 };
 
+const BOND_FIELD_LABELS: Record<string, string> = {
+  agreement_id: "Agreement ID",
+  escrow_id: "Escrow ID",
+  asset_definition: "Asset",
+  beneficiary: "Beneficiary",
+  amount: "Amount",
+  initiator: "Borrower / initiator",
+  counterparty: "Lender / counterparty",
+  custodian: "Custodian",
+  rate_bps: "Interest rate (basis points)",
+  maturity_timestamp_ms: "Maturity (Unix milliseconds)",
+  expires_at_ms: "Expiry (Unix milliseconds)",
+  haircut_bps: "Collateral haircut (basis points)",
+  margin_frequency_secs: "Margin interval (seconds)",
+  allow_early_repayment: "Initiator may repay early",
+  condition_id: "Condition ID",
+  value: "Attested value",
+  evidence_hashes: "Evidence hashes",
+};
+
+/** Keep every native field visible, with explicit cash, collateral and policy terms. */
+const describeBondFields = (
+  value: unknown,
+): ConnectTransactionReviewField[] => {
+  const record = asRecord(value);
+  if (!record) return genericFields(value);
+  const fields: ConnectTransactionReviewField[] = [];
+  for (const [key, entry] of Object.entries(record)) {
+    if (key === "governance" && asRecord(entry)) {
+      fields.push(...describeBondFields(entry));
+    } else if (
+      (key === "cash_leg" || key === "collateral_leg") &&
+      asRecord(entry)
+    ) {
+      const leg = asRecord(entry)!;
+      fields.push(
+        field(
+          key === "cash_leg" ? "Cash principal" : "Collateral",
+          `${displayValue(leg.quantity)} of ${displayValue(leg.asset_definition_id)}`,
+        ),
+      );
+      for (const [legKey, legValue] of Object.entries(leg)) {
+        if (legKey !== "quantity" && legKey !== "asset_definition_id") {
+          fields.push(
+            field(
+              `${key === "cash_leg" ? "Cash" : "Collateral"} ${legKey}`,
+              legValue,
+            ),
+          );
+        }
+      }
+    } else if (key === "conditions" && Array.isArray(entry)) {
+      entry.forEach((condition, index) =>
+        fields.push(field(`Condition ${index + 1}`, condition)),
+      );
+    } else {
+      fields.push(field(BOND_FIELD_LABELS[key] ?? key, entry));
+    }
+  }
+  return fields;
+};
+
 type InstructionDescription = Pick<
   ConnectTransactionInstructionReview,
   "kind" | "title" | "fields"
@@ -546,7 +608,7 @@ const describeInstruction = (
       return {
         kind: "repo",
         title: REPO_VARIANT_TITLES[variant] ?? `Repo ${variant}`.trim(),
-        fields: genericFields(inner?.[1] ?? body),
+        fields: describeBondFields(inner?.[1] ?? body),
       };
     }
     default:
@@ -554,14 +616,14 @@ const describeInstruction = (
         return {
           kind: "escrow",
           title: ESCROW_INSTRUCTION_TITLES[name]!,
-          fields: genericFields(body),
+          fields: describeBondFields(body),
         };
       }
       if (name in REPO_VARIANT_TITLES) {
         return {
           kind: "repo",
           title: REPO_VARIANT_TITLES[name]!,
-          fields: genericFields(body),
+          fields: describeBondFields(body),
         };
       }
       return {

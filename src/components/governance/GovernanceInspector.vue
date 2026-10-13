@@ -102,7 +102,7 @@
         <p>
           {{
             t(
-              "This wallet can prepare the two reviewed validation-fee proposal kinds, but it does not expose Parliament ceremony or enactment controls.",
+              "This wallet can prepare validation-fee policy proposals only; payout-lifecycle proposals are inspect-only, and Parliament ceremony and enactment controls are not exposed.",
             )
           }}
         </p>

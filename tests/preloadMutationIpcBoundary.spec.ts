@@ -49,7 +49,7 @@ describe("preload first-release mutation IPC boundary", () => {
       start: "async copyTextToClipboard(input)",
       end: "deriveAccountAddress(",
       kind: "copyTextToClipboard",
-      sensitive: "clipboard.writeText(",
+      sensitive: 'ipcRenderer.invoke("clipboard:writeText"',
     },
     {
       start: "derivePublicKey(input)",
