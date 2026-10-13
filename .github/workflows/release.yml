@@ -402,6 +402,11 @@ jobs:
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
           rustup default "$RUST_TOOLCHAIN"
 
+      - name: Pin macOS native deployment target
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: echo 'MACOSX_DEPLOYMENT_TARGET=13.0' >> "$GITHUB_ENV"
+
       - name: Provision authenticated ignored Iroha Cargo lock
         shell: bash
         run: |

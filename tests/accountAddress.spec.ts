@@ -5,6 +5,7 @@ import {
   deriveAccountAddressView,
   parseAccountAddressLiteral,
   normalizeCanonicalAccountIdLiteral,
+  normalizeCanonicalI105AccountIdLiteral,
   requireAccountIdBoundToPublicKey,
 } from "../electron/accountAddress";
 
@@ -251,6 +252,28 @@ describe("accountAddress helper", () => {
     expect(
       normalizeCanonicalAccountIdLiteral(halfWidthLiteral, "accountId", 369),
     ).toBe(halfWidthLiteral);
+    expect(
+      normalizeCanonicalI105AccountIdLiteral(halfWidthLiteral, "accountId"),
+    ).toBe(halfWidthLiteral);
+    expect(() =>
+      normalizeCanonicalI105AccountIdLiteral(
+        toFullwidthKanaI105(halfWidthLiteral),
+        "accountId",
+      ),
+    ).toThrow(/canonical I105 account ID/i);
+  });
+
+  it("accepts the SDK's full I105 prefix range for read-only account filters", () => {
+    const accountId = AccountAddress.fromAccount({
+      publicKey: Buffer.from(SAMPLE_PUBLIC_KEY_HEX, "hex"),
+    }).toI105(16_384);
+
+    expect(normalizeCanonicalI105AccountIdLiteral(accountId, "accountId")).toBe(
+      accountId,
+    );
+    expect(() =>
+      normalizeCanonicalAccountIdLiteral(accountId, "accountId", 16_384),
+    ).toThrow(/networkPrefix must be an integer/u);
   });
 
   it("rejects noncanonical full-width kana variants", () => {

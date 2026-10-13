@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { AccountAddress } from "@iroha/iroha-js/address";
 import {
+  deriveAccountAddressView,
+  normalizeCanonicalAccountIdLiteral,
+} from "../electron/accountAddress";
+import {
   SESSION_SCHEMA,
   SESSION_STORAGE_KEY,
   SESSION_VERSION,
@@ -62,12 +66,16 @@ const snapshot = () =>
     unknown
   >;
 
-const hydratePayload = async (payload: unknown) => {
-  localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
+const hydrateRaw = async (raw: string) => {
+  localStorage.setItem(SESSION_STORAGE_KEY, raw);
   const store = useSessionStore();
+  vi.spyOn(store, "syncStoredSecrets").mockResolvedValue(undefined);
   await store.hydrate();
   return store;
 };
+
+const hydratePayload = (payload: unknown) =>
+  hydrateRaw(JSON.stringify(payload));
 
 describe("session store", () => {
   beforeEach(() => {
@@ -75,6 +83,21 @@ describe("session store", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     localStorage.clear();
     delete (window as { iroha?: unknown }).iroha;
+    (window as unknown as { iroha: unknown }).iroha = {
+      deriveAccountAddress: deriveAccountAddressView,
+      validateCanonicalAccountId: ({
+        accountId,
+        networkPrefix,
+      }: {
+        accountId: string;
+        networkPrefix: number;
+      }) =>
+        normalizeCanonicalAccountIdLiteral(
+          accountId,
+          "accountId",
+          networkPrefix,
+        ),
+    };
     setActivePinia(createPinia());
   });
 
@@ -179,6 +202,25 @@ describe("session store", () => {
     expect(store.activeAccount).not.toHaveProperty("privateKeyHex");
   });
 
+  it("rejects saved accounts when the native address bridge is unavailable", async () => {
+    delete (window as { iroha?: unknown }).iroha;
+    const store = await hydratePayload(persistedSession());
+
+    expect(store.accounts).toEqual([]);
+    expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it("rejects a saved account that is not bound to its public key", async () => {
+    const store = await hydratePayload(
+      persistedSession({
+        accounts: [persistedAccount({ publicKeyHex: BOB_PUBLIC_KEY_HEX })],
+      }),
+    );
+
+    expect(store.accounts).toEqual([]);
+    expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  });
+
   it("rejects an account literal for a different network prefix", async () => {
     const accountId = accountIdFor(ALICE_PUBLIC_KEY_HEX, 753);
     const store = await hydratePayload(
@@ -232,10 +274,7 @@ describe("session store", () => {
       `"version":${SESSION_VERSION}`,
       `"version":${SESSION_VERSION},"version":${SESSION_VERSION}`,
     );
-    localStorage.setItem(SESSION_STORAGE_KEY, raw);
-
-    const store = useSessionStore();
-    await store.hydrate();
+    const store = await hydrateRaw(raw);
 
     expect(store.accounts).toEqual([]);
     expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
@@ -246,20 +285,14 @@ describe("session store", () => {
       '"displayName":"Alice"',
       '"displayName":"Alice","displayName":"Mallory"',
     );
-    localStorage.setItem(SESSION_STORAGE_KEY, raw);
-
-    const store = useSessionStore();
-    await store.hydrate();
+    const store = await hydrateRaw(raw);
 
     expect(store.accounts).toEqual([]);
     expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
   });
 
   it("rejects an oversized saved session before JSON parsing", async () => {
-    localStorage.setItem(SESSION_STORAGE_KEY, " ".repeat(1_048_577));
-
-    const store = useSessionStore();
-    await store.hydrate();
+    const store = await hydrateRaw(" ".repeat(1_048_577));
 
     expect(store.accounts).toEqual([]);
     expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();

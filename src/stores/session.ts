@@ -1,6 +1,4 @@
 import { defineStore } from "pinia";
-import { AccountAddress } from "@iroha/iroha-js/browser";
-import type { CryptoAlgorithm } from "@iroha/iroha-js/crypto";
 import { CHAIN_PRESETS, DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import {
   normalizeChainIdValue,
@@ -497,19 +495,6 @@ const readSigningAlgorithm = (value: unknown, label: string): string => {
   return algorithm;
 };
 
-const decodeCanonicalPublicKey = (
-  value: unknown,
-  label: string,
-): Uint8Array => {
-  const literal = readCanonicalText(value, label, { maxLength: 16_384 });
-  if (!/^(?:[0-9a-f]{2})+$/u.test(literal)) {
-    throw new TypeError(`${label} must be canonical lowercase hex.`);
-  }
-  return Uint8Array.from(
-    literal.match(/.{2}/gu)!.map((byte) => Number.parseInt(byte, 16)),
-  );
-};
-
 const readAccountId = (
   value: unknown,
   label: string,
@@ -524,11 +509,12 @@ const readAccountId = (
   }
   if (accountId && options.networkPrefix !== undefined) {
     try {
-      const address = AccountAddress.parseEncoded(
-        accountId,
-        options.networkPrefix,
-      ).address;
-      if (address.toI105(options.networkPrefix) !== accountId) {
+      if (
+        window.iroha.validateCanonicalAccountId({
+          accountId,
+          networkPrefix: options.networkPrefix,
+        }) !== accountId
+      ) {
         throw new Error("noncanonical account ID");
       }
     } catch {
@@ -655,12 +641,17 @@ const parsePersistedAccount = (
     account.signingAlgorithm,
     `${label} signing algorithm`,
   );
+  if (!/^(?:[0-9a-f]{2})+$/u.test(publicKeyHex)) {
+    throw new TypeError(`${label} public key must be canonical lowercase hex.`);
+  }
   let expectedAccountId: string;
   try {
-    expectedAccountId = AccountAddress.fromAccount({
-      publicKey: decodeCanonicalPublicKey(publicKeyHex, `${label} public key`),
-      algorithm: signingAlgorithm as CryptoAlgorithm,
-    }).toI105(networkPrefix);
+    expectedAccountId = window.iroha.deriveAccountAddress({
+      domain: "",
+      publicKeyHex,
+      signingAlgorithm,
+      networkPrefix,
+    }).accountId;
   } catch {
     throw new TypeError(
       `${label} public identity is invalid for its signing algorithm.`,

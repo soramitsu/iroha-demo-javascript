@@ -43,6 +43,7 @@ const EXPECTED_INPUT_KINDS = {
   listAccountSecretFlags: "listAccountSecretFlags",
   copyTextToClipboard: "copyTextToClipboard",
   deriveAccountAddress: "deriveAccountAddress",
+  validateCanonicalAccountId: "validateCanonicalAccountId",
   derivePublicKey: "derivePublicKey",
   resolveAccountAlias: "resolveAccountAlias",
   createConfidentialPaymentAddress: "createConfidentialPaymentAddress",

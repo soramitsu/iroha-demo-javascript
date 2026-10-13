@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   buildSoraCloudHfStatusQuery,
   deriveSoraCloudPublicUrls,
@@ -15,6 +15,17 @@ const CANONICAL_ACCOUNT_ID =
 const CANONICAL_HASH =
   "hash:1313131313131313131313131313131313131313131313131313131313131313#9CE1";
 const CANONICAL_ASSET_DEFINITION_ID = "61CtjvNd9T3THAR65GsMVHr82Bjc";
+
+beforeEach(() => {
+  (window as unknown as { iroha: unknown }).iroha = {
+    validateCanonicalAccountId: ({ accountId }: { accountId: string }) => {
+      if (accountId !== CANONICAL_ACCOUNT_ID) {
+        throw new Error("Invalid account fixture.");
+      }
+      return accountId;
+    },
+  };
+});
 
 const exactStatusPayload = (overrides: Record<string, unknown> = {}) => ({
   schema_version: 1,
@@ -485,6 +496,47 @@ describe("SoraCloud utilities", () => {
         leaseTermMs: 86_400_000,
       }),
     ).toThrow("full 40-character lowercase hexadecimal commit OID");
+  });
+
+  it("rejects an account-filtered query without the native address bridge", () => {
+    delete (window as { iroha?: unknown }).iroha;
+    expect(() =>
+      buildSoraCloudHfStatusQuery({
+        repoId: "OpenAI/Demo",
+        revision: HF_REVISION,
+        storageClass: "warm",
+        leaseTermMs: 86_400_000,
+        accountId: CANONICAL_ACCOUNT_ID,
+      }),
+    ).toThrow("exact canonical I105 account ID");
+  });
+
+  it("uses an injected validator when parsing in preload's isolated world", () => {
+    delete (window as { iroha?: unknown }).iroha;
+    const validateAccountId = (accountId: string): string => {
+      if (accountId !== CANONICAL_ACCOUNT_ID) {
+        throw new Error("Invalid account fixture.");
+      }
+      return accountId;
+    };
+    const query = {
+      repoId: "OpenAI/Demo",
+      revision: HF_REVISION,
+      storageClass: "warm" as const,
+      leaseTermMs: 86_400_000,
+      accountId: CANONICAL_ACCOUNT_ID,
+    };
+
+    expect(
+      buildSoraCloudHfStatusQuery(query, validateAccountId).account_id,
+    ).toBe(CANONICAL_ACCOUNT_ID);
+    expect(
+      normalizeSoraCloudHfStatusPayload(
+        exactHfStatusPayload(),
+        query,
+        validateAccountId,
+      ).member?.accountId,
+    ).toBe(CANONICAL_ACCOUNT_ID);
   });
 
   it("keeps HF source 404 distinct from API unavailability", () => {

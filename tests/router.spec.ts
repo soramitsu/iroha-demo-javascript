@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { AccountAddress } from "@iroha/iroha-js/address";
 import router, { APP_NAV_ITEMS } from "@/router";
@@ -9,6 +9,10 @@ import {
 } from "@/stores/session";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { useSessionStore } from "@/stores/session";
+import {
+  deriveAccountAddressView,
+  normalizeCanonicalAccountIdLiteral,
+} from "../electron/accountAddress";
 
 const ALICE_PUBLIC_KEY_HEX =
   "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737";
@@ -45,8 +49,34 @@ const savedSession = {
 
 describe("router guard", () => {
   beforeEach(() => {
+    (window as unknown as { iroha: unknown }).iroha = {
+      deriveAccountAddress: deriveAccountAddressView,
+      validateCanonicalAccountId: ({
+        accountId,
+        networkPrefix,
+      }: {
+        accountId: string;
+        networkPrefix: number;
+      }) =>
+        normalizeCanonicalAccountIdLiteral(
+          accountId,
+          "accountId",
+          networkPrefix,
+        ),
+      isSecureVaultAvailable: async () => true,
+      listAccountSecretFlags: async ({
+        accountIds,
+      }: {
+        accountIds: string[];
+      }) =>
+        Object.fromEntries(accountIds.map((accountId) => [accountId, true])),
+    };
     localStorage.clear();
     setActivePinia(createPinia());
+  });
+
+  afterEach(() => {
+    delete (window as { iroha?: unknown }).iroha;
   });
 
   it("allows protected routes when a saved account is present", async () => {

@@ -2,6 +2,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -109,6 +110,62 @@ export const hasCurrentIrohaSdkApi = (sdkRoot) =>
       isCanonicalRegularFile(join(sdkRoot, declarationFilename)),
   );
 
+const findSdkDistributionMismatch = (source, distribution, relative = "") => {
+  let sourceEntries;
+  let distributionEntries;
+  try {
+    const sourceMetadata = lstatSync(source);
+    const distributionMetadata = lstatSync(distribution);
+    if (
+      !sourceMetadata.isDirectory() ||
+      sourceMetadata.isSymbolicLink() ||
+      !distributionMetadata.isDirectory() ||
+      distributionMetadata.isSymbolicLink()
+    ) {
+      return relative || "src/dist directories";
+    }
+    sourceEntries = readdirSync(source).sort();
+    distributionEntries = readdirSync(distribution).sort();
+  } catch {
+    return relative || "src/dist directories";
+  }
+  if (
+    sourceEntries.length !== distributionEntries.length ||
+    sourceEntries.some((entry, index) => entry !== distributionEntries[index])
+  ) {
+    return relative || "src/dist file inventory";
+  }
+  for (const entry of sourceEntries) {
+    const childRelative = relative ? `${relative}/${entry}` : entry;
+    const sourcePath = join(source, entry);
+    const distributionPath = join(distribution, entry);
+    try {
+      const sourceMetadata = lstatSync(sourcePath);
+      const distributionMetadata = lstatSync(distributionPath);
+      if (sourceMetadata.isDirectory() && distributionMetadata.isDirectory()) {
+        const mismatch = findSdkDistributionMismatch(
+          sourcePath,
+          distributionPath,
+          childRelative,
+        );
+        if (mismatch) return mismatch;
+      } else if (
+        !sourceMetadata.isFile() ||
+        sourceMetadata.isSymbolicLink() ||
+        !distributionMetadata.isFile() ||
+        distributionMetadata.isSymbolicLink() ||
+        sourceMetadata.size !== distributionMetadata.size ||
+        !readFileSync(sourcePath).equals(readFileSync(distributionPath))
+      ) {
+        return childRelative;
+      }
+    } catch {
+      return childRelative;
+    }
+  }
+  return null;
+};
+
 export const buildIrohaSdkAliases = (sdkRoot) => {
   const dist = resolve(sdkRoot, "dist");
   return REQUIRED_SDK_MODULES.map(([find, runtimeFilename]) => ({
@@ -199,6 +256,16 @@ export const resolveCompatibleIrohaSdkRoot = ({
     throw new Error(
       `The current linked @iroha/iroha-js API is unavailable at ${sdkRoot}. ` +
         "Build the sibling SDK before running the wallet; pinned or cached historical SDK fallbacks are not permitted.",
+    );
+  }
+  const distributionMismatch = findSdkDistributionMismatch(
+    join(sdkRoot, "src"),
+    join(sdkRoot, "dist"),
+  );
+  if (distributionMismatch) {
+    throw new Error(
+      `The current linked @iroha/iroha-js dist at ${sdkRoot} does not match src (${distributionMismatch}). ` +
+        "Run npm run build:dist in that SDK checkout before running the wallet.",
     );
   }
   log(`[iroha-sdk] using current linked SDK at ${sdkRoot}`);

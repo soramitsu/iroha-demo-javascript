@@ -64,17 +64,18 @@ const makeRoot = (): string => {
 
 const writeCurrentSdk = (sdkRoot: string): void => {
   const dist = join(sdkRoot, "dist");
+  const src = join(sdkRoot, "src");
   mkdirSync(dist, { recursive: true });
+  mkdirSync(src, { recursive: true });
   for (const [runtimeFilename] of Object.values(requiredModules)) {
-    writeFileSync(
-      join(dist, runtimeFilename),
+    const contents =
       runtimeFilename === "index.js"
         ? `${requiredRootExports
             .map((name) => `export function ${name}() {}`)
             .join("\n")}\n`
-        : "export {};\n",
-      "utf8",
-    );
+        : "export {};\n";
+    writeFileSync(join(src, runtimeFilename), contents, "utf8");
+    writeFileSync(join(dist, runtimeFilename), contents, "utf8");
   }
   for (const [, declarationFilename] of Object.values(requiredModules)) {
     writeFileSync(join(sdkRoot, declarationFilename), "export {};\n", "utf8");
@@ -150,6 +151,47 @@ describe("Iroha SDK build selection", () => {
 
     rmSync(join(sdkRoot, "normalizers.d.ts"));
     expect(hasCurrentIrohaSdkApi(sdkRoot)).toBe(false);
+  });
+
+  it("rejects stale or extra generated SDK files before activation", () => {
+    const projectRoot = makeRoot();
+    const sdkRoot = join(projectRoot, "sdk");
+    writeCurrentSdk(sdkRoot);
+
+    writeFileSync(join(sdkRoot, "src", "index.js"), "export {};\n");
+    expect(() =>
+      resolveCompatibleIrohaSdkRoot({
+        env: { IROHA_JS_SDK_ROOT: sdkRoot },
+        log: () => undefined,
+        projectRoot,
+      }),
+    ).toThrow(/dist .* does not match src \(index\.js\).*npm run build:dist/u);
+
+    writeFileSync(
+      join(sdkRoot, "src", "index.js"),
+      readFileSync(join(sdkRoot, "dist", "index.js")),
+    );
+    writeFileSync(join(sdkRoot, "dist", "obsolete.js"), "export {};\n");
+    expect(() =>
+      resolveCompatibleIrohaSdkRoot({
+        env: { IROHA_JS_SDK_ROOT: sdkRoot },
+        log: () => undefined,
+        projectRoot,
+      }),
+    ).toThrow(/does not match src \(src\/dist file inventory\)/u);
+
+    rmSync(join(sdkRoot, "dist", "obsolete.js"));
+    mkdirSync(join(sdkRoot, "src", "public"));
+    mkdirSync(join(sdkRoot, "dist", "public"));
+    writeFileSync(join(sdkRoot, "src", "public", "address.js"), "new\n");
+    writeFileSync(join(sdkRoot, "dist", "public", "address.js"), "old\n");
+    expect(() =>
+      resolveCompatibleIrohaSdkRoot({
+        env: { IROHA_JS_SDK_ROOT: sdkRoot },
+        log: () => undefined,
+        projectRoot,
+      }),
+    ).toThrow(/does not match src \(public\/address\.js\)/u);
   });
 
   it("rejects a configured root whose identity depends on the caller cwd", () => {

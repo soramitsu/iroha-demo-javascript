@@ -119,6 +119,11 @@ export const FIRST_RELEASE_IPC_INPUT_SCHEMAS = {
     label: "Derive account address input",
     required: ["domain", "publicKeyHex", "networkPrefix", "signingAlgorithm"],
   },
+  validateCanonicalAccountId: {
+    label: "Validate canonical account ID input",
+    required: ["accountId"],
+    optional: ["networkPrefix"],
+  },
   derivePublicKey: {
     label: "Derive public key input",
     required: ["privateKeyHex", "signingAlgorithm"],

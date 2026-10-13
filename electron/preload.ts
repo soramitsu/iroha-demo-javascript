@@ -158,6 +158,7 @@ import {
 import {
   deriveAccountAddressView,
   normalizeCanonicalAccountIdLiteral,
+  normalizeCanonicalI105AccountIdLiteral,
   requireAccountIdBoundToPublicKey,
 } from "./accountAddress";
 import {
@@ -1307,6 +1308,10 @@ type IrohaBridge = {
     signingAlgorithm: string;
     accountIdWarning: string;
   };
+  validateCanonicalAccountId(input: {
+    accountId: string;
+    networkPrefix?: number;
+  }): string;
   derivePublicKey(input: { privateKeyHex: string; signingAlgorithm: string }): {
     publicKeyHex: string;
     signingAlgorithm: string;
@@ -5252,6 +5257,9 @@ const reconcileSubscriptionMutationOnTorii = async (
   return reconciled;
 };
 
+const validateSoraCloudAccountId = (accountId: string): string =>
+  normalizeCanonicalI105AccountIdLiteral(accountId, "SoraCloud account ID");
+
 const fetchSoraCloudHfSharedLeaseStatusPayload = (
   input: SoraCloudHfSharedLeaseStatusInput,
 ): Promise<Record<string, unknown>> =>
@@ -5259,7 +5267,7 @@ const fetchSoraCloudHfSharedLeaseStatusPayload = (
     buildNexusEndpoint(
       input.toriiUrl,
       "/v1/soracloud/hf/lease/status",
-      buildSoraCloudHfStatusQuery(input),
+      buildSoraCloudHfStatusQuery(input, validateSoraCloudAccountId),
     ),
     "SoraCloud HF shared-lease status",
   );
@@ -5298,7 +5306,11 @@ const getSoraCloudHfSharedLeaseStatusFromTorii = async (
 ): Promise<SoraCloudHfStatusView> => {
   try {
     const payload = await fetchSoraCloudHfSharedLeaseStatusPayload(input);
-    return normalizeSoraCloudHfStatusPayload(payload, input);
+    return normalizeSoraCloudHfStatusPayload(
+      payload,
+      input,
+      validateSoraCloudAccountId,
+    );
   } catch (error) {
     if (error instanceof ApiRequestError && error.status === 404) {
       return missingSoraCloudHfStatus(
@@ -7274,6 +7286,32 @@ const api: IrohaBridge = {
       signingAlgorithm:
         normalizeRequiredBridgeSigningAlgorithm(signingAlgorithm),
     });
+  },
+  validateCanonicalAccountId(input) {
+    const { accountId, networkPrefix } = requireFirstReleaseIpcInput(
+      input,
+      "validateCanonicalAccountId",
+    );
+    const literal = requireFirstReleaseInputText(
+      accountId,
+      "accountId",
+      16_384,
+    );
+    if (literal.length > 4_096) {
+      throw new Error("accountId must be at most 4096 characters.");
+    }
+    if (
+      networkPrefix !== undefined &&
+      (typeof networkPrefix !== "number" ||
+        !Number.isInteger(networkPrefix) ||
+        networkPrefix < 0 ||
+        networkPrefix > 0x3fff)
+    ) {
+      throw new Error("networkPrefix must be an integer between 0 and 16383.");
+    }
+    return networkPrefix === undefined
+      ? normalizeCanonicalI105AccountIdLiteral(literal, "accountId")
+      : normalizeCanonicalAccountIdLiteral(literal, "accountId", networkPrefix);
   },
   derivePublicKey(input) {
     const { privateKeyHex, signingAlgorithm: signingAlgorithmInput } =

@@ -195,6 +195,35 @@ describe("release Sigstore boundary", () => {
     expect(workflow).toContain("--bundle SOURCE-IDENTITY.json.sigstore.json");
   });
 
+  it("pins the macOS deployment target before native compilation in both macOS release builds", () => {
+    const buildJob = workflow.slice(
+      workflow.indexOf("  build:"),
+      workflow.indexOf("  publish:"),
+    );
+    expect(buildJob).toContain("- platform: mac\n            arch: x64");
+    expect(buildJob).toContain("- platform: mac\n            arch: arm64");
+    const pinStep = buildJob.indexOf(
+      "- name: Pin macOS native deployment target",
+    );
+    const buildStep = buildJob.indexOf(
+      "- name: Build reviewed Iroha native binding",
+    );
+    const installStep = buildJob.indexOf(
+      "- name: Install exact reviewed release dependencies",
+    );
+    expect(pinStep).toBeGreaterThanOrEqual(0);
+    expect(buildStep).toBeGreaterThan(pinStep);
+    expect(installStep).toBeGreaterThan(buildStep);
+    const pinStepBody = buildJob.slice(
+      pinStep,
+      buildJob.indexOf("\n      - name:", pinStep + 1),
+    );
+    expect(pinStepBody).toContain("if: matrix.platform == 'mac'");
+    expect(pinStepBody).toContain(
+      "echo 'MACOSX_DEPLOYMENT_TARGET=13.0' >> \"$GITHUB_ENV\"",
+    );
+  });
+
   it("records the exact runtime native-export contract in source identity", () => {
     const nativeExportsSource = nativeGate.match(
       /const REQUIRED_NATIVE_EXPORTS = \[(?<body>[\s\S]*?)\n\];/u,

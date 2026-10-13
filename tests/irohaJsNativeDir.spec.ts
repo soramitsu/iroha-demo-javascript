@@ -437,7 +437,7 @@ describe("hasRequiredPackagedIrohaJsNativeProvenance", () => {
   const nativeSha256 = createHash("sha256").update(nativeBytes).digest("hex");
   const exactEntry = {
     sha256: nativeSha256,
-    build_provenance_version: 3,
+    build_provenance_version: 4,
     build_execution_policy: "trusted-local-cargo-v1",
     cargo_profile: "release",
     source_git_revision: REVIEWED_IROHA_SOURCE_GIT_REVISION,

@@ -973,6 +973,10 @@ export interface IrohaBridge {
     networkPrefix: number;
     signingAlgorithm: string;
   }): AccountAddressView;
+  validateCanonicalAccountId(input: {
+    accountId: string;
+    networkPrefix?: number;
+  }): string;
   derivePublicKey(input: { privateKeyHex: string; signingAlgorithm: string }): {
     publicKeyHex: string;
     signingAlgorithm: string;

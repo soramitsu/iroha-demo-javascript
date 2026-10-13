@@ -41,6 +41,19 @@ const PE_CERTIFICATE_DIRECTORY_OFFSET = PE_OPTIONAL_OFFSET + 112 + 4 * 8;
 const sha256 = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 
+const macosBuildIdentity = () => ({
+  sdk_root: "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk",
+  sdk_version: "26.5",
+  sdk_settings_sha256: "d".repeat(64),
+  deployment_target: "13.0",
+  clang_path:
+    "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
+  clang_version: "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+  linker_path:
+    "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld",
+  linker_version: "@(#)PROGRAM:ld PROJECT:ld-27037.1",
+});
+
 const canonicalManifest = (
   platformKey: string,
   nativeSha256: string,
@@ -52,7 +65,7 @@ const canonicalManifest = (
         entries: {
           [platformKey]: {
             sha256: nativeSha256,
-            build_provenance_version: 3,
+            build_provenance_version: 4,
             build_execution_policy: "trusted-local-cargo-v1",
             cargo_profile: "release",
             source_git_revision: SOURCE_GIT_REVISION,
@@ -307,7 +320,7 @@ describe("packaged Iroha native provenance fixtures", () => {
           entries: {
             "linux-x64": {
               sha256: sha256(nativeBytes),
-              build_provenance_version: 3,
+              build_provenance_version: 4,
               build_execution_policy: "trusted-local-cargo-v1",
               cargo_profile: "release",
               source_git_revision: SOURCE_GIT_REVISION,
@@ -335,6 +348,7 @@ describe("packaged Iroha native provenance fixtures", () => {
       platformField: unknown = signingIndependentSha256,
     ): Buffer =>
       canonicalManifest("darwin-arm64", nativeSha256, {
+        macos_build: macosBuildIdentity(),
         mach_o_signing_independent_sha256: platformField,
       });
 
@@ -352,6 +366,37 @@ describe("packaged Iroha native provenance fixtures", () => {
           manifestFor(sha256(reviewedMachO), 42),
         ),
       ).toBe(false);
+    });
+
+    it("rejects missing, malformed, or extra macOS build identity fields", () => {
+      const validManifest = JSON.parse(manifestFor().toString("utf8")) as {
+        entries: { "darwin-arm64": Record<string, unknown> };
+      };
+      const invalidIdentities = [
+        undefined,
+        { ...macosBuildIdentity(), sdk_version: "26" },
+        { ...macosBuildIdentity(), deployment_target: "13" },
+        { ...macosBuildIdentity(), sdk_root: "/tmp/../bad.sdk" },
+        { ...macosBuildIdentity(), extra: true },
+      ];
+      for (const macosBuild of invalidIdentities) {
+        const manifest = structuredClone(validManifest);
+        if (macosBuild === undefined) {
+          Reflect.deleteProperty(
+            manifest.entries["darwin-arm64"],
+            "macos_build",
+          );
+        } else {
+          manifest.entries["darwin-arm64"].macos_build = macosBuild;
+        }
+        expect(
+          checkFixture(
+            "darwin-arm64",
+            reviewedMachO,
+            Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8"),
+          ),
+        ).toBe(false);
+      }
     });
 
     it("rejects an inconsistent signing-independent hash even when the raw SHA-256 matches", () => {
@@ -405,6 +450,7 @@ describe("packaged Iroha native provenance fixtures", () => {
         "darwin-x64",
         sha256(reviewedX64MachO),
         {
+          macos_build: macosBuildIdentity(),
           mach_o_signing_independent_sha256:
             machOSigningIndependentSha256(reviewedX64MachO),
         },

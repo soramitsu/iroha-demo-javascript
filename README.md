@@ -17,15 +17,21 @@ The SDK dependency is intentionally local:
 ```
 
 There is no cached full-SDK, historical-revision signer, or compatibility
-fallback. Build the current sibling SDK when its native bindings are missing or
-stale.
+fallback. The wallet checks that the sibling SDK's generated `dist` exactly
+matches its current `src`; rebuild it after updating Iroha. The wallet's native
+build wrapper rebuilds an outdated native binding before a development build.
 
 ## Development
 
 ```bash
+npm --prefix ../iroha/javascript/iroha_js run build:dist
 npm install
 npm run dev
 ```
+
+On macOS, the native build performed by `npm install` or `npm run build`
+defaults `MACOSX_DEPLOYMENT_TARGET` to `13.0`. Set it explicitly to use a
+different deployment target during development.
 
 Useful verification commands:
 

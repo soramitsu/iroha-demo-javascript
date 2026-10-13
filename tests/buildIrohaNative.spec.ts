@@ -91,6 +91,40 @@ describe("Iroha native build environment", () => {
     expect(runProcess).toHaveBeenCalledTimes(3);
   });
 
+  it.each([
+    ["darwin", undefined, "13.0"],
+    ["darwin", "14.0", "14.0"],
+    ["darwin", "", ""],
+    ["linux", undefined, undefined],
+  ] as const)(
+    "uses macOS deployment target %s/%s as %s",
+    (platform, configuredTarget, expectedTarget) => {
+      const fixture = makeFixture();
+      const runProcess = vi.fn((_command: string, args: readonly string[]) => ({
+        status: 0,
+        stdout: `${fixture.tools[args[1] ?? ""]}\n`,
+      }));
+      const environment = {
+        CARGO_TARGET_DIR: fixture.target,
+        ...(configuredTarget === undefined
+          ? {}
+          : { MACOSX_DEPLOYMENT_TARGET: configuredTarget }),
+      };
+
+      const result = resolveIrohaNativeBuildEnvironment({
+        environment,
+        platform,
+        projectRoot: fixture.projectRoot,
+        runProcess,
+        sdkRoot: fixture.sdkRoot,
+      });
+
+      expect(result.buildEnvironment.MACOSX_DEPLOYMENT_TARGET).toBe(
+        expectedTarget,
+      );
+    },
+  );
+
   it("rejects a target nested inside the authenticated source", () => {
     const fixture = makeFixture();
     const runProcess = vi.fn((_command: string, args: readonly string[]) => ({
@@ -141,6 +175,7 @@ describe("Iroha native build environment", () => {
         CARGO_TARGET_DIR: fixture.target,
         npm_execpath: join(fixture.projectRoot, "npm-cli.js"),
       },
+      platform: "darwin",
       projectRoot: fixture.projectRoot,
       runProcess,
       sdkRoot: fixture.sdkRoot,
@@ -157,11 +192,13 @@ describe("Iroha native build environment", () => {
       command: fixture.tools.cargo,
     });
     expect(calls[0]?.environment).not.toHaveProperty("CARGO_NET_OFFLINE");
+    expect(calls[0]?.environment.MACOSX_DEPLOYMENT_TARGET).toBe("13.0");
     expect(calls[1]?.args).toEqual([
       join(fixture.projectRoot, "npm-cli.js"),
       "run",
       "build:native",
     ]);
     expect(calls[1]?.environment.CARGO_NET_OFFLINE).toBe("true");
+    expect(calls[1]?.environment.MACOSX_DEPLOYMENT_TARGET).toBe("13.0");
   });
 });

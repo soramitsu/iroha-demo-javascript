@@ -813,6 +813,12 @@ function buildInitScript() {
         publicKeyHex,
         accountIdWarning: "",
       }),
+      validateCanonicalAccountId: ({ accountId: candidate, networkPrefix }) => {
+        if (candidate !== accountId || (networkPrefix !== undefined && networkPrefix !== 369)) {
+          throw new Error("Account ID is not canonical for the mock network.");
+        }
+        return candidate;
+      },
       derivePublicKey: () => ({ publicKeyHex }),
       createConfidentialPaymentAddress: async () => ({
         schema: "iroha-confidential-payment-address/v3",

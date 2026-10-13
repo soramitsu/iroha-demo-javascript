@@ -333,6 +333,20 @@ describe("AccountSetupView", () => {
     getSigningAlgorithmsMock.mockResolvedValue([
       { id: "ed25519", label: "Ed25519", isDefault: true },
     ]);
+    // Persistence uses the preload bridge as well as the mocked view service.
+    // Keep both paths on the same derived identity, including synthetic IDs in
+    // the network-preview cases below.
+    (window as unknown as { iroha: unknown }).iroha = {
+      validateCanonicalAccountId: ({ accountId }: { accountId: string }) =>
+        accountId,
+      deriveAccountAddress: (input: {
+        publicKeyHex: string;
+        networkPrefix: number;
+      }) =>
+        input.publicKeyHex === BOB_PUBLIC_KEY_HEX
+          ? { accountId: accountIdFor(BOB_PUBLIC_KEY_HEX, input.networkPrefix) }
+          : deriveAccountAddressMock(input),
+    };
     exportConfidentialWalletBackupMock.mockResolvedValue({
       schema: "iroha-demo-confidential-wallet-backup/v2",
       chainId: TAIRA_CHAIN_PRESET.connection.chainId,
@@ -359,6 +373,7 @@ describe("AccountSetupView", () => {
     }
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    delete (window as { iroha?: unknown }).iroha;
   });
 
   const mountView = (options?: {

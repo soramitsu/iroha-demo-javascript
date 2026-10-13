@@ -132,24 +132,30 @@ byte size and SHA-256
 `28ca3f9224b55d89f6307f487462ec9f7b8027ccb0712323b779a568bc9ebfd1`.
 It never patches the signed Iroha source.
 
-Release-native manifests must use provenance version `3`, execution policy
+After the release source is refreshed, native manifests must use provenance
+version `4`, execution policy
 `trusted-local-cargo-v1`, identify the one revision and canonical source-tree
 SHA-256 selected by the complete reviewed pin set, and set
 `cargo_profile: "release"` plus
 `source_tree_clean: true`; missing, malformed, or unknown provenance fields fail
-closed. The reviewed addon must report exactly `23` from
+closed. On macOS, version `4` also requires the exact `macos_build` SDK,
+deployment-target, compiler, and linker identity. The reviewed addon must
+report exactly `23` from
 `connectNoritoBridgeAbiVersion()`, export the exact address, confidential
 receive-address, versioned-transaction, subscription, Hijiri quote,
 governance fingerprint, and secure private-file methods enforced by
 `postinstallNativeCheck.mjs`, and report exactly `1` from
 `securePrivateFileAbiVersion()`. JavaScript function arity is not an ABI signal
-for N-API exports. `SOURCE-IDENTITY.json` records provenance version `3`, the
+for N-API exports. `SOURCE-IDENTITY.json` must record provenance version `4`, the
 `trusted-local-cargo-v1` execution policy, both ABI versions, and the same exact
 required-export inventory. Packaged Electron loading also binds the native
 bytes to that manifest, using the signing-independent identity on macOS and
 Windows so platform signing cannot silently replace the reviewed addon. Windows
 packaging signs both `.exe` and `.node` files. The packaged runtime contains one
 canonical `dist/native/iroha_js_host.node`; the SDK source package is excluded.
+The sealed workflow still requests version `3` from its historical source pin,
+so it must be updated alongside the reviewed source before publishing a version
+`4` artifact.
 Every platform's `afterPack` gate opens the ASAR and requires exactly that
 unpacked addon plus its sealed checksum manifest, rejecting stale native layouts
 and any packaged `@iroha/iroha-js` source tree.

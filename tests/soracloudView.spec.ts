@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from "pinia";
 import { flushPromises, mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   getSoraCloudHfSharedLeaseStatus,
@@ -55,6 +55,14 @@ const missingLeaseStatus = {
 
 describe("SoraCloudView", () => {
   beforeEach(() => {
+    (window as unknown as { iroha: unknown }).iroha = {
+      validateCanonicalAccountId: ({ accountId }: { accountId: string }) => {
+        if (accountId !== ACCOUNT_ID) {
+          throw new Error("Invalid account fixture.");
+        }
+        return accountId;
+      },
+    };
     vi.mocked(getSoraCloudStatus).mockReset();
     vi.mocked(getSoraCloudHfSharedLeaseStatus).mockReset();
     vi.mocked(getSoraCloudHfSharedLeaseStatus).mockResolvedValue(
@@ -62,6 +70,10 @@ describe("SoraCloudView", () => {
     );
     localStorage.clear();
     setActivePinia(createPinia());
+  });
+
+  afterEach(() => {
+    delete (window as { iroha?: unknown }).iroha;
   });
 
   const mountView = async (leaseRoutesSupported = true) => {

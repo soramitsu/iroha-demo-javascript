@@ -1,5 +1,3 @@
-import { AccountAddress } from "@iroha/iroha-js/address";
-
 import { isCanonicalAssetDefinitionId } from "@/utils/assetId";
 
 export type SoraCloudAvailability =
@@ -57,6 +55,8 @@ export interface SoraCloudHfStatusQueryInput {
   leaseTermMs: number;
   accountId?: string;
 }
+
+export type CanonicalI105AccountIdValidator = (accountId: string) => string;
 
 export interface SoraCloudHfSourceView {
   schemaVersion: 1;
@@ -237,14 +237,11 @@ const requireCanonicalIrohaName = (value: unknown, label: string): string => {
 const requireCanonicalI105AccountId = (
   value: unknown,
   label: string,
+  validateAccountId: CanonicalI105AccountIdValidator,
 ): string => {
   const accountId = requireCanonicalText(value, label);
   try {
-    const parsed = AccountAddress.parseEncoded(accountId);
-    if (
-      parsed.chainDiscriminant === undefined ||
-      parsed.address.toI105(parsed.chainDiscriminant) !== accountId
-    ) {
+    if (validateAccountId(accountId) !== accountId) {
       throw new Error("noncanonical");
     }
   } catch {
@@ -252,6 +249,10 @@ const requireCanonicalI105AccountId = (
   }
   return accountId;
 };
+
+const validateAccountIdWithRendererBridge: CanonicalI105AccountIdValidator = (
+  accountId,
+) => window.iroha.validateCanonicalAccountId({ accountId });
 
 const computeHashLiteralCrc = (body: string): string => {
   let crc = 0xffff;
@@ -1388,6 +1389,7 @@ export const unavailableSoraCloudStatus = (
 
 export const buildSoraCloudHfStatusQuery = (
   input: SoraCloudHfStatusQueryInput,
+  validateAccountId: CanonicalI105AccountIdValidator = validateAccountIdWithRendererBridge,
 ): Record<string, string | number | undefined> => {
   const repoId = requireCanonicalHfRepoId(input.repoId, "Hugging Face repo");
   const revision = requireCanonicalCommitOid(
@@ -1411,6 +1413,7 @@ export const buildSoraCloudHfStatusQuery = (
         : requireCanonicalI105AccountId(
             input.accountId,
             "SoraCloud account ID",
+            validateAccountId,
           ),
   };
 };
@@ -1443,6 +1446,7 @@ const readExactNameArray = (value: unknown, label: string): string[] => {
 const readQueuedWindow = (
   value: unknown,
   label: string,
+  validateAccountId: CanonicalI105AccountIdValidator,
 ): SoraCloudHfQueuedWindowView => {
   const queued = requireRecord(value, label);
   requireExactKeys(
@@ -1490,6 +1494,7 @@ const readQueuedWindow = (
     sponsorAccountId: requireCanonicalI105AccountId(
       queued.sponsor_account_id,
       `${label}.sponsor_account_id`,
+      validateAccountId,
     ),
     leaseAssetDefinitionId,
     baseFee: requirePositiveCanonicalQuantity(
@@ -1516,6 +1521,7 @@ const readQueuedWindow = (
 export const normalizeSoraCloudHfStatusPayload = (
   payload: Record<string, unknown>,
   expected?: SoraCloudHfStatusQueryInput,
+  validateAccountId: CanonicalI105AccountIdValidator = validateAccountIdWithRendererBridge,
 ): SoraCloudHfStatusView => {
   const label = "SoraCloud HF status response";
   requireExactKeys(
@@ -1583,7 +1589,7 @@ export const normalizeSoraCloudHfStatusPayload = (
     throw new Error(`${label}.source.updated_at_ms precedes created_at_ms.`);
   }
   if (expected) {
-    const query = buildSoraCloudHfStatusQuery(expected);
+    const query = buildSoraCloudHfStatusQuery(expected, validateAccountId);
     if (repoId !== query.repo_id || resolvedRevision !== query.revision) {
       throw new Error(
         `${label}.source does not match the requested HF source.`,
@@ -1699,6 +1705,7 @@ export const normalizeSoraCloudHfStatusPayload = (
         : readQueuedWindow(
             pool.queued_next_window,
             `${label}.pool.queued_next_window`,
+            validateAccountId,
           );
     if (status !== "Active" && activeMemberCount !== 0) {
       throw new Error(
@@ -1776,6 +1783,7 @@ export const normalizeSoraCloudHfStatusPayload = (
     const accountId = requireCanonicalI105AccountId(
       member.account_id,
       `${label}.member.account_id`,
+      validateAccountId,
     );
     if (expected?.accountId !== undefined && accountId !== expected.accountId) {
       throw new Error(`${label}.member.account_id does not match the query.`);
@@ -1897,6 +1905,7 @@ export const normalizeSoraCloudHfStatusPayload = (
     const accountId = requireCanonicalI105AccountId(
       event.account_id,
       `${label}.latest_audit_event.account_id`,
+      validateAccountId,
     );
     if (expected?.accountId !== undefined && accountId !== expected.accountId) {
       throw new Error(

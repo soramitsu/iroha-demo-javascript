@@ -11,8 +11,19 @@ const GIT_REVISION_PATTERN = /^[0-9a-f]{40}$/u;
 const PE_DOS_HEADER_BYTES = 64;
 const MAX_CHECKSUM_MANIFEST_BYTES = 1024 * 1024;
 const MAX_NATIVE_MODULE_BYTES = 256 * 1024 * 1024;
-const REQUIRED_NATIVE_BUILD_PROVENANCE_VERSION = 3;
+const REQUIRED_NATIVE_BUILD_PROVENANCE_VERSION = 4;
 const REQUIRED_NATIVE_BUILD_EXECUTION_POLICY = "trusted-local-cargo-v1";
+const MACOS_VERSION_PATTERN = /^\d+(?:\.\d+){1,2}$/u;
+const MACOS_BUILD_FIELDS = [
+  "sdk_root",
+  "sdk_version",
+  "sdk_settings_sha256",
+  "deployment_target",
+  "clang_path",
+  "clang_version",
+  "linker_path",
+  "linker_version",
+];
 const REQUIRED_NATIVE_EXPORTS = [
   "accountAddressParseEncoded",
   "accountAddressRender",
@@ -122,6 +133,46 @@ const hasExactFields = (value, fields) => {
   );
 };
 
+const hasControlCharacter = (value) =>
+  Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint <= 0x1f || codePoint === 0x7f;
+  });
+
+const isCanonicalMacosPath = (value) =>
+  typeof value === "string" &&
+  value.startsWith("/") &&
+  Buffer.byteLength(value, "utf8") <= 4096 &&
+  value
+    .slice(1)
+    .split("/")
+    .every(
+      (segment) =>
+        segment !== "" &&
+        segment !== "." &&
+        segment !== ".." &&
+        !hasControlCharacter(segment),
+    );
+
+const isBoundedVersionLine = (value, prefix) =>
+  typeof value === "string" &&
+  value.startsWith(prefix) &&
+  value.length > prefix.length &&
+  Buffer.byteLength(value, "utf8") <= 512 &&
+  !hasControlCharacter(value);
+
+const hasExactMacosBuildIdentity = (value) =>
+  hasExactFields(value, MACOS_BUILD_FIELDS) &&
+  isCanonicalMacosPath(value.sdk_root) &&
+  MACOS_VERSION_PATTERN.test(value.sdk_version) &&
+  typeof value.sdk_settings_sha256 === "string" &&
+  SHA256_PATTERN.test(value.sdk_settings_sha256) &&
+  MACOS_VERSION_PATTERN.test(value.deployment_target) &&
+  isCanonicalMacosPath(value.clang_path) &&
+  isBoundedVersionLine(value.clang_version, "Apple clang version ") &&
+  isCanonicalMacosPath(value.linker_path) &&
+  isBoundedVersionLine(value.linker_version, "@(#)PROGRAM:ld PROJECT:ld-");
+
 const isBoundedRegularNonSymbolicLink = (path, maximumBytes) => {
   try {
     const stat = lstatSync(path);
@@ -178,6 +229,7 @@ const describeReleaseProvenanceFailure = (
     "source_tree_sha256",
   ]);
   if (platformKey.startsWith("darwin-")) {
+    allowedFields.add("macos_build");
     allowedFields.add("mach_o_signing_independent_sha256");
   } else if (platformKey.startsWith("win32-")) {
     allowedFields.add("pe_signing_independent_sha256");
@@ -199,7 +251,10 @@ const describeReleaseProvenanceFailure = (
     "source_tree_sha256",
   ];
   if (platformKey.startsWith("darwin-")) {
-    requiredProvenanceFields.push("mach_o_signing_independent_sha256");
+    requiredProvenanceFields.push(
+      "macos_build",
+      "mach_o_signing_independent_sha256",
+    );
   } else if (platformKey.startsWith("win32-")) {
     requiredProvenanceFields.push(
       "pe_signing_independent_sha256",
@@ -257,6 +312,12 @@ const describeReleaseProvenanceFailure = (
     return `native SHA-256 is malformed for ${platformKey}`;
   }
 
+  if (
+    platformKey.startsWith("darwin-") &&
+    !hasExactMacosBuildIdentity(checksumEntry.macos_build)
+  ) {
+    return `macOS build identity is malformed for ${platformKey}`;
+  }
   if (
     Object.hasOwn(checksumEntry, "mach_o_signing_independent_sha256") &&
     (typeof checksumEntry.mach_o_signing_independent_sha256 !== "string" ||

@@ -150,6 +150,31 @@ export const normalizeCanonicalAccountIdLiteral = (
   return parseCanonicalAccountId(value, label, normalizedPrefix).literal;
 };
 
+export const normalizeCanonicalI105AccountIdLiteral = (
+  value: string,
+  label: string,
+): string => {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value !== value.trim()
+  ) {
+    throw new Error(`${label} must be an exact canonical I105 account ID.`);
+  }
+  try {
+    const parsed = AccountAddress.parseEncoded(value);
+    if (parsed.chainDiscriminant === undefined) {
+      throw new Error("I105 network prefix is missing.");
+    }
+    if (parsed.address.toI105(parsed.chainDiscriminant) !== value) {
+      throw new Error("Noncanonical I105 rendering.");
+    }
+    return value;
+  } catch {
+    throw new Error(`${label} must be an exact canonical I105 account ID.`);
+  }
+};
+
 export const requireAccountIdBoundToPublicKey = (input: {
   accountId: string;
   publicKeyHex: string;

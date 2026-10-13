@@ -24,8 +24,19 @@ const CHECKSUM_FILENAME = "iroha_js_host.checksums.json";
 const REVIEWED_IROHA_SOURCE_GIT_REVISION =
   "1bcb05eb208d8bda1610789d827a7ed97e66e56c";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
-const REQUIRED_NATIVE_BUILD_PROVENANCE_VERSION = 3;
+const REQUIRED_NATIVE_BUILD_PROVENANCE_VERSION = 4;
 const REQUIRED_NATIVE_BUILD_EXECUTION_POLICY = "trusted-local-cargo-v1";
+const MACOS_VERSION_PATTERN = /^\d+(?:\.\d+){1,2}$/u;
+const MACOS_BUILD_FIELDS = [
+  "sdk_root",
+  "sdk_version",
+  "sdk_settings_sha256",
+  "deployment_target",
+  "clang_path",
+  "clang_version",
+  "linker_path",
+  "linker_version",
+] as const;
 const MAX_CHECKSUM_MANIFEST_BYTES = 1024 * 1024;
 const MAX_NATIVE_MODULE_BYTES = 256 * 1024 * 1024;
 const SNAPSHOT_DIRECTORY_PREFIX = "sora-iroha-js-native-v1-";
@@ -479,7 +490,7 @@ const expectedEntryFields = (platformKey: string): readonly string[] | null => {
     "source_tree_sha256",
   ];
   if (platformKey.startsWith("darwin-")) {
-    return [...common, "mach_o_signing_independent_sha256"];
+    return [...common, "macos_build", "mach_o_signing_independent_sha256"];
   }
   if (platformKey.startsWith("win32-")) {
     return [...common, "pe_signing_independent_sha256", "pe_unsigned_size"];
@@ -489,6 +500,52 @@ const expectedEntryFields = (platformKey: string): readonly string[] | null => {
   }
   return null;
 };
+
+const hasControlCharacter = (value: string): boolean =>
+  Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f;
+  });
+
+const isCanonicalMacosPath = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.startsWith("/") &&
+  Buffer.byteLength(value, "utf8") <= 4096 &&
+  value
+    .slice(1)
+    .split("/")
+    .every(
+      (segment) =>
+        segment !== "" &&
+        segment !== "." &&
+        segment !== ".." &&
+        !hasControlCharacter(segment),
+    );
+
+const isBoundedVersionLine = (
+  value: unknown,
+  prefix: string,
+): value is string =>
+  typeof value === "string" &&
+  value.startsWith(prefix) &&
+  value.length > prefix.length &&
+  Buffer.byteLength(value, "utf8") <= 512 &&
+  !hasControlCharacter(value);
+
+const hasExactMacosBuildIdentity = (value: unknown): value is JsonObject =>
+  isPlainObject(value) &&
+  hasExactKeys(value, MACOS_BUILD_FIELDS) &&
+  isCanonicalMacosPath(value.sdk_root) &&
+  typeof value.sdk_version === "string" &&
+  MACOS_VERSION_PATTERN.test(value.sdk_version) &&
+  typeof value.sdk_settings_sha256 === "string" &&
+  SHA256_PATTERN.test(value.sdk_settings_sha256) &&
+  typeof value.deployment_target === "string" &&
+  MACOS_VERSION_PATTERN.test(value.deployment_target) &&
+  isCanonicalMacosPath(value.clang_path) &&
+  isBoundedVersionLine(value.clang_version, "Apple clang version ") &&
+  isCanonicalMacosPath(value.linker_path) &&
+  isBoundedVersionLine(value.linker_version, "@(#)PROGRAM:ld PROJECT:ld-");
 
 const hasRequiredEntryIdentity = (
   entry: JsonObject,
@@ -511,6 +568,7 @@ const hasRequiredPlatformIdentity = (
 ): boolean => {
   if (platformKey.startsWith("darwin-")) {
     return (
+      hasExactMacosBuildIdentity(entry.macos_build) &&
       typeof entry.mach_o_signing_independent_sha256 === "string" &&
       SHA256_PATTERN.test(entry.mach_o_signing_independent_sha256)
     );
@@ -573,6 +631,7 @@ const readVerifiedPackagedNativeBytes = (
       source_tree_sha256: entry.source_tree_sha256,
     };
     if (platformKey.startsWith("darwin-")) {
+      canonicalEntry.macos_build = entry.macos_build;
       canonicalEntry.mach_o_signing_independent_sha256 =
         entry.mach_o_signing_independent_sha256;
     } else if (platformKey.startsWith("win32-")) {

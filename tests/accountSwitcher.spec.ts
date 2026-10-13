@@ -1,10 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { AccountAddress } from "@iroha/iroha-js/address";
 import AccountSwitcher from "@/components/AccountSwitcher.vue";
 import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
+import {
+  deriveAccountAddressView,
+  normalizeCanonicalAccountIdLiteral,
+} from "../electron/accountAddress";
 
 const ALICE_PUBLIC_KEY_HEX =
   "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737";
@@ -29,8 +33,27 @@ const t = (key: string) => translate("en-US", key);
 
 describe("AccountSwitcher", () => {
   beforeEach(() => {
+    (window as unknown as { iroha: unknown }).iroha = {
+      deriveAccountAddress: deriveAccountAddressView,
+      validateCanonicalAccountId: ({
+        accountId,
+        networkPrefix,
+      }: {
+        accountId: string;
+        networkPrefix: number;
+      }) =>
+        normalizeCanonicalAccountIdLiteral(
+          accountId,
+          "accountId",
+          networkPrefix,
+        ),
+    };
     localStorage.clear();
     setActivePinia(createPinia());
+  });
+
+  afterEach(() => {
+    delete (window as { iroha?: unknown }).iroha;
   });
 
   it("renders accounts and switches the active account", async () => {

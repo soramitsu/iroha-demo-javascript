@@ -61,6 +61,18 @@ const sha256 = (value: string): string =>
 
 const RELEASE_SOURCE_REVISION = "a".repeat(40);
 const RELEASE_SOURCE_TREE_SHA256 = "c".repeat(64);
+const macosBuildIdentity = () => ({
+  sdk_root: "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk",
+  sdk_version: "26.5",
+  sdk_settings_sha256: "d".repeat(64),
+  deployment_target: "13.0",
+  clang_path:
+    "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
+  clang_version: "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+  linker_path:
+    "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld",
+  linker_version: "@(#)PROGRAM:ld PROJECT:ld-27037.1",
+});
 const releaseProvenanceRequirement = (): NativeProvenanceRequirement => ({
   cargoProfile: "release",
   sourceGitRevision: RELEASE_SOURCE_REVISION,
@@ -70,12 +82,13 @@ const releaseChecksumEntry = (
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> => ({
   sha256: sha256("native-binary"),
-  build_provenance_version: 3,
+  build_provenance_version: 4,
   build_execution_policy: "trusted-local-cargo-v1",
   cargo_profile: "release",
   source_git_revision: RELEASE_SOURCE_REVISION,
   source_tree_clean: true,
   source_tree_sha256: RELEASE_SOURCE_TREE_SHA256,
+  macos_build: macosBuildIdentity(),
   mach_o_signing_independent_sha256: "b".repeat(64),
   ...overrides,
 });
@@ -721,6 +734,7 @@ describe("resolveNativeBuildRequirement", () => {
     "source_git_revision",
     "source_tree_clean",
     "source_tree_sha256",
+    "macos_build",
     "mach_o_signing_independent_sha256",
   ])(
     "requests a release rebuild when provenance field %s is missing",
@@ -753,6 +767,9 @@ describe("resolveNativeBuildRequirement", () => {
     ["source_tree_clean", "true"],
     ["source_tree_sha256", "C".repeat(64)],
     ["mach_o_signing_independent_sha256", "B".repeat(64)],
+    ["macos_build", { ...macosBuildIdentity(), deployment_target: "13" }],
+    ["macos_build", { ...macosBuildIdentity(), extra: true }],
+    ["macos_build", { ...macosBuildIdentity(), sdk_root: "/tmp/../bad.sdk" }],
   ])(
     "requests a release rebuild when provenance field %s is malformed",
     (field, malformedValue) => {

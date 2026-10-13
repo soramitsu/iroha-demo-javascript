@@ -14,6 +14,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PINNED_RUST_TOOLCHAIN = "1.93.1";
+const DEFAULT_MACOSX_DEPLOYMENT_TARGET = "13.0";
 const NATIVE_BUILD_CARGO_LOCK_ENV = "IROHA_JS_CARGO_LOCKFILE_PATH";
 const NATIVE_BUILD_CARGO_PATH_ENV = "IROHA_JS_CARGO_PATH";
 const REQUIRED_BUILD_ENVIRONMENT = Object.freeze({
@@ -133,6 +134,7 @@ const defaultTargetDirectory = (projectRoot, repoRoot) => {
 
 export const resolveIrohaNativeBuildEnvironment = ({
   environment = process.env,
+  platform = process.platform,
   projectRoot = defaultProjectRoot,
   runProcess = spawnSync,
   sdkRoot,
@@ -213,6 +215,10 @@ export const resolveIrohaNativeBuildEnvironment = ({
     buildEnvironment: Object.freeze({
       ...environment,
       ...REQUIRED_BUILD_ENVIRONMENT,
+      ...(platform === "darwin" &&
+      environment.MACOSX_DEPLOYMENT_TARGET === undefined
+        ? { MACOSX_DEPLOYMENT_TARGET: DEFAULT_MACOSX_DEPLOYMENT_TARGET }
+        : {}),
       CARGO_TARGET_DIR: cargoTargetDirectory,
       [NATIVE_BUILD_CARGO_LOCK_ENV]: cargoLock,
       [NATIVE_BUILD_CARGO_PATH_ENV]: cargoPath,
@@ -229,12 +235,14 @@ export const resolveIrohaNativeBuildEnvironment = ({
 
 export const buildIrohaNative = ({
   environment = process.env,
+  platform = process.platform,
   projectRoot = defaultProjectRoot,
   runProcess = spawnSync,
   sdkRoot,
 } = {}) => {
   const build = resolveIrohaNativeBuildEnvironment({
     environment,
+    platform,
     projectRoot,
     runProcess,
     sdkRoot,

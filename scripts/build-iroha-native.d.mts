@@ -26,6 +26,7 @@ export type IrohaNativeBuildProcess = (
 
 export interface IrohaNativeBuildOptions {
   environment?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
   projectRoot?: string;
   runProcess?: IrohaNativeBuildProcess;
   sdkRoot: string;
