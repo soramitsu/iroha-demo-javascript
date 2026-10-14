@@ -11,22 +11,32 @@ import {
   THEME_VERSION,
   useThemeStore,
 } from "@/stores/theme";
+import { SAKURA_PALETTES } from "@/utils/sakuraPetals";
 
 type MotionListener = (event: MediaQueryListEvent) => void;
 
+const createGradient = () => ({ addColorStop: vi.fn() });
+
 const createCanvasContext = () => ({
-  save: vi.fn(),
-  restore: vi.fn(),
-  translate: vi.fn(),
-  rotate: vi.fn(),
-  scale: vi.fn(),
+  setTransform: vi.fn(),
   beginPath: vi.fn(),
   moveTo: vi.fn(),
   bezierCurveTo: vi.fn(),
+  quadraticCurveTo: vi.fn(),
+  closePath: vi.fn(),
   fill: vi.fn(),
+  stroke: vi.fn(),
   clearRect: vi.fn(),
-  setTransform: vi.fn(),
-  fillStyle: "",
+  fillRect: vi.fn(),
+  drawImage: vi.fn(),
+  createLinearGradient: vi.fn(() => createGradient()),
+  createRadialGradient: vi.fn(() => createGradient()),
+  fillStyle: "" as unknown,
+  strokeStyle: "" as unknown,
+  lineWidth: 1,
+  lineCap: "butt",
+  globalAlpha: 1,
+  globalCompositeOperation: "source-over",
 });
 
 const setViewport = (width: number, height: number, pixelRatio: number) => {
@@ -84,18 +94,50 @@ const installMotionPreference = (initial: boolean) => {
   };
 };
 
+const seededRandom = (seed: number) => {
+  let state = seed;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
 const sakuraSource = readFileSync(
   resolve(process.cwd(), "src/components/SakuraScene.vue"),
   "utf8",
 );
 
-const petalTranslations = (context: ReturnType<typeof createCanvasContext>) =>
-  context.translate.mock.calls
-    .filter((_, index) => index % 2 === 1)
-    .map(([x, y]) => [x, y]);
+type CanvasContextMock = ReturnType<typeof createCanvasContext>;
+
+// Every petal body is one closed outline drawn under its own transform.
+const petalPositions = (context: CanvasContextMock, pixelRatio = 2) => {
+  const transforms = context.setTransform.mock.calls.map((args, index) => ({
+    order: context.setTransform.mock.invocationCallOrder[index],
+    args,
+  }));
+  return context.closePath.mock.invocationCallOrder.map((order) => {
+    const transform = transforms.filter((entry) => entry.order < order).at(-1);
+    return [
+      transform!.args[4] / pixelRatio,
+      transform!.args[5] / pixelRatio,
+    ] as const;
+  });
+};
+
+const gradientStops = (context: CanvasContextMock) =>
+  [
+    ...context.createLinearGradient.mock.results,
+    ...context.createRadialGradient.mock.results,
+  ].flatMap(({ value }) =>
+    (value as ReturnType<typeof createGradient>).addColorStop.mock.calls.map(
+      ([, color]) => color,
+    ),
+  );
 
 describe("SakuraScene", () => {
-  let context: ReturnType<typeof createCanvasContext>;
+  let context: CanvasContextMock;
   let wrappers: VueWrapper[];
   let hidden = false;
   let nextFrameId = 1;
@@ -114,6 +156,16 @@ describe("SakuraScene", () => {
     expect(callback, `animation frame ${id} should be scheduled`).toBeTruthy();
     frameCallbacks.delete(id);
     callback?.(timestamp);
+  };
+
+  const clearDrawing = () => {
+    context.setTransform.mockClear();
+    context.closePath.mockClear();
+    context.drawImage.mockClear();
+    context.fill.mockClear();
+    context.bezierCurveTo.mockClear();
+    context.createLinearGradient.mockClear();
+    context.createRadialGradient.mockClear();
   };
 
   beforeEach(() => {
@@ -209,69 +261,82 @@ describe("SakuraScene", () => {
     mountScene();
 
     expect(requestFrame).not.toHaveBeenCalled();
-    expect(context.fill).toHaveBeenCalled();
+    expect(context.closePath).toHaveBeenCalledTimes(18);
+  });
+
+  it("draws each petal as one closed, notched outline over its wall shadow", () => {
+    vi.spyOn(Math, "random").mockImplementation(seededRandom(7));
+    installMotionPreference(true);
+
+    mountScene();
+
+    expect(context.bezierCurveTo).toHaveBeenCalledTimes(18 * 8);
+    expect(context.drawImage).toHaveBeenCalledTimes(18);
+    // Shadows land on the wall before any petal is painted over them.
+    expect(
+      Math.max(...context.drawImage.mock.invocationCallOrder),
+    ).toBeLessThan(Math.min(...context.closePath.mock.invocationCallOrder));
   });
 
   it("repaints the same static composition when reduced-motion colors change", async () => {
-    vi.spyOn(Math, "random").mockReturnValue(0.25);
+    vi.spyOn(Math, "random").mockImplementation(seededRandom(42));
     installMotionPreference(true);
     mountScene();
-    const originalComposition = petalTranslations(context).slice(-18);
+    const originalComposition = petalPositions(context);
+    const darkStops = gradientStops(context);
+    expect(new Set(originalComposition.map(([x]) => x)).size).toBeGreaterThan(
+      1,
+    );
 
-    context.translate.mockClear();
+    clearDrawing();
     useThemeStore().setTheme("light");
     await nextTick();
 
     expect(requestFrame).not.toHaveBeenCalled();
-    expect(petalTranslations(context)).toEqual(originalComposition);
-    expect(context.fillStyle).toBe("rgba(247, 166, 198, 0.92)");
+    expect(petalPositions(context)).toEqual(originalComposition);
+    const lightStops = gradientStops(context);
+    expect(lightStops).toContain(
+      `rgba(${SAKURA_PALETTES.light.occlusion.join(", ")}, 1)`,
+    );
+    expect(lightStops).not.toEqual(darkStops);
   });
 
-  it.each([
-    ["dark", "rgba(252, 181, 212, 0.9)"],
-    ["light", "rgba(247, 166, 198, 0.92)"],
-  ] as const)("preserves the %s-theme sakura color", (theme, color) => {
-    localStorage.setItem(
-      THEME_STORAGE_KEY,
-      JSON.stringify({
-        schema: THEME_SCHEMA,
-        version: THEME_VERSION,
-        theme,
-      }),
-    );
-    installMotionPreference(true);
+  it.each(["dark", "light"] as const)(
+    "lights petals with the %s-theme palette",
+    (theme) => {
+      localStorage.setItem(
+        THEME_STORAGE_KEY,
+        JSON.stringify({
+          schema: THEME_SCHEMA,
+          version: THEME_VERSION,
+          theme,
+        }),
+      );
+      installMotionPreference(true);
 
+      mountScene();
+
+      const palette = SAKURA_PALETTES[theme];
+      const stops = gradientStops(context);
+      expect(stops).toContain(`rgba(${palette.occlusion.join(", ")}, 1)`);
+      expect(stops).toContain(`rgb(${palette.clawDeep.join(", ")})`);
+    },
+  );
+
+  it("rebuilds the theme paint for the next animated frame", async () => {
+    installMotionPreference(false);
     mountScene();
+    runFrame(1, 1000 / 60);
 
-    expect(context.fillStyle).toBe(color);
-  });
+    clearDrawing();
+    useThemeStore().setTheme("light");
+    await nextTick();
+    expect(context.createRadialGradient).not.toHaveBeenCalled();
+    runFrame(2, 2000 / 60);
 
-  it("preserves the notched, tapered sakura petal path", () => {
-    vi.spyOn(Math, "random").mockReturnValue(0);
-    installMotionPreference(true);
-
-    mountScene();
-
-    expect(context.moveTo.mock.calls.length).toBeGreaterThanOrEqual(18);
-    expect(context.bezierCurveTo).toHaveBeenCalledTimes(
-      context.moveTo.mock.calls.length * 6,
+    expect(gradientStops(context)).toContain(
+      `rgba(${SAKURA_PALETTES.light.occlusion.join(", ")}, 1)`,
     );
-    const roundedMove = context.moveTo.mock.calls[0].map((value) =>
-      Number(value.toFixed(4)),
-    );
-    const roundedCurves = context.bezierCurveTo.mock.calls
-      .slice(0, 6)
-      .map((curve) => curve.map((value) => Number(value.toFixed(4))));
-
-    expect(roundedMove).toEqual([0, -6.8096]);
-    expect(roundedCurves).toEqual([
-      [1.3728, -9.1392, 3.4944, -8.2432, 4.2432, -4.8384],
-      [5.616, -0.1792, 3.8688, 4.1216, 1.3728, 8.512],
-      [0.4992, 9.9456, 0.1872, 10.752, 0, 11.0208],
-      [-0.3744, 10.3936, -0.9984, 9.408, -1.872, 8.064],
-      [-4.6176, 3.0464, -5.928, -0.5376, -4.1184, -5.1968],
-      [-3.4944, -8.2432, -1.248, -9.1392, 0, -6.8096],
-    ]);
   });
 
   it("sticks petals to the windward edge and releases them when wind calms", () => {
@@ -283,41 +348,53 @@ describe("SakuraScene", () => {
       new MouseEvent("pointermove", { clientX: 0, clientY: 150 }),
     );
     runFrame(2, 1);
-    context.translate.mockClear();
+    clearDrawing();
     runFrame(1, 1000 / 60);
 
-    expect(context.translate.mock.calls[0]).toEqual([-2, 0]);
-    expect(petalTranslations(context).every(([x]) => x === 8)).toBe(true);
+    // Far petals are 12.9px long, pinned half a length from the wall, and
+    // shifted by a fifth of their -0.5 × 8px parallax while pinned.
+    const pinned = 12.9 / 2 - 0.5 * 8 * 0.2;
+    const stuck = petalPositions(context);
+    expect(stuck).toHaveLength(16);
+    stuck.forEach(([x]) => expect(x).toBeCloseTo(pinned, 10));
 
     window.dispatchEvent(
       new MouseEvent("pointermove", { clientX: 200, clientY: 150 }),
     );
     runFrame(4, 20);
     runFrame(3, 2000 / 60);
-    context.translate.mockClear();
+    clearDrawing();
     runFrame(5, 3000 / 60);
+    const releasedOnce = petalPositions(context);
+    clearDrawing();
+    runFrame(6, 4000 / 60);
+    const releasedTwice = petalPositions(context);
 
-    expect(context.translate.mock.calls[0]).toEqual([0, 0]);
-    expect(petalTranslations(context).every(([x]) => x < 8)).toBe(true);
+    // Free petals drift again instead of holding the wall.
+    expect(releasedTwice).toHaveLength(16);
+    releasedTwice.forEach(([x], index) => {
+      expect(x).not.toBeCloseTo(pinned, 3);
+      expect(x).not.toBeCloseTo(releasedOnce[index][0], 6);
+    });
   });
 
   it("scales petal density and backing dimensions after a viewport resize", () => {
     installMotionPreference(false);
     const wrapper = mountScene();
 
-    context.fill.mockClear();
+    clearDrawing();
     runFrame(1, 1000 / 60);
-    expect(context.fill).toHaveBeenCalledTimes(16);
+    expect(context.closePath).toHaveBeenCalledTimes(16);
 
     setViewport(1440, 1000, 2);
     window.dispatchEvent(new Event("resize"));
-    context.fill.mockClear();
+    clearDrawing();
     runFrame(2, 2000 / 60);
 
     const canvas = wrapper.get("canvas").element as HTMLCanvasElement;
     expect(canvas.width).toBe(2880);
     expect(canvas.height).toBe(2000);
-    expect(context.fill).toHaveBeenCalledTimes(55);
+    expect(context.closePath).toHaveBeenCalledTimes(55);
   });
 
   it("pauses while hidden and resumes with only one animation frame", () => {
@@ -350,7 +427,7 @@ describe("SakuraScene", () => {
     expect(
       document.documentElement.style.getPropertyValue("--parallax-y"),
     ).toBe("0");
-    expect(context.fill).toHaveBeenCalled();
+    expect(context.closePath).toHaveBeenCalledTimes(18);
 
     motion.set(false);
     motion.set(false);

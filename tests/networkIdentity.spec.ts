@@ -27,6 +27,10 @@ import {
   testNetworkIdentityPin,
 } from "./helpers/networkIdentityFixture";
 
+const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
+const TEST_RESET_TAIRA_NETWORK_ID =
+  "hash:CA7BEBB1579D7F490C23BCBABD27E116BF2F921A7DB69862F0AD28E22257B465#450F";
+
 const jsonResponse = (payload: unknown, status = 200) =>
   new Response(JSON.stringify(payload), {
     status,
@@ -139,6 +143,11 @@ describe("endpoint-derived network identity parsing", () => {
   it("validates persisted pins exactly", () => {
     expect(isNetworkIdentityPin(testNetworkIdentityPin())).toBe(true);
     expect(
+      isNetworkIdentityPin(
+        testNetworkIdentityPin({ confirmation: "testnet-current" }),
+      ),
+    ).toBe(true);
+    expect(
       isNetworkIdentityPin({ ...testNetworkIdentityPin(), extra: true }),
     ).toBe(false);
     expect(
@@ -245,7 +254,7 @@ describe("network identity pin store", () => {
     }
   });
 
-  it("pins on first use and never replaces a pin implicitly", () => {
+  it("refreshes official TAIRA pins after successive resets and persists each identity", () => {
     const pins = store();
     expect(pins.read("https://taira.sora.org")).toBeNull();
     const first = pins.pinFirstUse("https://taira.sora.org/", {
@@ -258,24 +267,72 @@ describe("network identity pin store", () => {
       confirmedAtMs: 42,
       confirmation: "first-use",
     });
+    for (const networkId of [
+      TEST_TAIRA_NETWORK_ID,
+      TEST_RESET_TAIRA_NETWORK_ID,
+    ]) {
+      const refreshed = pins.pinFirstUse("https://taira.sora.org", {
+        networkId,
+        networkPrefix: 369,
+      });
+      expect(refreshed).toMatchObject({
+        networkId,
+        networkPrefix: 369,
+        confirmedAtMs: 42,
+        confirmation: "testnet-current",
+      });
+      expect(pins.read("https://taira.sora.org")).toEqual(refreshed);
+      const reloaded = new NetworkIdentityPinStore(join(pins.filePath, ".."));
+      expect(reloaded.read("https://taira.sora.org")).toEqual(refreshed);
+    }
+    expect(JSON.parse(readFileSync(pins.filePath, "utf8")).pins).toHaveLength(
+      1,
+    );
+  });
+
+  it("preserves non-TAIRA pins until the user confirms a replacement", () => {
+    for (const [toriiUrl, networkPrefix] of [
+      ["https://minamoto.sora.org", 753],
+      ["https://example.test", 369],
+      ["https://taira.sora.org:8443", 369],
+      ["https://taira.sora.org/proxy", 369],
+      ["https://taira.sora.org", 753],
+    ] as const) {
+      const pins = store();
+      const first = pins.pinFirstUse(toriiUrl, {
+        networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID,
+        networkPrefix,
+      });
+      expect(
+        pins.pinFirstUse(toriiUrl, {
+          networkId: TEST_TAIRA_NETWORK_ID,
+          networkPrefix,
+        }),
+      ).toEqual(first);
+      const confirmed = pins.replaceConfirmed(toriiUrl, {
+        networkId: TEST_TAIRA_NETWORK_ID,
+        networkPrefix,
+      });
+      expect(confirmed).toMatchObject({
+        networkId: TEST_TAIRA_NETWORK_ID,
+        confirmation: "user-confirmed",
+      });
+      expect(pins.read(toriiUrl)).toEqual(confirmed);
+    }
+  });
+
+  it("never refreshes a TAIRA pin across a network-prefix change", () => {
+    const pins = store();
+    const previous = pins.pinFirstUse("https://taira.sora.org", {
+      networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID,
+      networkPrefix: 753,
+    });
     expect(
       pins.pinFirstUse("https://taira.sora.org", {
         networkId: TEST_TAIRA_NETWORK_ID,
         networkPrefix: 369,
-      }).networkId,
-    ).toBe(TEST_PREVIOUS_TAIRA_NETWORK_ID);
-    const replaced = pins.replaceConfirmed("https://taira.sora.org", {
-      networkId: TEST_TAIRA_NETWORK_ID,
-      networkPrefix: 369,
-    });
-    expect(replaced).toMatchObject({
-      networkId: TEST_TAIRA_NETWORK_ID,
-      confirmation: "user-confirmed",
-    });
-    expect(pins.read("https://taira.sora.org")).toEqual(replaced);
-    expect(JSON.parse(readFileSync(pins.filePath, "utf8")).pins).toHaveLength(
-      1,
-    );
+      }),
+    ).toEqual(previous);
   });
 
   it("fails closed on a malformed store instead of re-pinning", () => {
@@ -290,7 +347,7 @@ describe("network identity pin store", () => {
     ).toThrow("malformed");
   });
 
-  it("resolves main-process signing identities through the pin", async () => {
+  it("uses the current official TAIRA identity for main-process signers after resets", async () => {
     const pins = store();
     const verified = async () => ({
       status: "verified" as const,
@@ -303,7 +360,11 @@ describe("network identity pin store", () => {
     await expect(
       resolvePinnedNetworkIdInMain(
         pins,
-        { toriiUrl: "https://taira.sora.org", networkPrefix: 369 },
+        {
+          toriiUrl: "https://taira.sora.org",
+          chainId: TAIRA_CHAIN_ID,
+          networkPrefix: 369,
+        },
         verified,
       ),
     ).resolves.toBe(TEST_TAIRA_NETWORK_ID);
@@ -311,26 +372,115 @@ describe("network identity pin store", () => {
       networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID,
       networkPrefix: 369,
     });
+    for (const networkId of [
+      TEST_TAIRA_NETWORK_ID,
+      TEST_RESET_TAIRA_NETWORK_ID,
+    ]) {
+      await expect(
+        resolvePinnedNetworkIdInMain(
+          pins,
+          {
+            toriiUrl: "https://taira.sora.org",
+            chainId: TAIRA_CHAIN_ID,
+            networkPrefix: 369,
+          },
+          async () => ({
+            status: "verified" as const,
+            identity: {
+              networkId,
+              networkPrefix: 369,
+              genesisHashHex: networkIdGenesisHashHex(networkId),
+            },
+          }),
+        ),
+      ).resolves.toBe(networkId);
+      expect(pins.read("https://taira.sora.org")).toMatchObject({
+        networkId,
+        confirmation: "testnet-current",
+      });
+    }
     await expect(
       resolvePinnedNetworkIdInMain(
         pins,
-        { toriiUrl: "https://taira.sora.org", networkPrefix: 369 },
-        verified,
-      ),
-    ).rejects.toThrow("Confirm the new network identity");
-    await expect(
-      resolvePinnedNetworkIdInMain(
-        pins,
-        { toriiUrl: "https://taira.sora.org", networkPrefix: 753 },
+        {
+          toriiUrl: "https://taira.sora.org",
+          chainId: TAIRA_CHAIN_ID,
+          networkPrefix: 753,
+        },
         verified,
       ),
     ).rejects.toThrow("network prefix");
+    for (const status of [
+      "incomplete",
+      "conflicting",
+      "unreachable",
+    ] as const) {
+      await expect(
+        resolvePinnedNetworkIdInMain(
+          pins,
+          {
+            toriiUrl: "https://taira.sora.org",
+            chainId: TAIRA_CHAIN_ID,
+            networkPrefix: 369,
+          },
+          async () => ({ status, detail: "missing or conflicting identity" }),
+        ),
+      ).rejects.toThrow("not verified");
+      expect(pins.read("https://taira.sora.org")?.networkId).toBe(
+        TEST_RESET_TAIRA_NETWORK_ID,
+      );
+    }
+  });
+
+  it("blocks main-process signing when Minamoto changes its pinned identity", async () => {
+    const pins = store();
+    const input = {
+      toriiUrl: "https://minamoto.sora.org",
+      chainId: "00000000-0000-0000-0000-000000000000",
+      networkPrefix: 753,
+    };
+    pins.pinFirstUse(input.toriiUrl, {
+      networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID,
+      networkPrefix: 753,
+    });
+    await expect(
+      resolvePinnedNetworkIdInMain(pins, input, async () => ({
+        status: "verified" as const,
+        identity: {
+          networkId: TEST_TAIRA_NETWORK_ID,
+          networkPrefix: 753,
+          genesisHashHex: TEST_TAIRA_GENESIS_HASH,
+        },
+      })),
+    ).rejects.toThrow("Confirm the new network identity");
+  });
+
+  it("does not refresh a pin for main-process signing with a wrong TAIRA chain", async () => {
+    const pins = store();
+    pins.pinFirstUse("https://taira.sora.org", {
+      networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID,
+      networkPrefix: 369,
+    });
     await expect(
       resolvePinnedNetworkIdInMain(
         pins,
-        { toriiUrl: "https://taira.sora.org", networkPrefix: 369 },
-        async () => ({ status: "incomplete" as const, detail: "missing" }),
+        {
+          toriiUrl: "https://taira.sora.org",
+          chainId: "00000000-0000-0000-0000-000000000000",
+          networkPrefix: 369,
+        },
+        async () => ({
+          status: "verified" as const,
+          identity: {
+            networkId: TEST_TAIRA_NETWORK_ID,
+            networkPrefix: 369,
+            genesisHashHex: TEST_TAIRA_GENESIS_HASH,
+          },
+        }),
       ),
-    ).rejects.toThrow("not verified");
+    ).rejects.toThrow();
+    expect(pins.read("https://taira.sora.org")?.networkId).toBe(
+      TEST_PREVIOUS_TAIRA_NETWORK_ID,
+    );
   });
 });

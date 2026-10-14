@@ -563,8 +563,8 @@ const registerNetworkIdentityHandlers = () => {
       const toriiUrl = normalizeEndpointUrl(exact.toriiUrl);
       const networkId = parseNetworkIdLiteral(exact.networkId);
       const networkPrefix = normalizeNetworkPrefixValue(exact.networkPrefix);
-      // Re-derive independently: the main process pins only what the endpoint
-      // itself reports through both public identity sources.
+      // Re-derive independently before first-use trust or automatic TAIRA
+      // refresh: accept only what both public identity sources report now.
       const discovery = await discoverEndpointNetworkIdentity(toriiUrl);
       if (
         discovery.status !== "verified" ||

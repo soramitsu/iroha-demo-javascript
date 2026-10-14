@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   EndpointFeatureOperationUnsupportedError,
   EndpointWriteBlockedError,
@@ -16,6 +17,7 @@ import {
   resolvePinnedEndpointNetworkId,
   type EndpointIdentityPins,
 } from "../electron/endpointInspector";
+import { NetworkIdentityPinStore } from "../electron/networkIdentityPinStore";
 import type { NetworkIdentityPin } from "../src/utils/networkIdentity";
 import {
   TEST_PREVIOUS_TAIRA_NETWORK_ID,
@@ -25,6 +27,8 @@ import {
 } from "./helpers/networkIdentityFixture";
 
 const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
+const TEST_RESET_TAIRA_NETWORK_ID =
+  "hash:CA7BEBB1579D7F490C23BCBABD27E116BF2F921A7DB69862F0AD28E22257B465#450F";
 const network = {
   toriiUrl: "https://taira.sora.org",
   chainId: TAIRA_CHAIN_ID,
@@ -404,24 +408,33 @@ const identityRoutes = (
   }),
 });
 
+const pinDirectories: string[] = [];
+afterEach(() => {
+  for (const directory of pinDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+// Exercise the production persistence policy through the async IPC-shaped interface.
 const memoryPins = (initial: NetworkIdentityPin[] = []) => {
-  const pins = new Map(initial.map((pin) => [pin.toriiUrl, pin]));
+  const directory = mkdtempSync(join(tmpdir(), "wallet-inspector-pins-"));
+  pinDirectories.push(directory);
+  const pins = new NetworkIdentityPinStore(directory, { now: () => 42 });
+  writeFileSync(
+    pins.filePath,
+    JSON.stringify({
+      schema: "iroha.wallet.network-identity-pins.v1",
+      pins: initial,
+    }),
+  );
   const store = {
-    read: vi.fn(async (toriiUrl: string) => pins.get(toriiUrl) ?? null),
+    read: vi.fn(async (toriiUrl: string) => pins.read(toriiUrl)),
     pinFirstUse: vi.fn(
       async (
         toriiUrl: string,
         identity: { networkId: string; networkPrefix: number },
       ) => {
-        const existing = pins.get(toriiUrl);
-        if (existing) return existing;
-        const pin = testNetworkIdentityPin({
-          toriiUrl,
-          networkId: identity.networkId,
-          networkPrefix: identity.networkPrefix,
-        });
-        pins.set(toriiUrl, pin);
-        return pin;
+        return pins.pinFirstUse(toriiUrl, identity);
       },
     ),
   };
@@ -503,46 +516,93 @@ describe("endpoint inspector network identity", () => {
     expect(inspection.identityStatus).toBe("matched");
     expect(inspection.networkIdentity.state).toBe("matches-pin");
     expect(pins.pinFirstUse).not.toHaveBeenCalled();
+    await expect(pins.read(network.toriiUrl)).resolves.toEqual(
+      testNetworkIdentityPin(),
+    );
   });
 
-  it("blocks writes when a reset changed the pinned identity", async () => {
+  it("automatically follows successive official TAIRA resets for writes", async () => {
+    const pins = memoryPins([
+      testNetworkIdentityPin({ networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID }),
+    ]);
+    for (const networkId of [
+      TEST_TAIRA_NETWORK_ID,
+      TEST_RESET_TAIRA_NETWORK_ID,
+    ]) {
+      const inspection = await assertEndpointWriteAuthorized(network, {
+        identityPins: pins,
+        fetchImpl: routeFetch(
+          identityRoutes({
+            capabilitiesNetworkId: networkId,
+            genesisHash: networkId,
+          }),
+        ),
+      });
+      expect(inspection).toMatchObject({
+        identityStatus: "matched",
+        accessMode: "read-write",
+        expected: { networkId },
+        observed: { networkId },
+        networkIdentity: {
+          state: "matches-pin",
+          pinned: { networkId, confirmation: "testnet-current" },
+          observedNetworkId: networkId,
+        },
+      });
+      expect(requireTrustedInspectionNetworkId(inspection)).toBe(networkId);
+      await expect(pins.read(network.toriiUrl)).resolves.toMatchObject({
+        networkId,
+        confirmation: "testnet-current",
+      });
+    }
+    expect(pins.pinFirstUse).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps Minamoto read-only with its stale pin unchanged", async () => {
+    const minamoto = {
+      toriiUrl: "https://minamoto.sora.org",
+      chainId: "00000000-0000-0000-0000-000000000000",
+      networkPrefix: 753,
+    };
+    const pins = memoryPins([
+      testNetworkIdentityPin({
+        toriiUrl: minamoto.toriiUrl,
+        networkPrefix: minamoto.networkPrefix,
+        networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID,
+      }),
+    ]);
+    const inspection = await inspectEndpoint(minamoto, {
+      identityPins: pins,
+      fetchImpl: routeFetch(identityRoutes({ networkPrefix: 753 })),
+    });
+    expect(inspection).toMatchObject({
+      identityStatus: "unverified",
+      accessMode: "read-only",
+      networkIdentity: {
+        pinned: { networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID },
+      },
+    });
+    expect(pins.pinFirstUse).not.toHaveBeenCalled();
+    await expect(pins.read(minamoto.toriiUrl)).resolves.toMatchObject({
+      networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID,
+    });
+    expect(() => requireTrustedInspectionNetworkId(inspection)).toThrow(
+      EndpointWriteBlockedError,
+    );
+    await expect(
+      assertEndpointWriteAuthorized(minamoto, {
+        identityPins: pins,
+        fetchImpl: routeFetch(identityRoutes({ networkPrefix: 753 })),
+      }),
+    ).rejects.toMatchObject({ code: "endpoint_identity_unverified" });
+  });
+
+  it("fails closed when the two identity sources disagree", async () => {
     const pins = memoryPins([
       testNetworkIdentityPin({ networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID }),
     ]);
     const inspection = await inspectEndpoint(network, {
       identityPins: pins,
-      fetchImpl: routeFetch(identityRoutes()),
-    });
-    expect(inspection).toMatchObject({
-      identityStatus: "changed",
-      accessMode: "read-only",
-      expected: { networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID },
-      observed: { networkId: TEST_TAIRA_NETWORK_ID },
-      networkIdentity: {
-        state: "changed",
-        pinned: { networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID },
-        observedNetworkId: TEST_TAIRA_NETWORK_ID,
-      },
-      diagnostic: { code: "endpoint_identity_changed" },
-    });
-    expect(inspection.diagnostic.message).toContain(
-      "confirm the new network identity",
-    );
-    expect(pins.pinFirstUse).not.toHaveBeenCalled();
-    expect(() => requireTrustedInspectionNetworkId(inspection)).toThrow(
-      EndpointWriteBlockedError,
-    );
-    await expect(
-      assertEndpointWriteAuthorized(network, {
-        identityPins: pins,
-        fetchImpl: routeFetch(identityRoutes()),
-      }),
-    ).rejects.toMatchObject({ code: "endpoint_identity_changed" });
-  });
-
-  it("fails closed when the two identity sources disagree", async () => {
-    const inspection = await inspectEndpoint(network, {
-      identityPins: memoryPins(),
       fetchImpl: routeFetch(
         identityRoutes({ genesisHash: TEST_PREVIOUS_TAIRA_NETWORK_ID }),
       ),
@@ -550,14 +610,19 @@ describe("endpoint inspector network identity", () => {
     expect(inspection.identityStatus).toBe("conflicting");
     expect(inspection.accessMode).toBe("read-only");
     expect(inspection.observed).toBeNull();
-    expect(inspection.networkIdentity.pinned).toBeNull();
+    expect(pins.pinFirstUse).not.toHaveBeenCalled();
+    await expect(pins.read(network.toriiUrl)).resolves.toMatchObject({
+      networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID,
+    });
     expect(getTrustedEndpointIdentityScope(inspection)).toBeNull();
   });
 
   it("requires both public sources before trusting an identity", async () => {
     const routes = identityRoutes();
     delete routes["/v1/explorer/blocks/1"];
-    const pins = memoryPins();
+    const pins = memoryPins([
+      testNetworkIdentityPin({ networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID }),
+    ]);
     const inspection = await inspectEndpoint(network, {
       identityPins: pins,
       fetchImpl: routeFetch(routes),
@@ -565,6 +630,9 @@ describe("endpoint inspector network identity", () => {
     expect(inspection.identityStatus).toBe("unverified");
     expect(inspection.diagnostic.message).toContain("/v1/explorer/blocks/1");
     expect(pins.pinFirstUse).not.toHaveBeenCalled();
+    await expect(pins.read(network.toriiUrl)).resolves.toMatchObject({
+      networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID,
+    });
     expect(inspection.evidence.map((entry) => entry.source)).toEqual([
       "account-capabilities",
     ]);
@@ -597,37 +665,69 @@ describe("endpoint inspector network identity", () => {
   });
 
   it("classifies a network prefix mismatch as mismatched", async () => {
+    const pins = memoryPins([
+      testNetworkIdentityPin({ networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID }),
+    ]);
     const inspection = await inspectEndpoint(network, {
-      identityPins: memoryPins(),
+      identityPins: pins,
       fetchImpl: routeFetch(identityRoutes({ networkPrefix: 753 })),
     });
     expect(inspection.identityStatus).toBe("mismatched");
+    expect(inspection.accessMode).toBe("read-only");
     expect(inspection.diagnostic.code).toBe("endpoint_identity_mismatch");
+    expect(pins.pinFirstUse).not.toHaveBeenCalled();
   });
 
-  it("keeps a custom endpoint read-only and unpinned even with a valid identity", async () => {
-    const pins = memoryPins();
+  it("keeps custom endpoints read-only without refreshing their pins", async () => {
+    for (const toriiUrl of [
+      "https://example.test",
+      "https://taira.sora.org:8443",
+      "https://taira.sora.org/proxy",
+    ]) {
+      const pins = memoryPins([
+        testNetworkIdentityPin({
+          toriiUrl,
+          networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID,
+        }),
+      ]);
+      const pathPrefix = new URL(toriiUrl).pathname.replace(/\/$/u, "");
+      const routes = Object.fromEntries(
+        Object.entries(identityRoutes()).map(([path, response]) => [
+          `${pathPrefix}${path}`,
+          response,
+        ]),
+      );
+      const inspection = await inspectEndpoint(
+        { ...network, toriiUrl },
+        { identityPins: pins, fetchImpl: routeFetch(routes) },
+      );
+      expect(inspection.identityStatus).toBe("unverified");
+      expect(inspection.accessMode).toBe("read-only");
+      expect(inspection.observed?.networkId).toBe(TEST_TAIRA_NETWORK_ID);
+      expect(pins.pinFirstUse).not.toHaveBeenCalled();
+      await expect(pins.read(toriiUrl)).resolves.toMatchObject({
+        networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID,
+      });
+    }
+  });
+
+  it("does not let the TAIRA origin authorize a different configured profile", async () => {
+    const pins = memoryPins([
+      testNetworkIdentityPin({ networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID }),
+    ]);
     const inspection = await inspectEndpoint(
-      { ...network, toriiUrl: "https://example.test" },
+      { ...network, chainId: "00000000-0000-0000-0000-000000000000" },
       {
         identityPins: pins,
         fetchImpl: routeFetch(identityRoutes()),
       },
     );
     expect(inspection.identityStatus).toBe("unverified");
-    expect(inspection.observed?.networkId).toBe(TEST_TAIRA_NETWORK_ID);
+    expect(inspection.accessMode).toBe("read-only");
     expect(pins.pinFirstUse).not.toHaveBeenCalled();
-  });
-
-  it("does not let the TAIRA origin authorize a different configured profile", async () => {
-    const inspection = await inspectEndpoint(
-      { ...network, chainId: "00000000-0000-0000-0000-000000000000" },
-      {
-        identityPins: memoryPins(),
-        fetchImpl: routeFetch(identityRoutes()),
-      },
-    );
-    expect(inspection.identityStatus).toBe("unverified");
+    await expect(pins.read(network.toriiUrl)).resolves.toMatchObject({
+      networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID,
+    });
   });
 
   it("keeps the endpoint read-only when the pin store fails", async () => {
@@ -750,14 +850,29 @@ describe("endpoint inspector network identity", () => {
         String(url).endsWith("/openapi.json"),
       ),
     ).toBe(false);
-    await expect(
-      resolvePinnedEndpointNetworkId(network, {
-        identityPins: memoryPins([
-          testNetworkIdentityPin({ networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID }),
-        ]),
-        fetchImpl,
-      }),
-    ).rejects.toThrow("endpoint_identity_changed");
+    for (const networkId of [
+      TEST_TAIRA_NETWORK_ID,
+      TEST_RESET_TAIRA_NETWORK_ID,
+    ]) {
+      const stalePins = memoryPins([
+        testNetworkIdentityPin({ networkId: TEST_PREVIOUS_TAIRA_NETWORK_ID }),
+      ]);
+      await expect(
+        resolvePinnedEndpointNetworkId(network, {
+          identityPins: stalePins,
+          fetchImpl: routeFetch(
+            identityRoutes({
+              capabilitiesNetworkId: networkId,
+              genesisHash: networkId,
+            }),
+          ),
+        }),
+      ).resolves.toBe(networkId);
+      await expect(stalePins.read(network.toriiUrl)).resolves.toMatchObject({
+        networkId,
+        confirmation: "testnet-current",
+      });
+    }
     await expect(
       resolvePinnedEndpointNetworkId(
         { ...network, toriiUrl: "https://example.test" },

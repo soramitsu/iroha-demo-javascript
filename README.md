@@ -142,10 +142,14 @@ wallet continues to require its approval modal and native confirmation dialog.
 ### Network identity after a TAIRA reset
 
 TAIRA is reset periodically. The wallet derives the NetworkId from
-`/v1/accounts/capabilities` and the genesis block, pins it per endpoint on
-first use, and blocks writes and Connect pairing when it changes. After an
-intentional reset, open Settings, check the endpoint, and choose **Trust new
-network identity** to confirm the new identity in the native dialog. Pins
+`/v1/accounts/capabilities` and the genesis block. For the official
+`https://taira.sora.org` profile (chain `fc56984b-2be7-431d-840e-21514d1883f0`,
+prefix `369`), agreeing sources automatically refresh the trusted identity
+after a reset. A historical genesis hash does not block fresh writes or
+Connect pairing, and no Settings confirmation is needed. Signing and
+network-scoped state still use the current NetworkId; conflicting sources,
+wrong profiles, and unavailable identity reads remain blocked. Other
+endpoints retain explicit confirmation for identity changes. Trusted identities
 live in `network-identity-pins.json` under the Electron `userData` directory.
 
 ## SCCP operator artifacts (runtime disabled)

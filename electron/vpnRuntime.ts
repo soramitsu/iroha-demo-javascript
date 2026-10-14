@@ -825,6 +825,7 @@ const VPN_STABLE_SESSION_FIELDS = [
 
 export type VpnNetworkIdResolver = (input: {
   toriiUrl: string;
+  chainId: string;
   networkPrefix: number;
 }) => Promise<NetworkId>;
 
@@ -1074,6 +1075,7 @@ export class VpnRuntime {
     const chainId = normalizeChainId(input.chainId);
     const networkId = await this.resolveNetworkId({
       toriiUrl: input.toriiUrl,
+      chainId,
       networkPrefix: input.networkPrefix,
     });
     const accountId = normalizeVpnAccountId(
@@ -1564,6 +1566,7 @@ export class VpnRuntime {
         ),
       await this.resolveNetworkId({
         toriiUrl: auth.toriiUrl,
+        chainId: auth.chainId,
         networkPrefix: auth.networkPrefix,
       }),
     );
@@ -1686,6 +1689,7 @@ export class VpnRuntime {
         ),
       await this.resolveNetworkId({
         toriiUrl: auth.toriiUrl,
+        chainId: auth.chainId,
         networkPrefix: auth.networkPrefix,
       }),
     );

@@ -30,6 +30,7 @@ import {
   TAIRA_CHAIN_ID,
   TAIRA_NETWORK_PREFIX,
   TAIRA_TORII_URL,
+  isTairaTestnetEndpoint,
 } from "../src/utils/firstReleaseNetworkIdentity";
 import {
   pinMatchesIdentity,
@@ -47,8 +48,8 @@ type FetchLike = (
 ) => Promise<Response>;
 
 /**
- * Persisted trust-on-first-use identities. The preload implementation is
- * backed by the main process; tests use an in-memory map.
+ * Persisted trusted identities, following official TAIRA resets automatically.
+ * The preload implementation is backed by the main process.
  */
 export type EndpointIdentityPins = {
   read(toriiUrl: string): Promise<NetworkIdentityPin | null>;
@@ -93,7 +94,7 @@ const FINALIZED_TRANSACTION_EVIDENCE_OPERATIONS = [
 /**
  * Only these exact HTTPS origin/profile pairs can become write-authorized.
  * Their transaction-binding NetworkId is not pinned here: it is derived from
- * the endpoint at connection time and pinned per endpoint on first use.
+ * the endpoint at connection time; official TAIRA resets refresh its identity.
  */
 const FIRST_RELEASE_WRITE_PROFILES = Object.freeze([
   Object.freeze({
@@ -1006,16 +1007,19 @@ export const inspectEndpoint = async (
   try {
     pin = await options.identityPins.read(toriiUrl);
     if (verified && prefixMatches && writeProfile) {
-      if (!pin) {
+      const hadPin = pin !== null;
+      if (
+        !pin ||
+        (isTairaTestnetEndpoint(toriiUrl, verified.networkPrefix) &&
+          !pinMatchesIdentity(pin, verified))
+      ) {
         pin = await options.identityPins.pinFirstUse(toriiUrl, verified);
-        identityState = pinMatchesIdentity(pin, verified)
-          ? "pinned-now"
-          : "changed";
-      } else {
-        identityState = pinMatchesIdentity(pin, verified)
-          ? "matches-pin"
-          : "changed";
       }
+      identityState = pinMatchesIdentity(pin, verified)
+        ? hadPin
+          ? "matches-pin"
+          : "pinned-now"
+        : "changed";
     } else if (pin) {
       identityState =
         verified && !pinMatchesIdentity(pin, verified) ? "changed" : "unpinned";
@@ -1101,7 +1105,7 @@ export const inspectEndpoint = async (
 /**
  * Lightweight identity-only check (no OpenAPI read) for signing paths that
  * need the transaction-binding NetworkId of a release write endpoint. It
- * applies the same two-source agreement and trust-on-first-use pin as
+ * applies the same two-source agreement and automatic TAIRA reset policy as
  * {@link inspectEndpoint}.
  */
 export const resolvePinnedEndpointNetworkId = async (
@@ -1132,9 +1136,14 @@ export const resolvePinnedEndpointNetworkId = async (
       `[endpoint_identity_mismatch] Endpoint network prefix ${discovery.identity.networkPrefix} differs from the configured prefix ${expected.networkPrefix}.`,
     );
   }
-  const pin =
-    (await options.identityPins.read(toriiUrl)) ??
-    (await options.identityPins.pinFirstUse(toriiUrl, discovery.identity));
+  let pin = await options.identityPins.read(toriiUrl);
+  if (
+    !pin ||
+    (isTairaTestnetEndpoint(toriiUrl, discovery.identity.networkPrefix) &&
+      !pinMatchesIdentity(pin, discovery.identity))
+  ) {
+    pin = await options.identityPins.pinFirstUse(toriiUrl, discovery.identity);
+  }
   if (!pinMatchesIdentity(pin, discovery.identity)) {
     throw new Error(
       `[endpoint_identity_changed] This endpoint now reports network ${discovery.identity.networkId}, but this wallet trusted ${pin.networkId}. Confirm the new network identity in Settings before signing.`,

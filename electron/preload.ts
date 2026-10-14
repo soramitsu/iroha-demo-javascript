@@ -3949,7 +3949,7 @@ const readNetworkIdentityPinResponse = (
   return value;
 };
 
-/** Trust-on-first-use pins persisted by the main process. */
+/** Main-owned identity trust, automatically refreshed after TAIRA resets. */
 const preloadIdentityPins: EndpointIdentityPins = {
   async read(toriiUrl) {
     return readNetworkIdentityPinResponse(

@@ -8,6 +8,11 @@ import {
 import { dirname, join } from "node:path";
 import { normalizeEndpointUrl } from "../src/utils/endpoint";
 import {
+  TAIRA_CHAIN_ID,
+  TAIRA_TORII_URL,
+  isTairaTestnetEndpoint,
+} from "../src/utils/firstReleaseNetworkIdentity";
+import {
   NETWORK_IDENTITY_PIN_SCHEMA,
   isNetworkIdentityPin,
   pinMatchesIdentity,
@@ -32,7 +37,8 @@ type StoreFile = {
 };
 
 /**
- * Per-endpoint trust-on-first-use network identity pins.
+ * Per-endpoint network identity trust. Official TAIRA follows verified resets;
+ * other endpoints keep trust-on-first-use pins until explicit confirmation.
  *
  * The file only records public network identities, so it is a plain JSON file
  * under Electron `userData`. Any malformed content fails closed: the store
@@ -57,7 +63,7 @@ export class NetworkIdentityPinStore {
     return this.#load().pins.find((pin) => pin.toriiUrl === toriiUrl) ?? null;
   }
 
-  /** Pin an endpoint only if it has no pin yet; never replaces an existing pin. */
+  /** Accept a verified identity, refreshing only the official TAIRA testnet. */
   pinFirstUse(
     toriiUrlInput: string,
     identity: Pick<ObservedNetworkIdentity, "networkId" | "networkPrefix">,
@@ -66,7 +72,21 @@ export class NetworkIdentityPinStore {
     const store = this.#load();
     const existing = store.pins.find((pin) => pin.toriiUrl === toriiUrl);
     if (existing) {
-      return existing;
+      if (
+        pinMatchesIdentity(existing, identity) ||
+        !isTairaTestnetEndpoint(toriiUrl, identity.networkPrefix) ||
+        existing.networkPrefix !== identity.networkPrefix
+      ) {
+        return existing;
+      }
+      const pin = this.#buildPin(toriiUrl, identity, "testnet-current");
+      this.#save({
+        ...store,
+        pins: store.pins.map((entry) =>
+          entry.toriiUrl === toriiUrl ? pin : entry,
+        ),
+      });
+      return pin;
     }
     if (store.pins.length >= MAX_PINNED_ENDPOINTS) {
       throw new Error(
@@ -172,11 +192,12 @@ export class NetworkIdentityPinStore {
 /**
  * Resolve the pinned NetworkId for main-process signers (VPN canonical auth).
  * The endpoint must currently report the pinned identity through both public
- * sources; a missing pin is created on first use, a changed one is refused.
+ * sources. Official TAIRA resets are accepted automatically; other changed
+ * identities require confirmation.
  */
 export const resolvePinnedNetworkIdInMain = async (
   store: NetworkIdentityPinStore,
-  input: { toriiUrl: string; networkPrefix: number },
+  input: { toriiUrl: string; chainId: string; networkPrefix: number },
   discover: (
     toriiUrl: string,
   ) => Promise<
@@ -185,6 +206,19 @@ export const resolvePinnedNetworkIdInMain = async (
   >,
 ): Promise<string> => {
   const toriiUrl = normalizeEndpointUrl(input.toriiUrl);
+  if (toriiUrl === TAIRA_TORII_URL && input.chainId !== TAIRA_CHAIN_ID) {
+    throw new Error(
+      "The configured chain ID does not match the TAIRA testnet.",
+    );
+  }
+  if (
+    toriiUrl === TAIRA_TORII_URL &&
+    !isTairaTestnetEndpoint(toriiUrl, input.networkPrefix)
+  ) {
+    throw new Error(
+      "The configured network prefix does not match the TAIRA testnet.",
+    );
+  }
   const discovery = await discover(toriiUrl);
   if (discovery.status !== "verified") {
     throw new Error(
@@ -196,8 +230,7 @@ export const resolvePinnedNetworkIdInMain = async (
       `Endpoint network prefix ${discovery.identity.networkPrefix} differs from the configured prefix ${input.networkPrefix}.`,
     );
   }
-  const pin =
-    store.read(toriiUrl) ?? store.pinFirstUse(toriiUrl, discovery.identity);
+  const pin = store.pinFirstUse(toriiUrl, discovery.identity);
   if (!pinMatchesIdentity(pin, discovery.identity)) {
     throw new Error(
       `This endpoint now reports network ${discovery.identity.networkId}, but this wallet trusted ${pin.networkId}. Confirm the new network identity in Settings first.`,

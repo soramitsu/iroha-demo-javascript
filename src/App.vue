@@ -5,8 +5,6 @@
       {{ t("Skip to content") }}
     </a>
     <header class="app-header">
-      <div class="app-header-drag-region" aria-hidden="true"></div>
-
       <RouterLink
         :to="brandDestination"
         class="brand-link"

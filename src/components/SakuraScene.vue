@@ -5,31 +5,29 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { useThemeStore } from "@/stores/theme";
+import {
+  createSakuraPaint,
+  createSakuraPetal,
+  drawSakuraPetal,
+  drawSakuraShadow,
+  stepSakuraPetal,
+  type SakuraPaint,
+  type SakuraPetal,
+} from "@/utils/sakuraPetals";
 
 const canvas = ref<HTMLCanvasElement | null>(null);
 const theme = useThemeStore();
 
-interface Petal {
-  x: number;
-  y: number;
-  size: number;
-  speedY: number;
-  speedX: number;
-  rotation: number;
-  rotationSpeed: number;
-  sway: number;
-  flutterPhase: number;
-  stuck: boolean;
-  stickSide: "left" | "right" | null;
-}
-
 let ctx: CanvasRenderingContext2D | null = null;
-let petals: Petal[] = [];
+let paint: SakuraPaint | null = null;
+let petals: SakuraPetal[] = [];
 let frameId = 0;
 let pointerFrameId = 0;
 let lastFrameTime = 0;
+let sceneTime = 0;
 let viewportWidth = 0;
 let viewportHeight = 0;
+let pixelRatio = 1;
 let parallaxX = 0;
 let parallaxY = 0;
 let pendingPointer: { x: number; y: number } | null = null;
@@ -37,24 +35,6 @@ let reducedMotionQuery: MediaQueryList | null = null;
 let reducedMotion = false;
 const MAX_PETALS = 55;
 const MIN_PETALS = 16;
-const petalColor = () =>
-  theme.current === "dark"
-    ? "rgba(252, 181, 212, 0.9)"
-    : "rgba(247, 166, 198, 0.92)";
-
-const createPetal = (width: number, height: number): Petal => ({
-  x: Math.random() * width,
-  y: Math.random() * height,
-  size: 8 + Math.random() * 8,
-  speedY: 0.4 + Math.random() * 1.2,
-  speedX: -0.5 + Math.random() * 1.0,
-  rotation: Math.random() * Math.PI * 2,
-  rotationSpeed: -0.01 + Math.random() * 0.02,
-  sway: 0.5 + Math.random() * 0.8,
-  flutterPhase: Math.random() * Math.PI * 2,
-  stuck: false,
-  stickSide: null,
-});
 
 const targetPetalCount = (width: number, height: number) => {
   if (reducedMotion) {
@@ -69,12 +49,22 @@ const targetPetalCount = (width: number, height: number) => {
 const syncPetalCount = (width: number, height: number) => {
   const count = targetPetalCount(width, height);
   if (petals.length > count) {
-    petals = petals.slice(0, count);
+    // Thin evenly across the depth-sorted list so every layer keeps petals.
+    const stride = petals.length / count;
+    petals = Array.from(
+      { length: count },
+      (_, index) => petals[Math.floor(index * stride)],
+    );
+    return;
+  }
+  if (petals.length === count) {
     return;
   }
   while (petals.length < count) {
-    petals.push(createPetal(width, height));
+    petals.push(createSakuraPetal(width, height));
   }
+  // Paint far petals first so nearer ones overlap them.
+  petals.sort((left, right) => left.depth - right.depth);
 };
 
 const resizeCanvas = () => {
@@ -83,7 +73,7 @@ const resizeCanvas = () => {
   viewportWidth = window.innerWidth;
   viewportHeight = window.innerHeight;
   const devicePixelRatio = window.devicePixelRatio;
-  const pixelRatio =
+  pixelRatio =
     Number.isFinite(devicePixelRatio) && devicePixelRatio > 0
       ? Math.min(Math.max(devicePixelRatio, 1), 2)
       : 1;
@@ -108,138 +98,50 @@ const resizeCanvas = () => {
   }
 };
 
-const drawPetal = (petal: Petal) => {
-  if (!ctx) return;
-  const color = petalColor();
-  ctx.save();
-  ctx.translate(petal.x, petal.y);
-  ctx.rotate(petal.rotation);
-  const flutter =
-    Math.sin(petal.rotation * 2.6 + petal.flutterPhase) *
-    (0.05 + petal.sway * 0.03);
-  ctx.scale(1 + flutter, 1 - flutter * 0.42);
-  const width = petal.size * 0.78;
-  const height = petal.size * 1.12;
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  // A sakura-like single petal: top notch + wider shoulders + tapered tip.
-  ctx.moveTo(0, -height * 0.76);
-  ctx.bezierCurveTo(
-    width * 0.22,
-    -height * 1.02,
-    width * 0.56,
-    -height * 0.92,
-    width * 0.68,
-    -height * 0.54,
-  );
-  ctx.bezierCurveTo(
-    width * 0.9,
-    -height * 0.02,
-    width * 0.62,
-    height * 0.46,
-    width * 0.22,
-    height * 0.95,
-  );
-  ctx.bezierCurveTo(
-    width * 0.08,
-    height * 1.11,
-    width * 0.03,
-    height * 1.2,
-    0,
-    height * 1.23,
-  );
-  ctx.bezierCurveTo(
-    -width * 0.06,
-    height * 1.16,
-    -width * 0.16,
-    height * 1.05,
-    -width * 0.3,
-    height * 0.9,
-  );
-  ctx.bezierCurveTo(
-    -width * 0.74,
-    height * 0.34,
-    -width * 0.95,
-    -height * 0.06,
-    -width * 0.66,
-    -height * 0.58,
-  );
-  ctx.bezierCurveTo(
-    -width * 0.56,
-    -height * 0.92,
-    -width * 0.2,
-    -height * 1.02,
-    0,
-    -height * 0.76,
-  );
-  ctx.fill();
-  ctx.restore();
-};
-
-const updatePetal = (
-  petal: Petal,
-  width: number,
-  height: number,
-  parallaxX: number,
-  frameScale: number,
-) => {
-  const wind = parallaxX * 1.5;
-  if (petal.stuck) {
-    petal.y += petal.speedY * 1.4 * frameScale;
-    petal.x = petal.stickSide === "left" ? petal.size : width - petal.size;
-    if (Math.abs(parallaxX) < 0.12) {
-      petal.stuck = false;
-      petal.stickSide = null;
-    }
-  } else {
-    petal.y += petal.speedY * frameScale;
-    petal.x +=
-      (petal.speedX + wind + Math.sin(petal.y / 40) * petal.sway * 0.3) *
-      frameScale;
-    if (Math.abs(parallaxX) > 0.2) {
-      if (petal.x < petal.size * 1.5 && parallaxX < 0) {
-        petal.stuck = true;
-        petal.stickSide = "left";
-        petal.x = petal.size;
-      } else if (petal.x > width - petal.size * 1.5 && parallaxX > 0) {
-        petal.stuck = true;
-        petal.stickSide = "right";
-        petal.x = width - petal.size;
-      }
-    }
-  }
-  petal.rotation += petal.rotationSpeed * frameScale;
-  if (petal.y > height + petal.size) {
-    petal.y = -petal.size;
-    petal.x = Math.random() * width;
-    petal.stuck = false;
-    petal.stickSide = null;
-  }
-  if (!petal.stuck) {
-    if (petal.x > width + petal.size) {
-      petal.x = -petal.size;
-    } else if (petal.x < -petal.size) {
-      petal.x = width + petal.size;
-    }
-  }
-};
+// Nearer petals slide further with the pointer, which reads as depth.
+const parallaxOffset = (petal: SakuraPetal): [number, number] => [
+  parallaxX * (8 + 24 * petal.depth) * (petal.stuck ? 0.2 : 1),
+  parallaxY * (6 + 18 * petal.depth) * (petal.stuck ? 0.3 : 1),
+];
 
 const drawFrame = (advance: boolean, frameScale: number) => {
   const el = canvas.value;
   const context = ctx;
   if (!context || !el) return;
+  const currentPaint = (paint ??= createSakuraPaint(context, theme.current));
+  if (advance) {
+    sceneTime += frameScale / 60;
+    const environment = {
+      width: viewportWidth,
+      height: viewportHeight,
+      parallaxX,
+      time: sceneTime,
+      frameScale,
+    };
+    petals.forEach((petal) => stepSakuraPetal(petal, environment));
+  }
+  context.globalAlpha = 1;
+  context.globalCompositeOperation = "source-over";
+  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   context.clearRect(0, 0, viewportWidth, viewportHeight);
+  // Shadows land on the wall behind every petal, so they go down first.
   petals.forEach((petal) => {
-    if (advance) {
-      updatePetal(petal, viewportWidth, viewportHeight, parallaxX, frameScale);
-    }
-    const offsetX = parallaxX * 20 * (petal.stuck ? 0.2 : 1);
-    const offsetY = parallaxY * 15 * (petal.stuck ? 0.3 : 1);
-    context.save();
-    context.translate(offsetX, offsetY);
-    drawPetal(petal);
-    context.restore();
+    const [offsetX, offsetY] = parallaxOffset(petal);
+    drawSakuraShadow(
+      context,
+      petal,
+      currentPaint,
+      pixelRatio,
+      offsetX,
+      offsetY,
+    );
   });
+  petals.forEach((petal) => {
+    const [offsetX, offsetY] = parallaxOffset(petal);
+    drawSakuraPetal(context, petal, currentPaint, pixelRatio, offsetX, offsetY);
+  });
+  context.globalAlpha = 1;
+  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
 };
 
 const render = (timestamp: number) => {
@@ -335,11 +237,8 @@ onMounted(() => {
   window.addEventListener("pointermove", updatePointer, { passive: true });
   document.addEventListener("visibilitychange", handleVisibilityChange);
   reducedMotionQuery.addEventListener("change", handleReducedMotionChange);
-  if (reducedMotion) {
-    drawFrame(false, 0);
-  } else {
-    startAnimation();
-  }
+  // resizeCanvas already painted the static scene for reduced motion.
+  startAnimation();
 });
 
 onBeforeUnmount(() => {
@@ -351,12 +250,14 @@ onBeforeUnmount(() => {
   if (pointerFrameId) {
     cancelAnimationFrame(pointerFrameId);
   }
+  paint = null;
 });
 
 watch(
   () => theme.current,
   () => {
-    petals = petals.map((petal) => ({ ...petal }));
+    // Palettes, gradients and the shadow sprite are theme-bound.
+    paint = null;
     if (reducedMotion) {
       drawFrame(false, 0);
     }

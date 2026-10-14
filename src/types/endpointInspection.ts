@@ -66,12 +66,12 @@ export interface EndpointNetworkIdentityPinView {
   networkId: string;
   networkPrefix: number;
   confirmedAtMs: number;
-  confirmation: "first-use" | "user-confirmed";
+  confirmation: "first-use" | "user-confirmed" | "testnet-current";
 }
 
 export interface EndpointNetworkIdentity {
   state: EndpointNetworkIdentityState;
-  /** Identity persisted for this endpoint (after any first-use pin). */
+  /** Trusted identity, automatically refreshed for the official TAIRA testnet. */
   pinned: EndpointNetworkIdentityPinView | null;
   /** Identity both public sources currently agree on. */
   observedNetworkId: string | null;

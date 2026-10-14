@@ -14,9 +14,9 @@ import type { EndpointInspection } from "../types/endpointInspection";
  * - `GET /v1/explorer/blocks/1` -> the genesis block `hash` literal, which is
  *   the canonical `NetworkId` literal (`hash:<UPPER HEX>#<CRC>`).
  *
- * The first agreeing observation for an endpoint is persisted (trust on first
- * use). A later observation that differs from the persisted identity is never
- * adopted silently: writes stay blocked until the user explicitly re-confirms.
+ * The official TAIRA testnet follows agreeing observations automatically after
+ * resets. Other endpoints keep the first agreeing observation until the user
+ * explicitly confirms a changed identity.
  */
 
 export const ACCOUNT_CAPABILITIES_PATH = "/v1/accounts/capabilities";
@@ -41,8 +41,8 @@ export type NetworkIdentityPin = {
   networkId: string;
   networkPrefix: number;
   confirmedAtMs: number;
-  /** `first-use` for TOFU pins, `user-confirmed` after an explicit re-confirmation. */
-  confirmation: "first-use" | "user-confirmed";
+  /** Official TAIRA resets follow the current verified identity automatically. */
+  confirmation: "first-use" | "user-confirmed" | "testnet-current";
 };
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
@@ -184,7 +184,8 @@ export const isNetworkIdentityPin = (
       Number.isSafeInteger(record.confirmedAtMs) &&
       record.confirmedAtMs >= 0 &&
       (record.confirmation === "first-use" ||
-        record.confirmation === "user-confirmed")
+        record.confirmation === "user-confirmed" ||
+        record.confirmation === "testnet-current")
     );
   } catch {
     return false;

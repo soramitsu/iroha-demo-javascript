@@ -821,6 +821,12 @@ describe("VpnRuntime", () => {
   });
 
   it("connects, reconciles with the authenticated session, and stores canonical receipts", async () => {
+    const networkContext = {
+      toriiUrl: "https://taira.sora.org",
+      chainId: "chain",
+      networkPrefix: 369,
+    };
+    resolveVpnNetworkIdMock.mockClear();
     const controller = createControllerMock();
     const runtime = new VpnRuntime({
       resolveNetworkId: resolveVpnNetworkIdMock,
@@ -838,6 +844,7 @@ describe("VpnRuntime", () => {
       signingAlgorithm: "ed25519",
       exitClass: "standard",
     });
+    expect(resolveVpnNetworkIdMock).toHaveBeenNthCalledWith(1, networkContext);
     expect(connected.state).toBe("connected");
     expect(connected.relayEndpoint).toBe(
       "/dns/torii.exit.example/udp/9443/quic",
@@ -852,6 +859,7 @@ describe("VpnRuntime", () => {
       }),
     );
 
+    resolveVpnNetworkIdMock.mockClear();
     const refreshed = await runtime.getStatus({
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
@@ -860,6 +868,7 @@ describe("VpnRuntime", () => {
       privateKeyHex: "ab".repeat(32),
       signingAlgorithm: "ed25519",
     });
+    expect(resolveVpnNetworkIdMock).toHaveBeenNthCalledWith(1, networkContext);
     expect(refreshed.remoteSessionActive).toBe(true);
     expect(getVpnSessionMock).toHaveBeenCalled();
 
@@ -874,6 +883,7 @@ describe("VpnRuntime", () => {
     expect(disconnected.state).toBe("remote-expiry-pending");
     expect(controller.disconnect).toHaveBeenCalled();
 
+    resolveVpnNetworkIdMock.mockClear();
     const receipts = await runtime.listReceipts({
       toriiUrl: "https://taira.sora.org",
       chainId: "chain",
@@ -882,6 +892,9 @@ describe("VpnRuntime", () => {
       privateKeyHex: "ab".repeat(32),
       signingAlgorithm: "ed25519",
     });
+    expect(resolveVpnNetworkIdMock).toHaveBeenCalledExactlyOnceWith(
+      networkContext,
+    );
     expect(receipts[0]?.receiptSource).toBe("torii");
     expect(listVpnReceiptsMock).toHaveBeenCalled();
   });
