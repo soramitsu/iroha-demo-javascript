@@ -423,7 +423,7 @@ describe("preload utils", () => {
     );
   });
 
-  it("normalizes the exact first-release account asset response", () => {
+  it("normalizes the exact current account asset response", () => {
     expect(
       normalizeAccountAssetListPayload({
         items: [
@@ -434,16 +434,10 @@ describe("preload utils", () => {
             asset_name: "Localnet Fee",
             scope: "global",
             quantity: "25000",
-            primary_alias: null,
-            primary_alias_name: null,
-            primary_alias_dataspace: null,
-            primary_alias_domain: null,
-            has_primary_alias: false,
           },
         ],
         total: 1,
-        has_more: false,
-        count_mode: "exact",
+        next_cursor: null,
       }),
     ).toEqual({
       items: [
@@ -468,16 +462,10 @@ describe("preload utils", () => {
             asset_name: "XOR",
             scope: "global",
             quantity: "25000",
-            primary_alias: null,
-            primary_alias_name: null,
-            primary_alias_dataspace: null,
-            primary_alias_domain: null,
-            has_primary_alias: false,
           },
         ],
         total: 1,
-        has_more: false,
-        count_mode: "exact",
+        next_cursor: null,
       }),
     ).toThrow("must contain exactly");
   });
@@ -493,16 +481,10 @@ describe("preload utils", () => {
             asset_name: "XOR",
             scope: "dataspace:7",
             quantity: "42",
-            primary_alias: null,
-            primary_alias_name: null,
-            primary_alias_dataspace: null,
-            primary_alias_domain: null,
-            has_primary_alias: false,
           },
         ],
         total: 1,
-        has_more: false,
-        count_mode: "exact",
+        next_cursor: null,
       }),
     ).toEqual({
       items: [
@@ -529,16 +511,10 @@ describe("preload utils", () => {
           asset_name: "XOR",
           scope: "global",
           quantity: "1",
-          primary_alias: null,
-          primary_alias_name: null,
-          primary_alias_dataspace: null,
-          primary_alias_domain: null,
-          has_primary_alias: false,
         },
       ],
       total: 1,
-      has_more: false,
-      count_mode: "exact",
+      next_cursor: null,
     };
 
     expect(() => normalizeAccountAssetListPayload(response)).toThrow(
@@ -582,19 +558,13 @@ describe("preload utils", () => {
       asset_name: "XOR",
       scope: "global",
       quantity: "1",
-      primary_alias: null,
-      primary_alias_name: null,
-      primary_alias_dataspace: null,
-      primary_alias_domain: null,
-      has_primary_alias: false,
     };
     expect(() =>
       decodeAccountAssetListPayload(
         {
           items: [item, { ...item, quantity: "2" }],
           total: 2,
-          has_more: false,
-          count_mode: "exact",
+          next_cursor: null,
         },
         {
           expectedAccountId: ACCOUNT_ID,
@@ -615,8 +585,7 @@ describe("preload utils", () => {
           },
         ],
         total: 1,
-        has_more: false,
-        count_mode: "exact",
+        next_cursor: null,
       }),
     ).toThrow("must contain exactly");
 
@@ -629,8 +598,7 @@ describe("preload utils", () => {
           },
         ],
         total: 1,
-        has_more: false,
-        count_mode: "exact",
+        next_cursor: null,
       }),
     ).toThrow("must contain exactly");
 
@@ -643,8 +611,7 @@ describe("preload utils", () => {
           },
         ],
         total: 1,
-        has_more: false,
-        count_mode: "exact",
+        next_cursor: null,
       }),
     ).toThrow("must contain exactly");
 
@@ -652,9 +619,8 @@ describe("preload utils", () => {
       normalizeAccountAssetListPayload({
         items: [],
         total: 0,
+        next_cursor: null,
         has_more: false,
-        count_mode: "exact",
-        next_cursor: "unexpected",
       }),
     ).toThrow("account asset list response must contain exactly");
 
@@ -662,10 +628,9 @@ describe("preload utils", () => {
       normalizeAccountAssetListPayload({
         items: [],
         total: 0,
-        has_more: false,
-        count_mode: "bounded",
+        next_cursor: "",
       }),
-    ).toThrow('count_mode must be "exact"');
+    ).toThrow("next_cursor must be canonical text or null");
 
     expect(() =>
       normalizeAccountAssetListPayload({
@@ -677,16 +642,10 @@ describe("preload utils", () => {
             asset_name: "XOR",
             scope: "global",
             quantity: "1",
-            primary_alias: null,
-            primary_alias_name: null,
-            primary_alias_dataspace: null,
-            primary_alias_domain: null,
-            has_primary_alias: false,
           },
         ],
         total: 1,
-        has_more: false,
-        count_mode: "exact",
+        next_cursor: null,
       }),
     ).toThrow(/asset_alias/u);
   });

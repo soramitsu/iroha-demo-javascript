@@ -49,30 +49,16 @@ describe("preload first-release account read boundary", () => {
     expect(source).toContain("assertFirstReleaseHasMore(");
   });
 
-  it("requires the same exact envelope for account assets", () => {
+  it("uses the current SDK account-assets collection without legacy request parameters", () => {
     const normalizer = between(
       preloadUtils,
       "export const normalizeAccountAssetListPayload",
       "export const normalizeGovernanceCouncilCurrentPayload",
     );
-    expect(normalizer).toContain(
-      '["items", "total", "has_more", "count_mode"]',
+    expect(normalizer).toContain('["items", "total", "next_cursor"]');
+    expect(normalizer).not.toContain("count_mode");
+    expect(preload).toContain(
+      "const fetchAccountAssetsList = fetchAccountAssetCollection;",
     );
-    expect(normalizer).toContain('record.count_mode !== "exact"');
-
-    const fetcher = between(
-      preload,
-      "const fetchAccountAssetsList",
-      "const fetchGovernanceCouncilCurrent",
-    );
-    expect(fetcher).toContain(
-      'endpoint.searchParams.set("count_mode", "exact")',
-    );
-    expect(fetcher).toContain("readBoundedJsonObjectResponse(");
-    expect(fetcher).toContain(
-      "expectedAssetDefinitionId: input.assetDefinitionId",
-    );
-    expect(fetcher).toContain("assertFirstReleasePageWindow(");
-    expect(fetcher).toContain("assertFirstReleaseHasMore(");
   });
 });

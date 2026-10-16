@@ -614,14 +614,22 @@ export const normalizeAccountAssetListPayload = (
   const record = toRecord(payload, "account asset list response");
   assertExactObjectKeys(
     record,
-    ["items", "total", "has_more", "count_mode"],
+    ["items", "total", "next_cursor"],
     "account asset list response",
   );
-  if (typeof record.has_more !== "boolean") {
-    throw new Error("account asset list response.has_more must be a boolean.");
-  }
-  if (record.count_mode !== "exact") {
-    throw new Error('account asset list response.count_mode must be "exact".');
+  if (
+    record.next_cursor !== null &&
+    (typeof record.next_cursor !== "string" ||
+      !record.next_cursor ||
+      record.next_cursor.length > 16_384 ||
+      record.next_cursor.trim() !== record.next_cursor ||
+      Array.from(record.next_cursor).some(
+        (character) => character < " " || character === "\u007f",
+      ))
+  ) {
+    throw new Error(
+      "account asset list response.next_cursor must be canonical text or null.",
+    );
   }
   const rawItems = toArray(record.items, "account asset list response.items");
   if (rawItems.length > context.maximumItems) {
@@ -638,33 +646,9 @@ export const normalizeAccountAssetListPayload = (
     const itemLabel = `account asset list response.items[${index}]`;
     assertExactObjectKeys(
       entry,
-      [
-        "account_id",
-        "asset",
-        "asset_alias",
-        "asset_name",
-        "scope",
-        "quantity",
-        "primary_alias",
-        "primary_alias_name",
-        "primary_alias_dataspace",
-        "primary_alias_domain",
-        "has_primary_alias",
-      ],
+      ["account_id", "asset", "asset_alias", "asset_name", "scope", "quantity"],
       itemLabel,
     );
-    if (
-      entry.primary_alias !== null ||
-      entry.primary_alias_name !== null ||
-      entry.primary_alias_dataspace !== null ||
-      entry.primary_alias_domain !== null ||
-      entry.has_primary_alias !== false
-    ) {
-      throw new Error(
-        `${itemLabel} contains unsupported primary alias projection data.`,
-      );
-    }
-
     const readRequiredString = (field: string) => {
       const fieldValue = entry[field];
       if (
@@ -760,6 +744,11 @@ export const normalizeAccountAssetListPayload = (
     record.total,
     "account asset list response.total",
   );
+  if (Object.is(total, -0)) {
+    throw new Error(
+      "account asset list response.total must not be negative zero.",
+    );
+  }
   if (total < items.length) {
     throw new Error(
       "account asset list response.total cannot be less than items.length.",

@@ -525,8 +525,6 @@ const registerGovernanceValidationFeePolicyHandler = () => {
   );
 };
 
-const MAX_CONNECT_REVIEW_DIALOG_LINES = 400;
-
 const confirmationText = (value: unknown, maxLength = 512) =>
   Array.from(String(value ?? ""))
     .map((character) => {
@@ -678,12 +676,10 @@ const registerIrohaConnectConfirmationHandler = () => {
         // payload hash shown here.
         detail.push(
           "",
-          ...formatConnectTransactionReviewLines(input.review)
-            .slice(0, MAX_CONNECT_REVIEW_DIALOG_LINES)
-            .map(
-              (line) =>
-                (/^ */u.exec(line)?.[0] ?? "") + confirmationText(line, 1_024),
-            ),
+          ...formatConnectTransactionReviewLines(input.review).map(
+            (line) =>
+              (/^ */u.exec(line)?.[0] ?? "") + confirmationText(line, 1_024),
+          ),
         );
       } else {
         detail.push(

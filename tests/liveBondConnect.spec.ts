@@ -7,6 +7,7 @@
  * stays in this test process. This test funds that account and submits real Taira
  * demo purchases, a repo and early repayment. BOND_CONNECT_PAIR_ONLY=1 stops after
  * pairing; the server may still run its normal wallet-funding job.
+ * BOND_CONNECT_ONBOARD_ONLY=1 waits for that funding without buying bonds.
  */
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -24,7 +25,7 @@ import {
 } from "../electron/connectTransactionReview";
 import { discoverEndpointNetworkIdentity } from "../electron/networkIdentityDiscovery";
 import { nodeFetch } from "../electron/nodeFetch";
-import { normalizeAccountAssetListPayload } from "../electron/preload-utils";
+import { fetchAccountAssetCollection } from "../electron/accountAssetCollection";
 import {
   buildIrohaConnectTokenProtocol,
   buildIrohaConnectWebSocketUrl,
@@ -65,7 +66,9 @@ describe.skipIf(!LIVE)(
       );
       // This harness mutates a throwaway world; it cannot target the public presenter.
       expect(["127.0.0.1", "localhost", "[::1]"]).toContain(base.hostname);
-      const pairOnly = process.env.BOND_CONNECT_PAIR_ONLY === "1";
+      const onboardOnly = process.env.BOND_CONNECT_ONBOARD_ONLY === "1";
+      const pairOnly =
+        process.env.BOND_CONNECT_PAIR_ONLY === "1" || onboardOnly;
       let cookie = "";
       const call = async <T>(
         method: string,
@@ -74,7 +77,12 @@ describe.skipIf(!LIVE)(
       ): Promise<T> => {
         const response = await fetch(new URL(path, base), {
           method,
-          headers: { "content-type": "application/json", cookie },
+          headers: {
+            cookie,
+            ...(body === undefined
+              ? {}
+              : { "content-type": "application/json" }),
+          },
           body: body === undefined ? undefined : JSON.stringify(body),
           signal: AbortSignal.timeout(60_000),
         });
@@ -269,27 +277,21 @@ describe.skipIf(!LIVE)(
         console.info(
           "[live bond] production wallet boundary paired with local server over Taira relay",
         );
-        if (pairOnly) return;
+        if (pairOnly && !onboardOnly) return;
         await waitUntil(
           async () => {
-            const response = await nodeFetch(
-              `${TAIRA}/v1/accounts/${encodeURIComponent(account)}/assets?limit=50&offset=0&count_mode=exact`,
-            );
-            if (response.status === 404) return false;
-            if (!response.ok)
-              throw new Error(`Account assets: HTTP ${response.status}`);
-            const page = normalizeAccountAssetListPayload(
-              await response.json(),
-              {
-                expectedAccountId: account,
-                networkPrefix: PREFIX,
-                maximumItems: 50,
-              },
-            );
             const state = await call<DemoState>("GET", "/api/state");
+            if (Number(state.balances.investor?.EUR ?? 0) <= 0) return false;
+            const page = await fetchAccountAssetCollection({
+              toriiUrl: TAIRA,
+              accountId: account,
+              networkPrefix: PREFIX,
+              limit: 50,
+            });
             return (
               page.items.some(
                 (asset) =>
+                  asset.scope === "global" &&
                   asset.asset_definition_id ===
                     initial.assets.EUR.definitionId &&
                   Number(asset.quantity) > 0,
@@ -299,6 +301,12 @@ describe.skipIf(!LIVE)(
           "wallet funding",
           300_000,
         );
+        if (onboardOnly) {
+          console.info(
+            "[live bond] wallet onboarding confirmed with on-chain EUR and demo balance",
+          );
+          return;
+        }
         await waitJob(
           await call<DemoJob>("POST", "/api/trades", {
             bondId: "abc-tourism-2030",

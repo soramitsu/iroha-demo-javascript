@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import bondVectors from "./fixtures/bond-review-v1.json";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -35,6 +36,7 @@ import type { IrohaConnectWalletContext } from "../electron/irohaConnectBoundary
 import {
   isConnectTransactionReview,
   formatConnectTransactionReviewLines,
+  connectTransactionReviewRows,
 } from "@/utils/connectTransactionReview";
 import {
   TEST_PREVIOUS_TAIRA_NETWORK_ID,
@@ -76,6 +78,7 @@ const accountFor = (privateKey: Uint8Array) =>
 const INVESTOR = accountFor(investorKey);
 const ISSUER = accountFor(issuerKey);
 const NETWORK = NetworkId.parse(TEST_TAIRA_NETWORK_ID);
+const SETTLEMENT = { ...newSettlementId(INVESTOR, "bond-buy-1") };
 
 // Production payload inspection (SDK codec) plus the SDK's native decoder.
 const realDecoder = (): ConnectTransactionDecoder => ({
@@ -97,7 +100,7 @@ const bondPurchaseInstructions = () => [
       name: "CanExecuteSettlement",
       payload: {
         debited_asset: `${XOR}#${INVESTOR}`,
-        settlement_id: "bond_buy_1",
+        settlement_id: SETTLEMENT,
         intent_hash: `hash:${"AB".repeat(32)}#0000`,
       },
     },
@@ -106,7 +109,7 @@ const bondPurchaseInstructions = () => [
     Settlement: {
       Atomic: {
         network_id: TEST_TAIRA_NETWORK_ID,
-        settlement_id: "bond_buy_1",
+        settlement_id: SETTLEMENT,
         movements: [
           { source: `${XOR}#${INVESTOR}`, recipient: ISSUER, quantity: "10" },
           { source: `${XOR}#${ISSUER}`, recipient: INVESTOR, quantity: "3" },
@@ -174,7 +177,7 @@ describe("IrohaConnect transaction payload review", () => {
     expect(review.instructions[2]).toMatchObject({
       title: "Grant settlement consent (CanExecuteSettlement)",
       fields: expect.arrayContaining([
-        { label: "Settlement ID", value: "bond_buy_1" },
+        { label: "Settlement ID", value: JSON.stringify(SETTLEMENT) },
         { label: "Intent hash", value: `hash:${"AB".repeat(32)}#0000` },
         { label: "Debited asset", value: `${XOR}#${INVESTOR}` },
       ]),
@@ -182,7 +185,7 @@ describe("IrohaConnect transaction payload review", () => {
     expect(review.instructions[3]).toMatchObject({
       title: "Atomic settlement (2 movements)",
       fields: expect.arrayContaining([
-        { label: "Settlement ID", value: "bond_buy_1" },
+        { label: "Settlement ID", value: JSON.stringify(SETTLEMENT) },
         {
           label: "Movement 1",
           value: `10 of ${XOR} from ${INVESTOR} to ${ISSUER}`,
@@ -370,7 +373,7 @@ describe("IrohaConnect transaction payload review", () => {
     const draft = buildPayload(INVESTOR, [
       buildSettleAtomicInstruction({
         networkId: NETWORK,
-        settlementId: newSettlementId("wallet-review:settlement"),
+        settlementId: newSettlementId(INVESTOR, "wallet-review:settlement"),
         movements: [
           {
             sourceAssetHoldingId: `${bond}#${ISSUER}`,
@@ -485,6 +488,230 @@ describe("IrohaConnect transaction payload review", () => {
     expect(review.instructions[5]!.fields).toEqual([
       { label: "Agreement ID", value: agreementId },
     ]);
+  });
+
+  it("reviews bond terms, explicit claim effects and every lifecycle variant", () => {
+    const decoded: object[] = bondVectors.instructions.map((v) => v.json);
+    const draft = buildPayload(
+      INVESTOR,
+      decoded.map(() =>
+        buildMintAssetInstruction({
+          assetId: `${XOR}#${INVESTOR}`,
+          quantity: "1",
+        }),
+      ),
+    );
+    let index = 0;
+    const { review } = reviewConnectTransactionPayload({
+      payloadBytes: draft.payloadBytes,
+      expectedAuthority: INVESTOR,
+      expectedNetworkId: TEST_TAIRA_NETWORK_ID,
+      networkPrefix: PREFIX,
+      decoder: {
+        ...realDecoder(),
+        decodeInstructionArchive: () => JSON.stringify(decoded[index++]),
+      },
+    });
+    expect(review.instructions.every((row) => row.kind === "bond")).toBe(true);
+    expect(isConnectTransactionReview(review)).toBe(true);
+    expect(
+      review.instructions[0]!.fields.filter((f) =>
+        f.label.startsWith("Cash flow "),
+      ),
+    ).toHaveLength(4);
+    expect(review.instructions[1]!.fields).toContainEqual({
+      label: "Coupon payments per year",
+      value: "0",
+    });
+    expect(review.instructions[2]!.fields).toContainEqual({
+      label: "Effect",
+      value: expect.stringContaining("freezes bond transfers"),
+    });
+    expect(review.instructions[3]!.fields).toContainEqual({
+      label: "Funding source",
+      value: expect.stringContaining("#"),
+    });
+    expect(review.instructions[3]!.warning).toContain(
+      "not present in this instruction",
+    );
+    expect(review.instructions[4]!.warning).toContain(
+      "no cash-flow kind or payment amount",
+    );
+    expect(review.instructions[4]!.fields).toContainEqual({
+      label: "Effect",
+      value: expect.stringContaining("also burns"),
+    });
+    expect(review.instructions[5]!.fields).toContainEqual({
+      label: "Effect",
+      value: expect.stringContaining("unclaimed entitlements remain payable"),
+    });
+    expect(review.instructions[6]!.fields).toContainEqual({
+      label: "Call date (Unix milliseconds)",
+      value: "1831507200000",
+    });
+    expect(review.instructions[7]!.fields).toContainEqual({
+      label: "Default evidence SHA-256",
+      value: "ab".repeat(32),
+    });
+    expect(review.instructions[8]!.fields).toContainEqual({
+      label: "Paying agent",
+      value: expect.any(String),
+    });
+    expect(review.instructions[9]!.fields).toContainEqual({
+      label: "Effect",
+      value: expect.stringContaining(
+        "Burns units from the issuer's own balance",
+      ),
+    });
+  });
+
+  it("reviews bond unknown fields visibly and keeps a maximum schedule valid across the renderer boundary", () => {
+    const register = structuredClone(
+      bondVectors.instructions[0]!.json.Bond.Register!,
+    );
+    register.terms.cashflows = Array.from({ length: 400 }, (_, index) => ({
+      ...register.terms.cashflows[0]!,
+      index,
+    }));
+    const decoded = [
+      { Bond: { Register: { ...register, extra: "visible\u202evalue" } } },
+      { Bond: { UnknownVariant: { bond: "new-bond" } } },
+      { Bond: { ClaimCashflow: {}, CloseCashflow: {} } },
+      { Bond: { Register: { bond: register.bond, terms: null } } },
+    ];
+    const draft = buildPayload(
+      INVESTOR,
+      decoded.map(() =>
+        buildMintAssetInstruction({
+          assetId: `${XOR}#${INVESTOR}`,
+          quantity: "1",
+        }),
+      ),
+    );
+    let index = 0;
+    const { review } = reviewConnectTransactionPayload({
+      payloadBytes: draft.payloadBytes,
+      expectedAuthority: INVESTOR,
+      expectedNetworkId: TEST_TAIRA_NETWORK_ID,
+      networkPrefix: PREFIX,
+      decoder: {
+        ...realDecoder(),
+        decodeInstructionArchive: () => JSON.stringify(decoded[index++]),
+      },
+    });
+    expect(isConnectTransactionReview(review)).toBe(true);
+    expect(
+      review.instructions[0]!.fields.filter((f) =>
+        f.label.startsWith("Cash flow "),
+      ),
+    ).toHaveLength(400);
+    expect(review.instructions[0]!.fields).toContainEqual({
+      label: "extra",
+      value: "visible�value",
+    });
+    expect(
+      connectTransactionReviewRows(review).find(
+        (row) => row.label === "1. Register bond",
+      )!.value,
+    ).toContain('"index":399');
+    expect(
+      formatConnectTransactionReviewLines(review).some((line) =>
+        line.includes('"index":399'),
+      ),
+    ).toBe(true);
+    expect(review.instructions[1]!.kind).toBe("unknown");
+    expect(review.instructions[2]!.kind).toBe("unknown");
+    expect(review.instructions[3]!.fields).toContainEqual({
+      label: "Value",
+      value: "null",
+    });
+  });
+
+  it("natively decodes every bond instruction from the Rust model fixtures", () => {
+    const draft = buildPayload(
+      INVESTOR,
+      bondVectors.instructions.map((v) => v.json),
+    );
+    const { review } = reviewConnectTransactionPayload({
+      payloadBytes: draft.payloadBytes,
+      expectedAuthority: INVESTOR,
+      expectedNetworkId: TEST_TAIRA_NETWORK_ID,
+      networkPrefix: PREFIX,
+      decoder: realDecoder(),
+    });
+    expect(review.instructions.map((row) => row.kind)).toEqual(
+      Array(10).fill("bond"),
+    );
+    expect(review.instructions.map((row) => row.wireId)).toEqual(
+      Array(10).fill("iroha.bond"),
+    );
+    expect(review.instructions.map((row) => row.title)).toEqual([
+      "Register bond",
+      "Register bond",
+      "Record bond cash flow",
+      "Fund bond cash flow",
+      "Claim bond cash flow",
+      "Close bond cash flow",
+      "Call bond",
+      "Declare bond default",
+      "Replace bond paying agent",
+      "Retire bond treasury units",
+    ]);
+    expect(isConnectTransactionReview(review)).toBe(true);
+    expect(review.instructions[0]!.fields).toEqual(
+      expect.arrayContaining([
+        { label: "Annual coupon rate (basis points)", value: "650" },
+        { label: "Denomination per unit", value: "50" },
+        { label: "Call: Price (basis points)", value: "10100" },
+        { label: "ISIN", value: "SI0031234567" },
+        { label: "Terms SHA-256", value: "09".repeat(32) },
+      ]),
+    );
+    expect(review.instructions[1]!.fields).toContainEqual({
+      label: "Call provision",
+      value: "None",
+    });
+    expect(review.instructions[4]!.fields).toEqual(
+      expect.arrayContaining([
+        { label: "Cash-flow index (zero-based)", value: "0" },
+        {
+          label: "Holder / payment destination",
+          value: bondVectors.instructions[4]!.json.Bond.ClaimCashflow!.holder,
+        },
+        { label: "Effect", value: expect.stringContaining("also burns") },
+      ]),
+    );
+    expect(review.instructions[4]!.warning).toContain(
+      "no cash-flow kind or payment amount",
+    );
+    expect(review.instructions[9]!.fields).toContainEqual({
+      label: "Units to retire",
+      value: "250",
+    });
+    expect(formatConnectTransactionReviewLines(review)).toContain(
+      "5. Claim bond cash flow [iroha.bond]",
+    );
+    const undecoded = reviewConnectTransactionPayload({
+      payloadBytes: draft.payloadBytes,
+      expectedAuthority: INVESTOR,
+      expectedNetworkId: TEST_TAIRA_NETWORK_ID,
+      networkPrefix: PREFIX,
+      decoder: {
+        ...realDecoder(),
+        decodeInstructionArchive: () => {
+          throw new Error("invalid bond archive");
+        },
+      },
+    }).review;
+    expect(
+      undecoded.instructions.every(
+        (instruction) =>
+          instruction.kind === "undecoded" &&
+          instruction.title === "Bond instruction" &&
+          instruction.json === null,
+      ),
+    ).toBe(true);
+    expect(undecoded.warnings).toHaveLength(10);
   });
 
   it("keeps unfamiliar repo fields visible and describes disabled early repayment", () => {

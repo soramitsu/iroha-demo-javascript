@@ -52,7 +52,7 @@ Every build consumer (Vite, Vitest, `tsc`, native staging, the Electron
 native loader) resolves the SDK through `scripts/iroha-sdk-compat.mjs`, which
 honours one absolute `IROHA_JS_SDK_ROOT`. To run against the SDK being
 used for the Palmatrix smart-bond demo on SORA Nexus Taira, select the prepared
-`iroha-sdk-poc` runtime checkout. Its source is the signed `bond-poc-sdk` branch;
+`iroha-sdk-poc` runtime checkout. Its source must be a signed commit landed on `optimizations`;
 the runtime checkout remains detached so building does not alter that branch:
 
 ```bash
@@ -104,11 +104,16 @@ element-framed `[u8; 32]` values (`frame.sid`, `open.app_pk`,
 `sig_wallet` made of a u32 algorithm discriminant plus an element-framed
 signature; it closes any socket that sends the older raw arrays. The wallet
 emits that layout (pinned by frames captured from the live relay in
-`tests/irohaConnectRelayLayout.spec.ts`). The selected `bond-poc-sdk` implements
+`tests/irohaConnectRelayLayout.spec.ts`). The selected `optimizations` SDK implements
 the same layout directly; no socket adapter is used. The encrypted envelope
 layout is unchanged. Readable approvals include settlement movements and every
 escrow leg, conditional escrow open/attest/expire, and repo cash principal,
 collateral, rate, maturity, and the initiator's early-repayment permission.
+Bond servicing reviews decode all nine native `Bond` variants, including complete
+registration schedules, funding source, holder, cash-flow index, and treasury
+retirement. A claim explicitly warns that redemption burns the holder's units;
+its exact amount and cash-flow kind are state-dependent and absent from the
+signed instruction, so the wallet does not invent them.
 `tests/connectTransactionReview.spec.ts` builds those instructions with the SDK
 and decodes their real native archives, including four escrow legs and two
 issuer bond movements.
@@ -136,8 +141,14 @@ repayment. These are real testnet submissions. It only accepts loopback demo
 URLs, disconnects afterwards, and leaves investor signing in `connect` mode.
 Supply a local presenter's `BOND_ACCESS_CODE` through the environment if needed;
 never put it in a tracked file. `BOND_CONNECT_PAIR_ONLY=1` proves just the
-server pairing, while the server may still fund the new wallet. The interactive
-wallet continues to require its approval modal and native confirmation dialog.
+server pairing, while the server may still fund the new wallet.
+`BOND_CONNECT_ONBOARD_ONLY=1` also waits for the on-chain EUR top-up, then stops
+before purchases. The interactive wallet continues to require its approval
+modal and native confirmation dialog.
+
+Wallet balances use the SDK's current cursor-based account-assets collection.
+The renderer's requested row window is read through that collection with exact
+totals and strict account, asset, quantity, and response-size checks.
 
 ### Network identity after a TAIRA reset
 
@@ -878,3 +889,23 @@ verified physical SDK package.
 
 See [RELEASE.md](RELEASE.md) for signing variables and the tag-based release
 workflow.
+
+### Accelerated smart-bond wallet rehearsal
+
+With a fresh initialized Taira-backed demo world and the presenter access code
+already in `PALMATRIX_ACCESS_CODE`, run:
+
+```bash
+PALMATRIX_URL=https://palmatrix.soramitsu.io \
+PALMATRIX_STEPS=pair,buy,subscribe,loan,repay,accelerated,claim,redeem \
+npx vitest run tests/palmatrixRehearsal.spec.ts
+```
+
+The accelerated step creates and buys a monthly bond. Claim and redeem record
+and fund the respective cash flows, approve native `ClaimCashflow` instructions
+through the wallet, verify the exact EUR received, and verify redemption burns
+the investor's units. Duplicate claims must fail before another approval.
+`PALMATRIX_LEAD_SECONDS` defaults to 600; increase it if setup takes too long
+to finish before the record date. Claim requires accelerated, redeem requires
+claim, loan requires buy, and repay requires loan. This test mutates the demo
+world and leaves resetting it to the cutover runner/operator.

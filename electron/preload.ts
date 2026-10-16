@@ -28,7 +28,6 @@ import {
 import {
   assertConfidentialPolicyProjectionAgreement,
   formatOnboardingError,
-  normalizeAccountAssetListPayload,
   normalizeBaseUrl,
   normalizeConfidentialAssetPolicyPayload,
   assertExplorerAccountQrMatchesRequestedAccount,
@@ -101,6 +100,7 @@ import {
   type TransactionFinalityProof,
 } from "./transactionFinality";
 import { nodeFetch } from "./nodeFetch";
+import { fetchAccountAssetCollection } from "./accountAssetCollection";
 import {
   MAX_TORII_JSON_RESPONSE_BYTES,
   readBoundedJsonResponse,
@@ -5545,64 +5545,7 @@ const fetchConfidentialAssetPolicy = async (
   return normalizeConfidentialAssetPolicyPayload(payload);
 };
 
-const fetchAccountAssetsList = async (input: {
-  toriiUrl: string;
-  accountId: string;
-  networkPrefix: number;
-  assetDefinitionId?: string;
-  limit?: number;
-  offset?: number;
-}) => {
-  const pageRequest = requireFirstReleasePagination(input, {
-    defaultLimit: 50,
-    label: "Account assets",
-  });
-  const normalizedBaseUrl = `${normalizeBaseUrl(input.toriiUrl)}/`;
-  const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
-    input.accountId,
-    "accountId",
-    input.networkPrefix,
-  );
-  const endpoint = new URL(
-    `v1/accounts/${encodeURIComponent(normalizedAccountId)}/assets`,
-    normalizedBaseUrl,
-  );
-  endpoint.searchParams.set("limit", String(pageRequest.limit));
-  endpoint.searchParams.set("offset", String(pageRequest.offset));
-  endpoint.searchParams.set("count_mode", "exact");
-  if (input.assetDefinitionId !== undefined) {
-    const assetDefinitionId = normalizeFirstReleaseAssetDefinitionId(
-      input.assetDefinitionId,
-      "assetDefinitionId",
-    );
-    endpoint.searchParams.set("asset", assetDefinitionId);
-  }
-  const response = await fetchGetResponse(
-    endpoint.toString(),
-    "Account assets",
-  );
-  if (!response.ok) {
-    throw await createApiRequestError(response, "Account assets");
-  }
-  const payload = await readBoundedJsonObjectResponse(
-    response,
-    "Account assets",
-  );
-  const page = normalizeAccountAssetListPayload(payload, {
-    expectedAccountId: normalizedAccountId,
-    expectedAssetDefinitionId: input.assetDefinitionId,
-    networkPrefix: input.networkPrefix,
-    maximumItems: pageRequest.limit,
-  });
-  assertFirstReleasePageWindow(page, pageRequest, "Account assets");
-  assertFirstReleaseHasMore(
-    payload.has_more,
-    page,
-    pageRequest,
-    "Account assets",
-  );
-  return page;
-};
+const fetchAccountAssetsList = fetchAccountAssetCollection;
 
 const fetchGovernanceCouncilCurrent = async (
   toriiUrlRaw: string,

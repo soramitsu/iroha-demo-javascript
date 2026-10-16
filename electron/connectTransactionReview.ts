@@ -360,6 +360,76 @@ const REPO_VARIANT_TITLES: Record<string, string> = {
   RepoMarginCallIsi: "Repo margin call",
 };
 
+const BOND_VARIANT_TITLES: Record<string, string> = {
+  Register: "Register bond",
+  RecordCashflow: "Record bond cash flow",
+  FundCashflow: "Fund bond cash flow",
+  ClaimCashflow: "Claim bond cash flow",
+  CloseCashflow: "Close bond cash flow",
+  Call: "Call bond",
+  DeclareDefault: "Declare bond default",
+  ReplacePayingAgent: "Replace bond paying agent",
+  RetireTreasuryUnits: "Retire bond treasury units",
+};
+
+const BOND_KERNEL_FIELD_LABELS: Record<string, string> = {
+  bond: "Bond asset",
+  index: "Cash-flow index (zero-based)",
+  issuer: "Issuer",
+  paying_agent: "Paying agent",
+  payment_asset: "Payment asset",
+  denomination: "Denomination per unit",
+  coupon_rate_bps: "Annual coupon rate (basis points)",
+  coupon_frequency: "Coupon payments per year",
+  day_count: "Day-count convention",
+  issue_date_ms: "Issue date (Unix milliseconds)",
+  maturity_date_ms: "Maturity date (Unix milliseconds)",
+  redemption_price_bps: "Redemption price (basis points)",
+  payment_grace_ms: "Payment grace (milliseconds)",
+  first_call_date_ms: "First call date (Unix milliseconds)",
+  call_date_ms: "Call date (Unix milliseconds)",
+  price_bps: "Price (basis points)",
+  notice_ms: "Notice (milliseconds)",
+  isin: "ISIN",
+  cfi: "CFI",
+  issuer_lei: "Issuer LEI",
+  bdt_version: "BDT version",
+  bdt_document_sha256: "BDT document SHA-256",
+  terms_sha256: "Terms SHA-256",
+  evidence_sha256: "Default evidence SHA-256",
+  source: "Funding source",
+  holder: "Holder / payment destination",
+  quantity: "Units to retire",
+};
+
+/** Show all native bond fields, including every schedule entry and optional term. */
+const describeBondKernelFields = (
+  value: unknown,
+  prefix = "",
+): ConnectTransactionReviewField[] => {
+  const record = asRecord(value);
+  if (!record) return genericFields(value, prefix);
+  return Object.entries(record).flatMap(([key, entry]) => {
+    if (key === "terms" || key === "identifiers") {
+      return describeBondKernelFields(entry, prefix);
+    }
+    if (key === "call") {
+      return entry === null
+        ? [field("Call provision", "None")]
+        : describeBondKernelFields(entry, "Call: ");
+    }
+    if (key === "cashflows" && Array.isArray(entry)) {
+      return [
+        field("Cash flows", entry.length),
+        ...entry.map((flow, index) =>
+          field(`Cash flow ${index + 1} (native terms)`, flow),
+        ),
+      ];
+    }
+    return [field(`${prefix}${BOND_KERNEL_FIELD_LABELS[key] ?? key}`, entry)];
+  });
+};
+
 const BOND_FIELD_LABELS: Record<string, string> = {
   agreement_id: "Agreement ID",
   escrow_id: "Escrow ID",
@@ -426,6 +496,77 @@ type InstructionDescription = Pick<
   ConnectTransactionInstructionReview,
   "kind" | "title" | "fields"
 > & { warnings?: string[] };
+
+const describeBondInstruction = (body: unknown): InstructionDescription => {
+  const variant = singleVariant(body);
+  if (!variant || !Object.hasOwn(BOND_VARIANT_TITLES, variant[0])) {
+    return {
+      kind: "unknown",
+      title: "Unrecognized bond instruction",
+      fields: genericFields(body),
+    };
+  }
+  const [name, payload] = variant;
+  const fields = describeBondKernelFields(payload);
+  const warnings: string[] = [];
+  switch (name) {
+    case "RecordCashflow":
+      fields.push(
+        field(
+          "Effect",
+          "Records holder entitlements with the books closed until recording completes. Recording redemption freezes bond transfers.",
+        ),
+      );
+      break;
+    case "FundCashflow":
+      fields.push(
+        field(
+          "Effect",
+          "Moves the full recorded amount due from the funding source into the bond vault.",
+        ),
+      );
+      warnings.push(
+        "The payment amount is determined by the recorded cash flow and is not present in this instruction.",
+      );
+      break;
+    case "ClaimCashflow":
+      fields.push(
+        field(
+          "Effect",
+          "Pays the holder from the bond vault. For a redemption cash flow, also burns the holder's entitled bond units.",
+        ),
+      );
+      warnings.push(
+        "The instruction contains no cash-flow kind or payment amount; verify the registered bond and cash-flow index before approving.",
+      );
+      break;
+    case "CloseCashflow":
+      fields.push(
+        field(
+          "Effect",
+          "Closes the cash flow; unclaimed entitlements remain payable from the bond vault.",
+        ),
+      );
+      break;
+    case "Call":
+      fields.push(
+        field(
+          "Effect",
+          "Schedules early redemption under the registered call terms and cancels later scheduled cash flows.",
+        ),
+      );
+      break;
+    case "RetireTreasuryUnits":
+      fields.push(
+        field(
+          "Effect",
+          "Burns units from the issuer's own balance and reduces outstanding supply. Retiring the last units cancels every cash flow not yet recorded.",
+        ),
+      );
+      break;
+  }
+  return { kind: "bond", title: BOND_VARIANT_TITLES[name]!, fields, warnings };
+};
 
 const describeSettlementAtomic = (
   value: unknown,
@@ -593,6 +734,8 @@ const describeInstruction = (
     }
     case "Grant":
       return describeGrant(body);
+    case "Bond":
+      return describeBondInstruction(body);
     case "Settlement":
       if (inner?.[0] === "Atomic") {
         return describeSettlementAtomic(inner[1], sessionNetworkId);
@@ -640,6 +783,7 @@ const titleFromWireId = (wireId: string): string => {
     return ESCROW_INSTRUCTION_TITLES[typeName]!;
   }
   if (wireId === "iroha.repo") return "Repo instruction";
+  if (wireId === "iroha.bond") return "Bond instruction";
   if (wireId === "iroha.settlement") return "Settlement instruction";
   return `Instruction ${wireId}`;
 };

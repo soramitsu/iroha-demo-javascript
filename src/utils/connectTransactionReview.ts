@@ -6,7 +6,8 @@ import type {
 } from "../types/connectTransactionReview";
 
 const MAX_INSTRUCTIONS = 64;
-const MAX_FIELDS_PER_INSTRUCTION = 256;
+// A registered bond may contain up to 400 cash flows, each shown separately.
+const MAX_FIELDS_PER_INSTRUCTION = 512;
 const MAX_TEXT = 4_096;
 const INSTRUCTION_KINDS = new Set<ConnectTransactionInstructionKind>([
   "transfer",
@@ -18,6 +19,7 @@ const INSTRUCTION_KINDS = new Set<ConnectTransactionInstructionKind>([
   "settlement",
   "escrow",
   "repo",
+  "bond",
   "unknown",
   "undecoded",
 ]);

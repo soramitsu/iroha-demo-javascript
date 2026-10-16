@@ -13,6 +13,7 @@ export type ConnectTransactionInstructionKind =
   | "settlement"
   | "escrow"
   | "repo"
+  | "bond"
   | "unknown"
   | "undecoded";
 

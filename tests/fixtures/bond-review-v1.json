@@ -1,0 +1,204 @@
+{
+  "source": "Rust-generated bond-v1-codec.json (iroha_js_codec bond_instruction_tests.rs)",
+  "networkPrefix": 369,
+  "instructions": [
+    {
+      "name": "Register",
+      "json": {
+        "Bond": {
+          "Register": {
+            "bond": "6XJR4DDjp3W4kUVgwcbeWPMNMZ1g",
+            "terms": {
+              "call": {
+                "first_call_date_ms": 1799971200000,
+                "notice_ms": 2592000000,
+                "price_bps": 10100
+              },
+              "cashflows": [
+                {
+                  "amount_per_unit": "3.25",
+                  "index": 0,
+                  "kind": "Coupon",
+                  "payment_date_ms": 1799971200000,
+                  "record_date_ms": 1799884800000
+                },
+                {
+                  "amount_per_unit": "3.25",
+                  "index": 1,
+                  "kind": "Coupon",
+                  "payment_date_ms": 1831507200000,
+                  "record_date_ms": 1831420800000
+                },
+                {
+                  "amount_per_unit": "3.25",
+                  "index": 2,
+                  "kind": "Coupon",
+                  "payment_date_ms": 1863129600000,
+                  "record_date_ms": 1863043200000
+                },
+                {
+                  "amount_per_unit": "50",
+                  "index": 3,
+                  "kind": "Redemption",
+                  "payment_date_ms": 1863129600000,
+                  "record_date_ms": 1863043200000
+                }
+              ],
+              "coupon_frequency": 1,
+              "coupon_rate_bps": 650,
+              "day_count": "ActActIcma",
+              "denomination": "50",
+              "identifiers": {
+                "bdt_document_sha256": "0707070707070707070707070707070707070707070707070707070707070707",
+                "bdt_version": "bdt-1.0",
+                "cfi": "DBFTFB",
+                "isin": "SI0031234567",
+                "issuer_lei": "5299000DI3047E2LIV03"
+              },
+              "issue_date_ms": 1768435200000,
+              "issuer": "testuﾛ1PｸCｶrﾑhyﾜｴﾄhｳﾔSqP2GFGﾗヱﾐｹﾇﾏzﾍｵﾐMﾇﾖﾄksJヱRRJXVB",
+              "maturity_date_ms": 1863129600000,
+              "paying_agent": "testuﾛ1NﾛKﾅYRｺYﾇq8MﾇﾜﾏヰSPisヱ81EﾅｾVtﾀuHAtﾄｺ2cWqMLUMDW",
+              "payment_asset": "6RMsAwCBqszBEdjdvhCs8LqpTSZr",
+              "payment_grace_ms": 604800000,
+              "redemption_price_bps": 10000,
+              "terms_sha256": "0909090909090909090909090909090909090909090909090909090909090909"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "RegisterZeroCoupon",
+      "json": {
+        "Bond": {
+          "Register": {
+            "bond": "82twUfPiXfMVW7jB86bBpPKXTTou",
+            "terms": {
+              "call": null,
+              "cashflows": [
+                {
+                  "amount_per_unit": "100",
+                  "index": 0,
+                  "kind": "Redemption",
+                  "payment_date_ms": 1863129600000,
+                  "record_date_ms": 1863043200000
+                }
+              ],
+              "coupon_frequency": 0,
+              "coupon_rate_bps": 0,
+              "day_count": "Act365Fixed",
+              "denomination": "100",
+              "identifiers": {
+                "bdt_document_sha256": null,
+                "bdt_version": "bdt-1.0",
+                "cfi": null,
+                "isin": null,
+                "issuer_lei": null
+              },
+              "issue_date_ms": 1768435200000,
+              "issuer": "testuﾛ1PｸCｶrﾑhyﾜｴﾄhｳﾔSqP2GFGﾗヱﾐｹﾇﾏzﾍｵﾐMﾇﾖﾄksJヱRRJXVB",
+              "maturity_date_ms": 1863129600000,
+              "paying_agent": "testuﾛ1NﾛKﾅYRｺYﾇq8MﾇﾜﾏヰSPisヱ81EﾅｾVtﾀuHAtﾄｺ2cWqMLUMDW",
+              "payment_asset": "6RMsAwCBqszBEdjdvhCs8LqpTSZr",
+              "payment_grace_ms": 604800000,
+              "redemption_price_bps": 10000,
+              "terms_sha256": "0909090909090909090909090909090909090909090909090909090909090909"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "RecordCashflow",
+      "json": {
+        "Bond": {
+          "RecordCashflow": {
+            "bond": "6XJR4DDjp3W4kUVgwcbeWPMNMZ1g",
+            "index": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "FundCashflow",
+      "json": {
+        "Bond": {
+          "FundCashflow": {
+            "bond": "6XJR4DDjp3W4kUVgwcbeWPMNMZ1g",
+            "index": 0,
+            "source": "6RMsAwCBqszBEdjdvhCs8LqpTSZr#testuﾛ1NﾛKﾅYRｺYﾇq8MﾇﾜﾏヰSPisヱ81EﾅｾVtﾀuHAtﾄｺ2cWqMLUMDW"
+          }
+        }
+      }
+    },
+    {
+      "name": "ClaimCashflow",
+      "json": {
+        "Bond": {
+          "ClaimCashflow": {
+            "bond": "6XJR4DDjp3W4kUVgwcbeWPMNMZ1g",
+            "holder": "testuﾛ1PYﾛ9ｵﾆﾘﾐ3Yf8wﾜｿﾋﾉajｼｱ6eﾑbHｱﾜｶBｳdUｺcヰｲnﾌNP21YC",
+            "index": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "CloseCashflow",
+      "json": {
+        "Bond": {
+          "CloseCashflow": {
+            "bond": "6XJR4DDjp3W4kUVgwcbeWPMNMZ1g",
+            "index": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "Call",
+      "json": {
+        "Bond": {
+          "Call": {
+            "bond": "6XJR4DDjp3W4kUVgwcbeWPMNMZ1g",
+            "call_date_ms": 1831507200000
+          }
+        }
+      }
+    },
+    {
+      "name": "DeclareDefault",
+      "json": {
+        "Bond": {
+          "DeclareDefault": {
+            "bond": "6XJR4DDjp3W4kUVgwcbeWPMNMZ1g",
+            "evidence_sha256": "abababababababababababababababababababababababababababababababab",
+            "index": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "ReplacePayingAgent",
+      "json": {
+        "Bond": {
+          "ReplacePayingAgent": {
+            "bond": "6XJR4DDjp3W4kUVgwcbeWPMNMZ1g",
+            "paying_agent": "testuﾛ1Prﾇuﾉﾉ4ﾒdﾛﾑｲﾄn5tﾆﾒrsR9ﾋ2Gｷ7gWeFzyﾁﾋﾁAHﾌTJQQ4L"
+          }
+        }
+      }
+    },
+    {
+      "name": "RetireTreasuryUnits",
+      "json": {
+        "Bond": {
+          "RetireTreasuryUnits": {
+            "bond": "6XJR4DDjp3W4kUVgwcbeWPMNMZ1g",
+            "quantity": "250"
+          }
+        }
+      }
+    }
+  ]
+}
